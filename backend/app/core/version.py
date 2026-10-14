@@ -5,14 +5,21 @@ import subprocess
 
 APP_VERSION = "1.0.0"
 
-CANDIDATOS_REPO = ["/repo", "/app", "/code", "."]
+CANDIDATOS_REPO = ["/repo", "/app", "/code", ".", "..", "../.."]
 
 
 def repo_dir() -> Path | None:
     for c in CANDIDATOS_REPO:
-        p = Path(c)
+        p = Path(c).resolve()
         if (p / ".git").exists():
             return p
+    # Sobe a partir do arquivo atual até achar .git (dev local)
+    cur = Path(__file__).resolve()
+    for parent in cur.parents:
+        if (parent / ".git").exists():
+            return parent
+        if parent.name in ("code", "app", "repo"):
+            continue
     return None
 
 

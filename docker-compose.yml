@@ -41,8 +41,9 @@ services:
       - "8000:8000"
     volumes:
       - ./backend/app:/code/app
-      # Repo raiz p/ auto-update (git pull + compose). Sem .:/app p/ não mascarar código.
-      - .:/repo:ro
+      # Repo raiz p/ auto-update (git pull + compose). Monta raiz p/ `git -C /repo` funcionar.
+      # Produção: garanta mesma pasta no host (ou ajuste REPO_DIR). Sem .:/app p/ não mascarar código.
+      - .:/repo
       - /var/run/docker.sock:/var/run/docker.sock
 
   frontend:
