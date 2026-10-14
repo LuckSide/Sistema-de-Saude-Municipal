@@ -36,6 +36,8 @@ services:
       UPDATE_BRANCH: "main"
       GITHUB_OWNER: "LuckSide"
       GITHUB_REPO: "Sistema-de-Saude-Municipal"
+      # Token p/ repo privado (nunca commitar valor real — só via .env/servidor):
+      # GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
       REPO_DIR: /repo
     ports:
       - "127.0.0.1:8000:8000"

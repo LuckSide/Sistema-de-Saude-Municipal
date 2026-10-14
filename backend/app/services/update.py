@@ -24,7 +24,12 @@ def _github_get(url: str) -> dict | list | None:
     try:
         with urllib.request.urlopen(req, timeout=10) as res:
             return json.loads(res.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # 404 anônimo = repo privado ou inexistente; 401/403/429 = token/rate-limit
+        _CACHE["http_status"] = e.code
+        return None
     except Exception:
+        _CACHE["http_status"] = 0
         return None
 
 
@@ -42,22 +47,25 @@ def verificar_atualizacoes(forcar: bool = False) -> dict:
     erro: str | None = None
 
     if not settings.UPDATE_ENABLED:
-        erro = "Auto-update desabilitado (UPDATE_ENABLED=false)"
+        # Check continua funcionando p/ alerta; só execução fica bloqueada.
+        # Erro de execução aparece só no POST /executar, não aqui.
+        pass
 
-    if settings.UPDATE_ENABLED:
-        # Compara SHA local x remoto (fonte: branch main)
-        data = _github_get(f"https://api.github.com/repos/{owner}/{repo}/commits/{branch}")
-        if isinstance(data, dict) and data.get("sha"):
-            remoto = data["sha"]
-        else:
-            erro = "Falha ao consultar GitHub (rede ou repo inexistente)"
-        # Release latest só p/ exibir tag/link (não bloqueia)
-        rel = _github_get(f"https://api.github.com/repos/{owner}/{repo}/releases/latest")
-        if isinstance(rel, dict) and rel.get("tag_name"):
-            release = rel["tag_name"]
-            release_url = rel.get("html_url")
+    # Compara SHA local x remoto (fonte: branch main) — sempre, mesmo com auto-update off
+    data = _github_get(f"https://api.github.com/repos/{owner}/{repo}/commits/{branch}")
+    if isinstance(data, dict) and data.get("sha"):
+        remoto = data["sha"]
+    elif _CACHE.get("http_status") == 404 and not settings.GITHUB_TOKEN:
+        erro = "Repo privado ou inexistente — configure GITHUB_TOKEN p/ checar (admin)"
+    else:
+        erro = "Falha ao consultar GitHub (rede ou repo inexistente)"
+    # Release latest só p/ exibir tag/link (não bloqueia)
+    rel = _github_get(f"https://api.github.com/repos/{owner}/{repo}/releases/latest")
+    if isinstance(rel, dict) and rel.get("tag_name"):
+        release = rel["tag_name"]
+        release_url = rel.get("html_url")
 
-    tem_update = bool(settings.UPDATE_ENABLED and local and remoto and local != remoto)
+    tem_update = bool(local and remoto and local != remoto)
     out = {
         "versao": APP_VERSION,
         "atual": not tem_update,
