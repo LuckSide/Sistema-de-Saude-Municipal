@@ -1,12 +1,18 @@
 #!/bin/bash
 # Auto-update: git pull + rebuild Docker. Chamado via POST /api/update/executar (background).
 # Só comandos fixos (whitelist) — sem input do usuário.
-set -u
+set -uo pipefail
 LOG="${LOG_PATH:-/tmp/atualizacao.log}"
 REPO="${REPO_DIR:-/repo}"
 OWNER="${GITHUB_OWNER:-LuckSide}"
 REPONAME="${GITHUB_REPO:-Sistema-de-Saude-Municipal}"
 BRANCH="${UPDATE_BRANCH:-main}"
+
+# Blindagem: owner/repo/branch só aceitam chars seguros (sem injeção de comando/URL).
+[[ "$OWNER" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "ERRO: GITHUB_OWNER inválido"; exit 1; }
+[[ "$REPONAME" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "ERRO: GITHUB_REPO inválido"; exit 1; }
+[[ "$BRANCH" =~ ^[A-Za-z0-9_./-]+$ ]] || { echo "ERRO: UPDATE_BRANCH inválido"; exit 1; }
+[[ "$LOG" != *".."* ]] || { echo "ERRO: LOG_PATH inválido"; exit 1; }
 
 for c in "$REPO" /app /code .; do
   if [ -d "$c/.git" ]; then REPO="$c"; break; fi

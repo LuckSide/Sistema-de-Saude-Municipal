@@ -85,8 +85,8 @@ export default function UpdateBanner() {
             {" · "}{st.repo}@{st.branch} · versão {st.versao}
             {st.erro ? ` · ${st.erro}` : ""}
           </p>
-          {st.release_url && (
-            <a href={st.release_url} target="_blank" rel="noreferrer" className="text-xs font-semibold text-amber-800 underline">
+          {st.release_url && /^https:\/\/github\.com\//.test(st.release_url) && (
+            <a href={st.release_url} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-amber-800 underline">
               Ver release no GitHub
             </a>
           )}

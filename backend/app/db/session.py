@@ -109,14 +109,16 @@ def init_db() -> None:
             cols_ex = [c["name"] for c in inspect(conn).get_columns("tfd_exames_fila")]
         except Exception:
             cols_ex = []
-        for col, ddl in [
-            ("tipo_fila", "VARCHAR(80) DEFAULT '' NOT NULL"),
-            ("codigo_procedimento", "VARCHAR(20) DEFAULT '' NOT NULL"),
-            ("codigo_especialidade", "VARCHAR(10) DEFAULT '' NOT NULL"),
-            ("nome_especialidade", "VARCHAR(120) DEFAULT '' NOT NULL"),
-        ]:
+        COLS_FILTRO = {
+            "tipo_fila": "VARCHAR(80) DEFAULT '' NOT NULL",
+            "codigo_procedimento": "VARCHAR(20) DEFAULT '' NOT NULL",
+            "codigo_especialidade": "VARCHAR(10) DEFAULT '' NOT NULL",
+            "nome_especialidade": "VARCHAR(120) DEFAULT '' NOT NULL",
+        }
+        for col, ddl in COLS_FILTRO.items():
             if col not in cols_ex:
                 try:
+                    # col/ddl vêm de whitelist fixa acima — sem input de usuário.
                     conn.execute(text(f"ALTER TABLE tfd_exames_fila ADD COLUMN {col} {ddl}"))
                     conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_tfd_exames_fila_{col} ON tfd_exames_fila ({col})"))
                 except Exception:

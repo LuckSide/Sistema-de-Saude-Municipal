@@ -34,9 +34,19 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "same-origin"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 app.include_router(auth_router, prefix="/api", tags=["auth"])
 app.include_router(users_router, prefix="/api/usuarios", tags=["usuarios"])

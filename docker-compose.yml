@@ -32,17 +32,19 @@ services:
       FIRST_SUPERUSER_PASSWORD: admin123
       PEC_DATABASE_URL: postgresql://readonly_user:password@host.docker.internal:5432/pec_db
       PEC_FONTE: auto
-      UPDATE_ENABLED: "true"
+      UPDATE_ENABLED: "false"
       UPDATE_BRANCH: "main"
       GITHUB_OWNER: "LuckSide"
       GITHUB_REPO: "Sistema-de-Saude-Municipal"
       REPO_DIR: /repo
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./backend/app:/code/app
       # Repo raiz p/ auto-update (git pull + compose). Monta raiz p/ `git -C /repo` funcionar.
       # Produção: garanta mesma pasta no host (ou ajuste REPO_DIR). Sem .:/app p/ não mascarar código.
+      # RISCO: docker.sock = controle total do host. Habilite só em servidor próprio
+      # com UPDATE_ENABLED=true + endpoint restrito a superuser, ou remova as 2 linhas.
       - .:/repo
       - /var/run/docker.sock:/var/run/docker.sock
 

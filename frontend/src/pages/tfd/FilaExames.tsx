@@ -454,7 +454,7 @@ export default function FilaExames() {
   }
 
   function linkAcompanhar(e: Exame): string {
-    return `${baseAcompanhar()}/acompanhar/${e.public_token}`;
+    return `${baseAcompanhar()}/acompanhar/${encodeURIComponent(e.public_token ?? "")}`;
   }
 
   function copiar(link: string) {

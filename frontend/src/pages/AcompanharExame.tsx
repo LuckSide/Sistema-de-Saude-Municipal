@@ -10,7 +10,7 @@ export default function AcompanharExame() {
   const [erro, setErro] = useState("");
 
   useEffect(() => {
-    if (!token) {
+    if (!token || !/^[A-Za-z0-9-_]{10,128}$/.test(token)) {
       setErro("Link inválido.");
       return;
     }

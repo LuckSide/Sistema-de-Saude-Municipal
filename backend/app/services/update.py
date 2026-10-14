@@ -119,5 +119,5 @@ def ler_log(linhas: int = 200) -> str:
         return "\n".join(texto[-linhas:])
     except FileNotFoundError:
         return "(sem log ainda — nenhuma atualização executada)"
-    except Exception as e:
-        return f"(erro ao ler log: {e})"
+    except Exception:
+        return "(erro ao ler log)"

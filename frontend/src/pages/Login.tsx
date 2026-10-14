@@ -10,7 +10,7 @@ export default function Login() {
   const settings = useCidadeDinamica();
   const cidade = nomeCidade(settings);
   const nav = useNavigate();
-  const [username, setUsername] = useState("admin");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [erro, setErro] = useState("");
   const [busy, setBusy] = useState(false);
