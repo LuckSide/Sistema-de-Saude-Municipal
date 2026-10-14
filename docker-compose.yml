@@ -1,0 +1,58 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: guape_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: guape
+      POSTGRES_PASSWORD: guape123
+      POSTGRES_DB: saude_guape
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guape"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: guape_api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://guape:guape123@db:5432/saude_guape
+      SECRET_KEY: troque-esta-chave-em-producao-32chars-min
+      ACCESS_TOKEN_EXPIRE_MINUTES: 480
+      FIRST_SUPERUSER: admin
+      FIRST_SUPERUSER_PASSWORD: admin123
+      PEC_DATABASE_URL: postgresql://readonly_user:password@host.docker.internal:5432/pec_db
+      PEC_FONTE: auto
+      UPDATE_ENABLED: "true"
+      UPDATE_BRANCH: "main"
+      GITHUB_OWNER: "LuckSide"
+      GITHUB_REPO: "Sistema-de-Saude-Municipal"
+      REPO_DIR: /repo
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/code/app
+      # Repo raiz p/ auto-update (git pull + compose). Sem .:/app p/ não mascarar código.
+      - .:/repo:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  frontend:
+    build: ./frontend
+    container_name: guape_web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+volumes:
+  pgdata:
