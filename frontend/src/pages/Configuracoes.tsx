@@ -26,11 +26,16 @@ export default function Configuracoes() {
   useEffect(() => {
     fetchSettings()
       .then((s) => {
-        setCidade(s.cidade);
-        setUf(s.uf);
-        setSubtitulo(s.subtitulo);
+        setCidade((s.cidade || "").trim() || "Guapé");
+        setUf(((s.uf || "").trim().toUpperCase() || "MG").slice(0, 2));
+        setSubtitulo((s.subtitulo || "").trim() || "Secretaria Municipal");
       })
-      .catch(() => setErro("Falha ao carregar configurações."))
+      .catch((e: unknown) => {
+        const st = (e as { response?: { status?: number } }).response?.status;
+        if (st === 401) setErro("Sessão expirada. Entre novamente.");
+        else if (st === 403) setErro("Sem permissão ou troca de senha pendente.");
+        else setErro("Falha ao carregar configurações. Tente recarregar.");
+      })
       .finally(() => setLoading(false));
     updateStatus(false).then(setUpd).catch(() => {});
   }, []);
@@ -50,9 +55,12 @@ export default function Configuracoes() {
       setSubtitulo(s.subtitulo);
       setOk(`Cidade atualizada para ${s.cidade}. Título e favicon atualizados.`);
     } catch (e: unknown) {
-      const msg =
-        (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Erro ao salvar.";
-      setErro(typeof msg === "string" ? msg : "Erro ao salvar.");
+      const resp = (e as { response?: { status?: number; data?: { detail?: unknown } } }).response;
+      const detail = resp?.data?.detail;
+      if (resp?.status === 401) setErro("Sessão expirada. Entre novamente.");
+      else if (resp?.status === 403) setErro("Sem permissão (admin) ou troca de senha pendente.");
+      else if (typeof detail === "string" && detail) setErro(detail);
+      else setErro("Erro ao salvar. Confira os campos e tente de novo.");
     } finally {
       setBusy(false);
     }
