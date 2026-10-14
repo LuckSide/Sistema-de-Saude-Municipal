@@ -99,7 +99,7 @@ export default function Login() {
               {busy ? "Entrando…" : "Entrar no painel"}
             </Button>
             <p className="text-center text-xs text-ink/45">
-              Primeiro acesso usa temporária + troca obrigatória.
+              Para criar seu acesso fale com um administrador.
             </p>
           </div>
         </form>
