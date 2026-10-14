@@ -100,11 +100,17 @@ def atualizar(
     user_id: int,
     data: UserUpdate,
     db: Session = Depends(get_db),
-    _=Depends(require_superuser),
+    admin: User = Depends(require_superuser),
 ):
     user = db.exec(select(User).where(User.id == user_id)).first()
     if not user:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    # Trava: admin não remove próprio super/inativo (evita lockout após trocar senha/editar).
+    if user.id == admin.id:
+        if data.is_superuser is False:
+            raise HTTPException(status_code=400, detail="Não pode remover seu próprio superuser")
+        if data.is_active is False:
+            raise HTTPException(status_code=400, detail="Não pode inativar a si mesmo")
     return to_out(update_user(db, user, data))
 
 
