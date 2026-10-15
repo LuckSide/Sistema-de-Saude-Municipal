@@ -506,6 +506,7 @@ export default function VagasAgenda() {
               <Expand className="h-3.5 w-3.5" /> Expandir agendamentos
             </Button>
           </div>
+          <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-sus-900/10 bg-sand/60 text-xs uppercase text-sus-900/60">
@@ -534,6 +535,7 @@ export default function VagasAgenda() {
               ))}
             </tbody>
           </table>
+          </div>
           {vagasMes.length > 5 && (
             <button onClick={() => setModalAgend(true)} className="w-full bg-sand/50 px-4 py-2 text-center text-xs font-semibold text-sus-900/70 transition hover:bg-sand">
               + {vagasMes.length - 5} dia(s) · clique para expandir

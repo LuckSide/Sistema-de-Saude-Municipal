@@ -8,3 +8,5 @@ class SystemSettings(SQLModel, table=True):
     cidade: str = Field(default="Guapé", max_length=80)
     uf: str = Field(default="MG", max_length=2)
     subtitulo: str = Field(default="Secretaria Municipal", max_length=120)
+    brasao_url: str = Field(default="", max_length=500)
+    icone_url: str = Field(default="", max_length=500)

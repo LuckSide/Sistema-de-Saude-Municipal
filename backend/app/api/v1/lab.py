@@ -1,6 +1,6 @@
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlmodel import Session, select
 
 from app.core.deps import get_current_user_senha_ok as get_current_user, get_db
@@ -11,8 +11,10 @@ from app.schemas.lab import (
     FaturarIn,
     LoteOut,
     ResumoLabOut,
+    SigtapImportOut,
     SigtapIn,
     SigtapOut,
+    SigtapVersaoOut,
     SolicitacaoIn,
     SolicitacaoOut,
 )
@@ -28,16 +30,7 @@ from app.services.lab import (
 router = APIRouter()
 
 
-def need_tela(tela: str = "lab"):
-    from app.models.user import User
-
-    def check(user: User = Depends(get_current_user)) -> User:
-        telas = [t.strip() for t in (user.telas or "").split(",") if t.strip()]
-        if not user.is_superuser and tela not in telas:
-            raise HTTPException(status_code=403, detail="Sem acesso ao Lab")
-        return user
-
-    return check
+from app.services.permissoes import need_perm
 
 
 def _enriquecer(db: Session, obj: LabSolicitacao) -> SolicitacaoOut:
@@ -56,7 +49,7 @@ def _enriquecer(db: Session, obj: LabSolicitacao) -> SolicitacaoOut:
 def resumo(
     competencia: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
     db: Session = Depends(get_db),
-    _=Depends(need_tela()),
+    _=Depends(need_perm("lab_faturamento")),
 ):
     return resumo_lab(db, competencia)
 
@@ -65,11 +58,11 @@ def resumo(
 @router.get("/sigtap", response_model=Pagina[SigtapOut])
 def listar_sigtap(
     q: str = "",
-    instrumento: str | None = Query(default=None, pattern="^(BPA-C|BPA-I|BPA-F)$"),
+    instrumento: str | None = Query(default=None, pattern="^(BPA-C|BPA-I|BPA-F)?$"),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    _=Depends(need_tela()),
+    _=Depends(need_perm("lab_sigtap")),
 ):
     from sqlmodel import func as sm_func
     base = select(SigtapProcedimento).order_by(SigtapProcedimento.codigo)
@@ -108,7 +101,7 @@ def listar_sigtap(
 def criar_sigtap(
     data: SigtapIn,
     db: Session = Depends(get_db),
-    user=Depends(need_tela()),
+    user=Depends(need_perm("lab_sigtap", "criar")),
 ):
     if not user.is_superuser and "lab" not in (user.telas or "").split(","):
         raise HTTPException(status_code=403, detail="Sem acesso ao Lab")
@@ -135,7 +128,7 @@ def listar_solicitacoes(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    _=Depends(need_tela()),
+    _=Depends(need_perm("lab_marcacao")),
 ):
     from sqlmodel import func as sm_func
     base = select(LabSolicitacao).order_by(LabSolicitacao.data_solicitacao.desc())
@@ -169,7 +162,7 @@ def listar_solicitacoes(
 
 @router.post("/solicitacoes", response_model=SolicitacaoOut, status_code=201)
 def criar_solicitacao(
-    data: SolicitacaoIn, db: Session = Depends(get_db), _=Depends(need_tela())
+    data: SolicitacaoIn, db: Session = Depends(get_db), _=Depends(need_perm("lab_marcacao", "criar"))
 ):
     if not db.get(Paciente, data.paciente_id):
         raise HTTPException(404, "Paciente não encontrado")
@@ -186,7 +179,7 @@ def criar_solicitacao(
 
 
 @router.get("/solicitacoes/{sid}", response_model=SolicitacaoOut)
-def obter_solicitacao(sid: int, db: Session = Depends(get_db), _=Depends(need_tela())):
+def obter_solicitacao(sid: int, db: Session = Depends(get_db), _=Depends(need_perm("lab_marcacao"))):
     obj = db.get(LabSolicitacao, sid)
     if not obj:
         raise HTTPException(404, "Solicitação não encontrada")
@@ -195,7 +188,7 @@ def obter_solicitacao(sid: int, db: Session = Depends(get_db), _=Depends(need_te
 
 @router.put("/solicitacoes/{sid}", response_model=SolicitacaoOut)
 def atualizar_solicitacao(
-    sid: int, data: SolicitacaoIn, db: Session = Depends(get_db), _=Depends(need_tela())
+    sid: int, data: SolicitacaoIn, db: Session = Depends(get_db), _=Depends(need_perm("lab_marcacao", "editar"))
 ):
     obj = db.get(LabSolicitacao, sid)
     if not obj:
@@ -216,7 +209,7 @@ def atualizar_solicitacao(
 
 
 @router.delete("/solicitacoes/{sid}", status_code=status.HTTP_204_NO_CONTENT)
-def excluir_solicitacao(sid: int, db: Session = Depends(get_db), _=Depends(need_tela())):
+def excluir_solicitacao(sid: int, db: Session = Depends(get_db), _=Depends(need_perm("lab_marcacao", "excluir"))):
     obj = db.get(LabSolicitacao, sid)
     if not obj:
         raise HTTPException(404, "Solicitação não encontrada")
@@ -231,7 +224,7 @@ def listar_prontos(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    _=Depends(need_tela()),
+    _=Depends(need_perm("lab_faturamento")),
 ):
     from app.core.pagination import paginar as _paginar
     todos = prontos_faturar(db, competencia)
@@ -248,7 +241,7 @@ def listar_prontos(
 
 @router.post("/marcar-faturado")
 def marcar(
-    data: FaturarIn, db: Session = Depends(get_db), _=Depends(need_tela())
+    data: FaturarIn, db: Session = Depends(get_db), _=Depends(need_perm("lab_faturamento", "criar"))
 ):
     return marcar_faturado(db, data.ids)
 
@@ -257,7 +250,7 @@ def marcar(
 def ver_lote(
     competencia: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
     db: Session = Depends(get_db),
-    _=Depends(need_tela()),
+    _=Depends(need_perm("lab_faturamento")),
 ):
     itens = lote_bpa(db, competencia)
     return {"competencia": competencia, "total": sum(i["qtd"] for i in itens), "itens": itens}
@@ -267,7 +260,7 @@ def ver_lote(
 def exportar_lote(
     competencia: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
     db: Session = Depends(get_db),
-    _=Depends(need_tela()),
+    _=Depends(need_perm("lab_faturamento")),
 ):
     csv = lote_csv(db, competencia)
     return Response(
@@ -275,3 +268,160 @@ def exportar_lote(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=lote_bpa_{competencia}.csv"},
     )
+
+
+# ---------- Exportações XLSX ----------
+@router.get("/sigtap/exportar")
+def exportar_sigtap(
+    q: str = "",
+    instrumento: str | None = Query(default=None, pattern="^(BPA-C|BPA-I|BPA-F)?$"),
+    db: Session = Depends(get_db),
+    ator=Depends(need_perm("lab_sigtap")),
+):
+    """Tabela SIGTAP em XLSX respeitando busca/instrumento ativos."""
+    from app.services.export_xlsx import resposta_xlsx
+
+    import unicodedata
+
+    def norm(s: str) -> str:
+        return "".join(
+            c for c in unicodedata.normalize("NFD", s or "") if unicodedata.category(c) != "Mn"
+        )
+
+    base = select(SigtapProcedimento).order_by(SigtapProcedimento.codigo)
+    if instrumento:
+        base = select(SigtapProcedimento).where(
+            SigtapProcedimento.instrumento == instrumento
+        ).order_by(SigtapProcedimento.codigo)
+    rows = list(db.exec(base).all())
+    if q.strip():
+        termo = norm(q.strip()).upper()
+        rows = [r for r in rows if termo in norm(r.codigo).upper() or termo in norm(r.descricao).upper()]
+    linhas = [{
+        "codigo": r.codigo, "descricao": r.descricao,
+        "complexidade": r.complexidade or "", "instrumento": r.instrumento or "",
+        "valor_sa": getattr(r, "valor_sa", 0) or 0,
+        "valor_sp": getattr(r, "valor_sp", 0) or 0,
+        "valor_sh": getattr(r, "valor_sh", 0) or 0,
+    } for r in rows[:20000]]
+    return resposta_xlsx(
+        "Tabela SIGTAP", getattr(ator, "nome", "") or getattr(ator, "username", ""),
+        [
+            {"chave": "codigo", "rotulo": "Código", "largura": 16},
+            {"chave": "descricao", "rotulo": "Descrição", "largura": 52},
+            {"chave": "complexidade", "rotulo": "Complexidade", "largura": 14},
+            {"chave": "instrumento", "rotulo": "Instrumento", "largura": 14},
+            {"chave": "valor_sa", "rotulo": "Valor SA (R$)", "largura": 14, "formato": "moeda"},
+            {"chave": "valor_sp", "rotulo": "Valor SP (R$)", "largura": 14, "formato": "moeda"},
+            {"chave": "valor_sh", "rotulo": "Valor SH (R$)", "largura": 14, "formato": "moeda"},
+        ],
+        linhas, "sigtap",
+    )
+
+
+@router.get("/solicitacoes/exportar")
+def exportar_solicitacoes(
+    status_: str | None = Query(default=None, alias="status"),
+    laboratorio: str = "",
+    competencia: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+    db: Session = Depends(get_db),
+    ator=Depends(need_perm("lab_marcacao")),
+):
+    """Solicitações lab em XLSX respeitando os filtros ativos."""
+    from app.services.export_xlsx import resposta_xlsx
+
+    base = select(LabSolicitacao).order_by(LabSolicitacao.data_solicitacao.desc())
+    filtros = []
+    if status_:
+        filtros.append(LabSolicitacao.status == status_)
+    if laboratorio:
+        filtros.append(LabSolicitacao.laboratorio.ilike(f"%{laboratorio}%"))
+    if competencia:
+        filtros.append(LabSolicitacao.competencia == competencia)
+    if filtros:
+        base = select(LabSolicitacao).where(*filtros).order_by(LabSolicitacao.data_solicitacao.desc())
+    linhas = []
+    for o in list(db.exec(base).all())[:20000]:
+        e = _enriquecer(db, o)
+        linhas.append({
+            "paciente": e.paciente_nome, "codigo": e.procedimento_codigo,
+            "procedimento": e.procedimento_descricao, "data": o.data_solicitacao,
+            "laboratorio": o.laboratorio or "", "status": o.status,
+            "competencia": o.competencia or "",
+        })
+    return resposta_xlsx(
+        "Solicitações de exames", getattr(ator, "nome", "") or getattr(ator, "username", ""),
+        [
+            {"chave": "paciente", "rotulo": "Paciente", "largura": 32},
+            {"chave": "codigo", "rotulo": "Código SIGTAP", "largura": 16},
+            {"chave": "procedimento", "rotulo": "Procedimento", "largura": 44},
+            {"chave": "data", "rotulo": "Data", "largura": 14, "formato": "data"},
+            {"chave": "laboratorio", "rotulo": "Laboratório", "largura": 24},
+            {"chave": "status", "rotulo": "Status", "largura": 14},
+            {"chave": "competencia", "rotulo": "Competência", "largura": 12},
+        ],
+        linhas, "solicitacoes_lab",
+    )
+
+
+# ---------- SIGTAP: importação Tabela Unificada DATASUS ----------
+@router.get("/sigtap/versoes", response_model=list[SigtapVersaoOut])
+def versoes_sigtap(
+    db: Session = Depends(get_db),
+    _=Depends(need_perm("lab_sigtap")),
+):
+    """Histórico de cargas SIGTAP com competência (mês/ano)."""
+    from app.models.lab_exames import SigtapVersao
+
+    rows = list(db.exec(select(SigtapVersao).order_by(SigtapVersao.id.desc()).limit(60)).all())
+    out = []
+    for v in rows:
+        d = v.model_dump()
+        try:
+            d["criado_em"] = v.criado_em.strftime("%d/%m/%Y %H:%M") if v.criado_em else ""
+        except Exception:
+            d["criado_em"] = ""
+        out.append(SigtapVersaoOut(**d))
+    return out
+
+
+@router.get("/sigtap/modelo")
+def modelo_sigtap():
+    """Modelo CSV de carga (layout esperado)."""
+    from fastapi import Response
+
+    csv_text = (
+        "CO_PROCEDIMENTO;NO_PROCEDIMENTO;TP_COMPLEXIDADE;TP_SEXO;VL_IDADE_MIN;VL_IDADE_MAX;"
+        "QT_MAXIMA;VL_PONTOS;VL_SA;VL_SP;VL_SH;TP_INSTRUMENTO\n"
+        "0202010473;DOSAGEM DE GLICOSE;AB;B;0;130;99;0;1,85;0,00;0,00;BPA-C\n"
+        "0404010011;TRAQUEOSTOMIA;AC;B;0;130;1;0;0,00;150,00;200,00;AIH\n"
+    )
+    return Response(
+        content=csv_text.encode("utf-8-sig"),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="modelo_sigtap.csv"'},
+    )
+
+
+@router.post("/sigtap/importar", response_model=SigtapImportOut)
+def importar_sigtap(
+    file: UploadFile = File(...),
+    competencia: str = Query(pattern=r"^\d{4}-\d{2}$"),
+    simular: bool = Query(default=True),
+    db: Session = Depends(get_db),
+    ator=Depends(need_perm("lab_sigtap", "criar")),
+):
+    """Carga mensal SIGTAP (.zip oficial ou .txt/.csv). Simula antes de aplicar."""
+    from app.services.sigtap_import import importar_sigtap as _importar
+
+    nome = (file.filename or "arquivo").lower()
+    if not nome.endswith((".zip", ".txt", ".csv", ".dat")):
+        raise HTTPException(400, "Envie .zip, .txt ou .csv do layout SIGTAP")
+    raw = file.file.read()
+    if not raw:
+        raise HTTPException(400, "Arquivo vazio")
+    if len(raw) > 60 * 1024 * 1024:
+        raise HTTPException(400, "Arquivo acima de 60MB")
+    stats = _importar(db, [(file.filename or "arquivo", raw)], competencia,
+                      getattr(ator, "nome", "") or getattr(ator, "username", ""), simular)
+    return SigtapImportOut(**stats)

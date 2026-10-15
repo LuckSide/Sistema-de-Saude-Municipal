@@ -1,7 +1,7 @@
 """Importa filas e-SUS (CSV) p/ tfd_pacientes + tfd_exames_fila.
 
 Uso:
-  DATABASE_URL="postgresql://guape:guape123@localhost:5432/saude_guape" \
+  DATABASE_URL="postgresql://usuario:senha@localhost:5432/saude_guape" \
     python3 backend/scripts/importar_filas.py [--amostra N] [--somente fila|agendado|finalizado|removido]
 
 Idempotente: dedup por (cpf+exame+data_pedido) e upsert paciente por CPF.

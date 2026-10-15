@@ -74,10 +74,42 @@ ACOES: dict[str, list[str]] = {
 _cache: dict = {"ts": 0.0, "fonte": "", "dados": None}
 CACHE_TTL = 120
 
+# Cache curto da config de integração (evita 1 query por request no painel)
+_cfg_cache: dict = {"ts": 0.0, "fonte": "", "dsn": ""}
+_CFG_TTL = 60
+
 DATA_DIR = Path(__file__).parent.parent / "data" / "pec"
 
 
+def _integracao_db() -> tuple[str, str]:
+    """(fonte, dsn) da tela Integrações (banco). Cache 60s. Falha → ("", "")."""
+    agora = time.time()
+    if agora - _cfg_cache["ts"] < _CFG_TTL and _cfg_cache["ts"] > 0:
+        return _cfg_cache["fonte"], _cfg_cache["dsn"]
+    fonte, dsn = "", ""
+    try:
+        from sqlmodel import Session as S
+        from sqlmodel import select as _select
+
+        from app.db.session import engine as _eng
+        from app.models.integracoes import IntegrationSettings as _Cfg
+
+        with S(_eng) as s:
+            c = s.exec(_select(_Cfg).where(_Cfg.id == 1)).first()
+            if c:
+                fonte = (c.pec_fonte or "").strip()
+                dsn = (c.pec_database_url or "").strip()
+    except Exception:
+        fonte, dsn = "", ""
+    _cfg_cache.update({"ts": agora, "fonte": fonte, "dsn": dsn})
+    return fonte, dsn
+
+
 def fonte_ativa() -> str:
+    # Tela Integrações (banco) prevalece quando preenchida; senão env.
+    f_db, _ = _integracao_db()
+    if f_db in ("postgres", "files", "mock", "auto"):
+        return f_db
     f = os.getenv("PEC_FONTE", "auto").strip().lower()
     return f if f in ("postgres", "files", "mock", "auto") else "auto"
 
@@ -312,11 +344,12 @@ def files_painel() -> dict | None:
 
 
 def _pg() -> tuple:
-    """Pool readonly p/ PEC. Retorna (connect, dsn) ou (None, '')."""
+    """Pool readonly p/ PEC. DSN: banco (tela Integrações) > env. Retorna (connect, dsn) ou (None, '')."""
     try:
         from sqlalchemy import create_engine
 
-        dsn = os.getenv("PEC_DATABASE_URL", "").strip()
+        _, dsn_db = _integracao_db()
+        dsn = dsn_db or os.getenv("PEC_DATABASE_URL", "").strip()
         if not dsn:
             return None, ""
         eng = create_engine(dsn, pool_size=3, max_overflow=2, pool_pre_ping=True)

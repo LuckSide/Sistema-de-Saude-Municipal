@@ -14,7 +14,7 @@ export function Button({
     <button
       {...props}
       className={cn(
-        "inline-flex items-center justify-center gap-2 rounded-xl bg-sus-900 px-4 py-2.5 font-display text-sm font-semibold text-white transition hover:bg-sus-800 active:scale-[.99] disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl bg-sus-900 px-4 py-2.5 font-display text-sm font-semibold text-white transition hover:bg-sus-800 active:scale-[.99] disabled:cursor-not-allowed disabled:opacity-50",
         className
       )}
     />

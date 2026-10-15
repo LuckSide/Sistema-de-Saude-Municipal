@@ -13,6 +13,7 @@ import {
 } from "../../services/api";
 import { Button, Card, Input, Label } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
+import ExportarExcel from "../../components/ExportarExcel";
 
 function brl(v: number) {
   return Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -120,12 +121,14 @@ export default function TfdFaturamento() {
         <h2 className="font-display text-lg font-bold text-sus-950">Faturamento</h2>
         <input type="month" value={comp} onChange={(e) => setComp(e.target.value)} className="rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm" />
         <span className="ml-auto rounded-xl bg-sus-900 px-3 py-2 font-display text-sm font-bold text-white">Total {brl(total)}</span>
+        <ExportarExcel url="/api/tfd/faturamento/exportar" arquivo="faturamento_tfd" params={{ competencia: comp || undefined }} />
         <Button onClick={() => abrirModal()}><Plus className="h-4 w-4" /> Novo lançamento</Button>
       </div>
       {erro && !modal && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
       {ok && <p className="mb-3 rounded-xl bg-teal/10 px-3 py-2 text-sm text-teal">{ok}</p>}
 
       <Card className="overflow-hidden">
+        <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead><tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
             <th className="px-4 py-3">Paciente</th><th className="px-4 py-3">Procedimento</th><th className="px-4 py-3">Comp.</th><th className="px-4 py-3">Total</th><th className="px-4 py-3 text-right">Ações</th>
@@ -146,12 +149,13 @@ export default function TfdFaturamento() {
             {lista.length === 0 && <tr><td colSpan={5} className="px-4 py-8 text-center text-ink/45">Nenhum lançamento.</td></tr>}
           </tbody>
         </table>
+        </div>
         <Paginacao page={page} pages={pages} total={totalRegs} onPage={(p) => carregar(p).catch(() => setErro("Falha ao carregar faturamento."))} />
       </Card>
 
       {modal && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" onClick={fecharModal}>
-          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
               <p className="font-display text-base font-bold text-sus-950">{editId ? "Editar lançamento" : "Novo lançamento"}</p>
               <button onClick={fecharModal} className="rounded-lg p-2 text-ink/50 hover:bg-sand"><X className="h-4 w-4" /></button>

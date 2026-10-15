@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Pencil, Plus, Trash2, UserPlus, X, Calendar, Search } from "lucide-react";
 import {
   tfdAddPassageiro,
@@ -21,8 +22,10 @@ import {
   type Veiculo,
   type Viagem,
 } from "../../services/api";
+import { useAuth } from "../../hooks/useAuth";
 import { Button, Card, Input, Label, Badge } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
+import ExportarExcel from "../../components/ExportarExcel";
 
 const STATUS = ["agendada", "andamento", "concluida", "cancelada"];
 
@@ -33,12 +36,22 @@ const vazio = {
   hora_saida: "",
   veiculo_id: "",
   motorista: "",
+  departamento: "",
+  data_retorno: "",
+  hora_retorno: "",
+  km_inicial: "",
+  km_final: "",
+  adiantamento: "",
   status: "agendada",
   finalidade: "consulta",
   observacoes: "",
 };
 
 export default function TfdViagens() {
+  const { retroativoBloqueado } = useAuth();
+  const [sp] = useSearchParams();
+  const RETRO_MSG = "Seu perfil não possui permissão para realizar lançamentos com datas retroativas.";
+  const hojeISO = new Date().toISOString().slice(0, 10);
   const [lista, setLista] = useState<Viagem[]>([]);
   const [statusFiltro, setStatusFiltro] = useState("");
   const [mesFiltro, setMesFiltro] = useState("");
@@ -77,6 +90,12 @@ export default function TfdViagens() {
     tfdVeiculos().then((r) => setVeiculos(pagData<Veiculo>(r))).catch(() => {});
     tfdDestinos().then((r) => setDestinos(pagData<Destino>(r))).catch(() => {});
   }, [statusFiltro, mesFiltro, anoFiltro]);
+
+  useEffect(() => {
+    const rid = Number(sp.get("registro"));
+    if (!rid || modal) return;
+    if (lista.some((x) => x.id === rid)) abrirModal(rid);
+  }, [sp, lista, modal]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -128,6 +147,12 @@ export default function TfdViagens() {
           hora_saida: v.hora_saida,
           veiculo_id: v.veiculo_id ? String(v.veiculo_id) : "",
           motorista: v.motorista,
+          departamento: v.departamento ?? "",
+          data_retorno: (v.data_retorno || "").slice(0, 10),
+          hora_retorno: v.hora_retorno ?? "",
+          km_inicial: v.km_inicial ? String(v.km_inicial) : "",
+          km_final: v.km_final ? String(v.km_final) : "",
+          adiantamento: v.adiantamento ? String(v.adiantamento) : "",
           status: v.status,
           finalidade: v.finalidade,
           observacoes: v.observacoes,
@@ -155,9 +180,17 @@ export default function TfdViagens() {
       setErro("Destino e data são obrigatórios.");
       return;
     }
+    if (retroativoBloqueado && form.data_viagem < hojeISO) {
+      setErro(RETRO_MSG);
+      return;
+    }
     const payload: Record<string, unknown> = {
       ...form,
       veiculo_id: form.veiculo_id ? Number(form.veiculo_id) : null,
+      data_retorno: form.data_retorno || null,
+      km_inicial: Number(form.km_inicial) || 0,
+      km_final: Number(form.km_final) || 0,
+      adiantamento: Number(String(form.adiantamento).replace(",", ".")) || 0,
     };
     try {
       if (editId) await tfdAtualizarViagem(editId, payload);
@@ -165,8 +198,9 @@ export default function TfdViagens() {
       fecharModal();
       setOk(editId ? "Viagem atualizada." : "Viagem criada.");
       await carregar();
-    } catch {
-      setErro("Erro ao salvar viagem.");
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Erro ao salvar viagem.";
+      setErro(msg);
     }
   }
 
@@ -216,6 +250,7 @@ export default function TfdViagens() {
               ))}
             </select>
           </div>
+          <ExportarExcel url="/api/tfd/viagens/exportar" arquivo="viagens_tfd" params={{ status: statusFiltro || undefined, mes: mesFiltro || undefined, ano: anoFiltro || undefined }} />
           <Button onClick={() => abrirModal()}><Plus className="h-4 w-4" /> Nova viagem</Button>
         </div>
       </div>
@@ -223,6 +258,7 @@ export default function TfdViagens() {
       {ok && <p className="mb-3 rounded-xl bg-teal/10 px-3 py-2 text-sm text-teal">{ok}</p>}
 
       <Card className="overflow-hidden">
+        <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead><tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
             <th className="px-4 py-3">Data</th><th className="px-4 py-3">Destino</th><th className="px-4 py-3">Veículo</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Pax</th><th className="px-4 py-3 text-right">Ações</th>
@@ -245,12 +281,13 @@ export default function TfdViagens() {
             {lista.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-ink/45">Nenhuma viagem.</td></tr>}
           </tbody>
         </table>
+        </div>
         <Paginacao page={page} pages={pages} total={total} onPage={(p) => carregar(p).catch(() => setErro("Falha ao carregar viagens."))} />
       </Card>
 
       {sel && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" onClick={() => setSel(null)}>
-          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
             <div className="mb-3 flex items-center justify-between">
               <p className="font-display text-base font-bold">Passageiros · {sel.destino} {sel.data_viagem}</p>
               <button onClick={() => setSel(null)} className="rounded-lg p-2 hover:bg-sand"><X className="h-4 w-4" /></button>
@@ -315,7 +352,7 @@ export default function TfdViagens() {
 
       {modal && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" onClick={fecharModal}>
-          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
               <p className="font-display text-base font-bold text-sus-950">{editId ? "Editar viagem" : "Nova viagem"}</p>
               <button onClick={fecharModal} className="rounded-lg p-2 text-ink/50 hover:bg-sand"><X className="h-4 w-4" /></button>
@@ -347,7 +384,7 @@ export default function TfdViagens() {
                   )}
                 </div>
                 <div><Label>Unidade</Label><Input value={form.unidade} onChange={(e) => setForm({ ...form, unidade: e.target.value })} placeholder="Hospital / clínica" /></div>
-                <div><Label>Data *</Label><Input type="date" value={form.data_viagem} onChange={(e) => setForm({ ...form, data_viagem: e.target.value })} /></div>
+                <div><Label>Data *</Label><Input type="date" value={form.data_viagem} min={retroativoBloqueado ? hojeISO : undefined} onChange={(e) => setForm({ ...form, data_viagem: e.target.value })} /></div>
                 <div><Label>Hora saída</Label><Input type="time" value={form.hora_saida} onChange={(e) => setForm({ ...form, hora_saida: e.target.value })} /></div>
                 <div>
                   <Label>Veículo</Label>
@@ -359,6 +396,12 @@ export default function TfdViagens() {
                   </select>
                 </div>
                 <div><Label>Motorista</Label><Input value={form.motorista} onChange={(e) => setForm({ ...form, motorista: e.target.value })} /></div>
+                <div><Label>Departamento</Label><Input value={form.departamento} onChange={(e) => setForm({ ...form, departamento: e.target.value })} placeholder="Ex: Saúde" /></div>
+                <div><Label>Data retorno</Label><Input type="date" value={form.data_retorno} onChange={(e) => setForm({ ...form, data_retorno: e.target.value })} /></div>
+                <div><Label>Hora retorno</Label><Input type="time" value={form.hora_retorno} onChange={(e) => setForm({ ...form, hora_retorno: e.target.value })} /></div>
+                <div><Label>Km inicial</Label><Input type="number" min={0} value={form.km_inicial} onChange={(e) => setForm({ ...form, km_inicial: e.target.value })} /></div>
+                <div><Label>Km final</Label><Input type="number" min={0} value={form.km_final} onChange={(e) => setForm({ ...form, km_final: e.target.value })} /></div>
+                <div><Label>Adiantamento (R$)</Label><Input inputMode="decimal" value={form.adiantamento} onChange={(e) => setForm({ ...form, adiantamento: e.target.value })} placeholder="0,00" /></div>
                 <div>
                   <Label>Finalidade</Label>
                   <select value={form.finalidade} onChange={(e) => setForm({ ...form, finalidade: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">

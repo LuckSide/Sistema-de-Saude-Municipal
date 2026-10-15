@@ -12,6 +12,7 @@ import {
 } from "../../services/api";
 import { Button, Card, Input, Label } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
+import ExportarExcel from "../../components/ExportarExcel";
 
 export default function FilaPsf() {
   const [lista, setLista] = useState<FilaPsfItem[]>([]);
@@ -100,6 +101,7 @@ export default function FilaPsf() {
         <span className="rounded-full bg-teal/10 px-2.5 py-0.5 text-xs font-semibold text-teal">
           {total > 0 ? total : lista.length} aguardando
         </span>
+        <span className="ml-auto"><ExportarExcel url="/api/exames/fila-psf/exportar" arquivo="fila_psf" /></span>
       </div>
 
       {erro && (
@@ -169,6 +171,7 @@ export default function FilaPsf() {
       </Card>
 
       <Card className="overflow-hidden">
+        <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
@@ -217,6 +220,7 @@ export default function FilaPsf() {
             )}
           </tbody>
         </table>
+        </div>
         <Paginacao page={page} pages={pages} total={total} onPage={(p) => carregar(p).catch(() => setErro("Falha ao carregar fila."))} />
       </Card>
     </div>

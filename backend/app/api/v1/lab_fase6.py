@@ -12,6 +12,7 @@ from app.schemas.lab_fase6 import (
     FilaPsfIn,
     FilaPsfOut,
     FilaPsfStatusIn,
+    LaboratorioIn,
     LaboratorioOut,
     SolicMestreIn,
     SolicMestreOut,
@@ -29,39 +30,42 @@ from app.services.lab_fase6 import (
 router = APIRouter()
 
 
-def _telas(user) -> list[str]:
-    return [t.strip() for t in (user.telas or "").split(",") if t.strip()]
-
-
-def need_tela(tela: str):
-    from app.models.user import User
-
-    def check(user: User = Depends(get_current_user)) -> User:
-        if not user.is_superuser and tela not in _telas(user):
-            raise HTTPException(status_code=403, detail=f"Sem acesso a {tela}")
-        return user
-
-    return check
-
-
-def need_any_tela(*telas: str):
-    from app.models.user import User
-
-    def check(user: User = Depends(get_current_user)) -> User:
-        if user.is_superuser:
-            return user
-        proprias = _telas(user)
-        if not any(t in proprias for t in telas):
-            raise HTTPException(status_code=403, detail="Sem acesso")
-        return user
-
-    return check
+from app.services.permissoes import need_any_perm, need_perm
 
 
 # ---------- Laboratórios (leitura p/ agenda) ----------
 @router.get("/exames/laboratorios", response_model=list[LaboratorioOut])
 def listar_labs(db: Session = Depends(get_db), _=Depends(get_current_user)):
     return list(db.exec(select(Laboratorio).order_by(Laboratorio.nome)).all())
+
+@router.post("/exames/laboratorios", response_model=LaboratorioOut, status_code=201)
+def criar_lab(
+    data: LaboratorioIn,
+    db: Session = Depends(get_db),
+    _=Depends(need_perm("lab_vagas", "criar")),
+):
+    nome = data.nome.strip()
+    if db.exec(select(Laboratorio).where(Laboratorio.nome == nome)).first():
+        raise HTTPException(400, "Laboratório já existe")
+    obj = Laboratorio(nome=nome, ativo=data.ativo)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.delete("/exames/laboratorios/{lid}", status_code=204)
+def remover_lab(
+    lid: int, db: Session = Depends(get_db), _=Depends(need_perm("lab_vagas", "excluir"))
+):
+    lab = db.get(Laboratorio, lid)
+    if not lab:
+        raise HTTPException(404, "Laboratório não encontrado")
+    # Remoção lógica para preservar histórico/vagas; não apaga FKs.
+    lab.ativo = False
+    db.add(lab)
+    db.commit()
+    return None
 
 
 # ---------- Vagas grade mensal p/ agenda ----------
@@ -111,7 +115,7 @@ def listar_vagas(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    _=Depends(need_tela("lab_vagas")),
+    _=Depends(need_perm("lab_vagas")),
 ):
     filtros = []
     if de:
@@ -140,7 +144,7 @@ def listar_vagas(
 
 @router.post("/vagas", response_model=VagaOut, status_code=201)
 def criar_vaga(
-    data: VagaIn, db: Session = Depends(get_db), _=Depends(need_tela("lab_vagas"))
+    data: VagaIn, db: Session = Depends(get_db), _=Depends(need_perm("lab_vagas", "criar"))
 ):
     if data.data < date.today():
         raise HTTPException(400, "Dia passado indisponível (sem vagas)")
@@ -169,7 +173,7 @@ def criar_vaga(
 def liberar_mes(
     data: VagaLoteMesIn,
     db: Session = Depends(get_db),
-    _=Depends(need_tela("lab_vagas")),
+    _=Depends(need_perm("lab_vagas", "criar")),
 ):
     from calendar import monthrange
 
@@ -228,7 +232,7 @@ def liberar_mes(
 
 @router.put("/vagas/{vid}", response_model=VagaOut)
 def atualizar_vaga(
-    vid: int, data: VagaIn, db: Session = Depends(get_db), _=Depends(need_tela("lab_vagas"))
+    vid: int, data: VagaIn, db: Session = Depends(get_db), _=Depends(need_perm("lab_vagas", "editar"))
 ):
     obj = db.get(VagaLab, vid)
     if not obj:
@@ -263,7 +267,7 @@ def atualizar_vaga(
 
 
 @router.delete("/vagas/{vid}", status_code=204)
-def excluir_vaga(vid: int, db: Session = Depends(get_db), _=Depends(need_tela("lab_vagas"))):
+def excluir_vaga(vid: int, db: Session = Depends(get_db), _=Depends(need_perm("lab_vagas", "excluir"))):
     obj = db.get(VagaLab, vid)
     if not obj:
         raise HTTPException(404, "Vaga não encontrada")
@@ -281,7 +285,7 @@ def listar_fila(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    _=Depends(need_any_tela("lab_fila", "lab_agenda")),
+    _=Depends(need_any_perm("lab_fila", "lab_agenda")),
 ):
     filtros = []
     if status_:
@@ -310,7 +314,7 @@ def listar_fila(
 
 @router.post("/exames/fila-psf", response_model=FilaPsfOut, status_code=201)
 def criar_fila(
-    data: FilaPsfIn, db: Session = Depends(get_db), _=Depends(need_tela("lab_fila"))
+    data: FilaPsfIn, db: Session = Depends(get_db), _=Depends(need_perm("lab_fila", "criar"))
 ):
     if not db.get(Paciente, data.paciente_id):
         raise HTTPException(404, "Paciente não encontrado")
@@ -327,7 +331,7 @@ def atualizar_status_fila(
     fid: int,
     data: FilaPsfStatusIn,
     db: Session = Depends(get_db),
-    _=Depends(need_any_tela("lab_fila", "lab_agenda")),
+    _=Depends(need_any_perm("lab_fila", "lab_agenda")),
 ):
     obj = db.get(FilaPsf, fid)
     if not obj:
@@ -346,7 +350,7 @@ def atualizar_status_fila(
 
 @router.delete("/exames/fila-psf/{fid}", status_code=204)
 def excluir_fila(
-    fid: int, db: Session = Depends(get_db), _=Depends(need_tela("lab_fila"))
+    fid: int, db: Session = Depends(get_db), _=Depends(need_perm("lab_fila", "excluir"))
 ):
     obj = db.get(FilaPsf, fid)
     if not obj:
@@ -365,7 +369,7 @@ def listar_mestre(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    _=Depends(need_tela("lab_agenda")),
+    _=Depends(need_any_perm("lab_marcacao", "lab_agenda")),
 ):
     filtros = []
     if status_auditoria:
@@ -394,7 +398,7 @@ def listar_mestre(
 def criar_mestre(
     data: SolicMestreIn,
     db: Session = Depends(get_db),
-    user=Depends(need_tela("lab_agenda")),
+    user=Depends(need_any_perm("lab_marcacao", "lab_agenda", acoes=("criar",))),
 ):
     try:
         totais = data.itens_normalizados()
@@ -415,7 +419,7 @@ def criar_mestre(
 
 @router.get("/exames/solicitacoes/{mid}", response_model=SolicMestreOut)
 def obter_mestre(
-    mid: int, db: Session = Depends(get_db), _=Depends(need_tela("lab_agenda"))
+    mid: int, db: Session = Depends(get_db), _=Depends(need_any_perm("lab_marcacao", "lab_agenda"))
 ):
     m = db.get(SolicitacaoMestre, mid)
     if not m:
@@ -430,7 +434,7 @@ def listar_auditoria(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    _=Depends(need_tela("lab_audit")),
+    _=Depends(need_perm("lab_audit")),
 ):
     base = select(SolicitacaoMestre).order_by(SolicitacaoMestre.data_agendada.desc())
     if status_auditoria:
@@ -455,7 +459,7 @@ def auditar(
     mid: int,
     data: AuditoriaIn,
     db: Session = Depends(get_db),
-    _=Depends(need_tela("lab_audit")),
+    _=Depends(need_perm("lab_audit", "editar")),
 ):
     m = auditar_mestre(
         db,
@@ -469,7 +473,7 @@ def auditar(
 
 @router.post("/exames/auditoria/{mid}/solicitar-autorizacao", response_model=SolicMestreOut)
 def solicitar_autorizacao(
-    mid: int, db: Session = Depends(get_db), _=Depends(need_tela("lab_audit"))
+    mid: int, db: Session = Depends(get_db), _=Depends(need_perm("lab_audit", "criar"))
 ):
     m = db.get(SolicitacaoMestre, mid)
     if not m:
@@ -479,3 +483,47 @@ def solicitar_autorizacao(
     db.commit()
     db.refresh(m)
     return enriquecer_mestre(db, m)
+
+
+# ---------- Exportação XLSX ----------
+@router.get("/exames/fila-psf/exportar")
+def exportar_fila_psf(
+    status_: str | None = Query(default=None, alias="status"),
+    unidade: str = "",
+    db: Session = Depends(get_db),
+    ator=Depends(need_any_perm("lab_fila", "lab_agenda")),
+):
+    """Fila do PSF em XLSX respeitando os filtros ativos."""
+    from app.services.export_xlsx import resposta_xlsx
+
+    filtros = []
+    if status_:
+        filtros.append(FilaPsf.status == status_)
+    if unidade:
+        filtros.append(FilaPsf.unidade_psf.ilike(f"%{unidade}%"))
+    base = select(FilaPsf).order_by(FilaPsf.data_solicitacao.desc())
+    if filtros:
+        base = select(FilaPsf).where(*filtros).order_by(FilaPsf.data_solicitacao.desc())
+    linhas = []
+    for o in list(db.exec(base).all())[:20000]:
+        pac = db.get(Paciente, o.paciente_id)
+        linhas.append({
+            "paciente": pac.nome if pac else "?",
+            "unidade": o.unidade_psf or "",
+            "medico": o.medico_solicitante or "",
+            "data": o.data_solicitacao,
+            "status": o.status,
+            "obs": o.observacoes or "",
+        })
+    return resposta_xlsx(
+        "Fila do PSF", getattr(ator, "nome", "") or getattr(ator, "username", ""),
+        [
+            {"chave": "paciente", "rotulo": "Paciente", "largura": 32},
+            {"chave": "unidade", "rotulo": "Unidade PSF", "largura": 24},
+            {"chave": "medico", "rotulo": "Médico solicitante", "largura": 28},
+            {"chave": "data", "rotulo": "Data", "largura": 14, "formato": "data"},
+            {"chave": "status", "rotulo": "Status", "largura": 14},
+            {"chave": "obs", "rotulo": "Observações", "largura": 40},
+        ],
+        linhas, "fila_psf",
+    )

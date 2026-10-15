@@ -240,6 +240,7 @@ export default function CatalogoExames() {
 
       <Card className="overflow-hidden">
         {aba === "tipos" && (
+          <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead><tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
               <th className="px-4 py-3">ID e-SUS</th><th className="px-4 py-3">Tipo de fila</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Ações</th>
@@ -264,8 +265,10 @@ export default function CatalogoExames() {
               {tipos.length === 0 && <tr><td colSpan={4} className="px-4 py-8 text-center text-ink/45">Nenhum tipo cadastrado.</td></tr>}
             </tbody>
           </table>
+          </div>
         )}
         {aba === "procedimentos" && (
+          <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead><tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
               <th className="px-4 py-3">Código</th><th className="px-4 py-3">Procedimento</th><th className="px-4 py-3">Tipo / CBO</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Ações</th>
@@ -294,8 +297,10 @@ export default function CatalogoExames() {
               {procs.length === 0 && <tr><td colSpan={5} className="px-4 py-8 text-center text-ink/45">Nenhum procedimento cadastrado.</td></tr>}
             </tbody>
           </table>
+          </div>
         )}
         {aba === "especialidades" && (
+          <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead><tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
               <th className="px-4 py-3">CBO</th><th className="px-4 py-3">Especialidade</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Ações</th>
@@ -320,13 +325,14 @@ export default function CatalogoExames() {
               {esps.length === 0 && <tr><td colSpan={4} className="px-4 py-8 text-center text-ink/45">Nenhuma especialidade cadastrada.</td></tr>}
             </tbody>
           </table>
+          </div>
         )}
         <Paginacao page={page} pages={pages} total={total} onPage={(p) => carregar(p).catch(() => setErro("Falha ao carregar catálogo."))} />
       </Card>
 
       {modal && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" onClick={fecharModal}>
-          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
               <p className="font-display text-base font-bold text-sus-950">
                 {editId ? `Editar ${titulo.toLowerCase()}` : `Novo ${titulo.toLowerCase()}`}

@@ -12,7 +12,7 @@ import {
 import { Button, Card, Input, Label } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
 
-const vazio = { placa: "", modelo: "", capacidade: "4", tipo: "carro", ativo: true };
+const vazio = { placa: "", modelo: "", capacidade: "4", tipo: "carro", status: "disponivel", ativo: true };
 
 export default function TfdFrota() {
   const [lista, setLista] = useState<Veiculo[]>([]);
@@ -42,7 +42,7 @@ export default function TfdFrota() {
       const v = lista.find((x) => x.id === id);
       if (v) {
         setEditId(v.id);
-        setForm({ placa: v.placa, modelo: v.modelo, capacidade: String(v.capacidade), tipo: v.tipo, ativo: v.ativo });
+        setForm({ placa: v.placa, modelo: v.modelo, capacidade: String(v.capacidade), tipo: v.tipo, status: v.status || "disponivel", ativo: v.ativo });
       }
     } else {
       setEditId(null);
@@ -100,7 +100,7 @@ export default function TfdFrota() {
               <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${v.ativo ? "bg-teal/10 text-teal" : "bg-sus-900/10 text-sus-900/60"}`}>{v.ativo ? "ativo" : "inativo"}</span>
             </div>
             <p className="mt-2 font-semibold text-sus-950">{v.modelo || "—"}</p>
-            <p className="text-xs text-ink/55">{v.tipo} · {v.capacidade} lugares</p>
+            <p className="text-xs text-ink/55">{v.tipo} · {v.capacidade} lugares · {v.status === "manutencao" ? "em manutenção" : "disponível"}</p>
             <div className="mt-2 flex gap-1">
               <button onClick={() => abrirModal(v.id)} className="rounded-lg p-2 text-sus-800 hover:bg-sus-100"><Pencil className="h-4 w-4" /></button>
               <button onClick={async () => { if (confirm("Excluir veículo?")) { await tfdExcluirVeiculo(v.id); carregar(); } }} className="rounded-lg p-2 text-red-600 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
@@ -115,7 +115,7 @@ export default function TfdFrota() {
 
       {modal && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" onClick={fecharModal}>
-          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
               <p className="font-display text-base font-bold text-sus-950">{editId ? "Editar veículo" : "Novo veículo"}</p>
               <button onClick={fecharModal} className="rounded-lg p-2 text-ink/50 hover:bg-sand"><X className="h-4 w-4" /></button>
@@ -125,6 +125,13 @@ export default function TfdFrota() {
                 <div><Label>Placa *</Label><Input value={form.placa} onChange={(e) => setForm({ ...form, placa: e.target.value.toUpperCase() })} placeholder="ABC1D23" /></div>
                 <div className="md:col-span-2"><Label>Modelo</Label><Input value={form.modelo} onChange={(e) => setForm({ ...form, modelo: e.target.value })} placeholder="Ex: Spin 1.8" /></div>
                 <div><Label>Capacidade</Label><Input type="number" min={1} max={60} value={form.capacidade} onChange={(e) => setForm({ ...form, capacidade: e.target.value })} /></div>
+                <div>
+                  <Label>Status</Label>
+                  <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                    <option value="disponivel">Disponível</option>
+                    <option value="manutencao">Em manutenção</option>
+                  </select>
+                </div>
                 <div>
                   <Label>Tipo</Label>
                   <select value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">

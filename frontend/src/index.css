@@ -22,6 +22,22 @@ body {
 .rise-2 { animation-delay: 0.12s; }
 .rise-3 { animation-delay: 0.2s; }
 
+/* Gaveta mobile: desliza da esquerda */
+@keyframes drawer-in {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+.drawer-in { animation: drawer-in 0.25s ease both; }
+
+/* Alvos de toque: botões icônicos atingem 44px em telas touch */
+@media (pointer: coarse) {
+  button[aria-label],
+  button[title] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 /* Impressão comprovante: folha limpa, só o card, sem páginas em branco.
    Cabeçalho/rodapé do navegador (data, título, URL, nº página) são do
    próprio browser: desative em "Cabeçalhos e rodapés" no diálogo de impressão.
@@ -52,13 +68,23 @@ body {
     background: #fff !important;
     padding: 0 !important;
   }
+  /* Comprovante em formato compacto (estilo recibo): largura fixa,
+     break-inside avoid impede quebra no meio. */
   body.imprimindo-comprovante #comprovante-print {
     position: static !important;
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    width: 92mm !important;
+    max-width: 92mm !important;
     max-height: none !important;
     overflow: visible !important;
     box-shadow: none !important;
     border-radius: 0 !important;
+    border: 1px solid #999 !important;
     margin: 0 auto !important;
+    padding: 8px !important;
+    font-size: 12px !important;
     break-inside: avoid;
     page-break-inside: avoid;
   }
@@ -83,12 +109,12 @@ body {
   }
   /* Cabeçalho limpo só no papel */
   body.imprimindo-comprovante #comprovante-print::before {
-    content: "Saúde Guapé · Comprovante de fila TFD";
+    content: "Comprovante de fila TFD";
     display: block;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
     text-align: center;
     font-weight: 700;
-    font-size: 14px;
+    font-size: 13px;
   }
   #comprovante-print img {
     -webkit-print-color-adjust: exact;

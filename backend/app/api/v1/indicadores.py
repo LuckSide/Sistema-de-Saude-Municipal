@@ -7,7 +7,8 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
 
-from app.core.deps import get_current_user_senha_ok as get_current_user, get_db
+from app.core.deps import get_db
+from app.services.permissoes import need_perm
 from app.models.lab_fase6 import Laboratorio, SolicitacaoMestre
 from app.models.tfd import ExameFila, Paciente
 
@@ -106,7 +107,7 @@ def procedimentos_top(
     ate: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     limit: int = Query(default=8, ge=1, le=20),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(need_perm("dash_indicadores")),
 ):
     return procs_top_impl(db, de, ate, limit)
 
@@ -122,7 +123,7 @@ def procs_top_impl(db: Session, de: str | None, ate: str | None, limit: int) -> 
         y -= 1
     d_de = _parse_data(de, date(y, m, 1))
     meio = _metade(d_de, d_ate)
-    exames = list(db.exec(select(ExameFila)).all())
+    exames = list(db.exec(select(ExameFila).where(ExameFila.ativo == True)).all())
     grupos: dict[str, dict] = {}
     for e in exames:
         k = _nome_proc(e)
@@ -171,7 +172,7 @@ def procedimentos_evolucao(
     procedimentos: str = Query(default="", max_length=500),
     top: int = Query(default=4, ge=1, le=6),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(need_perm("dash_indicadores")),
 ):
     return procs_evolucao_impl(db, de, ate, granularidade, procedimentos, top)
 
@@ -189,7 +190,7 @@ def procs_evolucao_impl(
         m += 12
         y -= 1
     d_de = _parse_data(de, date(y, m, 1))
-    exames = list(db.exec(select(ExameFila)).all())
+    exames = list(db.exec(select(ExameFila).where(ExameFila.ativo == True)).all())
     termos = [t.strip() for t in (procedimentos or "").split(",") if t.strip()]
     if not termos:
         prev = procs_top_impl(db, d_de.isoformat(), d_ate.isoformat(), top)
@@ -235,7 +236,7 @@ def resumo(
     de: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     ate: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(need_perm("dash_indicadores")),
 ):
     return resumo_impl(db, de, ate)
 
@@ -244,7 +245,7 @@ def resumo_impl(db: Session, de: str | None, ate: str | None) -> dict:
     hoje = date.today()
     d_ate = _parse_data(ate, hoje)
     d_de = _parse_data(de, date(d_ate.year, d_ate.month, 1))
-    exames = list(db.exec(select(ExameFila)).all())
+    exames = list(db.exec(select(ExameFila).where(ExameFila.ativo == True)).all())
     em_fila = sum(1 for e in exames if e.status in ("aguardando", "agendado"))
     urgentes = sum(1 for e in exames if e.status in ("aguardando", "agendado") and e.prioridade == "urgente")
     novos = sum(1 for e in exames if e.data_pedido and d_de <= e.data_pedido <= d_ate)
@@ -281,7 +282,7 @@ def filas_evolucao(
     granularidade: str = Query(default="mes", pattern="^(mes|semana)$"),
     tipo_fila: str = Query(default="", max_length=80),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(need_perm("dash_indicadores")),
 ):
     return evolucao_impl(db, de, ate, granularidade, tipo_fila)
 
@@ -297,7 +298,7 @@ def evolucao_impl(db: Session, de: str | None, ate: str | None, granularidade: s
         m += 12
         y -= 1
     d_de = _parse_data(de, date(y, m, 1))
-    exames = list(db.exec(select(ExameFila)).all())
+    exames = list(db.exec(select(ExameFila).where(ExameFila.ativo == True)).all())
     if tipo_fila:
         tf = tipo_fila.strip().lower()
         exames = [e for e in exames if tf in (_nome_tipo(e)).lower() or tf in (e.exame or "").lower()]
@@ -345,7 +346,7 @@ def filas_volume(
     ate: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     status: str = Query(default="aguardando,agendado", max_length=60),
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(need_perm("dash_indicadores")),
 ):
     return volume_impl(db, de, ate, status)
 
@@ -362,12 +363,12 @@ def volume_impl(db: Session, de: str | None, ate: str | None, status: str) -> di
     d_de = _parse_data(de, date(y, m, 1))
     wanted = {s.strip() for s in (status or "").split(",") if s.strip()} or {"aguardando", "agendado"}
     exames = [
-        e for e in db.exec(select(ExameFila)).all()
+        e for e in db.exec(select(ExameFila).where(ExameFila.ativo == True)).all()
         if e.status in wanted and e.data_pedido and d_de <= e.data_pedido <= d_ate
     ]
     # fallback: sem filtro de período quando nada cai no intervalo (base legada concentrada)
     if not exames:
-        exames = [e for e in db.exec(select(ExameFila)).all() if e.status in wanted]
+        exames = [e for e in db.exec(select(ExameFila).where(ExameFila.ativo == True)).all() if e.status in wanted]
     grupos: dict[str, dict] = {}
     for e in exames:
         t = _nome_tipo(e)
@@ -392,7 +393,7 @@ def agenda(
     ate: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     laboratorio_id: int | None = None,
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(need_perm("dash_indicadores")),
 ):
     return agenda_impl(db, de, ate, laboratorio_id)
 
@@ -436,7 +437,7 @@ def agenda_impl(db: Session, de: str | None, ate: str | None, laboratorio_id: in
                 "status": m.status,
                 "local": labs.get(m.laboratorio_id, ""),
             })
-    exames = list(db.exec(select(ExameFila).where(ExameFila.data_agendada != None)).all())  # noqa: E711
+    exames = list(db.exec(select(ExameFila).where(ExameFila.ativo == True, ExameFila.data_agendada != None)).all())  # noqa: E711
     for e in exames:
         if not e.data_agendada or not (d_de <= e.data_agendada <= d_ate):
             continue

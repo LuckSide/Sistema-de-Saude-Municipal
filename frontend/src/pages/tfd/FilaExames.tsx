@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { CheckCircle2, Copy, Eye, Pencil, Plus, Printer, QrCode, RefreshCw, Search, Trash2, X } from "lucide-react";
 import {
@@ -21,13 +22,23 @@ import {
   type OpcaoFiltro,
   type Paciente,
   type PacientePec,
+  fetchMedicos,
+  fetchUnidadesSaude,
+  type Medico,
+  type UnidadeSaude,
 } from "../../services/api";
+import { useAuth } from "../../hooks/useAuth";
 import { Button, Card, Input, Label } from "../../components/ui/primitives";
+import Timeline from "../../components/Timeline";
 import { Combobox, type ComboOption } from "../../components/ui/combobox";
 import Paginacao from "../../components/Paginacao";
+import ExportarExcel from "../../components/ExportarExcel";
+import PerfilPaciente from "../../components/PerfilPaciente";
+import { PRIO_ROTULO } from "../../utils/rotulos";
 
 const STATUS = ["aguardando", "agendado", "realizado", "cancelado"];
 const PRIOS = ["rotina", "prioritaria", "urgente"];
+const JUST_MIN = 12;
 
 function hoje(): string {
   return new Date().toISOString().slice(0, 10);
@@ -39,14 +50,18 @@ function novoForm() {
     exame: "",
     codigo_curto: "",
     especialidade: "",
-    tipo_fila: "",
+    tipo_fila: "ELETIVO",
     codigo_procedimento: "",
     codigo_especialidade: "",
     nome_especialidade: "",
     prioridade: "rotina",
+    justificativa_prioridade: "",
     status: "aguardando",
     data_pedido: hoje(),
     data_agendada: "",
+    hora_agendada: "",
+    medico_id: "",
+    unidade_saude_id: "",
     destino: "",
     observacoes: "",
   };
@@ -82,7 +97,13 @@ function qrUrl(link: string): string {
 }
 
 export default function FilaExames() {
+  const { isMedico, podeAlterarPrioridade, retroativoBloqueado } = useAuth();
+  const RETRO_MSG = "Seu perfil não possui permissão para realizar lançamentos com datas retroativas.";
+  const hojeISO = () => new Date().toISOString().slice(0, 10);
+  const ehRetroativa = (d: string) => !!d && d < hojeISO();
   const [lista, setLista] = useState<Exame[]>([]);
+  const [sp] = useSearchParams();
+  const [soMeus, setSoMeus] = useState(false);
   const [filtro, setFiltro] = useState("aguardando");
   const [q, setQ] = useState("");
   const [prio, setPrio] = useState("");
@@ -111,15 +132,29 @@ export default function FilaExames() {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
+  const [toast, setToast] = useState("");
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => setToast(""), 4000);
+    return () => window.clearTimeout(t);
+  }, [toast]);
+  const [removerAlvo, setRemoverAlvo] = useState<Exame | null>(null);
+  const [removerMotivo, setRemoverMotivo] = useState("");
+  const [removendo, setRemovendo] = useState(false);
   const [comprovante, setComprovante] = useState<Exame | null>(null);
   const [detalhe, setDetalhe] = useState<Exame | null>(null);
+  const [perfilId, setPerfilId] = useState<number | null>(null);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
   const [sel, setSel] = useState<number[]>([]);
   const [loteModal, setLoteModal] = useState<"agendar" | "status" | "editar" | null>(null);
-  const [loteForm, setLoteForm] = useState({ data_agendada: "", destino: "", status: "", prioridade: "", observacoes: "" });
+  const [loteForm, setLoteForm] = useState({ data_agendada: "", hora_agendada: "", medico_id: "", unidade_id: "", destino: "", status: "", prioridade: "", justificativa: "", observacoes: "" });
   const [loteSalvando, setLoteSalvando] = useState(false);
+  const [medicos, setMedicos] = useState<Medico[]>([]);
+  const [unidades, setUnidades] = useState<UnidadeSaude[]>([]);
+  const [confirmandoLote, setConfirmandoLote] = useState(false);
 
   const idsVisiveis = useMemo(() => lista.map((e) => e.id), [lista]);
   const todosVisiveis = idsVisiveis.length > 0 && idsVisiveis.every((id) => sel.includes(id));
@@ -133,7 +168,7 @@ export default function FilaExames() {
   }
   function abrirLote(kind: "agendar" | "status" | "editar") {
     setErro("");
-    setLoteForm({ data_agendada: "", destino: "", status: "", prioridade: "", observacoes: "" });
+    setLoteForm({ data_agendada: "", hora_agendada: "", medico_id: "", unidade_id: "", destino: "", status: "", prioridade: "", justificativa: "", observacoes: "" });
     setLoteModal(kind);
   }
   async function salvarLote() {
@@ -143,12 +178,29 @@ export default function FilaExames() {
     try {
       const payload: Record<string, unknown> = { ids: sel };
       if (loteModal === "agendar") {
-        if (!loteForm.data_agendada && !loteForm.destino.trim()) {
-          setErro("Informe data agendada e/ou destino.");
+        if (!loteForm.data_agendada && !loteForm.destino.trim() && !loteForm.unidade_id) {
+          setErro("Informe data agendada e/ou unidade/destino.");
+          setLoteSalvando(false);
+          return;
+        }
+        if (retroativoBloqueado && loteForm.data_agendada && ehRetroativa(loteForm.data_agendada)) {
+          setErro(RETRO_MSG);
+          setLoteSalvando(false);
+          return;
+        }
+        if (loteForm.data_agendada && (!loteForm.medico_id || !loteForm.unidade_id)) {
+          setErro("Agendamento exige médico e unidade de atendimento (PSF).");
           setLoteSalvando(false);
           return;
         }
         if (loteForm.data_agendada) payload.data_agendada = loteForm.data_agendada;
+        if (loteForm.hora_agendada) payload.hora_agendada = loteForm.hora_agendada;
+        if (loteForm.medico_id) payload.medico_id = Number(loteForm.medico_id);
+        if (loteForm.unidade_id) {
+          payload.unidade_saude_id = Number(loteForm.unidade_id);
+          const u = unidades.find((x) => String(x.id) === loteForm.unidade_id);
+          if (u && !loteForm.destino.trim()) payload.destino = u.nome;
+        }
         if (loteForm.destino.trim()) payload.destino = loteForm.destino.trim();
         payload.status = "agendado";
       } else if (loteModal === "status") {
@@ -164,28 +216,40 @@ export default function FilaExames() {
           setLoteSalvando(false);
           return;
         }
-        if (loteForm.prioridade) payload.prioridade = loteForm.prioridade;
+        if (loteForm.prioridade) {
+          if (loteForm.justificativa.trim().length < 12) {
+            setErro("A justificativa deve conter no mínimo 12 caracteres.");
+            setLoteSalvando(false);
+            return;
+          }
+          payload.prioridade = loteForm.prioridade;
+          payload.justificativa_prioridade = loteForm.justificativa.trim();
+        }
         if (loteForm.observacoes.trim()) payload.observacoes = loteForm.observacoes.trim();
       }
       const r = await tfdAtualizarExamesLote(payload as { ids: number[] });
       setOk(`${r.atualizados} pedido(s) atualizado(s).`);
       setLoteModal(null);
+      setConfirmandoLote(false);
       setSel([]);
       await carregar();
       carregarOpcoes().catch(() => {});
-    } catch {
-      setErro("Erro ao atualizar em lote.");
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Erro ao atualizar em lote.";
+      setErro(msg);
     } finally {
       setLoteSalvando(false);
     }
   }
 
-  async function carregar(p = page, over?: { tipo?: string; proc?: string; esp?: string }) {
+  async function carregar(p = page, over?: { tipo?: string; proc?: string; esp?: string; meus?: boolean }) {
     const tipoAtual = over?.tipo !== undefined ? over.tipo : tipoFila;
     const procAtual = over?.proc !== undefined ? over.proc : proc;
     const espAtual = over?.esp !== undefined ? over.esp : espCbo;
+    const meusAtual = over?.meus !== undefined ? over.meus : soMeus;
     const params: FilaExamesParams = {
       status: filtro || undefined,
+      meus: meusAtual || undefined,
       q: q.trim() || undefined,
       prioridade: prio || undefined,
       tipo_fila: tipoAtual.trim() || undefined,
@@ -235,6 +299,20 @@ export default function FilaExames() {
   useEffect(() => {
     tfdPacientes("").then((r) => setPacientesLocais(pagData<Paciente>(r))).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const rid = Number(sp.get("registro"));
+    if (!rid || detalhe) return;
+    const found = lista.find((x) => x.id === rid);
+    if (found) setDetalhe(found);
+  }, [sp, lista, detalhe]);
+
+  useEffect(() => {
+    const rid = Number(sp.get("registro"));
+    if (!rid || detalhe) return;
+    const found = lista.find((x) => x.id === rid);
+    if (found) setDetalhe(found);
+  }, [sp, lista, detalhe]);
 
   useEffect(() => {
     const t = setTimeout(() => setBuscaDebounce(buscaPac), 250);
@@ -314,6 +392,8 @@ export default function FilaExames() {
   useEffect(() => {
     // Opções com contagem p/ Tipo / Procedimento / CBO ao abrir a tela.
     carregarOpcoes("aguardando").catch(() => {});
+    fetchMedicos().then(setMedicos).catch(() => {});
+    fetchUnidadesSaude().then(setUnidades).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -351,9 +431,13 @@ export default function FilaExames() {
           codigo_especialidade: e.codigo_especialidade ?? "",
           nome_especialidade: e.nome_especialidade ?? e.especialidade ?? "",
           prioridade: e.prioridade,
+          justificativa_prioridade: e.justificativa_prioridade ?? "",
           status: e.status,
           data_pedido: (e.data_pedido || "").slice(0, 10),
           data_agendada: (e.data_agendada || "").slice(0, 10),
+          hora_agendada: e.hora_agendada ?? "",
+          medico_id: e.medico_id ? String(e.medico_id) : "",
+          unidade_saude_id: e.unidade_saude_id ? String(e.unidade_saude_id) : "",
           destino: e.destino,
           observacoes: e.observacoes,
         });
@@ -395,6 +479,26 @@ export default function FilaExames() {
       setErro("Paciente inválido.");
       return;
     }
+    const original = editId ? lista.find((x) => x.id === editId) : undefined;
+    const prioMudou = !!original && form.prioridade !== original.prioridade;
+    if (prioMudou && form.justificativa_prioridade.trim().length < JUST_MIN) {
+      setErro("A justificativa deve conter no mínimo 12 caracteres.");
+      return;
+    }
+    if (retroativoBloqueado && ehRetroativa(form.data_pedido)) {
+      setErro(RETRO_MSG);
+      return;
+    }
+    const dataOriginal = (original?.data_agendada || "").slice(0, 10);
+    const novoAgendamento = !!form.data_agendada && form.data_agendada !== dataOriginal;
+    if (retroativoBloqueado && novoAgendamento && ehRetroativa(form.data_agendada)) {
+      setErro(RETRO_MSG);
+      return;
+    }
+    if (novoAgendamento && (!form.medico_id || !form.unidade_saude_id)) {
+      setErro("Agendamento exige médico e unidade de atendimento.");
+      return;
+    }
     setSalvando(true);
     // Compat legado: especialidade espelha tipo_fila / nome especialidade.
     const espFinal = (form.nome_especialidade || form.especialidade || form.tipo_fila || "").trim();
@@ -410,7 +514,12 @@ export default function FilaExames() {
       codigo_curto: form.codigo_curto.trim().toUpperCase(),
       paciente_id: pid,
       data_agendada: form.data_agendada || null,
+      hora_agendada: form.hora_agendada || "",
+      medico_id: form.medico_id ? Number(form.medico_id) : null,
+      unidade_saude_id: form.unidade_saude_id ? Number(form.unidade_saude_id) : null,
+      justificativa_prioridade: form.justificativa_prioridade.trim(),
     };
+    if (form.data_agendada) payload.status = "agendado";
     try {
       let salvo: Exame;
       if (editId) {
@@ -424,21 +533,35 @@ export default function FilaExames() {
       setComprovante(salvo);
       await carregar();
       carregarOpcoes().catch(() => {});
-    } catch {
-      setErro("Erro ao salvar.");
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Erro ao salvar.";
+      setErro(msg);
     } finally {
       setSalvando(false);
     }
   }
 
-  async function excluir(id: number) {
-    if (!confirm("Excluir da fila?")) return;
+  async function excluir() {
+    if (!removerAlvo) return;
+    const motivo = removerMotivo.trim();
+    if (!motivo) {
+      setErro("Informe o motivo da remoção da fila.");
+      return;
+    }
+    setRemovendo(true);
     try {
-      await tfdExcluirExame(id);
-      setOk("Excluído da fila.");
+      await tfdExcluirExame(removerAlvo.id, motivo);
+      setOk("Removido da fila (registro preservado na linha do tempo).");
+      setRemoverAlvo(null);
+      setRemoverMotivo("");
+      setSel((ids) => ids.filter((x) => x !== removerAlvo.id));
       await carregar();
-    } catch {
-      setErro("Erro ao excluir.");
+      carregarOpcoes().catch(() => {});
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Erro ao remover.";
+      setErro(msg);
+    } finally {
+      setRemovendo(false);
     }
   }
 
@@ -458,11 +581,41 @@ export default function FilaExames() {
   }
 
   function copiar(link: string) {
-    navigator.clipboard?.writeText(link).then(
-      () => setOk("Link copiado."),
-      () => setErro("Não foi possível copiar.")
-    );
+    const done = () => {
+      setToast("Link copiado com sucesso!");
+      setOk("Link copiado.");
+    };
+    const fallback = () => {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = link;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        const okCopy = document.execCommand("copy");
+        document.body.removeChild(ta);
+        if (okCopy) done();
+        else setErro("Não foi possível copiar.");
+      } catch {
+        setErro("Não foi possível copiar.");
+      }
+    };
+    try {
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(link).then(done, fallback);
+      } else {
+        fallback();
+      }
+    } catch {
+      fallback();
+    }
   }
+
+  const exameEmEdicao = editId ? lista.find((x) => x.id === editId) : undefined;
+  const podeEditarPrio = !editId || podeAlterarPrioridade(exameEmEdicao?.medico_id);
+  const prioAlterada = !!exameEmEdicao && form.prioridade !== exameEmEdicao.prioridade;
 
   const badgeTotal = lista.length > 0 ? lista[0].total_fila ?? total : total;
   const prioCor: Record<string, string> = {
@@ -478,14 +631,18 @@ export default function FilaExames() {
         <span className="rounded-full bg-teal/10 px-2.5 py-0.5 text-xs font-semibold text-teal">
           {total} no filtro · {badgeTotal} na fila
         </span>
-        <select value={filtro} onChange={(e) => setFiltro(e.target.value)} className="ml-auto rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm">
-          <option value="">Todos</option>
-          {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
+        <ExportarExcel url="/api/tfd/exames/exportar" arquivo="fila_espera" params={{ status: filtro || undefined, q: q.trim() || undefined, prioridade: prio || undefined, tipo_fila: tipoFila.trim() || undefined, procedimento: proc.trim() || undefined, codigo_especialidade: espCbo.trim() || undefined, destino: dest.trim() || undefined, data_de: de || undefined, data_ate: ate || undefined, meus: soMeus || undefined }} />
         <Button onClick={() => abrirModal()}><Plus className="h-4 w-4" /> Novo pedido</Button>
       </div>
       {erro && !modal && !comprovante && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700 print:hidden">{erro}</p>}
       {ok && <p className="mb-3 rounded-xl bg-teal/10 px-3 py-2 text-sm text-teal print:hidden">{ok}</p>}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 print:hidden">
+          <p className="flex items-center gap-2 rounded-xl bg-sus-950 px-4 py-3 text-sm font-semibold text-white shadow-lg">
+            <CheckCircle2 className="h-4 w-4 text-teal" /> {toast}
+          </p>
+        </div>
+      )}
 
       <Card className="mb-4 p-4 print:hidden">
         <form onSubmit={aplicarFiltros} className="grid gap-2 md:grid-cols-12">
@@ -494,10 +651,17 @@ export default function FilaExames() {
             <Input placeholder="Ex: nome, data nasc., CNS, CBO ou código 482917…" value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
           <div className="md:col-span-2">
+            <Label>Status</Label>
+            <select value={filtro} onChange={(e) => setFiltro(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+              <option value="">Todos</option>
+              {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div className="md:col-span-2">
             <Label>Prioridade</Label>
             <select value={prio} onChange={(e) => setPrio(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
               <option value="">Todas</option>
-              {PRIOS.map((p) => <option key={p} value={p}>{p}</option>)}
+              {PRIOS.map((p) => <option key={p} value={p}>{PRIO_ROTULO[p]}</option>)}
             </select>
           </div>
           <div className="md:col-span-2">
@@ -563,10 +727,20 @@ export default function FilaExames() {
             </div>
           </div>
           <div className="flex items-end gap-2 md:col-span-4">
+            {isMedico && (
+              <button
+                type="button"
+                onClick={() => { const v = !soMeus; setSoMeus(v); setPage(1); setSel([]); setErro(""); carregar(1, { meus: v }).catch(() => setErro("Falha ao carregar fila.")); }}
+                title="Mostrar apenas solicitações vinculadas ao seu cadastro de médico"
+                className={`min-h-[44px] rounded-xl px-4 py-2 text-sm font-bold ${soMeus ? "bg-teal text-white" : "bg-sus-900/10 text-sus-900 hover:bg-sus-900/15"}`}
+              >
+                Meus encaminhamentos
+              </button>
+            )}
             <Button type="submit"><Search className="h-4 w-4" /> Filtrar</Button>
             <button
               type="button"
-              onClick={() => { setQ(""); setPrio(""); setTipoFila(""); setProc(""); setEspCbo(""); setDest(""); setDe(""); setAte(""); setFiltro("aguardando"); setPage(1); carregar(1, { tipo: "", proc: "", esp: "" }).catch(() => {}); }}
+              onClick={() => { setQ(""); setPrio(""); setTipoFila(""); setProc(""); setEspCbo(""); setDest(""); setDe(""); setAte(""); setFiltro("aguardando"); setSoMeus(false); setPage(1); carregar(1, { tipo: "", proc: "", esp: "" }).catch(() => {}); }}
               className="rounded-xl px-4 py-2.5 text-sm font-semibold text-sus-900 hover:bg-sus-900/5"
             >
               Limpar
@@ -587,12 +761,13 @@ export default function FilaExames() {
             </div>
           </div>
         )}
+        <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead><tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
             <th className="w-10 px-3 py-3">
               <input type="checkbox" checked={todosVisiveis} ref={(el) => { if (el) el.indeterminate = !todosVisiveis && algunsVisiveis; }} onChange={toggleTodos} aria-label="Selecionar todos visíveis" className="h-4 w-4 accent-teal" />
             </th>
-            <th className="px-4 py-3">Posição*</th><th className="px-4 py-3">Paciente</th><th className="px-4 py-3">Exame</th><th className="px-4 py-3">Prioridade</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Ações</th>          </tr></thead>
+            <th className="px-4 py-3">Posição*</th><th className="px-4 py-3">Paciente</th><th className="px-4 py-3">Exame</th><th className="px-4 py-3">Especialidade</th><th className="px-4 py-3">Prioridade</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Ações</th>          </tr></thead>
           <tbody>
             {lista.map((e) => (
               <tr key={e.id} className={`border-b border-sus-900/5 last:border-0 ${sel.includes(e.id) ? "bg-teal/5" : ""}`}>
@@ -605,7 +780,8 @@ export default function FilaExames() {
                 </td>
                 <td className="px-4 py-3 font-semibold">{e.paciente_nome}<p className="text-xs font-normal text-ink/50">pedido {fmtData(e.data_pedido)} {e.destino ? `· ${e.destino}` : ""}</p></td>
                 <td className="px-4 py-3">{nomeLimpo(e.exame)}<p className="text-xs text-ink/50">{e.especialidade || "—"}</p></td>
-                <td className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${prioCor[e.prioridade] ?? ""}`}>{e.prioridade}</span></td>
+                <td className="px-4 py-3 text-xs">{e.nome_especialidade || e.especialidade || "—"}</td>
+                <td className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${prioCor[e.prioridade] ?? ""}`}>{PRIO_ROTULO[e.prioridade] ?? e.prioridade}</span></td>
                 <td className="px-4 py-3 text-xs">{e.status}{e.data_agendada ? ` · ${fmtData(e.data_agendada)}` : ""}</td>
                 <td className="px-4 py-3"><div className="flex justify-end gap-1">
                   <button onClick={() => setDetalhe(e)} className="rounded-lg p-2 text-sus-900 hover:bg-sand" title="Detalhes"><Eye className="h-4 w-4" /></button>
@@ -613,19 +789,20 @@ export default function FilaExames() {
                     <button onClick={() => setComprovante(e)} className="rounded-lg p-2 text-teal hover:bg-teal/10" title="Comprovante / QR"><QrCode className="h-4 w-4" /></button>
                   )}
                   <button onClick={() => abrirModal(e.id)} className="rounded-lg p-2 text-sus-800 hover:bg-sus-100" title="Editar"><Pencil className="h-4 w-4" /></button>
-                  <button onClick={() => excluir(e.id)} className="rounded-lg p-2 text-red-600 hover:bg-red-50" title="Excluir"><Trash2 className="h-4 w-4" /></button>
+                  <button onClick={() => { setRemoverAlvo(e); setRemoverMotivo(""); setErro(""); }} className="rounded-lg p-2 text-red-600 hover:bg-red-50" title="Remover da fila"><Trash2 className="h-4 w-4" /></button>
                 </div></td>
               </tr>
             ))}
             {lista.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-ink/45">Fila vazia.</td></tr>}
           </tbody>
         </table>
+        </div>
         <p className="bg-sand/50 px-4 py-2 text-[11px] text-ink/50">* Posição dentro do mesmo procedimento/tipo de serviço.{total > 0 ? ` ${total} registro(s) no filtro.` : ""}{sel.length > 0 ? ` ${sel.length} selecionado(s) no total.` : ""}</p>
         <Paginacao page={page} pages={pages} total={total} onPage={(p) => { setPage(p); carregar(p).catch(() => setErro("Falha ao carregar fila.")); }} />
       </Card>
 
       {loteModal && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4 print:hidden" onClick={() => setLoteModal(null)}>
+        <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4 print:hidden" onClick={() => { setConfirmandoLote(false); setLoteModal(null); }}>
           <div className="max-h-[90vh] w-full max-w-lg overflow-auto rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
               <p className="font-display text-base font-bold text-sus-950">
@@ -636,8 +813,25 @@ export default function FilaExames() {
             <div className="space-y-3">
               {loteModal === "agendar" && (
                 <>
-                  <div><Label>Data agendada</Label><Input type="date" value={loteForm.data_agendada} onChange={(e) => setLoteForm({ ...loteForm, data_agendada: e.target.value })} /></div>
-                  <div><Label>Unidade / destino</Label><Input value={loteForm.destino} onChange={(e) => setLoteForm({ ...loteForm, destino: e.target.value })} placeholder="Cidade / unidade" /></div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div><Label>Data do agendamento *</Label><Input type="date" value={loteForm.data_agendada} min={retroativoBloqueado ? hojeISO() : undefined} onChange={(e) => setLoteForm({ ...loteForm, data_agendada: e.target.value })} /></div>
+                    <div><Label>Hora</Label><Input type="time" value={loteForm.hora_agendada} onChange={(e) => setLoteForm({ ...loteForm, hora_agendada: e.target.value })} /></div>
+                  </div>
+                  <div>
+                    <Label>Médico(a)</Label>
+                    <select value={loteForm.medico_id} onChange={(e) => setLoteForm({ ...loteForm, medico_id: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                      <option value="">Selecionar…</option>
+                      {medicos.filter((m) => m.ativo).map((m) => <option key={m.id} value={m.id}>{m.nome}{m.crm ? ` · ${m.crm}` : ""}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <Label>PSF / Unidade de saúde</Label>
+                    <select value={loteForm.unidade_id} onChange={(e) => setLoteForm({ ...loteForm, unidade_id: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                      <option value="">Selecionar…</option>
+                      {unidades.filter((u) => u.ativo).map((u) => <option key={u.id} value={u.id}>{u.nome}</option>)}
+                    </select>
+                  </div>
+                  <div><Label>Unidade / destino (texto)</Label><Input value={loteForm.destino} onChange={(e) => setLoteForm({ ...loteForm, destino: e.target.value })} placeholder="Cidade / unidade (se não selecionar PSF)" /></div>
                   <p className="text-xs text-ink/55">Status muda para <b>agendado</b>. Campos vazios mantêm valor atual.</p>
                 </>
               )}
@@ -653,24 +847,116 @@ export default function FilaExames() {
               {loteModal === "editar" && (
                 <>
                   <div>
-                    <Label>Prioridade</Label>
-                    <select value={loteForm.prioridade} onChange={(e) => setLoteForm({ ...loteForm, prioridade: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                    <Label>Prioridade{!isMedico ? " (somente perfil Médico)" : ""}</Label>
+                    <select
+                      value={loteForm.prioridade}
+                      disabled={!isMedico}
+                      onChange={(e) => setLoteForm({ ...loteForm, prioridade: e.target.value })}
+                      className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm disabled:bg-sand disabled:text-ink/50"
+                      title={!isMedico ? "Somente o perfil Médico altera prioridade" : "O backend exige vínculo com cada pedido"}
+                    >
                       <option value="">Manter atual</option>
-                      {PRIOS.map((p) => <option key={p} value={p}>{p}</option>)}
+                      {PRIOS.map((p) => <option key={p} value={p}>{PRIO_ROTULO[p]}</option>)}
                     </select>
                   </div>
+                  {loteForm.prioridade && (
+                    <div>
+                      <Label>Justificativa técnica * (mín. 12 caracteres)</Label>
+                      <textarea
+                        value={loteForm.justificativa}
+                        disabled={!isMedico}
+                        onChange={(e) => setLoteForm({ ...loteForm, justificativa: e.target.value })}
+                        rows={3}
+                        maxLength={500}
+                        placeholder="Obrigatória ao alterar a prioridade…"
+                        className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm outline-none focus:border-teal disabled:bg-sand disabled:text-ink/50"
+                      />
+                      <p className="mt-1 text-xs text-ink/45">{loteForm.justificativa.trim().length}/{JUST_MIN} caracteres mínimos</p>
+                    </div>
+                  )}
                   <div><Label>Observações</Label><Input value={loteForm.observacoes} onChange={(e) => setLoteForm({ ...loteForm, observacoes: e.target.value })} placeholder="Vazio mantém valor atual" /></div>
                 </>
               )}
               {erro && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
-              <Button onClick={salvarLote} disabled={loteSalvando} className="w-full">
-                {loteSalvando ? "Aplicando…" : `Aplicar a ${sel.length} pedido(s)`}
-              </Button>
+              {loteModal === "agendar" ? (
+                <Button
+                  onClick={() => {
+                    setErro("");
+                    if (!loteForm.data_agendada) {
+                      setErro("Informe a data do agendamento.");
+                      return;
+                    }
+                    if (!loteForm.medico_id || !loteForm.unidade_id) {
+                      setErro("Agendamento exige médico e unidade de atendimento.");
+                      return;
+                    }
+                    setConfirmandoLote(true);
+                  }}
+                  disabled={loteSalvando}
+                  className="w-full"
+                >
+                  Revisar agendamento em lote
+                </Button>
+              ) : (
+                <Button onClick={salvarLote} disabled={loteSalvando} className="w-full">
+                  {loteSalvando ? "Aplicando…" : `Aplicar a ${sel.length} pedido(s)`}
+                </Button>
+              )}
             </div>
           </div>
         </div>
       )}
 
+      {confirmandoLote && loteModal === "agendar" && (
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-sus-950/50 p-4 print:hidden" onClick={() => setConfirmandoLote(false)}>
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
+            <p className="font-display text-base font-bold text-sus-950">Confirmar agendamento em lote</p>
+            <div className="mt-3 space-y-1 text-sm text-ink/70">
+              <p><b>{sel.length}</b> paciente(s) afetado(s).</p>
+              <p>Especialidade: <b>{[...new Set(lista.filter((e) => sel.includes(e.id)).map((e) => e.nome_especialidade || e.especialidade).filter(Boolean))].join(", ") || "—"}</b></p>
+              <p>Data: <b>{loteForm.data_agendada.split("-").reverse().join("/")}{loteForm.hora_agendada ? ` · ${loteForm.hora_agendada}` : ""}</b></p>
+              <p>Médico(a): <b>{medicos.find((m) => String(m.id) === loteForm.medico_id)?.nome || "—"}</b></p>
+              <p>Unidade / PSF: <b>{unidades.find((u) => String(u.id) === loteForm.unidade_id)?.nome || (loteForm.destino.trim() || "—")}</b></p>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <button onClick={() => setConfirmandoLote(false)} className="flex-1 rounded-xl border border-sus-900/15 px-4 py-2.5 text-sm font-semibold text-sus-900 hover:bg-sand">Cancelar</button>
+              <Button onClick={async () => { setConfirmandoLote(false); await salvarLote(); }} disabled={loteSalvando} className="flex-1">{loteSalvando ? "Aplicando…" : "Confirmar Agendamento em Lote"}</Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {removerAlvo && (
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-sus-950/50 p-4 print:hidden" onClick={() => setRemoverAlvo(null)}>
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <p className="font-display text-base font-bold text-sus-950">Remover da fila de espera</p>
+              <button onClick={() => setRemoverAlvo(null)} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar"><X className="h-4 w-4" /></button>
+            </div>
+            <p className="mb-3 text-sm text-ink/60">{removerAlvo.paciente_nome} · {removerAlvo.exame}</p>
+            <p className="mb-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              O registro é preservado (soft delete) e a remoção entra na linha do tempo do paciente com responsável, data/hora e motivo.
+            </p>
+            <div>
+              <Label>Motivo/justificativa da remoção *</Label>
+              <textarea
+                value={removerMotivo}
+                onChange={(e) => setRemoverMotivo(e.target.value)}
+                rows={4}
+                maxLength={500}
+                placeholder="Descreva o motivo da remoção…"
+                className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm outline-none focus:border-teal"
+              />
+            </div>
+            {erro && <p className="mt-2 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
+            <div className="mt-4 flex gap-2">
+              <button onClick={() => setRemoverAlvo(null)} className="flex-1 rounded-xl border border-sus-900/15 px-4 py-2.5 text-sm font-semibold text-sus-900 hover:bg-sand">Cancelar</button>
+              <button onClick={excluir} disabled={removendo} className="flex-1 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white hover:brightness-110 disabled:opacity-50">
+                {removendo ? "Removendo…" : "Confirmar remoção"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {modal && (
         <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-sus-950/50 p-4 print:hidden" onClick={fecharModal}>
           <div className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-2xl bg-white p-6 shadow-card md:p-8" onClick={(e) => e.stopPropagation()}>
@@ -862,9 +1148,15 @@ export default function FilaExames() {
                 <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-sus-900/55">Situação e datas</p>
                 <div className="grid gap-4 md:grid-cols-4">
                   <div>
-                    <Label>Prioridade</Label>
-                    <select value={form.prioridade} onChange={(e) => setForm({ ...form, prioridade: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
-                      {PRIOS.map((p) => <option key={p} value={p}>{p}</option>)}
+                    <Label>Prioridade{editId && !podeEditarPrio ? " (somente leitura)" : ""}</Label>
+                    <select
+                      value={form.prioridade}
+                      disabled={!!editId && !podeEditarPrio}
+                      onChange={(e) => setForm({ ...form, prioridade: e.target.value })}
+                      className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm disabled:bg-sand disabled:text-ink/50"
+                      title={editId && !podeEditarPrio ? "Somente o médico envolvido altera a prioridade" : undefined}
+                    >
+                      {PRIOS.map((p) => <option key={p} value={p}>{PRIO_ROTULO[p]}</option>)}
                     </select>
                   </div>
                   <div>
@@ -873,9 +1165,51 @@ export default function FilaExames() {
                       {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
-                  <div><Label>Data pedido *</Label><Input type="date" value={form.data_pedido} onChange={(e) => setForm({ ...form, data_pedido: e.target.value })} /></div>
-                  <div><Label>Data agendada</Label><Input type="date" value={form.data_agendada} onChange={(e) => setForm({ ...form, data_agendada: e.target.value })} /></div>
+                  <div><Label>Data pedido *</Label><Input type="date" value={form.data_pedido} min={retroativoBloqueado ? hojeISO() : undefined} onChange={(e) => setForm({ ...form, data_pedido: e.target.value })} /></div>
+                  <div><Label>Data agendada</Label><Input type="date" value={form.data_agendada} min={retroativoBloqueado ? hojeISO() : undefined} onChange={(e) => setForm({ ...form, data_agendada: e.target.value })} /></div>
                 </div>
+                {editId && (
+                  <div className="mt-4">
+                    <Label>Justificativa técnica da prioridade {prioAlterada ? "*" : ""}{!podeEditarPrio ? " (somente leitura)" : ""}</Label>
+                    <textarea
+                      value={form.justificativa_prioridade}
+                      disabled={!podeEditarPrio}
+                      onChange={(e) => setForm({ ...form, justificativa_prioridade: e.target.value })}
+                      rows={3}
+                      maxLength={500}
+                      placeholder={podeEditarPrio ? "Obrigatória ao alterar a prioridade (mín. 12 caracteres)…" : "Somente o médico envolvido registra justificativa"}
+                      className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm outline-none focus:border-teal disabled:bg-sand disabled:text-ink/50"
+                    />
+                    <p className={`mt-1 text-xs ${form.justificativa_prioridade.trim().length < JUST_MIN ? "text-ink/45" : "text-teal"}`}>
+                      {form.justificativa_prioridade.trim().length}/{JUST_MIN} caracteres mínimos
+                    </p>
+                  </div>
+                )}
+              </section>
+              {/* Agendamento: médico + unidade */}
+              <section>
+                <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-sus-900/55">Agendamento — médico e unidade *</p>
+                <div className="grid gap-4 md:grid-cols-3">
+                  <div>
+                    <Label>Médico(a) solicitante/atendente</Label>
+                    <select value={form.medico_id} onChange={(e) => setForm({ ...form, medico_id: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                      <option value="">Selecionar…</option>
+                      {medicos.filter((m) => m.ativo).map((m) => <option key={m.id} value={m.id}>{m.nome}{m.crm ? ` · ${m.crm}` : ""}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <Label>Hora</Label>
+                    <Input type="time" value={form.hora_agendada} onChange={(e) => setForm({ ...form, hora_agendada: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label>PSF / Unidade de atendimento</Label>
+                    <select value={form.unidade_saude_id} onChange={(e) => setForm({ ...form, unidade_saude_id: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                      <option value="">Selecionar…</option>
+                      {unidades.filter((u) => u.ativo).map((u) => <option key={u.id} value={u.id}>{u.nome}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <p className="mt-1 text-xs text-ink/50">Obrigatórios ao marcar data agendada. Nome, CPF, CBO do médico e endereço da unidade ficam registrados no pedido.</p>
               </section>
               {/* Destino e observações */}
               <section>
@@ -894,7 +1228,7 @@ export default function FilaExames() {
 
       {comprovante && createPortal(
         <div id="comprovante-overlay" className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" onClick={() => setComprovante(null)}>
-          <div id="comprovante-print" className="max-h-[90vh] w-full max-w-md overflow-auto rounded-2xl bg-white p-6 shadow-card print:block print:max-h-none print:w-full print:max-w-none print:overflow-visible print:rounded-none print:p-0 print:shadow-none" onClick={(e) => e.stopPropagation()}>
+          <div id="comprovante-print" className="max-h-[90vh] w-full max-w-md overflow-auto rounded-2xl bg-white p-6 shadow-card print:max-h-none print:overflow-visible print:rounded-none print:shadow-none" onClick={(e) => e.stopPropagation()}>
             <div className="comprovante-header mb-4 flex items-center justify-between print:hidden">
               <p className="flex items-center gap-2 font-display text-base font-bold text-sus-950">
                 <CheckCircle2 className="h-5 w-5 text-teal" /> Comprovante do pedido
@@ -903,8 +1237,9 @@ export default function FilaExames() {
             </div>
             <div id="comprovante-dados" className="rounded-2xl border border-sus-900/10 p-4 text-sm print:block">
               <p className="font-display text-base font-bold text-sus-950">{comprovante.exame}</p>
-              <p className="text-xs text-ink/55">{comprovante.especialidade || "—"} · {comprovante.prioridade} · pedido {fmtData(comprovante.data_pedido)}</p>
+              <p className="text-xs text-ink/55">{comprovante.especialidade || "—"} · {PRIO_ROTULO[comprovante.prioridade] ?? comprovante.prioridade} · pedido {fmtData(comprovante.data_pedido)}</p>
               <p className="mt-2 font-semibold">{comprovante.paciente_nome}</p>
+              {comprovante.paciente_cpf && <p className="text-xs text-ink/60">CPF: {comprovante.paciente_cpf}</p>}
               <p className="mt-1 text-xs text-ink/60">
                 Status: <b>{comprovante.status}</b>
                 {comprovante.posicao ? ` · posição ${comprovante.posicao}º no procedimento (de ${comprovante.total_fila ?? "—"})` : ""}
@@ -953,6 +1288,9 @@ export default function FilaExames() {
               <div className="rounded-2xl border border-sus-900/10 p-4">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-sus-900/50">Paciente</p>
                 <p className="mt-1 text-base font-bold text-sus-950">{detalhe.paciente_nome}</p>
+                <button onClick={() => setPerfilId(detalhe.paciente_id)} className="mt-2 inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-teal/10 px-3 py-2 text-xs font-bold text-teal hover:bg-teal/15">
+                  <Eye className="h-4 w-4" /> Ver perfil e demanda reprimida
+                </button>
                 {detalhe.posicao ? (
                   <p className="mt-1 text-xs text-ink/60">
                     Posição <b>{detalhe.posicao}º</b> no procedimento (de {detalhe.total_fila ?? "—"})
@@ -970,7 +1308,7 @@ export default function FilaExames() {
                   <div><dt className="text-ink/45">Tipo de fila</dt><dd className="font-semibold">{detalhe.tipo_fila || "—"}</dd></div>
                   <div><dt className="text-ink/45">Tipo / especialidade</dt><dd className="font-semibold">{detalhe.especialidade || "—"}</dd></div>
                   <div><dt className="text-ink/45">Especialidade (CBO)</dt><dd className="font-semibold">{detalhe.nome_especialidade || "—"}{detalhe.codigo_especialidade ? ` · ${detalhe.codigo_especialidade}` : ""}</dd></div>
-                  <div><dt className="text-ink/45">Prioridade</dt><dd className="font-semibold">{detalhe.prioridade}</dd></div>
+                  <div><dt className="text-ink/45">Prioridade</dt><dd className="font-semibold">{PRIO_ROTULO[detalhe.prioridade] ?? detalhe.prioridade}</dd></div>
                   <div><dt className="text-ink/45">Status</dt><dd className="font-semibold">{detalhe.status}</dd></div>
                   <div><dt className="text-ink/45">Data pedido</dt><dd className="font-semibold">{fmtData(detalhe.data_pedido)}</dd></div>
                   <div><dt className="text-ink/45">Data agendada</dt><dd className="font-semibold">{fmtData(detalhe.data_agendada)}</dd></div>
@@ -980,6 +1318,31 @@ export default function FilaExames() {
                   <p className="mt-2 rounded-xl bg-sand/60 px-3 py-2 text-xs text-ink/70">{detalhe.observacoes}</p>
                 )}
                 <p className="mt-2 break-all text-[11px] text-ink/40" title="Registro completo (legado)">{detalhe.exame}</p>
+              </div>
+              <div className="rounded-2xl border border-teal/25 bg-teal/5 p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-sus-900/60">Médico solicitante / atendente</p>
+                <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2.5 text-xs md:grid-cols-3">
+                  <div><dt className="text-ink/45">Nome</dt><dd className="font-semibold">{detalhe.medico_nome || "—"}</dd></div>
+                  <div><dt className="text-ink/45">CPF</dt><dd className="font-semibold">{detalhe.medico_cpf || "—"}</dd></div>
+                  <div><dt className="text-ink/45">CBO</dt><dd className="font-semibold">{detalhe.medico_cbo_codigo ? `${detalhe.medico_cbo_codigo}${detalhe.medico_cbo_descricao ? ` · ${detalhe.medico_cbo_descricao}` : ""}` : "—"}</dd></div>
+                </dl>
+                {detalhe.justificativa_prioridade ? (
+                  <p className="mt-2 rounded-xl bg-white/70 px-3 py-2 text-xs text-ink/70"><b>Justificativa da prioridade:</b> {detalhe.justificativa_prioridade}</p>
+                ) : (
+                  <p className="mt-2 text-xs text-ink/45">Sem justificativa registrada.</p>
+                )}
+              </div>
+              <div className="rounded-2xl border border-sus-900/10 p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-sus-900/50">Unidade de atendimento</p>
+                <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2.5 text-xs md:grid-cols-3">
+                  <div className="col-span-2 md:col-span-1"><dt className="text-ink/45">Nome</dt><dd className="font-semibold">{detalhe.unidade_nome || detalhe.destino || "—"}</dd></div>
+                  <div><dt className="text-ink/45">CNES</dt><dd className="font-semibold">{detalhe.unidade_cnes || "—"}</dd></div>
+                  <div><dt className="text-ink/45">CEP</dt><dd className="font-semibold">{detalhe.unidade_cep || "—"}</dd></div>
+                  <div className="col-span-2 md:col-span-3"><dt className="text-ink/45">Endereço completo</dt><dd className="font-semibold">{[detalhe.unidade_endereco, detalhe.unidade_numero ? `Nº ${detalhe.unidade_numero}` : "", detalhe.unidade_bairro, detalhe.unidade_municipio].filter(Boolean).join(" · ") || "—"}</dd></div>
+                </dl>
+              </div>
+              <div className="rounded-2xl border border-sus-900/10 p-4">
+                <Timeline pacienteId={detalhe.paciente_id} />
               </div>
               </div>
               <div className="space-y-4">
@@ -1011,6 +1374,17 @@ export default function FilaExames() {
               </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      {perfilId !== null && (
+        <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-sus-950/50 p-4 print:hidden" onClick={() => setPerfilId(null)}>
+          <div className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-2xl bg-white p-6 shadow-card md:p-8" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <p className="font-display text-lg font-bold text-sus-950">Perfil do paciente</p>
+              <button onClick={() => setPerfilId(null)} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar"><X className="h-4 w-4" /></button>
+            </div>
+            <PerfilPaciente pid={perfilId} />
           </div>
         </div>
       )}

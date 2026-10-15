@@ -16,6 +16,7 @@ import {
 import { solicitarListar, mapMestre, type SolicMestre } from "../../services/api";
 import { Button, Card, Input, Label } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
+import ExportarExcel from "../../components/ExportarExcel";
 import GradeDias from "../../components/GradeDias";
 import MonthPicker from "../../components/MonthPicker";
 
@@ -172,6 +173,7 @@ export default function LabMarcacao() {
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <h2 className="font-display text-lg font-bold text-sus-950">Marcação de exames</h2>
+        <ExportarExcel url="/api/lab/solicitacoes/exportar" arquivo="solicitacoes_lab" />
         <Button onClick={() => setModal(true)} className="ml-auto">
           <Plus className="h-4 w-4" /> Nova solicitação
         </Button>
@@ -181,6 +183,7 @@ export default function LabMarcacao() {
       {ok && <p className="mb-3 rounded-xl bg-teal/10 px-3 py-2 text-sm text-teal">{ok}</p>}
 
       <Card className="overflow-hidden">
+        <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
@@ -213,6 +216,7 @@ export default function LabMarcacao() {
             {lista.length === 0 && <tr><td colSpan={5} className="px-4 py-8 text-center text-ink/45">Nenhuma solicitação.</td></tr>}
           </tbody>
         </table>
+        </div>
         <Paginacao page={page} pages={pages} total={total} onPage={(p) => carregar(p).catch(() => setErro("Falha ao carregar solicitações."))} />
       </Card>
 

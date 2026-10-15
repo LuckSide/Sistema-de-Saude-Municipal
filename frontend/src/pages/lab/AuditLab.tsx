@@ -101,6 +101,7 @@ export default function AuditLab() {
       {ok && <p className="mb-3 rounded-xl bg-teal/10 px-3 py-2 text-sm text-teal">{ok}</p>}
 
       <Card className="overflow-hidden">
+        <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
@@ -128,6 +129,7 @@ export default function AuditLab() {
             {lista.length === 0 && <tr><td colSpan={5} className="px-4 py-8 text-center text-ink/45">Nada pendente.</td></tr>}
           </tbody>
         </table>
+        </div>
         <Paginacao page={page} pages={pages} total={total} onPage={(p) => carregar(p).catch(() => setErro("Falha ao carregar auditoria."))} />
       </Card>
 

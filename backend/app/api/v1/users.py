@@ -77,6 +77,34 @@ def listar(
     }
 
 
+@router.get("/exportar")
+def exportar(
+    db: Session = Depends(get_db), admin: User = Depends(require_superuser)
+):
+    """Contas em XLSX (sem senhas)."""
+    from app.services.export_xlsx import resposta_xlsx
+    from app.services.users import list_users
+
+    linhas = [{
+        "usuario": u.username, "nome": u.nome or "", "area": u.area,
+        "telas": u.telas or "",
+        "perfil": "Superuser" if u.is_superuser else ("Médico" if getattr(u, "medico_id", None) else "Operador"),
+        "status": "ativo" if u.is_active else "inativo",
+    } for u in list_users(db)]
+    return resposta_xlsx(
+        "Contas de usuário", admin.nome or admin.username,
+        [
+            {"chave": "usuario", "rotulo": "Usuário", "largura": 22},
+            {"chave": "nome", "rotulo": "Nome", "largura": 32},
+            {"chave": "area", "rotulo": "Área", "largura": 14},
+            {"chave": "telas", "rotulo": "Telas", "largura": 50},
+            {"chave": "perfil", "rotulo": "Perfil", "largura": 14},
+            {"chave": "status", "rotulo": "Status", "largura": 12},
+        ],
+        linhas, "usuarios",
+    )
+
+
 @router.post("/", response_model=ResetSenhaOut, status_code=status.HTTP_201_CREATED)
 def criar(
     data: UserCreate, db: Session = Depends(get_db), _=Depends(require_superuser)
@@ -111,7 +139,10 @@ def atualizar(
             raise HTTPException(status_code=400, detail="Não pode remover seu próprio superuser")
         if data.is_active is False:
             raise HTTPException(status_code=400, detail="Não pode inativar a si mesmo")
-    return to_out(update_user(db, user, data))
+    try:
+        return to_out(update_user(db, user, data))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -125,5 +156,14 @@ def excluir(
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
     if user.id == admin.id:
         raise HTTPException(status_code=400, detail="Não pode excluir a si mesmo")
+    # Limpa prefs do dashboard (FK) antes de excluir a conta.
+    try:
+        from app.models.dashboard_prefs import UserDashboardPrefs
+
+        prefs = db.get(UserDashboardPrefs, user.id)
+        if prefs:
+            db.delete(prefs)
+    except Exception:
+        pass
     db.delete(user)
     db.commit()

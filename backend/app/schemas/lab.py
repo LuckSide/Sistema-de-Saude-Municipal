@@ -7,12 +7,49 @@ from pydantic import BaseModel, Field
 class SigtapIn(BaseModel):
     codigo: str = Field(min_length=10, max_length=10, pattern=r"^\d{10}$")
     descricao: str = Field(min_length=2, max_length=255)
-    complexidade: str = Field(default="MC", pattern="^(AB|MC|AC)$")
-    instrumento: str = Field(default="BPA-C", pattern="^(BPA-C|BPA-I)$")
+    complexidade: str = Field(default="MC", pattern="^(NA|AB|MC|AC)$")
+    instrumento: str = Field(default="BPA-C", pattern="^(BPA-C|BPA-I|BPA-F|AIH|APAC|RAAS)$")
 
 
 class SigtapOut(SigtapIn):
     id: int
+    sexo: str = ""
+    idade_min: int = 0
+    idade_max: int = 0
+    qtd_maxima: int = 0
+    pontos: int = 0
+    valor_sa: float = 0
+    valor_sp: float = 0
+    valor_sh: float = 0
+    competencia: str = ""
+
+
+class SigtapVersaoOut(BaseModel):
+    id: int
+    competencia: str = ""
+    origem: str = ""
+    arquivo: str = ""
+    total_proc: int = 0
+    inseridos: int = 0
+    atualizados: int = 0
+    cbo_total: int = 0
+    cid_total: int = 0
+    ignorados: int = 0
+    usuario: str = ""
+    criado_em: str = ""
+
+
+class SigtapImportOut(BaseModel):
+    simulacao: bool = True
+    arquivo: str = ""
+    competencia: str = ""
+    processados: int = 0
+    inseridos: int = 0
+    atualizados: int = 0
+    ignorados: int = 0
+    cbo_total: int = 0
+    cid_total: int = 0
+    erros: list[dict] = []
 
 
 # ---------- Solicitações ----------

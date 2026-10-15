@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
-from jose import jwt
-from jose.exceptions import JWTError
+import jwt
+from jwt import ExpiredSignatureError, InvalidTokenError
 from passlib.context import CryptContext
 
 from app.core.config import settings
@@ -35,5 +35,5 @@ def decode_token(token: str) -> str | None:
         )
         sub: str | None = payload.get("sub")
         return sub
-    except JWTError:
+    except (ExpiredSignatureError, InvalidTokenError):
         return None

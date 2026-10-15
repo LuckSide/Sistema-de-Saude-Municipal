@@ -1,15 +1,17 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import type { ReactElement } from "react";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { useCidadeDinamica } from "./hooks/useCidade";
 import { Protected, Shell } from "./components/Layout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Usuarios from "./pages/Usuarios";
-import { Placeholder } from "./pages/Placeholder";
 import TfdLayout from "./pages/tfd/TfdLayout";
 import TfdResumo from "./pages/tfd/TfdResumo";
 import TfdViagens from "./pages/tfd/TfdViagens";
 import TfdPacientes from "./pages/tfd/TfdPacientes";
+import AgendaTfd from "./pages/tfd/AgendaTfd";
+import QuadroViagens from "./pages/tfd/QuadroViagens";
 import TfdDestinos from "./pages/tfd/TfdDestinos";
 import CatalogoExames from "./pages/tfd/CatalogoExames";
 import TfdFrota from "./pages/tfd/TfdFrota";
@@ -23,25 +25,46 @@ import AuditLab from "./pages/lab/AuditLab";
 import LabFaturamento from "./pages/lab/LabFaturamento";
 import LabSigtap from "./pages/lab/LabSigtap";
 import AcompanharExame from "./pages/AcompanharExame";
+import Auditoria from "./pages/Auditoria";
 import FilaExames from "./pages/tfd/FilaExames";
 import Indicadores from "./pages/Indicadores";
 import ApsPainel from "./pages/aps/ApsPainel";
 import Configuracoes from "./pages/Configuracoes";
+import PainelMedico from "./pages/PainelMedico";
+import Medicos from "./pages/Medicos";
+import UnidadesSaude from "./pages/UnidadesSaude";
 
-function Guard({ tela, children }: { tela: string; children: JSX.Element }) {
+function Guard({ tela, children }: { tela: string; children: ReactElement }) {
   const { can, loading } = useAuth();
   if (loading) return null;
   if (!can(tela)) return <Navigate to="/" replace />;
   return children;
 }
 
-function LabGuard({ tela, children }: { tela: string; children: JSX.Element }) {
+// Configurações centraliza município, filas, PEC e RNDS: aceita a tela
+// "usuarios" (admin) ou a legada "integracoes".
+function ConfigGuard({ children }: { children: ReactElement }) {
   const { can, loading } = useAuth();
   if (loading) return null;
-  const LAB_TELAS = ["lab", "lab_fila", "lab_agenda", "lab_vagas", "lab_audit"];
+  if (!can("usuarios") && !can("integracoes")) return <Navigate to="/" replace />;
+  return children;
+}
+
+function GuardQualquer({ telas, children }: { telas: string[]; children: ReactElement }) {
+  const { can, loading } = useAuth();
+  if (loading) return null;
+  if (!telas.some((t) => can(t))) return <Navigate to="/" replace />;
+  return children;
+}
+
+function LabGuard({ tela, telas, children }: { tela: string; telas?: string[]; children: ReactElement }) {
+  const { can, loading } = useAuth();
+  if (loading) return null;
+  const LAB_TELAS = ["lab", "lab_marcacao", "lab_fila", "lab_agenda", "lab_vagas", "lab_audit", "lab_faturamento", "lab_sigtap"];
+  const alvos = telas ?? [tela];
   if (tela === "lab") {
     if (!LAB_TELAS.some((t) => can(t))) return <Navigate to="/" replace />;
-  } else if (!can("lab") && !can(tela)) {
+  } else if (!can("lab") && !alvos.some((t) => can(t))) {
     return <Navigate to="/" replace />;
   }
   return children;
@@ -50,11 +73,11 @@ function LabGuard({ tela, children }: { tela: string; children: JSX.Element }) {
 function TfdRoutes() {
   return (
     <Protected>
-      <Guard tela="tfd">
+      <GuardQualquer telas={["tfd", "tfd_resumo", "tfd_viagens", "tfd_pacientes", "tfd_exames", "tfd_agenda", "tfd_catalogo", "tfd_destinos", "tfd_frota", "tfd_faturamento"]}>
         <Shell>
           <TfdLayout />
         </Shell>
-      </Guard>
+      </GuardQualquer>
     </Protected>
   );
 }
@@ -82,9 +105,18 @@ export default function App() {
           <Route path="/acompanhar/:token" element={<AcompanharExame />} />
           <Route path="/fila-exames" element={
             <Protected>
-              <Guard tela="tfd">
+              <Guard tela="tfd_exames">
                 <Shell>
                   <FilaExames />
+                </Shell>
+              </Guard>
+            </Protected>
+          } />
+          <Route path="/painel-medico" element={
+            <Protected>
+              <Guard tela="tfd_medico">
+                <Shell>
+                  <PainelMedico />
                 </Shell>
               </Guard>
             </Protected>
@@ -103,7 +135,7 @@ export default function App() {
             path="/indicadores"
             element={
               <Protected>
-                <Guard tela="dashboard">
+                <Guard tela="dash_indicadores">
                   <Shell>
                     <Indicadores />
                   </Shell>
@@ -124,24 +156,26 @@ export default function App() {
             }
           />
           <Route path="/tfd" element={<TfdRoutes />}>
-            <Route index element={<TfdResumo />} />
-            <Route path="viagens" element={<TfdViagens />} />
-            <Route path="pacientes" element={<TfdPacientes />} />
+            <Route index element={<Guard tela="tfd_resumo"><TfdResumo /></Guard>} />
+            <Route path="viagens" element={<Guard tela="tfd_viagens"><TfdViagens /></Guard>} />
+            <Route path="quadro" element={<Guard tela="tfd_viagens"><QuadroViagens /></Guard>} />
+            <Route path="pacientes" element={<Guard tela="tfd_pacientes"><TfdPacientes /></Guard>} />
+            <Route path="agenda" element={<Guard tela="tfd_agenda"><AgendaTfd /></Guard>} />
             <Route path="exames" element={<Navigate to="/fila-exames" replace />} />
-            <Route path="catalogo" element={<CatalogoExames />} />
-            <Route path="destinos" element={<TfdDestinos />} />
-            <Route path="frota" element={<TfdFrota />} />
-            <Route path="faturamento" element={<TfdFaturamento />} />
+            <Route path="catalogo" element={<Guard tela="tfd_catalogo"><CatalogoExames /></Guard>} />
+            <Route path="destinos" element={<Guard tela="tfd_destinos"><TfdDestinos /></Guard>} />
+            <Route path="frota" element={<Guard tela="tfd_frota"><TfdFrota /></Guard>} />
+            <Route path="faturamento" element={<Guard tela="tfd_faturamento"><TfdFaturamento /></Guard>} />
           </Route>
           <Route path="/lab" element={<LabRoutes />}>
-            <Route index element={<LabGuard tela="lab"><LabMarcacao /></LabGuard>} />
-            <Route path="marcacao" element={<LabGuard tela="lab"><LabMarcacao /></LabGuard>} />
+            <Route index element={<LabGuard tela="lab_marcacao"><LabMarcacao /></LabGuard>} />
+            <Route path="marcacao" element={<LabGuard tela="lab_marcacao"><LabMarcacao /></LabGuard>} />
             <Route path="fila" element={<LabGuard tela="lab_fila"><FilaPsf /></LabGuard>} />
-            <Route path="agenda" element={<LabGuard tela="lab_agenda"><VagasAgenda /></LabGuard>} />
+            <Route path="agenda" element={<LabGuard tela="lab_agenda" telas={["lab_agenda", "lab_vagas"]}><VagasAgenda /></LabGuard>} />
             <Route path="vagas" element={<LabGuard tela="lab_vagas"><VagasAgenda /></LabGuard>} />
             <Route path="auditoria" element={<LabGuard tela="lab_audit"><AuditLab /></LabGuard>} />
-            <Route path="faturamento" element={<LabGuard tela="lab"><LabFaturamento /></LabGuard>} />
-            <Route path="sigtap" element={<LabGuard tela="lab"><LabSigtap /></LabGuard>} />
+            <Route path="faturamento" element={<LabGuard tela="lab_faturamento"><LabFaturamento /></LabGuard>} />
+            <Route path="sigtap" element={<LabGuard tela="lab_sigtap"><LabSigtap /></LabGuard>} />
           </Route>
           <Route
             path="/aps"
@@ -155,13 +189,14 @@ export default function App() {
               </Protected>
             }
           />
+          <Route path="/integracoes" element={<Navigate to="/configuracoes" replace />} />
           <Route
-            path="/integracoes"
+            path="/auditoria"
             element={
               <Protected>
-                <Guard tela="integracoes">
+                <Guard tela="usuarios">
                   <Shell>
-                    <Placeholder titulo="Integrações" />
+                    <Auditoria />
                   </Shell>
                 </Guard>
               </Protected>
@@ -171,15 +206,17 @@ export default function App() {
             path="/configuracoes"
             element={
               <Protected>
-                <Guard tela="usuarios">
+                <ConfigGuard>
                   <Shell>
                     <Configuracoes />
                   </Shell>
-                </Guard>
+                </ConfigGuard>
               </Protected>
             }
           />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          {/* Rotas legadas: redirecionam p/ as abas em Configurações. */}
+          <Route path="/admin/medicos" element={<Navigate to="/configuracoes?aba=medicos" replace />} />
+          <Route path="/admin/psfs" element={<Navigate to="/configuracoes?aba=unidades" replace />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

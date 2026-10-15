@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { CalendarDays, Cross, ListOrdered, MapPin } from "lucide-react";
 import { tfdConsultarExamePublico, type ExamePublico } from "../services/api";
 import { Card } from "../components/ui/primitives";
+import { rotuloPrioridade } from "../utils/rotulos";
 
 export default function AcompanharExame() {
   const { token } = useParams<{ token: string }>();
@@ -50,12 +51,19 @@ export default function AcompanharExame() {
                 <span className="text-xs text-ink/55">paciente {dado.paciente_iniciais}</span>
               </p>
               <p className="mt-2 font-display text-base font-bold text-sus-950">{dado.exame}</p>
-              <p className="text-xs text-ink/55">{dado.especialidade || "—"} · prioridade {dado.prioridade}</p>
+              <p className="text-xs text-ink/55">{dado.especialidade || "—"} · prioridade {rotuloPrioridade(dado.prioridade).toLowerCase()}</p>
               <p className="mt-2 flex items-center gap-1.5 text-xs text-ink/60">
                 <CalendarDays className="h-3.5 w-3.5" />
                 pedido {dado.data_pedido ? dado.data_pedido.slice(0, 10).split("-").reverse().join("/") : "—"}
-                {dado.data_agendada ? ` · agendado ${dado.data_agendada.slice(0, 10).split("-").reverse().join("/")}` : ""}
+                {dado.data_agendada ? ` · marcado ${dado.data_agendada.slice(0, 10).split("-").reverse().join("/")}` : ""}
               </p>
+              {dado.data_agendada && (
+                <p className="mt-2">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-teal/20 px-3 py-1 text-xs font-bold text-teal ring-1 ring-teal/30">
+                    <CalendarDays className="h-3.5 w-3.5" /> Procedimento marcado para {dado.data_agendada.slice(0, 10).split("-").reverse().join("/")}
+                  </span>
+                </p>
+              )}
               {dado.destino && (
                 <p className="mt-1 flex items-center gap-1.5 text-xs text-ink/60">
                   <MapPin className="h-3.5 w-3.5" /> {dado.destino}

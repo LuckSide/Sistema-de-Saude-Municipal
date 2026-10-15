@@ -10,6 +10,7 @@ import {
 } from "../../services/api";
 import { Button, Card, Input, Label } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
+import ExportarExcel from "../../components/ExportarExcel";
 
 export default function LabFaturamento() {
   const [comp, setComp] = useState(() => new Date().toISOString().slice(0, 7));
@@ -100,6 +101,7 @@ export default function LabFaturamento() {
           <Button onClick={exportar} disabled={busy} className="!bg-teal !text-sus-950">
             <Download className="h-4 w-4" /> Exportar Lote BPA
           </Button>
+          <ExportarExcel url="/api/lab/solicitacoes/exportar" arquivo="faturamento_bpa" params={{ competencia: comp || undefined }} />
         </div>
       </div>
 
@@ -107,6 +109,7 @@ export default function LabFaturamento() {
       {ok && <p className="mb-3 rounded-xl bg-teal/10 px-3 py-2 text-sm font-medium text-teal">{ok}</p>}
 
       <Card className="overflow-hidden">
+        <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
@@ -134,6 +137,7 @@ export default function LabFaturamento() {
             {lista.length === 0 && <tr><td colSpan={5} className="px-4 py-8 text-center text-ink/45">Nenhum realizado pronto para faturar.</td></tr>}
           </tbody>
         </table>
+        </div>
         <Paginacao page={page} pages={pages} total={total} onPage={(p) => carregar(p).catch(() => setErro("Falha ao carregar prontos."))} />
       </Card>
 

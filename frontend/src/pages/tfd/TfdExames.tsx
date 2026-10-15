@@ -15,6 +15,7 @@ import {
 } from "../../services/api";
 import { Button, Card, Input, Label } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
+import { PRIO_ROTULO } from "../../utils/rotulos";
 
 const STATUS = ["aguardando", "agendado", "realizado", "cancelado"];
 
@@ -168,7 +169,7 @@ export default function TfdExames() {
               <tr key={e.id} className="border-b border-sus-900/5 last:border-0">
                 <td className="px-4 py-3 font-semibold">{e.paciente_nome}<p className="text-xs font-normal text-ink/50">pedido {e.data_pedido.split("-").reverse().join("/")} {e.destino ? `· ${e.destino}` : ""}</p></td>
                 <td className="px-4 py-3">{e.exame}<p className="text-xs text-ink/50">{e.especialidade || "—"}</p></td>
-                <td className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${prioCor[e.prioridade] ?? ""}`}>{e.prioridade}</span></td>
+                <td className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${prioCor[e.prioridade] ?? ""}`}>{PRIO_ROTULO[e.prioridade] ?? e.prioridade}</span></td>
                 <td className="px-4 py-3 text-xs">{e.status}{e.data_agendada ? ` · ${e.data_agendada.split("-").reverse().join("/")}` : ""}</td>
                 <td className="px-4 py-3"><div className="flex justify-end gap-1">
                   <button onClick={() => abrirModal(e.id)} className="rounded-lg p-2 text-sus-800 hover:bg-sus-100"><Pencil className="h-4 w-4" /></button>
@@ -245,7 +246,7 @@ export default function TfdExames() {
                 <div>
                   <Label>Prioridade</Label>
                   <select value={form.prioridade} onChange={(e) => setForm({ ...form, prioridade: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
-                    {["rotina", "prioritaria", "urgente"].map((p) => <option key={p} value={p}>{p}</option>)}
+                    {["rotina", "prioritaria", "urgente"].map((p) => <option key={p} value={p}>{PRIO_ROTULO[p] ?? p}</option>)}
                   </select>
                 </div>
                 <div>

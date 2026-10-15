@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlmodel import Session, select
 
 from app.core.deps import get_current_user_senha_ok as get_current_user, get_db
+from app.services.permissoes import need_perm
 from app.services.pec import (
     EQUIPE_RE,
     PERIODO_RE,
@@ -16,19 +17,8 @@ from app.services.pec import (
 router = APIRouter()
 
 
-def _telas(user) -> list[str]:
-    return [t.strip() for t in (user.telas or "").split(",") if t.strip()]
-
-
 def need_aps():
-    from app.models.user import User
-
-    def check(user: User = Depends(get_current_user)) -> User:
-        if not user.is_superuser and "aps" not in _telas(user):
-            raise HTTPException(status_code=403, detail="Sem acesso APS")
-        return user
-
-    return check
+    return need_perm("aps")
 
 
 def _no_store(res: Response):

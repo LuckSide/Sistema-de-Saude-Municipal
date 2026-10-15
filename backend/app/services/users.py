@@ -1,3 +1,4 @@
+import json
 import secrets
 import string
 
@@ -6,15 +7,19 @@ from sqlmodel import Session, select
 from app.core.security import hash_password, verify_password
 from app.models.user import User
 from app.schemas import UserCreate, UserUpdate
+from app.services.permissoes import TODAS_TELAS, acoes_map, validar_acoes
 
-TELAS_VALIDAS = {"dashboard", "tfd", "aps", "usuarios", "integracoes", "lab", "lab_fila", "lab_agenda", "lab_vagas", "lab_audit"}
+TELAS_VALIDAS = set(TODAS_TELAS)
 
 SENHA_MIN = 6
 
 
 def telas_to_str(telas: list[str]) -> str:
-    validas = sorted({t for t in telas if t in TELAS_VALIDAS})
-    return ",".join(validas)
+    limpas = sorted({t.strip() for t in telas if t.strip()})
+    desconhecidas = [t for t in limpas if t not in TELAS_VALIDAS]
+    if desconhecidas:
+        raise ValueError(f"tela desconhecida: {', '.join(desconhecidas)}")
+    return ",".join(limpas)
 
 
 def telas_to_list(raw: str) -> list[str]:
@@ -28,17 +33,31 @@ def to_out(user: User) -> dict:
         "nome": user.nome,
         "area": user.area,
         "telas": telas_to_list(user.telas),
+        "acoes": acoes_map(user),
+        "medico_id": getattr(user, "medico_id", None),
+        "permite_retroativo": bool(getattr(user, "permite_retroativo", True)),
         "is_superuser": user.is_superuser,
         "is_active": user.is_active,
         "must_change_password": bool(getattr(user, "must_change_password", False)),
     }
 
 
-def gerar_temporaria(tamanho: int = 10) -> str:
-    """Senha temporária legível: letras + dígitos, sem ambíguos."""
-    alfabeto = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+def gerar_temporaria(tamanho: int = 5) -> str:
+    """Senha temporária curta e ditável: minúsculas + dígitos, sem ambíguos.
+    Uso único com troca obrigatória no 1º login (nunca reutilizada)."""
+    alfabeto = "abcdefghijkmnpqrstuvwxyz23456789"
     base = "".join(secrets.choice(alfabeto) for _ in range(tamanho))
-    return f"Guape@{base}"
+    return f"Saude@{base}"
+
+
+def _validar_medico_id(db: Session, medico_id) -> int | None:
+    if medico_id is None:
+        return None
+    from app.models.cadastros_saude import Medico
+
+    if not db.get(Medico, medico_id):
+        raise ValueError("médico vinculado não encontrado")
+    return medico_id
 
 
 def get_by_username(db: Session, username: str) -> User | None:
@@ -73,6 +92,9 @@ def create_user(db: Session, data: UserCreate) -> tuple[User, str | None]:
         nome=data.nome.strip(),
         area=data.area,
         telas=telas_to_str(data.telas),
+        acoes=json.dumps(validar_acoes(data.acoes or {})),
+        medico_id=_validar_medico_id(db, data.medico_id),
+        permite_retroativo=data.permite_retroativo,
         is_superuser=data.is_superuser,
         is_active=data.is_active,
         must_change_password=True,
@@ -89,6 +111,13 @@ def update_user(db: Session, user: User, data: UserUpdate) -> User:
     patch.pop("password", None)
     if "telas" in patch and patch["telas"] is not None:
         user.telas = telas_to_str(patch.pop("telas"))
+    if "medico_id" in patch:
+        user.medico_id = _validar_medico_id(db, patch.pop("medico_id"))
+    if "acoes" in patch and patch["acoes"] is not None:
+        try:
+            user.acoes = json.dumps(validar_acoes(patch.pop("acoes")))
+        except ValueError as e:
+            raise ValueError(str(e))
     for k, v in patch.items():
         if v is not None and hasattr(user, k):
             setattr(user, k, v.strip() if isinstance(v, str) else v)

@@ -1,7 +1,9 @@
 import axios from "axios";
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL ?? "http://localhost:8000",
+  // Mesmo-origin por padrão: dev usa proxy do Vite (/api → localhost:8000),
+  // prod usa proxy do nginx (/api → backend). Evita CSP connect-src e localhost absoluto.
+  baseURL: import.meta.env.VITE_API_URL ?? "",
 });
 
 api.interceptors.request.use((config) => {
@@ -10,12 +12,71 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+/** Tradutor global de erros (i18n): HTTP/técnico em inglês ➔ pt-BR claro. */
+const GENERICOS_EN = new Set([
+  "Bad Request",
+  "Unauthorized",
+  "Forbidden",
+  "Not Found",
+  "Method Not Allowed",
+  "Request Timeout",
+  "Conflict",
+  "Unprocessable Entity",
+  "Too Many Requests",
+  "Internal Server Error",
+  "Bad Gateway",
+  "Service Unavailable",
+  "Gateway Timeout",
+]);
+
+const MAPA_STATUS: Record<number, string> = {
+  400: "Solicitação inválida. Confira os dados e tente novamente.",
+  403: "Seu usuário não possui permissão para realizar esta ação.",
+  404: "Recurso ou rota não encontrada no sistema.",
+  405: "Operação não permitida. A rota de salvamento/sugestão enviou uma requisição inválida ao servidor.",
+  422: "Dados inválidos. Confira os campos e tente novamente.",
+  500: "Ocorreu um erro interno ao processar a solicitação. Tente novamente mais tarde.",
+};
+
+/** Mensagem amigável p/ qualquer erro de API (prefere o detalhe pt-BR do backend). */
+export function msgErro(err: unknown, fallback = "Ocorreu um erro. Tente novamente."): string {
+  const e = err as {
+    response?: { status?: number; data?: { detail?: unknown } };
+    request?: unknown;
+    friendlyMessage?: string;
+  };
+  if (e?.friendlyMessage) return e.friendlyMessage;
+  const status = e?.response?.status;
+  const det = e?.response?.data?.detail;
+  const detalhe = Array.isArray(det) ? "" : typeof det === "string" ? det.trim() : "";
+  if (!e?.response) {
+    return "Sem resposta do servidor. Verifique sua conexão e tente novamente.";
+  }
+  if (detalhe && !GENERICOS_EN.has(detalhe)) {
+    return status === 500 ? (MAPA_STATUS[500] as string) : detalhe;
+  }
+  if (status && MAPA_STATUS[status]) return MAPA_STATUS[status] as string;
+  return fallback;
+}
+
 api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401) {
       localStorage.removeItem("guape:token");
       if (window.location.pathname !== "/login") window.location.href = "/login";
+    } else {
+      // Normaliza o detalhe p/ todas as telas exibirem pt-BR claro.
+      try {
+        const amigavel = msgErro(err);
+        (err as { friendlyMessage?: string }).friendlyMessage = amigavel;
+        const det = err.response?.data?.detail;
+        if (err.response?.data && (typeof det !== "string" || GENERICOS_EN.has(det.trim()))) {
+          err.response.data = { ...(err.response.data as object), detail: amigavel };
+        }
+      } catch {
+        /* nunca quebra a requisição */
+      }
     }
     return Promise.reject(err);
   }
@@ -27,6 +88,9 @@ export type Usuario = {
   nome: string;
   area: string;
   telas: string[];
+  acoes?: Record<string, string[]>;
+  medico_id?: number | null;
+  permite_retroativo?: boolean;
   is_superuser: boolean;
   is_active: boolean;
   must_change_password: boolean;
@@ -42,7 +106,41 @@ export async function login(username: string, password: string): Promise<{ token
   return { token: data.access_token as string, must_change_password: !!data.must_change_password, tem_atualizacao: tem };
 }
 
+export type Medico = {
+  id: number;
+  nome: string;
+  cpf: string;
+  crm: string;
+  cbo_codigo: string;
+  cbo_descricao: string;
+  especialidades: string;
+  telefone: string;
+  email: string;
+  ativo: boolean;
+};
+export const fetchMedicos = () => api.get<Medico[]>("/api/medicos").then((r) => r.data);
+export const createMedico = (payload: Record<string, unknown>) => api.post<Medico>("/api/medicos", payload).then((r) => r.data);
+export const updateMedico = (id: number, payload: Record<string, unknown>) => api.put<Medico>(`/api/medicos/${id}`, payload).then((r) => r.data);
+export const deleteMedico = (id: number) => api.delete(`/api/medicos/${id}`).then((r) => r.data);
+
+export type UnidadeSaude = {
+  id: number;
+  nome: string;
+  cnes: string;
+  endereco: string;
+  numero: string;
+  bairro: string;
+  municipio: string;
+  cep: string;
+  telefone: string;
+  ativo: boolean;
+};
+export const fetchUnidadesSaude = () => api.get<UnidadeSaude[]>("/api/unidades-saude").then((r) => r.data);
 export const fetchMe = () => api.get<Usuario>("/api/me").then((r) => r.data);
+export const createUnidadeSaude = (payload: Record<string, unknown>) => api.post<UnidadeSaude>("/api/unidades-saude", payload).then((r) => r.data);
+export const updateUnidadeSaude = (id: number, payload: Record<string, unknown>) => api.put<UnidadeSaude>(`/api/unidades-saude/${id}`, payload).then((r) => r.data);
+export const deleteUnidadeSaude = (id: number) => api.delete(`/api/unidades-saude/${id}`).then((r) => r.data);
+
 export const fetchUsuarios = (page?: number, limit?: number) =>
   api.get<Pagina<Usuario> | Usuario[]>("/api/usuarios/", { params: { page, limit } }).then((r) => r.data);
 export const createUsuario = (payload: Record<string, unknown>) =>
@@ -62,13 +160,54 @@ export const primeiraTrocaSenha = (senha_atual: string, nova_senha: string, conf
 export const resetSenhaUsuario = (id: number) =>
   api.post<{ ok: boolean; senha_temporaria: string; detail: string }>(`/api/usuarios/${id}/reset-senha`).then((r) => r.data);
 
-export type SystemSettings = { cidade: string; uf: string; subtitulo: string };
+export type SystemSettings = { cidade: string; uf: string; subtitulo: string; brasao_url: string; icone_url: string };
 export const fetchSettingsPublic = () =>
   api.get<SystemSettings>("/api/settings/public").then((r) => r.data);
 export const fetchSettings = () =>
   api.get<SystemSettings>("/api/settings").then((r) => r.data);
 export const saveSettings = (p: SystemSettings) =>
   api.put<SystemSettings>("/api/settings", p).then((r) => r.data);
+
+// ---------- Integrações (e-SUS APS/PEC, RNDS, importação de filas) ----------
+export type Integracoes = {
+  pec_fonte: string;
+  pec_servidor_url: string;
+  pec_usuario: string;
+  pec_senha_configurada: boolean;
+  pec_database_configurada: boolean;
+  pec_database_resumo: string;
+  rnds_ambiente: string;
+  rnds_client_id: string;
+  rnds_secret_configurado: boolean;
+  rnds_cert_configurado: boolean;
+  rnds_cert_resumo: string;
+  rnds_key_configurada: boolean;
+};
+export const fetchIntegracoes = () =>
+  api.get<Integracoes>("/api/integracoes").then((r) => r.data);
+export const savePec = (p: Record<string, unknown>) =>
+  api.put<Integracoes>("/api/integracoes/pec", p).then((r) => r.data);
+export const saveRnds = (p: Record<string, unknown>) =>
+  api.put<Integracoes>("/api/integracoes/rnds", p).then((r) => r.data);
+export const testarPec = () =>
+  api.post<{ ok: boolean; fonte_efetiva: string; detalhe: string; latencia_ms?: number }>("/api/integracoes/pec/testar").then((r) => r.data);
+export const validarRnds = () =>
+  api.post<{
+    ok: boolean; ambiente: string; link: string;
+    certificado: { configurado: boolean; subject?: string; issuer?: string; valido_de?: string; valido_ate?: string; dias_restantes?: number; expirado?: boolean };
+    chave_configurada: boolean; pendencias: string[];
+  }>("/api/integracoes/rnds/validar").then((r) => r.data);
+export type ImportFilasOut = {
+  simulacao: boolean; arquivo: string; lidas: number; pacientes_novos: number;
+  exames_novos: number; atualizados: number; duplicados: number; ignoradas: number;
+  catalogo: { tipos_novos: number; especialidades_novas: number; procedimentos_novos: number };
+  erros: { linha: number; motivo: string }[];
+};
+export const importarFilas = (arquivo: File, simular: boolean) => {
+  const form = new FormData();
+  form.append("file", arquivo);
+  return api.post<ImportFilasOut>("/api/integracoes/filas/importar", form, { params: { simular } }).then((r) => r.data);
+};
 
 // ---------- Versão / auto-update ----------
 export type UpdateStatus = {
@@ -92,6 +231,38 @@ export const updateExecutar = () =>
 export const updateLog = (linhas = 200) =>
   api.get<{ log: string }>("/api/update/log", { params: { linhas } }).then((r) => r.data);
 
+// ---------- Dashboard customizável ----------
+export type DashboardItem = { id: string; tipo: "atalho" | "widget"; ref: string };
+export const fetchDashboard = () =>
+  api.get<{ items: DashboardItem[] }>("/api/user/dashboard").then((r) => r.data.items ?? []);
+export const saveDashboard = (items: DashboardItem[]) =>
+  api.put<{ items: DashboardItem[] }>("/api/user/dashboard", { items }).then((r) => r.data.items ?? []);
+
+// ---------- Auditoria ----------
+export type AuditLog = {
+  id: number; user_id: number | null; user_name: string; action: string;
+  entity: string; entity_id: number | null; details: string; timestamp: string;
+};
+export const fetchAuditLogs = (params: { data_de?: string; data_ate?: string; usuario?: string; acao?: string; entidade?: string; page?: number; limit?: number }) =>
+  api.get<Pagina<AuditLog> | AuditLog[]>("/api/auditoria/logs", { params }).then((r) => r.data);
+export const fetchAuditFiltros = () =>
+  api.get<{ acoes: string[]; entidades: string[]; usuarios: string[] }>("/api/auditoria/filtros").then((r) => r.data);
+export type RegistroRelacionado = {
+  entity: string;
+  entity_id: number;
+  existe: boolean;
+  inativo: boolean;
+  rota: string | null;
+  titulo: string;
+  subtitulo: string;
+  pai?: { rota: string; titulo: string } | null;
+};
+export const fetchRegistroRelacionado = (entity: string, entityId: number) =>
+  api.get<RegistroRelacionado>(`/api/auditoria/registros/${entity}/${entityId}`).then((r) => r.data);
+export type TimelineEvento = { data: string; tipo: string; titulo: string; detalhe: string; usuario: string; status: string };
+export const fetchTimeline = (pacienteId: number) =>
+  api.get<{ paciente: { id: number; nome: string }; status_atual: string; eventos: TimelineEvento[] }>(`/api/auditoria/pacientes/${pacienteId}/timeline`).then((r) => r.data);
+
 // ---------- TFD ----------
 export type Paciente = {
   id: number;
@@ -101,8 +272,40 @@ export type Paciente = {
   nascimento: string | null;
   telefone: string;
   endereco: string;
+  endereco_numero: string;
+  bairro: string;
+  cep: string;
+  unidade_saude_id: number | null;
+  equipe_esf: string;
+  acs_nome: string;
   observacoes: string;
 };
+
+export type DemandaItem = {
+  id: number;
+  exame: string;
+  especialidade: string;
+  nome_especialidade: string;
+  tipo_fila: string;
+  prioridade: string;
+  classificacao_risco: string;
+  data_pedido: string | null;
+  data_inclusao: string;
+  posicao_especialidade: number | null;
+  total_fila_especialidade: number | null;
+  status: string;
+  status_rotulo: string;
+  data_agendada: string | null;
+  hora_agendada: string;
+};
+
+export type PacientePerfil = {
+  paciente: Paciente;
+  unidade_saude_nome: string;
+  demanda: DemandaItem[];
+};
+export const tfdPerfilPaciente = (id: number) =>
+  api.get<PacientePerfil>(`/api/tfd/pacientes/${id}/perfil`).then((r) => r.data);
 
 export type Veiculo = {
   id: number;
@@ -110,6 +313,7 @@ export type Veiculo = {
   modelo: string;
   capacidade: number;
   tipo: string;
+  status: string;
   ativo: boolean;
 };
 
@@ -121,6 +325,12 @@ export type Viagem = {
   hora_saida: string;
   veiculo_id: number | null;
   motorista: string;
+  departamento: string;
+  data_retorno: string | null;
+  hora_retorno: string;
+  km_inicial: number;
+  km_final: number;
+  adiantamento: number;
   status: string;
   finalidade: string;
   observacoes: string;
@@ -133,6 +343,10 @@ export type Destino = {
   nome_destino: string;
   hospital_referencia: string;
   procedimento_sigtap: string;
+  codigo_desloc_pac: string;
+  qtd_desloc_pac: number;
+  codigo_desloc_acomp: string;
+  qtd_desloc_acomp: number;
   ativo: boolean;
 };
 
@@ -143,7 +357,97 @@ export type Passageiro = {
   acompanhante: string;
   presente: boolean;
   paciente_nome: string;
+  viagem_fila_id?: number | null;
+  tratamento?: string;
+  unidade?: string;
+  hora_consulta?: string;
 };
+
+export type ViagemFila = {
+  id: number;
+  paciente_id: number;
+  destino: string;
+  unidade: string;
+  tratamento: string;
+  data_consulta: string | null;
+  hora_consulta: string;
+  acompanhante: boolean;
+  prioridade: string;
+  status: string;
+  exame_fila_id: number | null;
+  observacoes: string;
+  paciente_nome: string;
+  paciente_cpf: string;
+  paciente_nascimento: string | null;
+};
+
+export type DiaPassageiro = Passageiro & {
+  paciente_cpf: string;
+  paciente_nascimento: string | null;
+};
+
+export type DiaViagem = {
+  id: number;
+  destino: string;
+  unidade: string;
+  data_viagem: string;
+  hora_saida: string;
+  motorista: string;
+  status: string;
+  finalidade: string;
+  veiculo_id: number | null;
+  veiculo_placa: string;
+  veiculo_modelo: string;
+  capacidade: number;
+  ocupados: number;
+  vagas: number;
+  passageiros: DiaPassageiro[];
+};
+
+export type DiaDestino = {
+  destino: string;
+  viagens: DiaViagem[];
+  demanda_aguardando: number;
+};
+
+export type FrotaDia = {
+  id: number;
+  placa: string;
+  modelo: string;
+  tipo: string;
+  capacidade: number;
+  status: string;
+  em_outra_viagem: boolean;
+};
+
+export const tfdFilaViagem = (params?: { destino?: string; status?: string }) =>
+  api.get<ViagemFila[]>("/api/tfd/viagens-fila", { params }).then((r) => r.data);
+export const tfdCriarFilaViagem = (p: Record<string, unknown>) =>
+  api.post<ViagemFila>("/api/tfd/viagens-fila", p).then((r) => r.data);
+export const tfdAtualizarFilaViagem = (id: number, p: Record<string, unknown>) =>
+  api.put<ViagemFila>(`/api/tfd/viagens-fila/${id}`, p).then((r) => r.data);
+export const tfdExcluirFilaViagem = (id: number) =>
+  api.delete(`/api/tfd/viagens-fila/${id}`);
+export const tfdPuxarAgendados = (data?: string) =>
+  api.post<{ criados: number }>("/api/tfd/viagens-fila/puxar-agendados", null, { params: { data } }).then((r) => r.data);
+export const tfdDia = (data: string) =>
+  api.get<{ data: string; destinos: DiaDestino[]; frota: FrotaDia[] }>("/api/tfd/viagens/dia", { params: { data } }).then((r) => r.data);
+export type DiaSemana = { data: string; destinos: DiaDestino[] };
+export const tfdSemana = (inicio: string) =>
+  api.get<{ inicio: string; dias: DiaSemana[]; frota: FrotaDia[] }>("/api/tfd/viagens/semana", { params: { inicio } }).then((r) => r.data);
+export const tfdFaturarDeslocamento = (id: number) =>
+  api.post<{ criados: number; ignorados: number }>(`/api/tfd/viagens/${id}/faturar-deslocamento`).then((r) => r.data);
+export const tfdSugestao = (data: string, destino: string) =>
+  api.get<{ veiculo: FrotaDia | null; demanda: number; assentos: number; motivo: string }>("/api/tfd/viagens/sugestao", { params: { data, destino } }).then((r) => r.data);
+export const tfdOrdemCirculacaoBlob = async (id: number): Promise<{ url: string; nome: string }> => {
+  const r = await api.get(`/api/tfd/viagens/${id}/ordem-circulacao`, { responseType: "blob" });
+  const disp: string = r.headers?.["content-disposition"] ?? "";
+  const m = disp.match(/filename="?([^";]+)"?/);
+  const blob = new Blob([r.data as BlobPart], { type: (r.headers?.["content-type"] as string | undefined) ?? undefined });
+  return { url: URL.createObjectURL(blob), nome: m ? m[1] : `ordem_circulacao_${id}.odt` };
+};
+export const tfdOrdemCirculacao = (id: number) =>
+  api.get<Blob>(`/api/tfd/viagens/${id}/ordem-circulacao`, { responseType: "blob" }).then((r) => r.data);
 
 export type Exame = {
   id: number;
@@ -155,16 +459,32 @@ export type Exame = {
   codigo_especialidade: string;
   nome_especialidade: string;
   prioridade: string;
+  justificativa_prioridade?: string;
   status: string;
   data_pedido: string;
   data_agendada: string | null;
+  hora_agendada?: string;
+  medico_id?: number | null;
+  unidade_saude_id?: number | null;
   destino: string;
   observacoes: string;
   paciente_nome: string;
+  paciente_cpf?: string;
   codigo_curto?: string;
   public_token?: string;
   posicao?: number | null;
   total_fila?: number | null;
+  medico_nome?: string;
+  medico_cpf?: string;
+  medico_cbo_codigo?: string;
+  medico_cbo_descricao?: string;
+  unidade_nome?: string;
+  unidade_cnes?: string;
+  unidade_endereco?: string;
+  unidade_numero?: string;
+  unidade_bairro?: string;
+  unidade_municipio?: string;
+  unidade_cep?: string;
 };
 
 export type ExamePublico = {
@@ -306,6 +626,8 @@ export type FilaExamesParams = {
   destino?: string;
   data_de?: string;
   data_ate?: string;
+  agendada_em?: string;
+  meus?: boolean;
   page?: number;
   limit?: number;
 };
@@ -359,19 +681,25 @@ export const tfdCriarExame = (p: Record<string, unknown>) =>
   api.post<Exame>("/api/tfd/exames", p).then((r) => r.data);
 export const tfdAtualizarExame = (id: number, p: Record<string, unknown>) =>
   api.put<Exame>(`/api/tfd/exames/${id}`, p).then((r) => r.data);
+export const tfdAlterarPrioridade = (id: number, p: { prioridade: string; justificativa: string }) =>
+  api.put<Exame>(`/api/tfd/exames/${id}/prioridade`, p).then((r) => r.data);
 export type ExameLotePayload = {
   ids: number[];
   status?: string;
   data_agendada?: string | null;
+  hora_agendada?: string;
+  medico_id?: number;
+  unidade_saude_id?: number;
   limpar_data_agendada?: boolean;
   destino?: string;
   prioridade?: string;
+  justificativa_prioridade?: string;
   observacoes?: string;
 };
 export const tfdAtualizarExamesLote = (p: ExameLotePayload) =>
   api.put<{ atualizados: number; nao_encontrados: number[] }>("/api/tfd/exames/lote", p).then((r) => r.data);
-export const tfdExcluirExame = (id: number) =>
-  api.delete(`/api/tfd/exames/${id}`);
+export const tfdExcluirExame = (id: number, motivo?: string) =>
+  api.delete(`/api/tfd/exames/${id}`, { params: motivo ? { motivo } : undefined });
 export type CatalogoProc = {
   exame: string;
   nome_procedimento?: string;
@@ -409,6 +737,53 @@ export type SigtapProc = {
   descricao: string;
   complexidade: string;
   instrumento: string;
+  sexo?: string;
+  idade_min?: number;
+  idade_max?: number;
+  qtd_maxima?: number;
+  pontos?: number;
+  valor_sa?: number;
+  valor_sp?: number;
+  valor_sh?: number;
+  competencia?: string;
+};
+
+export type SigtapVersao = {
+  id: number;
+  competencia: string;
+  origem: string;
+  arquivo: string;
+  total_proc: number;
+  inseridos: number;
+  atualizados: number;
+  cbo_total: number;
+  cid_total: number;
+  ignorados: number;
+  usuario: string;
+  criado_em: string;
+};
+
+export type SigtapImportOut = {
+  simulacao: boolean;
+  arquivo: string;
+  competencia: string;
+  processados: number;
+  inseridos: number;
+  atualizados: number;
+  ignorados: number;
+  cbo_total: number;
+  cid_total: number;
+  erros: { arquivo: string; linha: number; motivo: string }[];
+};
+
+export const sigtapVersoes = () =>
+  api.get<SigtapVersao[]>("/api/lab/sigtap/versoes").then((r) => r.data);
+export const sigtapImportar = (arquivo: File, competencia: string, simular: boolean) => {
+  const form = new FormData();
+  form.append("file", arquivo);
+  return api
+    .post<SigtapImportOut>("/api/lab/sigtap/importar", form, { params: { competencia, simular } })
+    .then((r) => r.data);
 };
 
 export type LabSol = {
@@ -477,6 +852,10 @@ export type Laboratorio = { id: number; nome: string; ativo: boolean };
 
 export const labsListar = () =>
   api.get<Laboratorio[]>("/api/exames/laboratorios").then((r) => r.data);
+export const labsCriar = (nome: string, ativo = true) =>
+  api.post<Laboratorio>("/api/exames/laboratorios", { nome, ativo }).then((r) => r.data);
+export const labsRemover = (id: number) =>
+  api.delete<void>(`/api/exames/laboratorios/${id}`).then((r) => r.data);
 
 export type FilaPsfItem = {
   id: number;

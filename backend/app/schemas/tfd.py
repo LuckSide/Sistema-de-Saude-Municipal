@@ -11,11 +11,45 @@ class PacienteIn(BaseModel):
     nascimento: date | None = None
     telefone: str = Field(default="", max_length=20)
     endereco: str = Field(default="", max_length=255)
+    endereco_numero: str = Field(default="", max_length=20)
+    bairro: str = Field(default="", max_length=100)
+    cep: str = Field(default="", max_length=10)
+    unidade_saude_id: int | None = None
+    equipe_esf: str = Field(default="", max_length=80)
+    acs_nome: str = Field(default="", max_length=150)
     observacoes: str = Field(default="", max_length=500)
 
 
 class PacienteOut(PacienteIn):
     id: int
+
+
+class DemandaItemOut(BaseModel):
+    """Item da demanda reprimida do paciente (fila ativa por especialidade)."""
+
+    id: int
+    exame: str = ""
+    especialidade: str = ""
+    nome_especialidade: str = ""
+    tipo_fila: str = ""
+    prioridade: str = ""
+    classificacao_risco: str = ""
+    data_pedido: date | None = None
+    data_inclusao: str = ""
+    posicao_especialidade: int | None = None
+    total_fila_especialidade: int | None = None
+    status: str = ""
+    status_rotulo: str = ""
+    data_agendada: date | None = None
+    hora_agendada: str = ""
+
+
+class PacientePerfilOut(BaseModel):
+    """Perfil do paciente: dados pessoais + territorialização APS + demanda cronológica."""
+
+    paciente: PacienteOut
+    unidade_saude_nome: str = ""
+    demanda: list[DemandaItemOut] = []
 
 
 # ---------- Veículos ----------
@@ -24,6 +58,7 @@ class VeiculoIn(BaseModel):
     modelo: str = Field(default="", max_length=80)
     capacidade: int = Field(default=4, ge=1, le=60)
     tipo: str = Field(default="carro", pattern="^(carro|van|micro|amb)$")
+    status: str = Field(default="disponivel", pattern="^(disponivel|manutencao)$")
     ativo: bool = True
 
 
@@ -36,6 +71,10 @@ class DestinoIn(BaseModel):
     nome_destino: str = Field(min_length=2, max_length=120)
     hospital_referencia: str = Field(default="", max_length=150)
     procedimento_sigtap: str = Field(default="", max_length=20)
+    codigo_desloc_pac: str = Field(default="", max_length=20)
+    qtd_desloc_pac: int = Field(default=0, ge=0)
+    codigo_desloc_acomp: str = Field(default="", max_length=20)
+    qtd_desloc_acomp: int = Field(default=0, ge=0)
     ativo: bool = True
 
 
@@ -51,6 +90,12 @@ class ViagemIn(BaseModel):
     hora_saida: str = Field(default="", max_length=5)
     veiculo_id: int | None = None
     motorista: str = Field(default="", max_length=120)
+    departamento: str = Field(default="", max_length=120)
+    data_retorno: date | None = None
+    hora_retorno: str = Field(default="", max_length=5)
+    km_inicial: int = Field(default=0, ge=0)
+    km_final: int = Field(default=0, ge=0)
+    adiantamento: float = Field(default=0, ge=0)
     status: str = Field(
         default="agendada",
         pattern="^(agendada|andamento|concluida|cancelada)$",
@@ -69,6 +114,10 @@ class ViagemPacienteIn(BaseModel):
     paciente_id: int
     acompanhante: str = Field(default="", max_length=150)
     presente: bool = True
+    viagem_fila_id: int | None = None
+    tratamento: str = Field(default="", max_length=150)
+    unidade: str = Field(default="", max_length=150)
+    hora_consulta: str = Field(default="", max_length=5)
 
 
 class ViagemPacienteOut(ViagemPacienteIn):
@@ -77,22 +126,51 @@ class ViagemPacienteOut(ViagemPacienteIn):
     paciente_nome: str = ""
 
 
+# ---------- Fila de espera para viagem ----------
+class ViagemFilaIn(BaseModel):
+    paciente_id: int
+    destino: str = Field(min_length=2, max_length=120)
+    unidade: str = Field(default="", max_length=150)
+    tratamento: str = Field(default="", max_length=150)
+    data_consulta: date | None = None
+    hora_consulta: str = Field(default="", max_length=5)
+    acompanhante: bool = False
+    prioridade: str = Field(default="rotina", pattern="^(rotina|prioritaria|urgente)$")
+    status: str = Field(
+        default="aguardando",
+        pattern="^(aguardando|alocado|cancelado)$",
+    )
+    exame_fila_id: int | None = None
+    observacoes: str = Field(default="", max_length=500)
+
+
+class ViagemFilaOut(ViagemFilaIn):
+    id: int
+    paciente_nome: str = ""
+    paciente_cpf: str = ""
+    paciente_nascimento: date | None = None
+
+
 # ---------- Fila de exames ----------
 class ExameIn(BaseModel):
     paciente_id: int
     exame: str = Field(min_length=2, max_length=120)
     especialidade: str = Field(default="", max_length=80)
-    tipo_fila: str = Field(default="", max_length=80)
+    tipo_fila: str = Field(default="ELETIVO", max_length=80)
     codigo_procedimento: str = Field(default="", max_length=20)
     codigo_especialidade: str = Field(default="", max_length=10)
     nome_especialidade: str = Field(default="", max_length=120)
     prioridade: str = Field(default="rotina", pattern="^(rotina|prioritaria|urgente)$")
+    justificativa_prioridade: str = Field(default="", max_length=500)
     status: str = Field(
         default="aguardando",
         pattern="^(aguardando|agendado|realizado|cancelado)$",
     )
     data_pedido: date
     data_agendada: date | None = None
+    hora_agendada: str = Field(default="", max_length=5)
+    medico_id: int | None = None
+    unidade_saude_id: int | None = None
     destino: str = Field(default="", max_length=120)
     observacoes: str = Field(default="", max_length=500)
     codigo_curto: str = Field(default="", max_length=12)  # novo modelo; legado ignora
@@ -104,9 +182,13 @@ class ExameLoteIn(BaseModel):
     ids: list[int] = Field(min_length=1, max_length=200)
     status: str = Field(default="", pattern="^(|aguardando|agendado|realizado|cancelado)$")
     data_agendada: date | None = None
+    hora_agendada: str = Field(default="", max_length=5)
+    medico_id: int | None = None
+    unidade_saude_id: int | None = None
     limpar_data_agendada: bool = False
     destino: str = Field(default="", max_length=120)
     prioridade: str = Field(default="", pattern="^(|rotina|prioritaria|urgente)$")
+    justificativa_prioridade: str = Field(default="", max_length=500)
     observacoes: str = Field(default="", max_length=500)
 
 
@@ -118,9 +200,29 @@ class ExameLoteOut(BaseModel):
 class ExameOut(ExameIn):
     id: int
     paciente_nome: str = ""
+    paciente_cpf: str = ""
     public_token: str = ""
     posicao: int | None = None
     total_fila: int | None = None
+    # Snapshot do agendamento (resolvido no momento da marcação)
+    medico_nome: str = ""
+    medico_cpf: str = ""
+    medico_cbo_codigo: str = ""
+    medico_cbo_descricao: str = ""
+    unidade_nome: str = ""
+    unidade_cnes: str = ""
+    unidade_endereco: str = ""
+    unidade_numero: str = ""
+    unidade_bairro: str = ""
+    unidade_municipio: str = ""
+    unidade_cep: str = ""
+
+
+class PrioridadeIn(BaseModel):
+    """Alteração de prioridade pelo médico envolvido (justificativa obrigatória)."""
+
+    prioridade: str = Field(pattern="^(rotina|prioritaria|urgente)$")
+    justificativa: str = Field(min_length=1, max_length=500)
 
 
 class ExamePublicoOut(BaseModel):

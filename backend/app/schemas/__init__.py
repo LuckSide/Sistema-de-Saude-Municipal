@@ -22,6 +22,9 @@ class UserCreate(BaseModel):
     nome: str = Field(default="", max_length=120)
     area: str = Field(default="painel", pattern="^(painel|ferramentas)$")
     telas: list[str] = Field(default_factory=list)
+    acoes: dict[str, list[str]] = Field(default_factory=dict)
+    medico_id: int | None = None
+    permite_retroativo: bool = True
     is_superuser: bool = False
     is_active: bool = True
 
@@ -30,6 +33,9 @@ class UserUpdate(BaseModel):
     nome: str | None = None
     area: str | None = Field(default=None, pattern="^(painel|ferramentas)$")
     telas: list[str] | None = None
+    acoes: dict[str, list[str]] | None = None
+    medico_id: int | None = None
+    permite_retroativo: bool | None = None
     is_superuser: bool | None = None
     is_active: bool | None = None
 
@@ -46,9 +52,31 @@ class UserOut(BaseModel):
     nome: str
     area: str
     telas: list[str]
+    acoes: dict[str, list[str]] = {}
+    medico_id: int | None = None
+    permite_retroativo: bool = True
     is_superuser: bool
     is_active: bool
     must_change_password: bool = False
+
+
+# ---------- Dashboard customizável ----------
+class DashboardItem(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    id: str = Field(min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
+    tipo: str = Field(pattern="^(atalho|widget)$")
+    ref: str = Field(min_length=1, max_length=40)
+
+
+class DashboardIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    items: list[DashboardItem] = Field(default_factory=list, max_length=30)
+
+
+class DashboardOut(BaseModel):
+    items: list[DashboardItem] = []
 
 
 class TrocarSenhaIn(BaseModel):

@@ -46,7 +46,7 @@ export default function TrocarSenhaModal({ onClose }: { onClose: () => void }) {
       onClick={onClose}
     >
       <div
-        className="rise w-full max-w-sm rounded-2xl bg-white p-6 shadow-card"
+        className="rise max-h-[90vh] w-full max-w-sm overflow-y-auto rounded-2xl bg-white p-6 shadow-card"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">

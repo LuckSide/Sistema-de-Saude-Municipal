@@ -14,6 +14,12 @@ class Paciente(SQLModel, table=True):
     nascimento: date | None = Field(default=None, sa_column=Column(Date))
     telefone: str = Field(default="", max_length=20)
     endereco: str = Field(default="", max_length=255)
+    endereco_numero: str = Field(default="", max_length=20)
+    bairro: str = Field(default="", max_length=100)
+    cep: str = Field(default="", max_length=10)
+    unidade_saude_id: int | None = Field(default=None, index=True)
+    equipe_esf: str = Field(default="", max_length=80)
+    acs_nome: str = Field(default="", max_length=150)
     observacoes: str = Field(default="", max_length=500)
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
@@ -29,6 +35,7 @@ class Veiculo(SQLModel, table=True):
     modelo: str = Field(default="", max_length=80)
     capacidade: int = Field(default=4)
     tipo: str = Field(default="carro", max_length=20)  # carro | van | micro | amb
+    status: str = Field(default="disponivel", max_length=20)  # disponivel|manutencao
     ativo: bool = Field(default=True)
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
@@ -43,6 +50,10 @@ class Destino(SQLModel, table=True):
     nome_destino: str = Field(max_length=120, index=True, unique=True)
     hospital_referencia: str = Field(default="", max_length=150)
     procedimento_sigtap: str = Field(default="", max_length=20)
+    codigo_desloc_pac: str = Field(default="", max_length=20)
+    qtd_desloc_pac: int = Field(default=0)
+    codigo_desloc_acomp: str = Field(default="", max_length=20)
+    qtd_desloc_acomp: int = Field(default=0)
     ativo: bool = Field(default=True, index=True)
 
 
@@ -56,6 +67,12 @@ class Viagem(SQLModel, table=True):
     hora_saida: str = Field(default="", max_length=5)  # HH:MM
     veiculo_id: int | None = Field(default=None, foreign_key="tfd_veiculos.id")
     motorista: str = Field(default="", max_length=120)
+    departamento: str = Field(default="", max_length=120)
+    data_retorno: date | None = Field(default=None, sa_column=Column(Date))
+    hora_retorno: str = Field(default="", max_length=5)
+    km_inicial: int = Field(default=0)
+    km_final: int = Field(default=0)
+    adiantamento: float = Field(default=0)
     status: str = Field(
         default="agendada", max_length=20, index=True
     )  # agendada|andamento|concluida|cancelada
@@ -75,6 +92,37 @@ class ViagemPaciente(SQLModel, table=True):
     paciente_id: int = Field(foreign_key="tfd_pacientes.id", index=True)
     acompanhante: str = Field(default="", max_length=150)
     presente: bool = Field(default=True)
+    viagem_fila_id: int | None = Field(default=None, index=True)
+    tratamento: str = Field(default="", max_length=150)
+    unidade: str = Field(default="", max_length=150)
+    hora_consulta: str = Field(default="", max_length=5)
+
+
+class ViagemFila(SQLModel, table=True):
+    """Fila de espera de pacientes para viagem (transporte a outro município)."""
+
+    __tablename__ = "tfd_viagem_fila"
+
+    id: int | None = Field(default=None, primary_key=True)
+    paciente_id: int = Field(foreign_key="tfd_pacientes.id", index=True)
+    destino: str = Field(max_length=120, index=True)  # cidade de destino
+    unidade: str = Field(default="", max_length=150)  # hospital/unidade de atendimento
+    tratamento: str = Field(default="", max_length=150)  # exame/consulta/tratamento
+    data_consulta: date | None = Field(default=None, sa_column=Column(Date))
+    hora_consulta: str = Field(default="", max_length=5)
+    acompanhante: bool = Field(default=False)
+    prioridade: str = Field(default="rotina", max_length=20)  # rotina|prioritaria|urgente
+    status: str = Field(default="aguardando", max_length=20, index=True)  # aguardando|alocado|cancelado
+    exame_fila_id: int | None = Field(default=None, index=True)
+    observacoes: str = Field(default="", max_length=500)
+    created_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=False)),
+    )
+    viagem_fila_id: int | None = Field(default=None, index=True)
+    tratamento: str = Field(default="", max_length=150)
+    unidade: str = Field(default="", max_length=150)
+    hora_consulta: str = Field(default="", max_length=5)
 
 
 class ExameFila(SQLModel, table=True):
@@ -93,11 +141,32 @@ class ExameFila(SQLModel, table=True):
     codigo_especialidade: str = Field(default="", max_length=10, index=True)
     nome_especialidade: str = Field(default="", max_length=120)
     prioridade: str = Field(default="rotina", max_length=20)  # rotina|prioritaria|urgente
+    justificativa_prioridade: str = Field(default="", max_length=500)
     status: str = Field(
         default="aguardando", max_length=20, index=True
     )  # aguardando|agendado|realizado|cancelado
     data_pedido: date = Field(sa_column=Column(Date, index=True))
     data_agendada: date | None = Field(default=None, sa_column=Column(Date))
+    hora_agendada: str = Field(default="", max_length=5)
+    medico_id: int | None = Field(default=None, index=True)
+    unidade_saude_id: int | None = Field(default=None, index=True)
+    # Snapshot do agendamento (médico + unidade no momento da marcação)
+    medico_nome: str = Field(default="", max_length=150)
+    medico_cpf: str = Field(default="", max_length=14)
+    medico_cbo_codigo: str = Field(default="", max_length=10)
+    medico_cbo_descricao: str = Field(default="", max_length=120)
+    unidade_nome: str = Field(default="", max_length=150)
+    unidade_cnes: str = Field(default="", max_length=20)
+    unidade_endereco: str = Field(default="", max_length=200)
+    unidade_numero: str = Field(default="", max_length=20)
+    unidade_bairro: str = Field(default="", max_length=100)
+    unidade_municipio: str = Field(default="", max_length=100)
+    unidade_cep: str = Field(default="", max_length=10)
+    # Soft delete: remoção da fila preserva histórico + timeline
+    ativo: bool = Field(default=True, index=True)
+    motivo_remocao: str = Field(default="", max_length=500)
+    removido_em: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=False)))
+    removido_por: str = Field(default="", max_length=120)
     destino: str = Field(default="", max_length=120)
     observacoes: str = Field(default="", max_length=500)
     public_token: str = Field(default="", max_length=64, index=True)

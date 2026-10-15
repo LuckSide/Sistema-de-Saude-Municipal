@@ -5,6 +5,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 
 from app.api.v1.auth import router as auth_router
+from app.api.v1.auditoria import router as auditoria_router
+from app.api.v1.cadastros_saude import router as cadastros_saude_router
+from app.api.v1.dashboard import router as dashboard_router
+from app.api.v1.indicadores import router as indicadores_router
+from app.api.v1.integracoes import router as integracoes_router
 from app.api.v1.lab import router as lab_router
 from app.api.v1.lab_fase6 import router as lab_fase6_router
 from app.api.v1.indicadores import router as indicadores_router
@@ -14,6 +19,7 @@ from app.api.v1.tfd import router as tfd_router
 from app.api.v1.update import router as update_router
 from app.api.v1.users import router as users_router
 from app.core.config import settings
+from app.core.audit import AuditMiddleware
 from app.db.session import engine, init_db
 from app.services.users import ensure_first_superuser
 
@@ -28,7 +34,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Saúde Guapé — API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Sistema de Saúde — API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,12 +54,20 @@ async def security_headers(request, call_next):
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
+
+# Auditoria global de escritas (roda por fora; nunca quebra a requisição).
+app.add_middleware(AuditMiddleware)
+
+app.include_router(cadastros_saude_router, prefix="/api", tags=["cadastros_saude"])
 app.include_router(auth_router, prefix="/api", tags=["auth"])
+app.include_router(auditoria_router, prefix="/api", tags=["auditoria"])
+app.include_router(dashboard_router, prefix="/api", tags=["dashboard"])
 app.include_router(users_router, prefix="/api/usuarios", tags=["usuarios"])
 app.include_router(tfd_router, prefix="/api/tfd", tags=["tfd"])
 app.include_router(lab_router, prefix="/api/lab", tags=["lab"])
 app.include_router(lab_fase6_router, prefix="/api", tags=["fase6"])
 app.include_router(indicadores_router, prefix="/api", tags=["indicadores"])
+app.include_router(integracoes_router, prefix="/api", tags=["integracoes"])
 app.include_router(pec_router, prefix="/api", tags=["pec"])
 app.include_router(settings_router, prefix="/api", tags=["settings"])
 app.include_router(update_router, prefix="/api/update", tags=["update"])

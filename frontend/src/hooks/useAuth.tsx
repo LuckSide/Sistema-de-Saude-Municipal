@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { fetchMe, login as apiLogin, type Usuario } from "../services/api";
+import { concedida } from "../permissoes";
 
 type AuthCtx = {
   user: Usuario | null;
@@ -16,6 +17,12 @@ type AuthCtx = {
   logout: () => void;
   refreshMe: () => Promise<Usuario>;
   can: (tela: string) => boolean;
+  /** Perfil Médico: tela tfd_medico explícita (exclusiva) ou superuser. */
+  isMedico: boolean;
+  /** Trava de lançamentos retroativos (data < hoje), salvo flag ou superuser. */
+  retroativoBloqueado: boolean;
+  /** Pode alterar prioridade/justificativa deste pedido (superuser ou médico envolvido). */
+  podeAlterarPrioridade: (medicoIdDoPedido?: number | null) => boolean;
   precisaTrocarSenha: boolean;
 };
 
@@ -59,16 +66,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     (tela: string) => {
       if (!user) return false;
       if (user.is_superuser) return true;
-      return user.telas.includes(tela);
+      return concedida(user.telas, tela);
     },
     [user]
   );
 
   const precisaTrocarSenha = !!user?.must_change_password;
 
+  const isMedico = !!user && (user.is_superuser || concedida(user.telas, "tfd_medico"));
+
+  const retroativoBloqueado = !!user && !user.is_superuser && user.permite_retroativo === false;
+
+  const podeAlterarPrioridade = useCallback(
+    (medicoIdDoPedido?: number | null) => {
+      if (!user) return false;
+      if (user.is_superuser) return true;
+      if (!concedida(user.telas, "tfd_medico")) return false;
+      if (!user.medico_id) return false;
+      return (medicoIdDoPedido ?? null) === user.medico_id;
+    },
+    [user]
+  );
+
   const value = useMemo(
-    () => ({ user, loading, login, logout, refreshMe, can, precisaTrocarSenha }),
-    [user, loading, login, logout, refreshMe, can, precisaTrocarSenha]
+    () => ({ user, loading, login, logout, refreshMe, can, isMedico, retroativoBloqueado, podeAlterarPrioridade, precisaTrocarSenha }),
+    [user, loading, login, logout, refreshMe, can, isMedico, retroativoBloqueado, podeAlterarPrioridade, precisaTrocarSenha]
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -1,11 +1,24 @@
 import { useEffect, useState } from "react";
 import { fetchSettingsPublic, type SystemSettings } from "../services/api";
 
-const DEFAULTS: SystemSettings = { cidade: "Guapé", uf: "MG", subtitulo: "Secretaria Municipal" };
+const DEFAULTS: SystemSettings = { cidade: "Guapé", uf: "MG", subtitulo: "Secretaria Municipal", brasao_url: "", icone_url: "" };
 
 function aplicarVisual(s: SystemSettings) {
   const cidade = (s.cidade || "Guapé").trim() || "Guapé";
   document.title = `Saúde ${cidade} — Gestão SMS`;
+  // Ícone da marca: URL configurada prevalece; senão cruz médica com inicial.
+  const icone = (s.icone_url || "").trim();
+  let link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
+  if (!link) {
+    link = document.createElement("link");
+    link.rel = "icon";
+    document.head.appendChild(link);
+  }
+  if (icone) {
+    link.type = icone.startsWith("data:") ? "image/svg+xml" : "image/png";
+    link.href = icone;
+    return;
+  }
   // Favicon cruz médica com inicial da cidade (ex: G p/ Guapé)
   const inicial = (cidade.trim()[0] || "S").toUpperCase();
   const svg =
@@ -14,12 +27,6 @@ function aplicarVisual(s: SystemSettings) {
     `<rect x='26' y='12' width='12' height='40' rx='3' fill='#ffffff'/>` +
     `<rect x='12' y='26' width='40' height='12' rx='3' fill='#ffffff'/>` +
     `<text x='32' y='60' font-size='11' text-anchor='middle' fill='#14B8A6' font-family='sans-serif' font-weight='bold'>${inicial}</text></svg>`;
-  let link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
-  if (!link) {
-    link = document.createElement("link");
-    link.rel = "icon";
-    document.head.appendChild(link);
-  }
   link.type = "image/svg+xml";
   link.href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
