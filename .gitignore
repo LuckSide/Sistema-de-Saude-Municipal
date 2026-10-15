@@ -29,3 +29,6 @@ pgdata/
 # Update
 /tmp/atualizacao.log
 tsconfig.tsbuildinfo
+
+# OpenChamber temp artifacts
+.openchamber/
