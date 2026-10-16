@@ -43,12 +43,13 @@ const NAV = [
 
 const TFD_SUB = [
   { to: "/tfd/viagens", label: "Viagens", icon: Ambulance, tela: "tfd_viagens" },
-  { to: "/tfd/quadro", label: "Quadro semanal", icon: Bus, tela: "tfd_viagens" },
+  { to: "/tfd/quadro", label: "Quadro semanal", icon: Bus, tela: "tfd_viagens", ou: ["tfd_frota_gestao"] },
   { to: "/tfd/agenda", label: "Agenda", icon: CalendarDays, tela: "tfd_agenda" },
   { to: "/tfd/destinos", label: "Destinos", icon: MapPin, tela: "tfd_destinos" },
   { to: "/tfd/pacientes", label: "Pacientes", icon: Users, tela: "tfd_pacientes" },
   { to: "/tfd/catalogo", label: "Catálogo exames", icon: BookOpenText, tela: "tfd_catalogo" },
   { to: "/tfd/frota", label: "Frota", icon: CalendarDays, tela: "tfd_frota" },
+  { to: "/tfd/motoristas", label: "Motoristas", icon: Users, tela: "tfd_frota" },
   { to: "/tfd/faturamento", label: "Faturamento", icon: ReceiptText, tela: "tfd_faturamento" },
 ];
 
@@ -67,8 +68,16 @@ const canLab = (can: (t: string) => boolean) => LAB_TELAS.some((t) => can(t));
 // Configurações centraliza município, filas, PEC e RNDS: visível p/ quem tem
 // "usuarios" (admin) ou a tela legada "integracoes".
 const canConfig = (can: (t: string) => boolean) => can("usuarios") || can("integracoes");
-const visivel = (tela: string, can: (t: string) => boolean) =>
-  tela === "__lab__" ? canLab(can) : tela === "__config__" ? canConfig(can) : can(tela);
+const visivel = (tela: string, can: (t: string) => boolean) => {
+  if (tela === "__lab__") return canLab(can);
+  if (tela === "__config__") return canConfig(can);
+  // Módulo TFD visível se tem o pai ou qualquer subtela (ex: só tfd_frota_gestao).
+  if (tela === "tfd") {
+    if (can("tfd")) return true;
+    return TFD_SUB.some((s) => can(s.tela) || ((s as { ou?: string[] }).ou ?? []).some((t) => can(t)));
+  }
+  return can(tela);
+};
 
 export function SidebarConteudo({ onNavegar }: { onNavegar?: () => void }) {
   const { user, can, logout } = useAuth();
@@ -117,9 +126,9 @@ export function SidebarConteudo({ onNavegar }: { onNavegar?: () => void }) {
                 <n.icon className="h-[18px] w-[18px]" />
                 {n.label}
               </NavLink>
-              {n.to === "/tfd" && can("tfd") && inTfd && (
+              {n.to === "/tfd" && (can("tfd") || TFD_SUB.some((s) => can(s.tela) || ((s as { ou?: string[] }).ou ?? []).some((t) => can(t)))) && inTfd && (
                 <div className="ml-5 mt-1.5 space-y-1 border-l border-white/10 pl-2.5">
-                  {TFD_SUB.filter((s) => can("tfd") || can(s.tela)).map((s) => (
+                  {TFD_SUB.filter((s) => can("tfd") || can(s.tela) || ((s as { ou?: string[] }).ou ?? []).some((t) => can(t))).map((s) => (
                     <NavLink
                       key={s.to}
                       to={s.to}

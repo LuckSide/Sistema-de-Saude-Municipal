@@ -1,4 +1,13 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.services.validacoes import (
+    so_digitos,
+    valida_cnes,
+    valida_cpf,
+    valida_crm,
+    valida_email,
+    valida_telefone,
+)
 
 
 class MedicoIn(BaseModel):
@@ -11,6 +20,40 @@ class MedicoIn(BaseModel):
     telefone: str = Field(default="", max_length=30)
     email: str = Field(default="", max_length=120)
     ativo: bool = True
+
+    @field_validator("cpf")
+    @classmethod
+    def _cpf_valido(cls, v: str) -> str:
+        if not (v or "").strip():
+            raise ValueError("CPF é obrigatório.")
+        ok, msg = valida_cpf(v)
+        if not ok:
+            raise ValueError(msg)
+        return v
+
+    @field_validator("crm")
+    @classmethod
+    def _crm_valido(cls, v: str) -> str:
+        ok, msg, normalizado = valida_crm(v)
+        if not ok:
+            raise ValueError(msg)
+        return normalizado
+
+    @field_validator("telefone")
+    @classmethod
+    def _tel_valido(cls, v: str) -> str:
+        ok, msg = valida_telefone(v)
+        if not ok:
+            raise ValueError(msg)
+        return v
+
+    @field_validator("email")
+    @classmethod
+    def _email_valido(cls, v: str) -> str:
+        ok, msg = valida_email(v)
+        if not ok:
+            raise ValueError(msg)
+        return v
 
 
 class MedicoOut(MedicoIn):
@@ -27,6 +70,22 @@ class UnidadeIn(BaseModel):
     cep: str = Field(default="", max_length=10)
     telefone: str = Field(default="", max_length=30)
     ativo: bool = True
+
+    @field_validator("cnes")
+    @classmethod
+    def _cnes_valido(cls, v: str) -> str:
+        ok, msg = valida_cnes(v)
+        if not ok:
+            raise ValueError(msg)
+        return so_digitos(v)
+
+    @field_validator("telefone")
+    @classmethod
+    def _tel_valido(cls, v: str) -> str:
+        ok, msg = valida_telefone(v)
+        if not ok:
+            raise ValueError(msg)
+        return v
 
 
 class UnidadeOut(UnidadeIn):

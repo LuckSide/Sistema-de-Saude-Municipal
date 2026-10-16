@@ -112,7 +112,6 @@ const CAMPO_LABEL: Record<string, string> = {
 
 const VALOR_LABEL: Record<string, string> = {
   rotina: "Eletivo",
-  prioritaria: "Prioritário",
   urgente: "Urgente",
   aguardando: "Aguardando",
   agendado: "Agendado",

@@ -3,11 +3,14 @@ import { useSearchParams } from "react-router-dom";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { type UnidadeSaude, createUnidadeSaude, deleteUnidadeSaude, fetchUnidadesSaude, updateUnidadeSaude } from "../services/api";
 import { Button, Card, Input, Label } from "../components/ui/primitives";
+import { useUndo } from "../components/UndoToast";
+import { erros422, toastCampos, validaCnes, validaTelefone } from "../utils/validacoes";
 import ExportarExcel from "../components/ExportarExcel";
 
 const vazio = { nome: "", cnes: "", endereco: "", numero: "", bairro: "", municipio: "", cep: "", telefone: "", ativo: true };
 
 export default function UnidadesSaude() {
+  const { notificarUndo } = useUndo();
   const [lista, setLista] = useState<UnidadeSaude[]>([]);
   const [sp] = useSearchParams();
   const [form, setForm] = useState<typeof vazio>(vazio);
@@ -16,7 +19,13 @@ export default function UnidadesSaude() {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
   const [erroModal, setErroModal] = useState("");
+  const [erros, setErros] = useState<Record<string, string>>({});
   const [ok, setOk] = useState("");
+
+  const ROTULOS: Record<string, string> = { nome: "Nome da unidade", cnes: "CNES", telefone: "Telefone" };
+  const borda = (c: string) => (erros[c] ? "!border-red-500 focus:!border-red-500" : "");
+  const msg = (c: string) =>
+    erros[c] ? <p className="mt-1 text-xs font-medium text-red-600">{erros[c]}</p> : null;
 
   async function carregar() { try { setLista(await fetchUnidadesSaude()); } catch { setErro("Falha ao carregar unidades."); } }
   useEffect(() => { carregar(); }, []);
@@ -28,29 +37,62 @@ export default function UnidadesSaude() {
   }, [sp, lista, modal]);
 
   function abrir(u?: UnidadeSaude) {
-    setErroModal(""); setOk("");
+    setErroModal(""); setErros({}); setOk("");
     if (u) { setEditId(u.id); setForm({ nome: u.nome, cnes: u.cnes, endereco: u.endereco, numero: u.numero ?? "", bairro: u.bairro, municipio: u.municipio ?? "", cep: u.cep ?? "", telefone: u.telefone, ativo: u.ativo }); }
     else { setEditId(null); setForm(vazio); }
     setModal(true);
   }
-  function fechar() { setModal(false); setEditId(null); setForm(vazio); setErroModal(""); }
+  function fechar() { setModal(false); setEditId(null); setForm(vazio); setErroModal(""); setErros({}); }
 
   async function salvar() {
     setErroModal("");
-    if (!form.nome.trim()) { setErroModal("Nome é obrigatório."); return; }
+    const e: Record<string, string> = {};
+    if (form.nome.trim().length < 2) e.nome = "Nome é obrigatório.";
+    const cnes = validaCnes(form.cnes);
+    if (cnes) e.cnes = cnes;
+    const tel = validaTelefone(form.telefone);
+    if (tel) e.telefone = tel;
+    if (Object.keys(e).length > 0) {
+      setErros(e);
+      setErroModal(toastCampos(e, ROTULOS));
+      return;
+    }
     setSalvando(true);
     try {
       if (editId) { await updateUnidadeSaude(editId, form); setOk("Unidade atualizada."); }
       else { await createUnidadeSaude(form); setOk("Unidade cadastrada."); }
       fechar(); await carregar();
-    } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Erro ao salvar.";
-      setErroModal(msg);
+    } catch (err: unknown) {
+      const deCampo = erros422(err, ROTULOS);
+      if (Object.keys(deCampo).length > 0) {
+        setErros(deCampo);
+        setErroModal(toastCampos(deCampo, ROTULOS));
+        return;
+      }
+      const detalhe = (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
+      setErroModal(typeof detalhe === "string" ? detalhe : "Erro ao salvar.");
     } finally { setSalvando(false); }
   }
   async function excluir(u: UnidadeSaude) {
     if (!confirm(`Inativar ${u.nome}?`)) return;
-    try { await deleteUnidadeSaude(u.id); setOk("Unidade inativada."); await carregar(); }
+    const snap = { ...u };
+    try {
+      await deleteUnidadeSaude(u.id);
+      await carregar();
+      notificarUndo({
+        titulo: `Unidade ${snap.nome} inativada.`,
+        descricao: "Desfazer reativa o cadastro.",
+        onUndo: async () => {
+          await updateUnidadeSaude(snap.id, {
+            nome: snap.nome, cnes: snap.cnes, endereco: snap.endereco,
+            numero: snap.numero ?? "", bairro: snap.bairro,
+            municipio: snap.municipio ?? "", cep: snap.cep ?? "",
+            telefone: snap.telefone, ativo: true,
+          });
+          await carregar();
+        },
+      });
+    }
     catch { setErro("Falha ao inativar."); }
   }
 
@@ -98,9 +140,9 @@ export default function UnidadesSaude() {
               <button onClick={fechar} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar"><X className="h-4 w-4" /></button>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
-              <div className="md:col-span-2"><Label>Nome da unidade *</Label><Input value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder="Ex: PSF Dona Clara" /></div>
-              <div><Label>Código CNES</Label><Input value={form.cnes} onChange={(e) => setForm({ ...form, cnes: e.target.value })} /></div>
-              <div><Label>Telefone</Label><Input value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} /></div>
+              <div className="md:col-span-2"><Label>Nome da unidade *</Label><Input value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder="Ex: PSF Dona Clara" className={borda("nome")} />{msg("nome")}</div>
+              <div><Label>Código CNES *</Label><Input value={form.cnes} onChange={(e) => setForm({ ...form, cnes: e.target.value.replace(/\D/g, "").slice(0, 7) })} placeholder="7 dígitos" inputMode="numeric" className={borda("cnes")} />{msg("cnes")}</div>
+              <div><Label>Telefone</Label><Input value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} placeholder="DDD + número" className={borda("telefone")} />{msg("telefone")}</div>
               <div className="md:col-span-2"><Label>Endereço (logradouro)</Label><Input value={form.endereco} onChange={(e) => setForm({ ...form, endereco: e.target.value })} /></div>
               <div><Label>Número</Label><Input value={form.numero} onChange={(e) => setForm({ ...form, numero: e.target.value })} /></div>
               <div><Label>Bairro</Label><Input value={form.bairro} onChange={(e) => setForm({ ...form, bairro: e.target.value })} /></div>

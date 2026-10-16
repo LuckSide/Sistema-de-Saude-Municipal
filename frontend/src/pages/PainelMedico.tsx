@@ -15,13 +15,11 @@ import ExportarExcel from "../components/ExportarExcel";
 
 const PRIOS = [
   { value: "urgente", rotulo: "Urgente" },
-  { value: "prioritaria", rotulo: "Prioritário" },
   { value: "rotina", rotulo: "Eletivo" },
 ];
 
 const prioCor: Record<string, string> = {
   rotina: "bg-sus-900/10 text-sus-900",
-  prioritaria: "bg-amber-100 text-amber-800",
   urgente: "bg-red-100 text-red-700",
 };
 
@@ -38,7 +36,7 @@ export default function PainelMedico() {
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
   const [alvo, setAlvo] = useState<Exame | null>(null);
-  const [prio, setPrio] = useState("prioritaria");
+  const [prio, setPrio] = useState("rotina");
   const [just, setJust] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [erroModal, setErroModal] = useState("");

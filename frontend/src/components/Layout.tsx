@@ -17,7 +17,7 @@ export function Protected({ children }: { children: ReactNode }) {
   return children;
 }
 
-export function Shell({ children }: { children: ReactNode }) {
+export function Shell({ children, estreito }: { children: ReactNode; estreito?: boolean }) {
   const [aberto, setAberto] = useState(false);
   const loc = useLocation();
 
@@ -83,7 +83,13 @@ export function Shell({ children }: { children: ReactNode }) {
           </span>
         </header>
         <main className="min-w-0 flex-1 overflow-y-auto print:overflow-visible">
-          <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8 print:max-w-none print:p-0">
+          <div
+            className={
+              estreito
+                ? "mx-auto w-full max-w-4xl px-4 py-6 md:px-8 md:py-8 print:max-w-none print:p-0"
+                : "w-full max-w-full px-4 py-6 md:px-6 md:py-8 print:max-w-none print:p-0"
+            }
+          >
             {children}
           </div>
         </main>

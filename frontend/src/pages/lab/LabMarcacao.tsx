@@ -55,7 +55,7 @@ export default function LabMarcacao() {
 
   useEffect(() => {
     carregar(1).catch(() => setErro("Falha ao carregar solicitações."));
-    labsListar().then((l) => { setLabs(l); if (l.length) setLabId((atual) => atual || String(l[0].id)); }).catch(() => {});
+    labsListar().then((l) => { const ativos = l.filter((x) => x.ativo); setLabs(ativos); if (ativos.length) setLabId((atual) => atual || String(ativos[0].id)); }).catch(() => {});
   }, []);
 
   async function carregarGrade() {
@@ -300,7 +300,7 @@ export default function LabMarcacao() {
                     <Label>Laboratório</Label>
                     <select value={labId} onChange={(e) => setLabId(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
                       <option value="">Selecionar…</option>
-                      {labs.map((l) => <option key={l.id} value={l.id}>{l.nome}</option>)}
+                      {labs.filter((l) => l.ativo).map((l) => <option key={l.id} value={l.id}>{l.nome}</option>)}
                     </select>
                   </div>
                 </div>

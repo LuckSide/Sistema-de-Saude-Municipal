@@ -12,7 +12,7 @@ from sqlmodel import Session
 from app.core.deps import get_current_user_senha_ok as get_user_ok, get_db
 from app.models.dashboard_prefs import UserDashboardPrefs
 from app.models.user import User
-from app.schemas import DashboardIn, DashboardOut
+from app.schemas import DashboardIn, DashboardOut, QuadroFiltrosIn, QuadroFiltrosOut
 from app.services.permissoes import TODAS_TELAS, tem_tela
 
 router = APIRouter()
@@ -75,3 +75,48 @@ def salvar_dashboard(data: DashboardIn, db: Session = Depends(get_db), user: Use
     db.commit()
     db.refresh(row)
     return DashboardOut(items=items)
+
+
+def _ler_quadro(row: UserDashboardPrefs | None) -> dict:
+    if not row or not (getattr(row, "quadro_filtros", "") or "").strip():
+        return {"data": "", "destino": "", "agrupamento": "destino"}
+    try:
+        d = json.loads(row.quadro_filtros)
+        if not isinstance(d, dict):
+            return {"data": "", "destino": "", "agrupamento": "destino"}
+        data = str(d.get("data") or "")
+        dest = str(d.get("destino") or "")[:120]
+        agrup = str(d.get("agrupamento") or "destino")
+        import re as _re
+
+        if data and not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", data):
+            data = ""
+        if agrup not in ("destino", "data"):
+            agrup = "destino"
+        return {"data": data, "destino": dest, "agrupamento": agrup}
+    except Exception:
+        return {"data": "", "destino": "", "agrupamento": "destino"}
+
+
+@router.get("/user/quadro-viagens", response_model=QuadroFiltrosOut)
+def obter_quadro(db: Session = Depends(get_db), user: User = Depends(get_user_ok)):
+    return QuadroFiltrosOut(**_ler_quadro(db.get(UserDashboardPrefs, user.id)))
+
+
+@router.put("/user/quadro-viagens", response_model=QuadroFiltrosOut)
+def salvar_quadro(data: QuadroFiltrosIn, db: Session = Depends(get_db), user: User = Depends(get_user_ok)):
+    import re as _re
+
+    if data.data and not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", data.data):
+        raise HTTPException(status_code=400, detail="Data inválida (AAAA-MM-DD)")
+    row = db.get(UserDashboardPrefs, user.id)
+    if not row:
+        row = UserDashboardPrefs(user_id=user.id, layout="[]")
+    row.quadro_filtros = json.dumps({
+        "data": data.data,
+        "destino": (data.destino or "")[:120],
+        "agrupamento": data.agrupamento or "destino",
+    })
+    db.add(row)
+    db.commit()
+    return QuadroFiltrosOut(**_ler_quadro(row))

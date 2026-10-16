@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import type { ReactElement } from "react";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
+import { UndoToastProvider } from "./components/UndoToast";
 import { useCidadeDinamica } from "./hooks/useCidade";
 import { Protected, Shell } from "./components/Layout";
 import Login from "./pages/Login";
@@ -15,6 +16,7 @@ import QuadroViagens from "./pages/tfd/QuadroViagens";
 import TfdDestinos from "./pages/tfd/TfdDestinos";
 import CatalogoExames from "./pages/tfd/CatalogoExames";
 import TfdFrota from "./pages/tfd/TfdFrota";
+import TfdMotoristas from "./pages/tfd/TfdMotoristas";
 import TfdFaturamento from "./pages/tfd/TfdFaturamento";
 import AlterarSenhaInicial from "./pages/AlterarSenhaInicial";
 import LabLayout from "./pages/lab/LabLayout";
@@ -73,7 +75,7 @@ function LabGuard({ tela, telas, children }: { tela: string; telas?: string[]; c
 function TfdRoutes() {
   return (
     <Protected>
-      <GuardQualquer telas={["tfd", "tfd_resumo", "tfd_viagens", "tfd_pacientes", "tfd_exames", "tfd_agenda", "tfd_catalogo", "tfd_destinos", "tfd_frota", "tfd_faturamento"]}>
+      <GuardQualquer telas={["tfd", "tfd_resumo", "tfd_viagens", "tfd_pacientes", "tfd_exames", "tfd_agenda", "tfd_catalogo", "tfd_destinos", "tfd_frota", "tfd_frota_gestao", "tfd_faturamento"]}>
         <Shell>
           <TfdLayout />
         </Shell>
@@ -97,6 +99,7 @@ function LabRoutes() {
 export default function App() {
   return (
     <AuthProvider>
+      <UndoToastProvider>
       <AplicaCidade />
       <BrowserRouter>
         <Routes>
@@ -158,13 +161,14 @@ export default function App() {
           <Route path="/tfd" element={<TfdRoutes />}>
             <Route index element={<Guard tela="tfd_resumo"><TfdResumo /></Guard>} />
             <Route path="viagens" element={<Guard tela="tfd_viagens"><TfdViagens /></Guard>} />
-            <Route path="quadro" element={<Guard tela="tfd_viagens"><QuadroViagens /></Guard>} />
+            <Route path="quadro" element={<GuardQualquer telas={["tfd_viagens", "tfd_frota_gestao"]}><QuadroViagens /></GuardQualquer>} />
             <Route path="pacientes" element={<Guard tela="tfd_pacientes"><TfdPacientes /></Guard>} />
             <Route path="agenda" element={<Guard tela="tfd_agenda"><AgendaTfd /></Guard>} />
             <Route path="exames" element={<Navigate to="/fila-exames" replace />} />
             <Route path="catalogo" element={<Guard tela="tfd_catalogo"><CatalogoExames /></Guard>} />
             <Route path="destinos" element={<Guard tela="tfd_destinos"><TfdDestinos /></Guard>} />
             <Route path="frota" element={<Guard tela="tfd_frota"><TfdFrota /></Guard>} />
+            <Route path="motoristas" element={<Guard tela="tfd_frota"><TfdMotoristas /></Guard>} />
             <Route path="faturamento" element={<Guard tela="tfd_faturamento"><TfdFaturamento /></Guard>} />
           </Route>
           <Route path="/lab" element={<LabRoutes />}>
@@ -219,6 +223,7 @@ export default function App() {
           <Route path="/admin/psfs" element={<Navigate to="/configuracoes?aba=unidades" replace />} />
         </Routes>
       </BrowserRouter>
+      </UndoToastProvider>
     </AuthProvider>
   );
 }

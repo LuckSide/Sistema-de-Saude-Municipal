@@ -17,7 +17,7 @@ import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
 import PerfilPaciente from "../../components/PerfilPaciente";
 
-const vazio = { nome: "", cpf: "", cns: "", nascimento: "", telefone: "", endereco: "", endereco_numero: "", bairro: "", cep: "", unidade_saude_id: "", equipe_esf: "", acs_nome: "", observacoes: "" };
+const vazio = { nome: "", cpf: "", cns: "", nascimento: "", telefone: "", endereco: "", endereco_numero: "", complemento: "", bairro: "", cep: "", unidade_saude_id: "", equipe_esf: "", acs_nome: "", observacoes: "" };
 
 export default function TfdPacientes() {
   const [lista, setLista] = useState<Paciente[]>([]);
@@ -62,7 +62,7 @@ export default function TfdPacientes() {
       const p = lista.find((x) => x.id === id);
       if (p) {
         setEditId(p.id);
-        setForm({ nome: p.nome, cpf: p.cpf, cns: p.cns, nascimento: p.nascimento ?? "", telefone: p.telefone, endereco: p.endereco, endereco_numero: p.endereco_numero ?? "", bairro: p.bairro ?? "", cep: p.cep ?? "", unidade_saude_id: p.unidade_saude_id ? String(p.unidade_saude_id) : "", equipe_esf: p.equipe_esf ?? "", acs_nome: p.acs_nome ?? "", observacoes: p.observacoes });
+        setForm({ nome: p.nome, cpf: p.cpf, cns: p.cns, nascimento: p.nascimento ?? "", telefone: p.telefone, endereco: p.endereco, endereco_numero: p.endereco_numero ?? "", complemento: p.complemento ?? "", bairro: p.bairro ?? "", cep: p.cep ?? "", unidade_saude_id: p.unidade_saude_id ? String(p.unidade_saude_id) : "", equipe_esf: p.equipe_esf ?? "", acs_nome: p.acs_nome ?? "", observacoes: p.observacoes });
       }
     } else {
       setEditId(null);
@@ -172,6 +172,7 @@ export default function TfdPacientes() {
                 <div><Label>Telefone</Label><Input value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} /></div>
                 <div className="md:col-span-2"><Label>Logradouro</Label><Input value={form.endereco} onChange={(e) => setForm({ ...form, endereco: e.target.value })} placeholder="Rua/Avenida" /></div>
                 <div><Label>Nº</Label><Input value={form.endereco_numero} onChange={(e) => setForm({ ...form, endereco_numero: e.target.value })} /></div>
+                <div><Label>Complemento</Label><Input value={form.complemento} onChange={(e) => setForm({ ...form, complemento: e.target.value })} placeholder="Apto, bloco, casa…" /></div>
                 <div><Label>Bairro</Label><Input value={form.bairro} onChange={(e) => setForm({ ...form, bairro: e.target.value })} /></div>
                 <div><Label>CEP</Label><Input value={form.cep} onChange={(e) => setForm({ ...form, cep: e.target.value })} placeholder="00000-000" /></div>
                 <div className="md:col-span-2">

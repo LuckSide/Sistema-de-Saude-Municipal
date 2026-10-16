@@ -35,8 +35,21 @@ from app.services.permissoes import need_any_perm, need_perm
 
 # ---------- Laboratórios (leitura p/ agenda) ----------
 @router.get("/exames/laboratorios", response_model=list[LaboratorioOut])
-def listar_labs(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    return list(db.exec(select(Laboratorio).order_by(Laboratorio.nome)).all())
+def listar_labs(
+    somente_ativos: bool = True,
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Seletores de agendamento: por padrão só laboratórios ativos.
+
+    Desativados (soft delete) somem dos dropdowns mas preservam o
+    histórico de exames/vagas já marcados. Passe somente_ativos=false
+    na tela de Configurações para gerenciar todos.
+    """
+    base = select(Laboratorio).order_by(Laboratorio.nome)
+    if somente_ativos:
+        base = select(Laboratorio).where(Laboratorio.ativo == True).order_by(Laboratorio.nome)  # noqa: E712
+    return list(db.exec(base).all())
 
 @router.post("/exames/laboratorios", response_model=LaboratorioOut, status_code=201)
 def criar_lab(
@@ -52,6 +65,28 @@ def criar_lab(
     db.commit()
     db.refresh(obj)
     return obj
+
+
+@router.put("/exames/laboratorios/{lid}", response_model=LaboratorioOut)
+def atualizar_lab(
+    lid: int,
+    data: LaboratorioIn,
+    db: Session = Depends(get_db),
+    _=Depends(need_perm("lab_vagas", "editar")),
+):
+    lab = db.get(Laboratorio, lid)
+    if not lab:
+        raise HTTPException(404, "Laboratório não encontrado")
+    nome = data.nome.strip()
+    dup = db.exec(select(Laboratorio).where(Laboratorio.nome == nome, Laboratorio.id != lid)).first()
+    if dup:
+        raise HTTPException(400, "Laboratório já existe")
+    lab.nome = nome
+    lab.ativo = data.ativo
+    db.add(lab)
+    db.commit()
+    db.refresh(lab)
+    return lab
 
 
 @router.delete("/exames/laboratorios/{lid}", status_code=204)
@@ -151,6 +186,8 @@ def criar_vaga(
     lab = db.get(Laboratorio, data.laboratorio_id)
     if not lab:
         raise HTTPException(404, "Laboratório não encontrado")
+    if not lab.ativo:
+        raise HTTPException(400, "Laboratório inativo — reative em Configurações para abrir vagas")
     dup = db.exec(
         select(VagaLab).where(
             VagaLab.laboratorio_id == data.laboratorio_id, VagaLab.data == data.data
@@ -180,6 +217,8 @@ def liberar_mes(
     lab = db.get(Laboratorio, data.laboratorio_id)
     if not lab:
         raise HTTPException(404, "Laboratório não encontrado")
+    if not lab.ativo:
+        raise HTTPException(400, "Laboratório inativo — reative em Configurações para abrir vagas")
     _, ndays = monthrange(data.ano, data.mes)
     hoje = date.today()
     criadas = atualizadas = ignoradas = mantidas = ignoradas_passado = 0
@@ -241,8 +280,11 @@ def atualizar_vaga(
         raise HTTPException(400, "Dia passado indisponível (sem vagas)")
     if data.vagas_totais < obj.vagas_ocupadas:
         raise HTTPException(400, "vagas_totais menor que vagas_ocupadas")
-    if not db.get(Laboratorio, data.laboratorio_id):
+    _lab = db.get(Laboratorio, data.laboratorio_id)
+    if not _lab:
         raise HTTPException(404, "Laboratório não encontrado")
+    if not _lab.ativo:
+        raise HTTPException(400, "Laboratório inativo — reative em Configurações para abrir vagas")
     dup = db.exec(
         select(VagaLab).where(
             VagaLab.laboratorio_id == data.laboratorio_id,

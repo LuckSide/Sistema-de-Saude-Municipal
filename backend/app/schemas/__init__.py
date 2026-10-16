@@ -79,6 +79,18 @@ class DashboardOut(BaseModel):
     items: list[DashboardItem] = []
 
 
+class QuadroFiltrosIn(BaseModel):
+    data: str = Field(default="", max_length=10)
+    destino: str = Field(default="", max_length=120)
+    agrupamento: str = Field(default="destino", max_length=10, pattern="^(destino|data)$")
+
+
+class QuadroFiltrosOut(BaseModel):
+    data: str = ""
+    destino: str = ""
+    agrupamento: str = "destino"
+
+
 class TrocarSenhaIn(BaseModel):
     senha_atual: str = Field(min_length=1, max_length=100)
     nova_senha: str = Field(min_length=6, max_length=100)

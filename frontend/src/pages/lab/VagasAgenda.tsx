@@ -59,7 +59,7 @@ export default function VagasAgenda() {
   const [loteBusy, setLoteBusy] = useState(false);
 
   useEffect(() => {
-    labsListar().then((l) => { setLabs(l); if (l.length && !labId) setLabId(String(l[0].id)); }).catch(() => {});
+    labsListar().then((l) => { const ativos = l.filter((x) => x.ativo); setLabs(ativos); if (ativos.length && !labId) setLabId(String(ativos[0].id)); }).catch(() => {});
     filaPsfListar("na_fila").then((r) => setFila(pagData<FilaPsfItem>(r))).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -307,7 +307,7 @@ export default function VagasAgenda() {
             <Label>Laboratório</Label>
             <select value={labId} onChange={(e) => setLabId(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
               <option value="">Selecionar…</option>
-              {labs.map((l) => <option key={l.id} value={l.id}>{l.nome}</option>)}
+              {labs.filter((l) => l.ativo).map((l) => <option key={l.id} value={l.id}>{l.nome}</option>)}
             </select>
           </div>
           <div className="flex items-end gap-2">

@@ -166,7 +166,7 @@ def prioridade_de(raw: str) -> str:
     if v in ("sim", "urgente", "urgencia", "urgência"):
         return "urgente"
     if v in ("prioritaria", "prioritária"):
-        return "prioritaria"
+        return "rotina"  # categoria extinta: colapsa p/ Eletivo
     if v in ("rotina", "normal", "eletiva", ""):
         return "rotina"
     return "rotina"

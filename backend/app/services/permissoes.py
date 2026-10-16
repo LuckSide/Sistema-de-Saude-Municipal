@@ -25,6 +25,7 @@ PAI_DE: dict[str, str] = {
     "tfd_catalogo": "tfd",
     "tfd_destinos": "tfd",
     "tfd_frota": "tfd",
+    "tfd_frota_gestao": "tfd",
     "tfd_faturamento": "tfd",
     "tfd_medico": "tfd",
     "tfd_agenda": "tfd",

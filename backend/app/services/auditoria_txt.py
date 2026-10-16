@@ -121,7 +121,6 @@ FIELD_LABELS = {
 
 VALOR_LABELS = {
     "rotina": "Eletivo",
-    "prioritaria": "Prioritário",
     "urgente": "Urgente",
     "aguardando": "Aguardando",
     "agendado": "Agendado",

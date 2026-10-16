@@ -1,7 +1,6 @@
-/** Rótulos de exibição da prioridade (valor gravado: rotina|prioritaria|urgente). */
+/** Rótulos de exibição da prioridade (valores: rotina=Eletivo, urgente=Urgente). */
 export const PRIO_ROTULO: Record<string, string> = {
   rotina: "Eletivo",
-  prioritaria: "Prioritário",
   urgente: "Urgente",
 };
 

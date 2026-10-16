@@ -8,6 +8,7 @@ import {
   tfdCriarViagem,
   tfdDestinos,
   tfdExcluirViagem,
+  tfdMotoristas,
   tfdPacientes,
   tfdPassageiros,
   tfdRemoverPassageiro,
@@ -16,6 +17,7 @@ import {
   pagData,
   pagMeta,
   type Destino,
+  type Motorista,
   type Paciente,
   type PacientePec,
   type Passageiro,
@@ -23,6 +25,7 @@ import {
   type Viagem,
 } from "../../services/api";
 import { useAuth } from "../../hooks/useAuth";
+import { retornoAutomatico, useDisponibilidade } from "../../hooks/useDisponibilidade";
 import { Button, Card, Input, Label, Badge } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
@@ -36,6 +39,7 @@ const vazio = {
   hora_saida: "",
   veiculo_id: "",
   motorista: "",
+  motorista_id: "",
   departamento: "",
   data_retorno: "",
   hora_retorno: "",
@@ -60,6 +64,7 @@ export default function TfdViagens() {
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState(vazio);
   const [veiculos, setVeiculos] = useState<Veiculo[]>([]);
+  const [motoristas, setMotoristas] = useState<Motorista[]>([]);
   const [destinos, setDestinos] = useState<Destino[]>([]);
   const [pacientesPec, setPacientesPec] = useState<PacientePec[]>([]);
   const [buscaPac, setBuscaPac] = useState("");
@@ -71,6 +76,16 @@ export default function TfdViagens() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
+  const { disp } = useDisponibilidade(
+    form.data_viagem, form.hora_saida, form.hora_retorno, editId, modal,
+  );
+  const veiculosLivres = disp
+    ? disp.veiculos.filter((f) => f.disponivel || String(f.id) === String(form.veiculo_id))
+    : veiculos;
+  const motoristasLivres = disp
+    ? motoristas.filter((m) => disp.motoristas.find((d) => d.id === m.id)?.disponivel !== false
+      || String(m.id) === String(form.motorista_id))
+    : motoristas;
 
   async function carregar(p = page) {
     const params: Record<string, string | number> = { page: p, limit: 100 };
@@ -88,6 +103,7 @@ export default function TfdViagens() {
   useEffect(() => {
     carregar(1).catch(() => setErro("Falha ao carregar viagens."));
     tfdVeiculos().then((r) => setVeiculos(pagData<Veiculo>(r))).catch(() => {});
+    tfdMotoristas({ limit: 200 }).then((r) => setMotoristas(pagData<Motorista>(r))).catch(() => {});
     tfdDestinos().then((r) => setDestinos(pagData<Destino>(r))).catch(() => {});
   }, [statusFiltro, mesFiltro, anoFiltro]);
 
@@ -147,6 +163,7 @@ export default function TfdViagens() {
           hora_saida: v.hora_saida,
           veiculo_id: v.veiculo_id ? String(v.veiculo_id) : "",
           motorista: v.motorista,
+          motorista_id: v.motorista_id ? String(v.motorista_id) : "",
           departamento: v.departamento ?? "",
           data_retorno: (v.data_retorno || "").slice(0, 10),
           hora_retorno: v.hora_retorno ?? "",
@@ -186,6 +203,7 @@ export default function TfdViagens() {
     }
     const payload: Record<string, unknown> = {
       ...form,
+      motorista_id: /^\d+$/.test(form.motorista_id) ? Number(form.motorista_id) : null,
       veiculo_id: form.veiculo_id ? Number(form.veiculo_id) : null,
       data_retorno: form.data_retorno || null,
       km_inicial: Number(form.km_inicial) || 0,
@@ -385,20 +403,48 @@ export default function TfdViagens() {
                 </div>
                 <div><Label>Unidade</Label><Input value={form.unidade} onChange={(e) => setForm({ ...form, unidade: e.target.value })} placeholder="Hospital / clínica" /></div>
                 <div><Label>Data *</Label><Input type="date" value={form.data_viagem} min={retroativoBloqueado ? hojeISO : undefined} onChange={(e) => setForm({ ...form, data_viagem: e.target.value })} /></div>
-                <div><Label>Hora saída</Label><Input type="time" value={form.hora_saida} onChange={(e) => setForm({ ...form, hora_saida: e.target.value })} /></div>
+                <div><Label>Hora saída</Label><Input type="time" value={form.hora_saida} onChange={(e) => { const h = e.target.value; setForm({ ...form, hora_saida: h, hora_retorno: form.hora_retorno || retornoAutomatico(h) }); }} /></div>
                 <div>
                   <Label>Veículo</Label>
                   <select value={form.veiculo_id} onChange={(e) => setForm({ ...form, veiculo_id: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
-                    <option value="">—</option>
-                    {veiculos.filter((v) => v.ativo).map((v) => (
+                    <option value="">A definir</option>
+                    {veiculosLivres.filter((v) => (v as Veiculo).ativo !== false).map((v) => (
                       <option key={v.id} value={v.id}>{v.placa} · {v.modelo} ({v.capacidade} pax)</option>
                     ))}
                   </select>
                 </div>
-                <div><Label>Motorista</Label><Input value={form.motorista} onChange={(e) => setForm({ ...form, motorista: e.target.value })} /></div>
+                <div>
+                  <Label>Motorista</Label>
+                  {form.motorista_id === "__manual__" ? (
+                    <div className="flex gap-1">
+                      <Input value={form.motorista} onChange={(e) => setForm({ ...form, motorista: e.target.value })} placeholder="Nome do motorista" />
+                      <button onClick={() => setForm({ ...form, motorista_id: "", motorista: "" })} className="rounded-xl border border-sus-900/15 px-2 text-xs font-bold" title="Voltar à lista">Lista</button>
+                    </div>
+                  ) : (
+                    <select
+                      value={form.motorista_id}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === "__manual__") {
+                          setForm({ ...form, motorista_id: v });
+                          return;
+                        }
+                        const m = motoristas.find((x) => String(x.id) === v);
+                        setForm({ ...form, motorista_id: v, motorista: m ? m.nome : "" });
+                      }}
+                      className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm"
+                    >
+                      <option value="">A definir</option>
+                      {motoristasLivres.filter((m) => (m as Motorista).ativo !== false).map((m) => (
+                        <option key={m.id} value={m.id}>{m.nome}</option>
+                      ))}
+                      <option value="__manual__">Outro (digitar)…</option>
+                    </select>
+                  )}
+                </div>
                 <div><Label>Departamento</Label><Input value={form.departamento} onChange={(e) => setForm({ ...form, departamento: e.target.value })} placeholder="Ex: Saúde" /></div>
                 <div><Label>Data retorno</Label><Input type="date" value={form.data_retorno} onChange={(e) => setForm({ ...form, data_retorno: e.target.value })} /></div>
-                <div><Label>Hora retorno</Label><Input type="time" value={form.hora_retorno} onChange={(e) => setForm({ ...form, hora_retorno: e.target.value })} /></div>
+                <div><Label>Hora retorno (auto +9h)</Label><Input type="time" value={form.hora_retorno} onChange={(e) => setForm({ ...form, hora_retorno: e.target.value })} placeholder={retornoAutomatico(form.hora_saida || "05:00")} /></div>
                 <div><Label>Km inicial</Label><Input type="number" min={0} value={form.km_inicial} onChange={(e) => setForm({ ...form, km_inicial: e.target.value })} /></div>
                 <div><Label>Km final</Label><Input type="number" min={0} value={form.km_final} onChange={(e) => setForm({ ...form, km_final: e.target.value })} /></div>
                 <div><Label>Adiantamento (R$)</Label><Input inputMode="decimal" value={form.adiantamento} onChange={(e) => setForm({ ...form, adiantamento: e.target.value })} placeholder="0,00" /></div>
@@ -408,6 +454,11 @@ export default function TfdViagens() {
                     {["consulta", "exame", "cirurgia", "retorno"].map((f) => <option key={f} value={f}>{f}</option>)}
                   </select>
                 </div>
+                {disp && (
+                  <p className="text-xs text-ink/55 md:col-span-2">
+                    Janela {form.hora_saida || "—"}→{form.hora_retorno || retornoAutomatico(form.hora_saida || "05:00")}: {veiculosLivres.length} veículo(s) e {motoristasLivres.length} motorista(s) livre(s) — a lista mostra só disponíveis.
+                  </p>
+                )}
                 <div>
                   <Label>Status</Label>
                   <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">

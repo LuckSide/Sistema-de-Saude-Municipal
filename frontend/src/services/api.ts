@@ -237,6 +237,11 @@ export const fetchDashboard = () =>
   api.get<{ items: DashboardItem[] }>("/api/user/dashboard").then((r) => r.data.items ?? []);
 export const saveDashboard = (items: DashboardItem[]) =>
   api.put<{ items: DashboardItem[] }>("/api/user/dashboard", { items }).then((r) => r.data.items ?? []);
+export type QuadroFiltros = { data: string; destino: string; agrupamento: "destino" | "data" };
+export const fetchQuadroFiltros = () =>
+  api.get<QuadroFiltros>("/api/user/quadro-viagens").then((r) => r.data);
+export const saveQuadroFiltros = (data: string, destino: string, agrupamento: "destino" | "data" = "destino") =>
+  api.put<QuadroFiltros>("/api/user/quadro-viagens", { data, destino, agrupamento }).then((r) => r.data);
 
 // ---------- Auditoria ----------
 export type AuditLog = {
@@ -273,6 +278,7 @@ export type Paciente = {
   telefone: string;
   endereco: string;
   endereco_numero: string;
+  complemento?: string;
   bairro: string;
   cep: string;
   unidade_saude_id: number | null;
@@ -325,6 +331,7 @@ export type Viagem = {
   hora_saida: string;
   veiculo_id: number | null;
   motorista: string;
+  motorista_id?: number | null;
   departamento: string;
   data_retorno: string | null;
   hora_retorno: string;
@@ -355,6 +362,9 @@ export type Passageiro = {
   viagem_id: number;
   paciente_id: number;
   acompanhante: string;
+  acompanhante_id?: number | null;
+  acompanhante_nome?: string;
+  acompanhante_cpf?: string;
   presente: boolean;
   paciente_nome: string;
   viagem_fila_id?: number | null;
@@ -372,6 +382,9 @@ export type ViagemFila = {
   data_consulta: string | null;
   hora_consulta: string;
   acompanhante: boolean;
+  acompanhante_id?: number | null;
+  acompanhante_nome?: string;
+  acompanhante_cpf?: string;
   prioridade: string;
   status: string;
   exame_fila_id: number | null;
@@ -388,11 +401,14 @@ export type DiaPassageiro = Passageiro & {
 
 export type DiaViagem = {
   id: number;
+  nome?: string;
   destino: string;
   unidade: string;
   data_viagem: string;
   hora_saida: string;
+  hora_retorno?: string;
   motorista: string;
+  motorista_id?: number | null;
   status: string;
   finalidade: string;
   veiculo_id: number | null;
@@ -401,6 +417,7 @@ export type DiaViagem = {
   capacidade: number;
   ocupados: number;
   vagas: number;
+  passageiros_restritos?: boolean;
   passageiros: DiaPassageiro[];
 };
 
@@ -428,8 +445,25 @@ export const tfdAtualizarFilaViagem = (id: number, p: Record<string, unknown>) =
   api.put<ViagemFila>(`/api/tfd/viagens-fila/${id}`, p).then((r) => r.data);
 export const tfdExcluirFilaViagem = (id: number) =>
   api.delete(`/api/tfd/viagens-fila/${id}`);
-export const tfdPuxarAgendados = (data?: string) =>
-  api.post<{ criados: number }>("/api/tfd/viagens-fila/puxar-agendados", null, { params: { data } }).then((r) => r.data);
+export const tfdPuxarAgendados = (data?: string, ids?: number[]) =>
+  api.post<{ criados: number; ignorados: number }>(
+    "/api/tfd/viagens-fila/puxar-agendados",
+    ids !== undefined ? { ids } : {},
+    { params: { data } },
+  ).then((r) => r.data);
+export type CandidatoPuxar = {
+  exame_fila_id: number;
+  paciente_id: number;
+  paciente_nome: string;
+  exame: string;
+  destino: string;
+  unidade: string;
+  data_agendada: string;
+  hora_agendada: string;
+  prioridade: string;
+};
+export const tfdCandidatosPuxar = (data?: string) =>
+  api.get<CandidatoPuxar[]>("/api/tfd/viagens-fila/candidatos-agendados", { params: { data } }).then((r) => r.data);
 export const tfdDia = (data: string) =>
   api.get<{ data: string; destinos: DiaDestino[]; frota: FrotaDia[] }>("/api/tfd/viagens/dia", { params: { data } }).then((r) => r.data);
 export type DiaSemana = { data: string; destinos: DiaDestino[] };
@@ -439,6 +473,16 @@ export const tfdFaturarDeslocamento = (id: number) =>
   api.post<{ criados: number; ignorados: number }>(`/api/tfd/viagens/${id}/faturar-deslocamento`).then((r) => r.data);
 export const tfdSugestao = (data: string, destino: string) =>
   api.get<{ veiculo: FrotaDia | null; demanda: number; assentos: number; motivo: string }>("/api/tfd/viagens/sugestao", { params: { data, destino } }).then((r) => r.data);
+export type Disponibilidade = {
+  data: string;
+  janela: { saida: string; retorno: string };
+  veiculos: (FrotaDia & { disponivel: boolean; ocupado_por: string | null })[];
+  motoristas: { id: number; nome: string; disponivel: boolean; ocupado_por: string | null }[];
+};
+export const tfdDisponibilidade = (data: string, saida: string, retorno: string, ignorarId?: number) =>
+  api.get<Disponibilidade>("/api/tfd/viagens/disponibilidade", {
+    params: { data, saida, retorno, ignorar_id: ignorarId || undefined },
+  }).then((r) => r.data);
 export const tfdOrdemCirculacaoBlob = async (id: number): Promise<{ url: string; nome: string }> => {
   const r = await api.get(`/api/tfd/viagens/${id}/ordem-circulacao`, { responseType: "blob" });
   const disp: string = r.headers?.["content-disposition"] ?? "";
@@ -474,6 +518,7 @@ export type Exame = {
   public_token?: string;
   posicao?: number | null;
   total_fila?: number | null;
+  grupo_fila?: string;
   medico_nome?: string;
   medico_cpf?: string;
   medico_cbo_codigo?: string;
@@ -497,6 +542,7 @@ export type ExamePublico = {
   destino: string;
   posicao: number | null;
   total_fila: number | null;
+  grupo_fila?: string;
   paciente_iniciais: string;
 };
 
@@ -546,6 +592,40 @@ export const tfdAtualizarVeiculo = (id: number, p: Record<string, unknown>) =>
 export const tfdExcluirVeiculo = (id: number) =>
   api.delete(`/api/tfd/veiculos/${id}`);
 
+export type Motorista = {
+  id: number;
+  nome: string;
+  cpf: string;
+  cnh_numero: string;
+  cnh_categoria: string;
+  cnh_validade: string | null;
+  telefone: string;
+  ativo: boolean;
+};
+
+export const tfdMotoristas = (params?: { q?: string; page?: number; limit?: number }) =>
+  api.get<Pagina<Motorista> | Motorista[]>("/api/tfd/motoristas", { params }).then((r) => r.data);
+export const tfdCriarMotorista = (p: Record<string, unknown>) =>
+  api.post<Motorista>("/api/tfd/motoristas", p).then((r) => r.data);
+export const tfdAtualizarMotorista = (id: number, p: Record<string, unknown>) =>
+  api.put<Motorista>(`/api/tfd/motoristas/${id}`, p).then((r) => r.data);
+export const tfdExcluirMotorista = (id: number) =>
+  api.delete(`/api/tfd/motoristas/${id}`);
+
+export type RelatorioFrota = {
+  periodo: { de: string; ate: string };
+  total_viagens: number;
+  por_status: Record<string, number>;
+  km_total: number;
+  ocupacao_media: number;
+  por_veiculo: { veiculo_id: number | null; placa: string; modelo: string; viagens: number; km: number; ocupacao_media: number }[];
+  por_motorista: { motorista: string; viagens: number; km: number }[];
+  mais_usado_veiculo: { placa: string; modelo: string; viagens: number; km: number } | null;
+  mais_usado_motorista: { motorista: string; viagens: number; km: number } | null;
+};
+export const tfdRelatorioFrota = (de?: string, ate?: string) =>
+  api.get<RelatorioFrota>("/api/tfd/frota/relatorio", { params: { de: de || undefined, ate: ate || undefined } }).then((r) => r.data);
+
 export const tfdDestinos = (page?: number, limit?: number) =>
   api.get<Pagina<Destino> | Destino[]>("/api/tfd/destinos", { params: { page, limit } }).then((r) => r.data);
 export const tfdCriarDestino = (p: Record<string, unknown>) =>
@@ -575,6 +655,10 @@ export const tfdBuscarPacientesPec = (termo: string) =>
 
 export const tfdViagens = (params?: { status?: string; mes?: string; ano?: string | number; page?: number; limit?: number }) =>
   api.get<Pagina<Viagem> | Viagem[]>("/api/tfd/viagens", { params }).then((r) => r.data);
+export const tfdObterViagem = (id: number) =>
+  api.get<Viagem>(`/api/tfd/viagens/${id}`).then((r) => r.data);
+export const tfdTrocarVeiculoViagem = (id: number, veiculo_id: number | null, motorista?: string, motorista_id?: number | null) =>
+  api.patch<Viagem>(`/api/tfd/viagens/${id}/veiculo`, { veiculo_id, motorista, motorista_id }).then((r) => r.data);
 export const tfdCriarViagem = (p: Record<string, unknown>) =>
   api.post<Viagem>("/api/tfd/viagens", p).then((r) => r.data);
 export const tfdAtualizarViagem = (id: number, p: Record<string, unknown>) =>
@@ -627,6 +711,7 @@ export type FilaExamesParams = {
   data_de?: string;
   data_ate?: string;
   agendada_em?: string;
+  ordenacao?: string;
   meus?: boolean;
   page?: number;
   limit?: number;
@@ -850,8 +935,12 @@ export const labExportarLote = (competencia?: string) =>
 // ---------- Fila PSF / Agenda / Vagas / Auditoria ----------
 export type Laboratorio = { id: number; nome: string; ativo: boolean };
 
-export const labsListar = () =>
-  api.get<Laboratorio[]>("/api/exames/laboratorios").then((r) => r.data);
+export const labsListar = (somenteAtivos = true) =>
+  api.get<Laboratorio[]>("/api/exames/laboratorios", {
+    params: { somente_ativos: somenteAtivos },
+  }).then((r) => r.data);
+export const labsAtualizar = (id: number, nome: string, ativo: boolean) =>
+  api.put<Laboratorio>(`/api/exames/laboratorios/${id}`, { nome, ativo }).then((r) => r.data);
 export const labsCriar = (nome: string, ativo = true) =>
   api.post<Laboratorio>("/api/exames/laboratorios", { nome, ativo }).then((r) => r.data);
 export const labsRemover = (id: number) =>

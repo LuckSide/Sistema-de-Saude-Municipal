@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { Building2, FlaskConical, GitBranch, ImagePlus, RefreshCw, Save, ScrollText, Stethoscope, MapPin } from "lucide-react";
 import { Badge, Button, Card, Input, Label } from "../components/ui/primitives";
 import { useAuth } from "../hooks/useAuth";
+import { useUndo } from "../components/UndoToast";
 import Medicos from "./Medicos";
 import UnidadesSaude from "./UnidadesSaude";
 import {
@@ -10,6 +11,7 @@ import {
   fetchSettings,
   importarFilas,
   savePec,
+  labsAtualizar,
   labsCriar,
   labsListar,
   labsRemover,
@@ -665,6 +667,7 @@ function AbaRnds() {
 
 // ---------- Aba: Laboratórios ----------
 function AbaLaboratorios() {
+  const { notificarUndo } = useUndo();
   const [lista, setLista] = useState<{ id: number; nome: string; ativo: boolean }[]>([]);
   const [nome, setNome] = useState("");
   const [busy, setBusy] = useState(false);
@@ -673,9 +676,24 @@ function AbaLaboratorios() {
 
   async function carregar() {
     try {
-      setLista(await labsListar());
+      setLista(await labsListar(false));
     } catch {
       setErro("Falha ao carregar laboratórios.");
+    }
+  }
+
+  async function reativar(id: number, nomeAtual: string) {
+    setBusy(true);
+    setErro("");
+    setOk("");
+    try {
+      await labsAtualizar(id, nomeAtual, true);
+      setOk("Laboratório reativado — volta aos seletores de marcação.");
+      await carregar();
+    } catch {
+      setErro("Falha ao reativar.");
+    } finally {
+      setBusy(false);
     }
   }
   useEffect(() => {
@@ -704,14 +722,22 @@ function AbaLaboratorios() {
   }
 
   async function remover(id: number) {
+    const alvo = lista.find((x) => x.id === id);
     if (!confirm("Desativar/remover este laboratório? As vagas atuais serão preservadas no histórico.")) return;
     setBusy(true);
     setErro("");
     setOk("");
     try {
       await labsRemover(id);
-      setOk("Laboratório removido (inativado).");
       await carregar();
+      notificarUndo({
+        titulo: `Laboratório ${alvo?.nome ?? ""} inativado.`,
+        descricao: "Desfazer reativa o laboratório nos seletores.",
+        onUndo: async () => {
+          await labsAtualizar(id, alvo?.nome ?? "", true);
+          await carregar();
+        },
+      });
     } catch (e: unknown) {
       const d = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Falha.";
       setErro(typeof d === "string" ? d : "Falha ao remover.");
@@ -727,6 +753,7 @@ function AbaLaboratorios() {
       </p>
       <p className="mb-4 text-xs text-ink/55">
         Cadastre e remova laboratórios usados na agenda de vagas, solicitações e BPA.
+        Inativos somem dos seletores de marcação, mas o histórico é preservado.
       </p>
       <div className="mb-4 flex gap-2">
         <Input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome do laboratório" />
@@ -749,9 +776,15 @@ function AbaLaboratorios() {
                 <td className="px-3 py-2 font-medium">{l.nome}</td>
                 <td className="px-3 py-2 text-xs">{l.ativo ? "Sim" : "Não"}</td>
                 <td className="px-3 py-2 text-right">
-                  <button onClick={() => remover(l.id)} className="rounded-lg px-2 py-1 text-xs font-bold text-red-700 hover:bg-red-50">
-                    Remover
-                  </button>
+                  {l.ativo ? (
+                    <button onClick={() => remover(l.id)} className="rounded-lg px-2 py-1 text-xs font-bold text-red-700 hover:bg-red-50">
+                      Remover
+                    </button>
+                  ) : (
+                    <button onClick={() => reativar(l.id, l.nome)} className="rounded-lg px-2 py-1 text-xs font-bold text-teal hover:bg-teal/10">
+                      Reativar
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

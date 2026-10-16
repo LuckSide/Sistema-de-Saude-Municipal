@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlmodel import Session, func, select
 
 from app.core.deps import get_current_user_senha_ok as get_current_user, get_db
@@ -8,6 +8,7 @@ from app.models.tfd import (
     Especialidade,
     ExameFila,
     Faturamento,
+    Motorista,
     Paciente,
     ProcedimentoCatalogo,
     TipoFila,
@@ -32,6 +33,8 @@ from app.schemas.tfd import (
     FaturaIn,
     FaturaOut,
     FiltrosOpcoesOut,
+    MotoristaIn,
+    MotoristaOut,
     OpcaoFiltro,
     PacienteIn,
     PacienteOut,
@@ -425,7 +428,7 @@ def exportar_pacientes(
         "Pacientes", ator.nome or ator.username,
         [
             {"chave": "nome", "rotulo": "Nome completo", "largura": 34},
-            {"chave": "cpf", "rotulo": "CPF", "largura": 18},
+            {"chave": "cpf", "rotulo": "CPF", "largura": 18, "formato": "texto"},
             {"chave": "cns", "rotulo": "CNS", "largura": 22},
             {"chave": "nascimento", "rotulo": "Nascimento", "largura": 14, "formato": "data"},
             {"chave": "telefone", "rotulo": "Telefone", "largura": 16},
@@ -533,6 +536,93 @@ def excluir_veiculo(vid: int, db: Session = Depends(get_db), _=Depends(need_perm
     db.commit()
 
 
+def _resolver_motorista(db: Session, motorista_id, motorista_txt: str) -> tuple:
+    """Snapshot do motorista: ID vinculado (quando escolhido no cadastro) + nome exibido."""
+    if motorista_id:
+        mot = db.get(Motorista, int(motorista_id))
+        if not mot:
+            raise HTTPException(404, "Motorista não encontrado")
+        nome = (motorista_txt or "").strip() or mot.nome
+        return mot.id, nome[:120]
+    return None, (motorista_txt or "")[:120]
+
+
+# ---------- Motoristas ----------
+@router.get("/motoristas", response_model=Pagina[MotoristaOut])
+def listar_motoristas(
+    q: str = Query(default="", max_length=80),
+    ativos: bool | None = None,
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao")),
+):
+    base = select(Motorista).order_by(Motorista.nome)
+    filtros = []
+    if q.strip():
+        like = f"%{q.strip()}%"
+        filtros.append((Motorista.nome.ilike(like)) | (Motorista.cpf.ilike(like)))
+    if ativos is not None:
+        filtros.append(Motorista.ativo == ativos)
+    if filtros:
+        base = select(Motorista).where(*filtros).order_by(Motorista.nome)
+    total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
+    meta = paginar(total, page, limit)
+    rows = db.exec(base.offset(meta["offset"]).limit(limit)).all()
+    return {"data": rows, "total": total, "page": meta["page"], "pages": meta["pages"]}
+
+
+@router.post("/motoristas", response_model=MotoristaOut, status_code=201)
+def criar_motorista(
+    data: MotoristaIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_frota", "criar"))
+):
+    nome = data.nome.strip()
+    cpf = "".join(c for c in (data.cpf or "") if c.isdigit())[:11]
+    if cpf and db.exec(select(Motorista).where(Motorista.cpf == cpf)).first():
+        raise HTTPException(400, "CPF já cadastrado")
+    obj = Motorista(**{**data.model_dump(), "nome": nome, "cpf": cpf})
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.put("/motoristas/{mid}", response_model=MotoristaOut)
+def atualizar_motorista(
+    mid: int, data: MotoristaIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_frota", "editar"))
+):
+    obj = db.get(Motorista, mid)
+    if not obj:
+        raise HTTPException(404, "Motorista não encontrado")
+    cpf = "".join(c for c in (data.cpf or "") if c.isdigit())[:11]
+    if cpf and db.exec(select(Motorista).where(Motorista.cpf == cpf, Motorista.id != mid)).first():
+        raise HTTPException(400, "CPF já cadastrado")
+    for k, v in data.model_dump().items():
+        setattr(obj, k, v)
+    obj.nome = data.nome.strip()
+    obj.cpf = cpf
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@router.delete("/motoristas/{mid}", status_code=204)
+def excluir_motorista(mid: int, db: Session = Depends(get_db), _=Depends(need_perm("tfd_frota", "excluir"))):
+    obj = db.get(Motorista, mid)
+    if not obj:
+        raise HTTPException(404, "Motorista não encontrado")
+    vinculado = db.exec(select(Viagem).where(Viagem.motorista_id == mid).limit(1)).first()
+    if vinculado:
+        # Preserva histórico das viagens: inativa em vez de apagar.
+        obj.ativo = False
+        db.add(obj)
+        db.commit()
+        return
+    db.delete(obj)
+    db.commit()
+
+
 # ---------- Viagens ----------
 @router.get("/viagens", response_model=Pagina[ViagemOut])
 def listar_viagens(
@@ -631,7 +721,10 @@ def criar_viagem(
     data: ViagemIn, db: Session = Depends(get_db), ator: User = Depends(need_perm("tfd_viagens", "criar"))
 ):
     exige_sem_retroativo(ator, data.data_viagem, True)
-    obj = Viagem(**data.model_dump())
+    mid, mnome = _resolver_motorista(db, data.motorista_id, data.motorista)
+    _exigir_sem_conflito(db, data.data_viagem, data.hora_saida, data.hora_retorno,
+                         data.veiculo_id, mid, mnome)
+    obj = Viagem(**{**data.model_dump(), "motorista_id": mid, "motorista": mnome})
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -646,8 +739,13 @@ def atualizar_viagem(
     if not obj:
         raise HTTPException(404, "Viagem não encontrada")
     exige_sem_retroativo(ator, data.data_viagem, data.data_viagem != obj.data_viagem)
+    mid, mnome = _resolver_motorista(db, data.motorista_id, data.motorista)
+    _exigir_sem_conflito(db, data.data_viagem, data.hora_saida, data.hora_retorno,
+                         data.veiculo_id, mid, mnome, ignorar_id=vid)
     for k, v in data.model_dump().items():
         setattr(obj, k, v)
+    obj.motorista_id = mid
+    obj.motorista = mnome
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -657,13 +755,89 @@ def atualizar_viagem(
     return ViagemOut(**obj.model_dump(), passageiros=n or 0)
 
 
+@router.patch("/viagens/{vid}/veiculo", response_model=ViagemOut)
+def trocar_veiculo_viagem(
+    vid: int,
+    data: dict,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("tfd_viagens", "tfd_frota_gestao", acoes=("editar",))),
+):
+    """Troca rápida de veículo na visão semanal (seletor direto no card)."""
+
+    obj = db.get(Viagem, vid)
+    if not obj:
+        raise HTTPException(404, "Viagem não encontrada")
+    veiculo_id = (data or {}).get("veiculo_id")
+    if veiculo_id is not None and veiculo_id != "":
+        try:
+            veiculo_id = int(veiculo_id)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Veículo inválido")
+        veh = db.get(Veiculo, veiculo_id)
+        if not veh or not veh.ativo:
+            raise HTTPException(404, "Veículo não encontrado")
+        obj.veiculo_id = veiculo_id
+    else:
+        # "A definir": viagem salva sem veículo vinculado.
+        obj.veiculo_id = None
+    if (data or {}).get("motorista_id") is not None and (data or {}).get("motorista_id") != "":
+        mid, mnome = _resolver_motorista(db, (data or {}).get("motorista_id"), str((data or {}).get("motorista") or ""))
+        obj.motorista_id = mid
+        obj.motorista = mnome
+    elif (data or {}).get("motorista") is not None:
+        obj.motorista = str((data or {}).get("motorista") or "")[:120]
+        if not obj.motorista:
+            obj.motorista_id = None
+    _exigir_sem_conflito(db, obj.data_viagem, obj.hora_saida, obj.hora_retorno,
+                         obj.veiculo_id, getattr(obj, "motorista_id", None),
+                         obj.motorista, ignorar_id=vid)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    # Valida capacidade após a troca (assentos ocupados vs novo veículo).
+    ocup, cap = _assentos(db, vid)
+    if cap and ocup > cap:
+        raise HTTPException(400, f"Veículo sem capacidade p/ esta viagem ({ocup}/{cap} assentos).")
+    n = db.exec(
+        select(func.count(ViagemPaciente.id)).where(ViagemPaciente.viagem_id == vid)
+    ).one()
+    placa = ""
+    if obj.veiculo_id:
+        veh = db.get(Veiculo, obj.veiculo_id)
+        placa = veh.placa if veh else ""
+    return ViagemOut(**obj.model_dump(), passageiros=n or 0, veiculo_placa=placa)
+
+
 @router.delete("/viagens/{vid}", status_code=204)
 def excluir_viagem(vid: int, db: Session = Depends(get_db), _=Depends(need_perm("tfd_viagens", "excluir"))):
     obj = db.get(Viagem, vid)
     if not obj:
         raise HTTPException(404, "Viagem não encontrada")
     for vp in db.exec(select(ViagemPaciente).where(ViagemPaciente.viagem_id == vid)).all():
+        if vp.viagem_fila_id:
+            fila = db.get(ViagemFila, vp.viagem_fila_id)
+            if fila and fila.status == "alocado":
+                fila.status = "aguardando"
+                db.add(fila)
+        else:
+            # Passageiro avulso (sem vínculo de fila): recria entrada na fila p/ não perder o agendamento.
+            pac = db.get(Paciente, vp.paciente_id)
+            if pac:
+                db.add(ViagemFila(
+                    paciente_id=vp.paciente_id,
+                    destino=obj.destino or "A definir",
+                    unidade=vp.unidade or obj.unidade or "",
+                    tratamento=vp.tratamento or "",
+                    data_consulta=obj.data_viagem,
+                    hora_consulta=vp.hora_consulta or "",
+                    acompanhante=bool((vp.acompanhante or "").strip() or vp.acompanhante_id),
+                    acompanhante_id=getattr(vp, "acompanhante_id", None),
+                    acompanhante_nome=(vp.acompanhante or "")[:150],
+                    acompanhante_cpf=getattr(vp, "acompanhante_cpf", "") or "",
+                    status="aguardando",
+                ))
         db.delete(vp)
+    db.flush()
     db.delete(obj)
     db.commit()
 
@@ -714,8 +888,22 @@ def add_passageiro(
                 f"O paciente só pode ser alocado em veículos cadastrados para o mesmo destino (ex: {fila.destino}).",
             )
     obj = ViagemPaciente(viagem_id=vid, **data.model_dump())
+    # Acompanhante via busca no sistema: resolve nome/CPF a partir do ID (manual continua válido).
+    if data.acompanhante_id:
+        acomp = db.get(Paciente, data.acompanhante_id)
+        if not acomp:
+            raise HTTPException(404, "Acompanhante não encontrado")
+        if acomp.id == data.paciente_id:
+            raise HTTPException(400, "Acompanhante não pode ser o próprio paciente")
+        obj.acompanhante = data.acompanhante.strip() or acomp.nome
+        obj.acompanhante_id = acomp.id
+        obj.acompanhante_cpf = (data.acompanhante_cpf or acomp.cpf or "")[:14]
     if fila:
-        obj.acompanhante = obj.acompanhante or ("Sim" if fila.acompanhante else "")
+        obj.acompanhante = obj.acompanhante or (fila.acompanhante_nome or "") or ("Sim" if fila.acompanhante else "")
+        if not obj.acompanhante_id and getattr(fila, "acompanhante_id", None):
+            obj.acompanhante_id = fila.acompanhante_id
+            obj.acompanhante_cpf = (fila.acompanhante_cpf or "")[:14]
+            obj.acompanhante = obj.acompanhante or (fila.acompanhante_nome or "")
         obj.tratamento = obj.tratamento or fila.tratamento or ""
         obj.unidade = obj.unidade or fila.unidade or ""
         obj.hora_consulta = obj.hora_consulta or fila.hora_consulta or ""
@@ -751,7 +939,7 @@ def remover_passageiro(
 
 
 # ---------- Fila de exames ----------
-PRIO_PESO = {"urgente": 0, "prioritaria": 1, "rotina": 2}
+PRIO_PESO = {"urgente": 0, "rotina": 1}
 
 
 def _iniciais(nome: str) -> str:
@@ -763,7 +951,12 @@ def _iniciais(nome: str) -> str:
     return (partes[0][0] + partes[-1][0]).upper()
 
 
-def _ordenar_fila(itens: list[ExameFila]) -> list[ExameFila]:
+def _ordenar_fila(itens: list[ExameFila], ordem: str = "prioridade") -> list[ExameFila]:
+    if ordem == "cronologica":
+        return sorted(
+            itens,
+            key=lambda e: (str(getattr(e, "created_at", "") or ""), str(e.data_pedido), e.id or 0),
+        )
     return sorted(
         itens,
         key=lambda e: (PRIO_PESO.get(e.prioridade, 9), str(e.data_pedido), e.id or 0),
@@ -771,8 +964,33 @@ def _ordenar_fila(itens: list[ExameFila]) -> list[ExameFila]:
 
 
 def _grupo_procedimento(e: ExameFila) -> str:
-    """Chave de segmentação: mesmo procedimento (exame+especialidade normalizados)."""
+    """Chave legada: mesmo procedimento (exame+especialidade normalizados)."""
     return f"{(e.exame or '').strip().upper()}|{(e.especialidade or '').strip().upper()}"
+
+
+# Tipos de atendimento que são consulta especializada (posição por especialidade).
+TIPOS_CONSULTA_ESPECIALIZADA = frozenset({
+    "CONSULTAS ESPECIALIZADAS",
+    "RETORNO CONSULTA ESPECIALIZADA",
+})
+
+
+def _eh_consulta_especializada(e: ExameFila) -> bool:
+    return (e.tipo_fila or "").strip().upper() in TIPOS_CONSULTA_ESPECIALIZADA
+
+
+def _grupo_fila(e: ExameFila) -> tuple[str, str]:
+    """Fila específica do encaminhamento: (chave, rótulo).
+
+    - Exames: agrupa pelo Tipo de Fila do procedimento.
+    - Consultas especializadas: agrupa pela Especialidade médica.
+    """
+    if _eh_consulta_especializada(e):
+        rotulo = ((e.nome_especialidade or "").strip()
+                  or (e.especialidade or "").strip()) or "GERAL"
+        return f"ESP|{rotulo.upper()}", rotulo
+    rotulo = (e.tipo_fila or "").strip() or "GERAL"
+    return f"TIPO|{rotulo.upper()}", rotulo
 
 
 def _grupo_especialidade(e: ExameFila) -> str:
@@ -821,7 +1039,7 @@ def _rank_por_especialidade(db: Session) -> dict[int, tuple[int, int]]:
     return rank
 
 
-RISCO_ROTULO = {"rotina": "Eletivo", "prioritaria": "Prioritário", "urgente": "Urgente"}
+RISCO_ROTULO = {"rotina": "Eletivo", "urgente": "Urgente"}
 
 
 def _risco_rotulo(prioridade: str | None) -> str:
@@ -838,7 +1056,7 @@ def _status_rotulo(e: ExameFila) -> str:
             data = ""
         return f"Marcado ({data})" if data else "Marcado"
     if status == "aguardando":
-        return "Em Regulação" if (e.prioridade or "") in ("prioritaria", "urgente") else "Aguardando Agendamento"
+        return "Em Regulação" if (e.prioridade or "") == "urgente" else "Aguardando Agendamento"
     if status == "realizado":
         return "Realizado"
     if status == "cancelado":
@@ -858,21 +1076,28 @@ def _data_inclusao_iso(e: ExameFila) -> str:
         return ""
 
 
-def _rank_por_grupo(db: Session) -> dict[int, tuple[int, int]]:
-    """Posição restrita ao mesmo procedimento/tipo. Retorna {id: (posicao, total_grupo)}."""
+def _rank_por_grupo(db: Session) -> dict[int, tuple[int, int, str]]:
+    """Posição na fila específica do encaminhamento.
+
+    Exames agrupam por Tipo de Fila; consultas especializadas, por
+    Especialidade. Retorna {id: (posicao, total_grupo, rotulo_grupo)}.
+    """
     base = list(
         db.exec(
             select(ExameFila).where(ExameFila.ativo == True, ExameFila.status.in_(["aguardando", "agendado"]))  # noqa: E712
         ).all()
     )
     grupos: dict[str, list[ExameFila]] = {}
+    rotulos: dict[str, str] = {}
     for e in base:
-        grupos.setdefault(_grupo_procedimento(e), []).append(e)
-    rank: dict[int, tuple[int, int]] = {}
-    for membros in grupos.values():
+        chave, rotulo = _grupo_fila(e)
+        grupos.setdefault(chave, []).append(e)
+        rotulos[chave] = rotulo
+    rank: dict[int, tuple[int, int, str]] = {}
+    for chave, membros in grupos.items():
         total = len(membros)
         for i, m in enumerate(_ordenar_fila(membros)):
-            rank[m.id] = (i + 1, total)
+            rank[m.id] = (i + 1, total, rotulos[chave])
     return rank
 
 
@@ -887,7 +1112,7 @@ def _com_posicao(db: Session, itens: list[ExameFila]) -> list[dict]:
     out = []
     for e in itens:
         pac = db.get(Paciente, e.paciente_id)
-        pos, total_grupo = rank.get(e.id, (None, None))
+        pos, total_grupo, rotulo = rank.get(e.id, (None, None, ""))
         out.append(
             ExameOut(
                 **e.model_dump(),
@@ -895,6 +1120,7 @@ def _com_posicao(db: Session, itens: list[ExameFila]) -> list[dict]:
                 paciente_cpf=pac.cpf if pac else "",
                 posicao=pos,
                 total_fila=total_grupo if total_grupo is not None else total,
+                grupo_fila=rotulo or "",
             )
         )
     return out
@@ -914,6 +1140,7 @@ def listar_exames(
     data_ate: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     agendada_em: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     meus: bool = Query(default=False),
+    ordenacao: str = Query(default="prioridade", pattern="^(prioridade|cronologica)$"),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
@@ -926,7 +1153,7 @@ def listar_exames(
     )
     total = len(itens)
     meta = paginar(total, page, limit)
-    pagina = _ordenar_fila(itens)[meta["offset"]:meta["offset"] + limit]
+    pagina = _ordenar_fila(itens, ordenacao)[meta["offset"]:meta["offset"] + limit]
     return {
         "data": _com_posicao(db, pagina),
         "total": total,
@@ -1016,8 +1243,12 @@ def _filtrar_exames_lista(
 
 COLS_FILA = [
     {"chave": "posicao", "rotulo": "Posição", "largura": 10},
+    {"chave": "grupo_fila", "rotulo": "Fila específica", "largura": 28},
     {"chave": "paciente", "rotulo": "Paciente", "largura": 32},
-    {"chave": "cpf", "rotulo": "CPF", "largura": 18},
+    {"chave": "cpf", "rotulo": "CPF", "largura": 18, "formato": "texto"},
+    {"chave": "cns", "rotulo": "Cartão SUS / CNS", "largura": 20, "formato": "texto"},
+    {"chave": "telefone", "rotulo": "Telefone", "largura": 18, "formato": "texto"},
+    {"chave": "endereco_completo", "rotulo": "Endereço completo", "largura": 44},
     {"chave": "exame", "rotulo": "Exame / procedimento", "largura": 42},
     {"chave": "especialidade", "rotulo": "Especialidade", "largura": 28},
     {"chave": "risco", "rotulo": "Classificação de risco", "largura": 18},
@@ -1030,15 +1261,80 @@ COLS_FILA = [
 ]
 
 
+def _endereco_completo(pac) -> str:
+    """Rua, número, bairro, complemento e CEP (cadastro local)."""
+    if not pac:
+        return ""
+    partes = [
+        (pac.endereco or "").strip(),
+        f"Nº {(pac.endereco_numero or '').strip()}" if (pac.endereco_numero or "").strip() else "",
+        (getattr(pac, "complemento", "") or "").strip(),
+        (pac.bairro or "").strip(),
+        f"CEP {(pac.cep or '').strip()}" if (pac.cep or "").strip() else "",
+    ]
+    return " · ".join([x for x in partes if x])
+
+
+def _pec_documentos(cpfs: set, cnss: set) -> dict:
+    """Backfill best-effort de CNS/CPF via DW PEC readonly (sem escrita).
+
+    O DW expõe cadastro básico (cns, cpf, prontuário); endereço/telefone
+    vêm do cadastro local. Falha silenciosa => só dados locais.
+    """
+    out: dict[str, dict] = {}
+    if not cpfs and not cnss:
+        return out
+    try:
+        from sqlalchemy import bindparam, text
+
+        from app.services.pec import _pg
+
+        conn, _ = _pg()
+        if conn is None:
+            return out
+        try:
+            for coluna, chaves in (("cpf", cpfs), ("cns", cnss)):
+                lista = [c for c in chaves if c][:2000]
+                if not lista:
+                    continue
+                stmt = text(
+                    f"SELECT cns, cpf, prontuario FROM pec_pacientes WHERE {coluna} IN :chaves"  # noqa: S608
+                ).bindparams(bindparam("chaves", expanding=True))
+                for cns, cpf, _pront in conn.execute(stmt, {"chaves": lista}).all():
+                    if cpf:
+                        out.setdefault(f"cpf:{''.join(c for c in str(cpf) if c.isdigit())}",
+                                       {"cns": cns or "", "cpf": cpf or ""})
+                    if cns:
+                        out.setdefault(f"cns:{''.join(c for c in str(cns) if c.isdigit())}",
+                                       {"cns": cns or "", "cpf": cpf or ""})
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    except Exception:
+        return {}
+    return out
+
+
 def _linha_fila(db: Session, cache: dict, e, pos: int | None = None) -> dict:
     pac = cache.get(e.paciente_id)
     if pac is None:
         pac = db.get(Paciente, e.paciente_id)
         cache[e.paciente_id] = pac
+    _, rotulo = _grupo_fila(e)
+    cpf = "".join(c for c in (pac.cpf if pac else "") if c.isdigit())
+    cns = "".join(c for c in (pac.cns if pac else "") if c.isdigit())
+    pec = cache.get("pec") or {}
+    comp = pec.get(f"cpf:{cpf}") or pec.get(f"cns:{cns}") or {}
     return {
         "posicao": pos or "",
+        "grupo_fila": rotulo,
         "paciente": pac.nome if pac else "?",
         "cpf": pac.cpf if pac else "",
+        "cns": (pac.cns if pac and pac.cns else comp.get("cns", "")) or "",
+        "telefone": pac.telefone if pac else "",
+        "endereco_completo": _endereco_completo(pac),
         "exame": e.exame or "",
         "especialidade": e.nome_especialidade or e.especialidade or e.tipo_fila or "",
         "risco": _risco_rotulo(e.prioridade),
@@ -1078,6 +1374,12 @@ def exportar_fila(
     )
     rank = _rank_por_grupo(db)
     cache: dict = {}
+    for e in itens:
+        if e.paciente_id not in cache:
+            cache[e.paciente_id] = db.get(Paciente, e.paciente_id)
+    cpfs = {"".join(c for c in (p.cpf or "") if c.isdigit()) for p in cache.values() if p}
+    cnss = {"".join(c for c in (p.cns or "") if c.isdigit()) for p in cache.values() if p}
+    cache["pec"] = _pec_documentos({c for c in cpfs if c}, {c for c in cnss if c})
     linhas = [_linha_fila(db, cache, e, (rank.get(e.id) or (None,))[0]) for e in itens]
     return resposta_xlsx(
         "Fila de espera — exames e procedimentos",
@@ -1370,11 +1672,12 @@ def atualizar_exame(
     db.refresh(obj)
     pac = db.get(Paciente, obj.paciente_id)
     rank = _rank_por_grupo(db)
-    pos, _ = rank.get(obj.id, (None, None))
+    pos, _, rotulo = rank.get(obj.id, (None, None, ""))
     return ExameOut(
         **obj.model_dump(), paciente_nome=pac.nome if pac else "",
         paciente_cpf=pac.cpf if pac else "",
         posicao=pos,
+        grupo_fila=rotulo or "",
     )
 
 
@@ -1455,7 +1758,7 @@ def consultar_exame_publico(token: str, db: Session = Depends(get_db)):
     if not obj or not obj.ativo:
         raise HTTPException(404, "Pedido não encontrado")
     rank = _rank_por_grupo(db)
-    pos, total_grupo = rank.get(obj.id, (None, None))
+    pos, total_grupo, rotulo = rank.get(obj.id, (None, None, ""))
     pac = db.get(Paciente, obj.paciente_id)
     return Response(
         content=ExamePublicoOut(
@@ -1468,6 +1771,7 @@ def consultar_exame_publico(token: str, db: Session = Depends(get_db)):
             destino=obj.destino,
             posicao=pos,
             total_fila=total_grupo,
+            grupo_fila=rotulo or "",
             paciente_iniciais=_iniciais(pac.nome if pac else ""),
         ).model_dump_json(),
         media_type="application/json",
@@ -1990,7 +2294,19 @@ def criar_fila_viagem(
 ):
     if not db.get(Paciente, data.paciente_id):
         raise HTTPException(404, "Paciente não encontrado")
-    obj = ViagemFila(**data.model_dump())
+    dados = data.model_dump()
+    if data.acompanhante_id:
+        acomp = db.get(Paciente, data.acompanhante_id)
+        if not acomp:
+            raise HTTPException(404, "Acompanhante não encontrado")
+        if acomp.id == data.paciente_id:
+            raise HTTPException(400, "Acompanhante não pode ser o próprio paciente")
+        dados["acompanhante"] = True
+        dados["acompanhante_nome"] = (data.acompanhante_nome or acomp.nome)[:150]
+        dados["acompanhante_cpf"] = (data.acompanhante_cpf or acomp.cpf or "")[:14]
+    elif data.acompanhante and not (data.acompanhante_nome or "").strip():
+        dados["acompanhante_nome"] = ""
+    obj = ViagemFila(**dados)
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -2006,7 +2322,21 @@ def atualizar_fila_viagem(
         raise HTTPException(404, "Registro não encontrado")
     if not db.get(Paciente, data.paciente_id):
         raise HTTPException(404, "Paciente não encontrado")
-    for k, v in data.model_dump().items():
+    dados = data.model_dump()
+    if data.acompanhante_id:
+        acomp = db.get(Paciente, data.acompanhante_id)
+        if not acomp:
+            raise HTTPException(404, "Acompanhante não encontrado")
+        if acomp.id == data.paciente_id:
+            raise HTTPException(400, "Acompanhante não pode ser o próprio paciente")
+        dados["acompanhante"] = True
+        dados["acompanhante_nome"] = (data.acompanhante_nome or acomp.nome)[:150]
+        dados["acompanhante_cpf"] = (data.acompanhante_cpf or acomp.cpf or "")[:14]
+    elif not data.acompanhante:
+        dados["acompanhante_id"] = None
+        dados["acompanhante_nome"] = ""
+        dados["acompanhante_cpf"] = ""
+    for k, v in dados.items():
         setattr(obj, k, v)
     db.add(obj)
     db.commit()
@@ -2025,15 +2355,8 @@ def excluir_fila_viagem(fid: int, db: Session = Depends(get_db), _=Depends(need_
     db.commit()
 
 
-@router.post("/viagens-fila/puxar-agendados", response_model=dict)
-def puxar_agendados(
-    data: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
-    db: Session = Depends(get_db),
-    _=Depends(need_perm("tfd_viagens", "criar")),
-):
-    """Traz exames/consultas com data marcada para a fila de transporte."""
-    from datetime import date as _date
-
+def _candidatos_puxar(db: Session, data: str | None) -> list:
+    """Agendados ainda fora da fila de transporte (prévia do puxar)."""
     base = select(ExameFila).where(ExameFila.ativo == True, ExameFila.status == "agendado")  # noqa: E712
     if data:
         base = select(ExameFila).where(
@@ -2046,9 +2369,59 @@ def puxar_agendados(
             select(ViagemFila).where(ViagemFila.status.in_(["aguardando", "alocado"]))
         ).all() if o.exame_fila_id
     }
+    return [e for e in db.exec(base.order_by(ExameFila.data_agendada)).all()
+            if e.id not in existentes]
+
+
+def _candidato_out(db: Session, e) -> dict:
+    pac = db.get(Paciente, e.paciente_id)
+    return {
+        "exame_fila_id": e.id,
+        "paciente_id": e.paciente_id,
+        "paciente_nome": pac.nome if pac else "?",
+        "exame": e.exame or "",
+        "destino": (e.unidade_nome or e.destino or "").strip() or "A definir",
+        "unidade": e.unidade_nome or "",
+        "data_agendada": e.data_agendada.isoformat() if e.data_agendada else "",
+        "hora_agendada": e.hora_agendada or "",
+        "prioridade": e.prioridade or "rotina",
+    }
+
+
+@router.get("/viagens-fila/candidatos-agendados")
+def candidatos_puxar(
+    data: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    db: Session = Depends(get_db),
+    _=Depends(need_perm("tfd_viagens")),
+):
+    """Prévia do puxar-agendados: quem entraria na fila (p/ seleção no dialog)."""
+    return [_candidato_out(db, e) for e in _candidatos_puxar(db, data)]
+
+
+@router.post("/viagens-fila/puxar-agendados", response_model=dict)
+def puxar_agendados(
+    data: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    corpo: dict | None = Body(default=None),
+    db: Session = Depends(get_db),
+    _=Depends(need_perm("tfd_viagens", "criar")),
+):
+    """Traz exames/consultas com data marcada para a fila de transporte.
+
+    body {"ids": [...]} limita aos selecionados no dialog; sem "ids",
+    mantém o comportamento legado (todos os candidatos).
+    """
+    ids = None
+    if isinstance(corpo, dict) and "ids" in corpo:
+        ids = corpo.get("ids") or []
+        try:
+            ids = {int(i) for i in ids}
+        except (TypeError, ValueError):
+            raise HTTPException(400, "IDs inválidos")
     criados = 0
-    for e in db.exec(base).all():
-        if e.id in existentes:
+    ignorados = 0
+    for e in _candidatos_puxar(db, data):
+        if ids is not None and e.id not in ids:
+            ignorados += 1
             continue
         db.add(ViagemFila(
             paciente_id=e.paciente_id,
@@ -2064,7 +2437,7 @@ def puxar_agendados(
         ))
         criados += 1
     db.commit()
-    return {"criados": criados}
+    return {"criados": criados, "ignorados": ignorados}
 
 
 # ---------- Quadro semanal: dia por destino + frota ----------
@@ -2079,26 +2452,131 @@ def _assentos(db: Session, viagem_id: int) -> tuple[int, int]:
     for p in db.exec(select(ViagemPaciente).where(ViagemPaciente.viagem_id == viagem_id)).all():
         if not p.presente:
             continue
-        ocup += 2 if (p.acompanhante or "").strip() else 1
+        tem_acomp = bool((p.acompanhante or "").strip() or getattr(p, "acompanhante_id", None))
+        ocup += 2 if tem_acomp else 1
     return ocup, cap
 
 
 def _passageiro_out(db: Session, p) -> dict:
     pac = db.get(Paciente, p.paciente_id)
+    acomp_id = getattr(p, "acompanhante_id", None)
+    acomp = db.get(Paciente, acomp_id) if acomp_id else None
+    acomp_nome = (p.acompanhante or "").strip() or (acomp.nome if acomp else "")
     return {
         "id": p.id, "viagem_id": p.viagem_id, "paciente_id": p.paciente_id,
         "paciente_nome": pac.nome if pac else "?",
         "paciente_cpf": pac.cpf if pac else "",
         "paciente_nascimento": pac.nascimento.isoformat() if pac and pac.nascimento else None,
-        "acompanhante": p.acompanhante or "", "presente": p.presente,
+        "acompanhante": acomp_nome, "presente": p.presente,
+        "acompanhante_id": acomp_id,
+        "acompanhante_nome": acomp.nome if acomp else acomp_nome,
+        "acompanhante_cpf": getattr(p, "acompanhante_cpf", "") or (acomp.cpf if acomp else ""),
         "viagem_fila_id": p.viagem_fila_id,
         "tratamento": p.tratamento or "", "unidade": p.unidade or "",
         "hora_consulta": p.hora_consulta or "",
     }
 
 
-def _dia_payload(db: Session, data: str) -> dict:
-    """Quadro de um dia: destinos com viagens, veículos, vagas e passageiros."""
+DURACAO_PADRAO_MIN = 9 * 60
+
+
+def _minutos(hhmm: str | None) -> int | None:
+    """'HH:MM' -> minutos desde 00h. None se inválido/vazio."""
+    import re as _re
+
+    if not hhmm or not _re.fullmatch(r"\d{1,2}:\d{2}", (hhmm or "").strip()):
+        return None
+    h, m = (hhmm or "").strip().split(":")
+    h, m = int(h), int(m)
+    if h > 23 or m > 59:
+        return None
+    return h * 60 + m
+
+
+def _janela(saida: str | None, retorno: str | None) -> tuple[int, int]:
+    """Intervalo efetivo da viagem em minutos (retorno vazio/curto => +9h)."""
+    ini = _minutos(saida)
+    if ini is None:
+        ini = 5 * 60
+    fim = _minutos(retorno)
+    if fim is None or fim <= ini:
+        fim = ini + DURACAO_PADRAO_MIN
+    return ini, fim
+
+
+def _sobrepoe(a: tuple[int, int], b: tuple[int, int]) -> bool:
+    return max(a[0], b[0]) < min(a[1], b[1])
+
+
+def _norm_nome(s: str | None) -> str:
+    return " ".join((s or "").strip().upper().split())
+
+
+def _conflitos_viagem(db, data_viagem, saida: str, retorno: str,
+                      veiculo_id, motorista_id, motorista_nome: str,
+                      ignorar_id: int | None = None) -> tuple:
+    """Viagens na mesma data com sobreposição p/ o mesmo veículo/motorista."""
+    from datetime import date as _date
+
+    iso = data_viagem.isoformat() if isinstance(data_viagem, _date) else str(data_viagem or "")
+    if not iso:
+        return None, None
+    janela = _janela(saida, retorno)
+    nome = _norm_nome(motorista_nome)
+    conflito_veiculo = None
+    conflito_motorista = None
+    for v in db.exec(select(Viagem).where(
+            func.to_char(Viagem.data_viagem, "YYYY-MM-DD") == iso)).all():
+        if ignorar_id and v.id == ignorar_id:
+            continue
+        outra = _janela(v.hora_saida, v.hora_retorno)
+        if not _sobrepoe(janela, outra):
+            continue
+        if veiculo_id and v.veiculo_id and int(v.veiculo_id) == int(veiculo_id):
+            conflito_veiculo = v
+        mid = getattr(v, "motorista_id", None)
+        mesmo_id = bool(motorista_id and mid and int(mid) == int(motorista_id))
+        mesmo_nome = bool(nome and _norm_nome(v.motorista) == nome)
+        if mesmo_id or mesmo_nome:
+            conflito_motorista = v
+        if conflito_veiculo and conflito_motorista:
+            break
+    return conflito_veiculo, conflito_motorista
+
+
+def _exigir_sem_conflito(db, data_viagem, saida: str, retorno: str,
+                         veiculo_id, motorista_id, motorista_nome: str,
+                         ignorar_id: int | None = None) -> None:
+    cv, cm = _conflitos_viagem(db, data_viagem, saida, retorno, veiculo_id,
+                               motorista_id, motorista_nome, ignorar_id)
+    if cv is not None:
+        raise HTTPException(
+            400,
+            f"Veículo indisponível: já alocado na {_nome_viagem(cv.destino, cv.hora_saida, cv.id)} "
+            f"({(cv.hora_saida or '').strip() or 's/ horário'}"
+            f"→{(cv.hora_retorno or '').strip() or 's/ retorno'}) no mesmo dia/horário.",
+        )
+    if cm is not None:
+        quem = (motorista_nome or "").strip() or (cm.motorista or "").strip() or "motorista"
+        raise HTTPException(
+            400,
+            f"Motorista indisponível: {quem} já alocado na "
+            f"{_nome_viagem(cm.destino, cm.hora_saida, cm.id)} no mesmo dia/horário.",
+        )
+
+
+def _nome_viagem(destino: str, hora_saida: str, vid: int | None = None) -> str:
+    """Nome dinâmico da viagem (nunca exibe placa/código solto como título)."""
+    base = f"Viagem - {(destino or 'A definir').strip() or 'A definir'} - {(hora_saida or '').strip() or 's/ horário'}"
+    return f"{base} #{vid}" if vid else base
+
+
+def _dia_payload(db: Session, data: str, redigir_pacientes: bool = False) -> dict:
+    """Quadro de um dia: destinos com viagens, veículos, vagas e passageiros.
+
+    redigir_pacientes=True (perfil frota_gestao): oculta PII dos passageiros,
+    mantendo contagens p/ gestão de veículos/motoristas.
+    """
     viagens = list(db.exec(
         select(Viagem).where(func.to_char(Viagem.data_viagem, "YYYY-MM-DD") == data)
         .order_by(Viagem.destino, Viagem.hora_saida)
@@ -2108,18 +2586,27 @@ def _dia_payload(db: Session, data: str) -> dict:
     for v in viagens:
         veh = db.get(Veiculo, v.veiculo_id) if v.veiculo_id else None
         ocup, cap = _assentos(db, v.id)
+        if redigir_pacientes:
+            passageiros = []
+        else:
+            passageiros = [_passageiro_out(db, p) for p in db.exec(
+                select(ViagemPaciente).where(ViagemPaciente.viagem_id == v.id)
+            ).all()]
         por_destino.setdefault(v.destino or "A definir", []).append({
-            "id": v.id, "destino": v.destino, "unidade": v.unidade or "",
+            "id": v.id, "nome": _nome_viagem(v.destino, v.hora_saida, v.id),
+            "destino": v.destino, "unidade": v.unidade or "",
             "data_viagem": v.data_viagem.isoformat() if v.data_viagem else "",
-            "hora_saida": v.hora_saida or "", "motorista": v.motorista or "",
+            "hora_saida": v.hora_saida or "",
+            "hora_retorno": v.hora_retorno or "",
+            "motorista": v.motorista or "",
+            "motorista_id": getattr(v, "motorista_id", None),
             "status": v.status, "finalidade": v.finalidade or "",
             "veiculo_id": v.veiculo_id,
             "veiculo_placa": veh.placa if veh else "",
             "veiculo_modelo": veh.modelo if veh else "",
             "capacidade": cap, "ocupados": ocup, "vagas": max(cap - ocup, 0),
-            "passageiros": [_passageiro_out(db, p) for p in db.exec(
-                select(ViagemPaciente).where(ViagemPaciente.viagem_id == v.id)
-            ).all()],
+            "passageiros": passageiros,
+            "passageiros_restritos": redigir_pacientes,
         })
     frota = []
     for veh in db.exec(select(Veiculo).where(Veiculo.ativo == True).order_by(Veiculo.placa)).all():  # noqa: E712
@@ -2145,27 +2632,28 @@ def _dia_payload(db: Session, data: str) -> dict:
 def dia_viagens(
     data: str = Query(pattern=r"^\d{4}-\d{2}-\d{2}$"),
     db: Session = Depends(get_db),
-    _=Depends(need_perm("tfd_viagens")),
+    user: User = Depends(need_any_perm("tfd_viagens", "tfd_frota_gestao")),
 ):
     """Quadro do dia: destinos com viagens, veículos, vagas e passageiros."""
-    return _dia_payload(db, data)
+    return _dia_payload(db, data, redigir_pacientes=not tem_tela(user, "tfd_viagens"))
 
 
 @router.get("/viagens/semana")
 def semana_viagens(
     inicio: str = Query(pattern=r"^\d{4}-\d{2}-\d{2}$"),
     db: Session = Depends(get_db),
-    _=Depends(need_perm("tfd_viagens")),
+    user: User = Depends(need_any_perm("tfd_viagens", "tfd_frota_gestao")),
 ):
     """Grade semanal (7 dias a partir de `inicio`): viagens + frota."""
     from datetime import date as _date
 
+    redigir = not tem_tela(user, "tfd_viagens")
     ano, mes, dia = int(inicio[0:4]), int(inicio[5:7]), int(inicio[8:10])
     base = _date(ano, mes, dia)
     dias = []
     for i in range(7):
         d = base.fromordinal(base.toordinal() + i).isoformat()
-        dias.append(_dia_payload(db, d))
+        dias.append(_dia_payload(db, d, redigir_pacientes=redigir))
     frota = dias[0].get("frota", []) if dias else []
     for d in dias:
         d.pop("frota", None)
@@ -2177,7 +2665,7 @@ def sugestao_frota(
     data: str = Query(pattern=r"^\d{4}-\d{2}-\d{2}$"),
     destino: str = Query(min_length=2, max_length=120),
     db: Session = Depends(get_db),
-    _=Depends(need_perm("tfd_viagens")),
+    _=Depends(need_any_perm("tfd_viagens", "tfd_frota_gestao")),
 ):
     """Sugere o veículo ideal p/ a demanda do destino no dia.
 
@@ -2212,6 +2700,201 @@ def sugestao_frota(
                     "tipo": esc.tipo, "capacidade": esc.capacidade},
         "demanda": len(fila), "assentos": assentos, "motivo": motivo,
     }
+
+
+def _relatorio_frota(db: Session, de: str | None, ate: str | None) -> dict:
+    """Métricas da frota no período (sem PII: só agregados por veículo/motorista)."""
+    base = select(Viagem)
+    filtros = []
+    if de:
+        filtros.append(func.to_char(Viagem.data_viagem, "YYYY-MM-DD") >= de)
+    if ate:
+        filtros.append(func.to_char(Viagem.data_viagem, "YYYY-MM-DD") <= ate)
+    if filtros:
+        base = select(Viagem).where(*filtros)
+    viagens = list(db.exec(base.order_by(Viagem.data_viagem)).all())
+    veiculos = {v.id: v for v in db.exec(select(Veiculo)).all()}
+    por_veiculo: dict[int, dict] = {}
+    por_motorista: dict[str, dict] = {}
+    totais = {"agendada": 0, "andamento": 0, "concluida": 0, "cancelada": 0}
+    km_total = 0
+    soma_ocup = 0.0
+    n_ocup = 0
+    for v in viagens:
+        st = (v.status or "agendada")
+        totais[st] = totais.get(st, 0) + 1
+        km = (v.km_final - v.km_inicial) if (v.km_final and v.km_inicial and v.km_final >= v.km_inicial) else 0
+        km_total += km
+        ocup, cap = _assentos(db, v.id)
+        taxa = (ocup / cap) if cap else 0
+        if cap:
+            soma_ocup += taxa
+            n_ocup += 1
+        veh = veiculos.get(v.veiculo_id) if v.veiculo_id else None
+        chave_v = v.veiculo_id or 0
+        agg_v = por_veiculo.setdefault(chave_v, {
+            "veiculo_id": v.veiculo_id, "placa": veh.placa if veh else "A definir",
+            "modelo": veh.modelo if veh else "", "viagens": 0, "km": 0,
+            "soma_ocup": 0.0, "n_ocup": 0,
+        })
+        agg_v["viagens"] += 1
+        agg_v["km"] += km
+        if cap:
+            agg_v["soma_ocup"] += taxa
+            agg_v["n_ocup"] += 1
+        mot = (v.motorista or "").strip() or "A definir"
+        agg_m = por_motorista.setdefault(mot, {"motorista": mot, "viagens": 0, "km": 0})
+        agg_m["viagens"] += 1
+        agg_m["km"] += km
+    lista_v = sorted(
+        ({"veiculo_id": a["veiculo_id"], "placa": a["placa"], "modelo": a["modelo"],
+          "viagens": a["viagens"], "km": a["km"],
+          "ocupacao_media": round(a["soma_ocup"] / a["n_ocup"], 3) if a["n_ocup"] else 0}
+         for a in por_veiculo.values()),
+        key=lambda x: x["viagens"], reverse=True,
+    )
+    lista_m = sorted(por_motorista.values(), key=lambda x: x["viagens"], reverse=True)
+    return {
+        "periodo": {"de": de or "", "ate": ate or ""},
+        "total_viagens": len(viagens),
+        "por_status": totais,
+        "km_total": km_total,
+        "ocupacao_media": round(soma_ocup / n_ocup, 3) if n_ocup else 0,
+        "por_veiculo": lista_v,
+        "por_motorista": lista_m,
+        "mais_usado_veiculo": lista_v[0] if lista_v else None,
+        "mais_usado_motorista": lista_m[0] if lista_m else None,
+    }
+
+
+@router.get("/frota/relatorio")
+def relatorio_frota(
+    de: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    ate: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("tfd_frota", "tfd_viagens", "tfd_frota_gestao")),
+):
+    """Painel da frota: viagens por período, km, uso por veículo/motorista e ocupação."""
+    if de and ate and de > ate:
+        raise HTTPException(400, "Período inválido")
+    return _relatorio_frota(db, de, ate)
+
+
+@router.get("/frota/relatorio/exportar")
+def exportar_relatorio_frota(
+    de: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    ate: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("tfd_frota", "tfd_viagens", "tfd_frota_gestao")),
+):
+    """Relatório da frota em XLSX respeitando o período filtrado."""
+    from app.services.export_xlsx import resposta_xlsx
+
+    if de and ate and de > ate:
+        raise HTTPException(400, "Período inválido")
+    rel = _relatorio_frota(db, de, ate)
+    linhas = [
+        {"grupo": "Por veículo", "item": v["placa"], "detalhe": v["modelo"],
+         "viagens": v["viagens"], "km": v["km"], "ocupacao": v["ocupacao_media"]}
+        for v in rel["por_veiculo"]
+    ] + [
+        {"grupo": "Por motorista", "item": m["motorista"], "detalhe": "",
+         "viagens": m["viagens"], "km": m["km"], "ocupacao": ""}
+        for m in rel["por_motorista"]
+    ]
+    return resposta_xlsx(
+        f"Relatório da frota ({rel['periodo']['de'] or '…'} a {rel['periodo']['ate'] or '…'})",
+        ator.nome or ator.username,
+        [
+            {"chave": "grupo", "rotulo": "Grupo", "largura": 16},
+            {"chave": "item", "rotulo": "Veículo/Motorista", "largura": 28},
+            {"chave": "detalhe", "rotulo": "Modelo", "largura": 24},
+            {"chave": "viagens", "rotulo": "Viagens", "largura": 12},
+            {"chave": "km", "rotulo": "Km rodados", "largura": 14},
+            {"chave": "ocupacao", "rotulo": "Ocupação média", "largura": 16},
+        ],
+        linhas, "relatorio_frota",
+    )
+
+
+@router.get("/viagens/disponibilidade")
+def disponibilidade_frota(
+    data: str = Query(pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    saida: str = Query(default="", max_length=5),
+    retorno: str = Query(default="", max_length=5),
+    ignorar_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("tfd_viagens", "tfd_frota_gestao")),
+):
+    """Veículos e motoristas livres no dia/intervalo (sem sobreposição).
+
+    Intervalo efetivo: saída → retorno; retorno vazio/anterior => +9h.
+    `ignorar_id` exclui a própria viagem na edição/troca.
+    """
+    from datetime import date as _date
+
+    ano, mes, dia = int(data[0:4]), int(data[5:7]), int(data[8:10])
+    janela = _janela(saida, retorno)
+    viagens = list(db.exec(select(Viagem).where(
+        func.to_char(Viagem.data_viagem, "YYYY-MM-DD") == data)).all())
+    if ignorar_id:
+        viagens = [v for v in viagens if v.id != ignorar_id]
+    veiculos_out = []
+    for veh in db.exec(select(Veiculo).where(
+            Veiculo.ativo == True).order_by(Veiculo.placa)).all():  # noqa: E712
+        ocupado_por = None
+        for v in viagens:
+            if v.veiculo_id and int(v.veiculo_id) == int(veh.id or 0):
+                if _sobrepoe(janela, _janela(v.hora_saida, v.hora_retorno)):
+                    ocupado_por = _nome_viagem(v.destino, v.hora_saida, v.id)
+                    break
+        veiculos_out.append({
+            "id": veh.id, "placa": veh.placa, "modelo": veh.modelo or "",
+            "tipo": veh.tipo, "capacidade": veh.capacidade,
+            "status": veh.status or "disponivel",
+            "disponivel": ocupado_por is None and (veh.status or "") != "manutencao",
+            "ocupado_por": ocupado_por,
+        })
+    mots = list(db.exec(select(Motorista).where(
+        Motorista.ativo == True).order_by(Motorista.nome)).all())  # noqa: E712
+    motoristas_out = []
+    for m in mots:
+        ocupado_por = None
+        for v in viagens:
+            mid = getattr(v, "motorista_id", None)
+            if (mid and m.id and int(mid) == int(m.id)) or                (_norm_nome(v.motorista) == _norm_nome(m.nome) and _norm_nome(m.nome)):
+                if _sobrepoe(janela, _janela(v.hora_saida, v.hora_retorno)):
+                    ocupado_por = _nome_viagem(v.destino, v.hora_saida, v.id)
+                    break
+        motoristas_out.append({
+            "id": m.id, "nome": m.nome,
+            "disponivel": ocupado_por is None, "ocupado_por": ocupado_por,
+        })
+    return {
+        "data": data,
+        "janela": {"saida": saida, "retorno": retorno},
+        "veiculos": veiculos_out,
+        "motoristas": motoristas_out,
+    }
+
+
+@router.get("/viagens/{vid}", response_model=ViagemOut)
+def obter_viagem(
+    vid: int, db: Session = Depends(get_db),
+    _=Depends(need_any_perm("tfd_viagens", "tfd_frota_gestao")),
+):
+    """Detalhe da viagem p/ edição direta na visão semanal."""
+    obj = db.get(Viagem, vid)
+    if not obj:
+        raise HTTPException(404, "Viagem não encontrada")
+    n = db.exec(
+        select(func.count(ViagemPaciente.id)).where(ViagemPaciente.viagem_id == vid)
+    ).one()
+    placa = ""
+    if obj.veiculo_id:
+        veh = db.get(Veiculo, obj.veiculo_id)
+        placa = veh.placa if veh else ""
+    return ViagemOut(**obj.model_dump(), passageiros=n or 0, veiculo_placa=placa)
 
 
 @router.get("/viagens/{vid}/ordem-circulacao")

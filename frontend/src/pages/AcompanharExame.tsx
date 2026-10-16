@@ -42,7 +42,7 @@ export default function AcompanharExame() {
               </p>
               <p className="flex items-center justify-center gap-1 text-xs font-semibold text-sus-900/60">
                 <ListOrdered className="h-3.5 w-3.5" />
-                {dado.posicao ? `posição na fila · ${dado.total_fila ?? "—"} aguardando` : "fora da fila ativa"}
+                {dado.posicao ? `posição na fila${dado.grupo_fila ? ` ${dado.grupo_fila}` : ""} · ${dado.total_fila ?? "—"} aguardando` : "fora da fila ativa"}
               </p>
             </div>
             <div className="rounded-2xl border border-sus-900/10 p-4 text-sm">

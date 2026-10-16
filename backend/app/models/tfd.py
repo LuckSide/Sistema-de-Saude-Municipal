@@ -15,6 +15,7 @@ class Paciente(SQLModel, table=True):
     telefone: str = Field(default="", max_length=20)
     endereco: str = Field(default="", max_length=255)
     endereco_numero: str = Field(default="", max_length=20)
+    complemento: str = Field(default="", max_length=100)
     bairro: str = Field(default="", max_length=100)
     cep: str = Field(default="", max_length=10)
     unidade_saude_id: int | None = Field(default=None, index=True)
@@ -57,6 +58,25 @@ class Destino(SQLModel, table=True):
     ativo: bool = Field(default=True, index=True)
 
 
+class Motorista(SQLModel, table=True):
+    """Cadastro de motoristas da frota (vínculo opcional por viagem)."""
+
+    __tablename__ = "tfd_motoristas"
+
+    id: int | None = Field(default=None, primary_key=True)
+    nome: str = Field(max_length=120, index=True)
+    cpf: str = Field(default="", max_length=14, index=True)
+    cnh_numero: str = Field(default="", max_length=20)
+    cnh_categoria: str = Field(default="", max_length=5)
+    cnh_validade: date | None = Field(default=None, sa_column=Column(Date))
+    telefone: str = Field(default="", max_length=20)
+    ativo: bool = Field(default=True, index=True)
+    created_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=False)),
+    )
+
+
 class Viagem(SQLModel, table=True):
     __tablename__ = "tfd_viagens"
 
@@ -67,6 +87,7 @@ class Viagem(SQLModel, table=True):
     hora_saida: str = Field(default="", max_length=5)  # HH:MM
     veiculo_id: int | None = Field(default=None, foreign_key="tfd_veiculos.id")
     motorista: str = Field(default="", max_length=120)
+    motorista_id: int | None = Field(default=None, foreign_key="tfd_motoristas.id")
     departamento: str = Field(default="", max_length=120)
     data_retorno: date | None = Field(default=None, sa_column=Column(Date))
     hora_retorno: str = Field(default="", max_length=5)
@@ -91,6 +112,8 @@ class ViagemPaciente(SQLModel, table=True):
     viagem_id: int = Field(foreign_key="tfd_viagens.id", index=True)
     paciente_id: int = Field(foreign_key="tfd_pacientes.id", index=True)
     acompanhante: str = Field(default="", max_length=150)
+    acompanhante_id: int | None = Field(default=None, foreign_key="tfd_pacientes.id")
+    acompanhante_cpf: str = Field(default="", max_length=14)
     presente: bool = Field(default=True)
     viagem_fila_id: int | None = Field(default=None, index=True)
     tratamento: str = Field(default="", max_length=150)
@@ -111,7 +134,10 @@ class ViagemFila(SQLModel, table=True):
     data_consulta: date | None = Field(default=None, sa_column=Column(Date))
     hora_consulta: str = Field(default="", max_length=5)
     acompanhante: bool = Field(default=False)
-    prioridade: str = Field(default="rotina", max_length=20)  # rotina|prioritaria|urgente
+    acompanhante_id: int | None = Field(default=None, foreign_key="tfd_pacientes.id")
+    acompanhante_nome: str = Field(default="", max_length=150)
+    acompanhante_cpf: str = Field(default="", max_length=14)
+    prioridade: str = Field(default="rotina", max_length=20)  # rotina|urgente
     status: str = Field(default="aguardando", max_length=20, index=True)  # aguardando|alocado|cancelado
     exame_fila_id: int | None = Field(default=None, index=True)
     observacoes: str = Field(default="", max_length=500)
@@ -140,7 +166,7 @@ class ExameFila(SQLModel, table=True):
     codigo_procedimento: str = Field(default="", max_length=20, index=True)
     codigo_especialidade: str = Field(default="", max_length=10, index=True)
     nome_especialidade: str = Field(default="", max_length=120)
-    prioridade: str = Field(default="rotina", max_length=20)  # rotina|prioritaria|urgente
+    prioridade: str = Field(default="rotina", max_length=20)  # rotina|urgente
     justificativa_prioridade: str = Field(default="", max_length=500)
     status: str = Field(
         default="aguardando", max_length=20, index=True

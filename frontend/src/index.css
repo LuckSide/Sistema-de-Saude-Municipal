@@ -121,3 +121,12 @@ body {
     print-color-adjust: exact;
   }
 }
+
+/* Undo toast: barra regressiva 100% -> 0 em 5s */
+@keyframes undo-bar-shrink {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+.undo-bar {
+  animation: undo-bar-shrink 5s linear forwards;
+}

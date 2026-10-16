@@ -142,7 +142,6 @@ export default function TfdExames() {
 
   const prioCor: Record<string, string> = {
     rotina: "bg-sus-900/10 text-sus-900",
-    prioritaria: "bg-amber-100 text-amber-800",
     urgente: "bg-red-100 text-red-700",
   };
 
@@ -246,7 +245,7 @@ export default function TfdExames() {
                 <div>
                   <Label>Prioridade</Label>
                   <select value={form.prioridade} onChange={(e) => setForm({ ...form, prioridade: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
-                    {["rotina", "prioritaria", "urgente"].map((p) => <option key={p} value={p}>{PRIO_ROTULO[p] ?? p}</option>)}
+                    {["rotina", "urgente"].map((p) => <option key={p} value={p}>{PRIO_ROTULO[p] ?? p}</option>)}
                   </select>
                 </div>
                 <div>

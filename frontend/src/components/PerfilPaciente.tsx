@@ -14,6 +14,7 @@ function enderecoCompleto(p: PacientePerfil["paciente"]): string {
   const partes = [
     p.endereco,
     p.endereco_numero ? `Nº ${p.endereco_numero}` : "",
+    p.complemento ?? "",
     p.bairro,
     p.cep ? `CEP ${p.cep}` : "",
   ].filter(Boolean);
@@ -22,7 +23,6 @@ function enderecoCompleto(p: PacientePerfil["paciente"]): string {
 
 const RISCO_COR: Record<string, string> = {
   Eletivo: "bg-sus-900/10 text-sus-900",
-  "Prioritário": "bg-amber-100 text-amber-800",
   Urgente: "bg-red-100 text-red-700",
 };
 

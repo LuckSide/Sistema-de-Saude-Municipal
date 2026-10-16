@@ -24,6 +24,7 @@ def init_db() -> None:
         Especialidade,
         ExameFila,
         Faturamento,
+        Motorista,
         Paciente,
         ProcedimentoCatalogo,
         TipoFila,
@@ -158,6 +159,7 @@ def init_db() -> None:
             cols_pac = []
         for col, ddl in {
             "endereco_numero": "VARCHAR(20) DEFAULT '' NOT NULL",
+            "complemento": "VARCHAR(100) DEFAULT '' NOT NULL",
             "bairro": "VARCHAR(100) DEFAULT '' NOT NULL",
             "cep": "VARCHAR(10) DEFAULT '' NOT NULL",
             "unidade_saude_id": "INTEGER",
@@ -310,10 +312,26 @@ def init_db() -> None:
             "tratamento": "VARCHAR(150) DEFAULT '' NOT NULL",
             "unidade": "VARCHAR(150) DEFAULT '' NOT NULL",
             "hora_consulta": "VARCHAR(5) DEFAULT '' NOT NULL",
+            "acompanhante_id": "INTEGER",
+            "acompanhante_cpf": "VARCHAR(14) DEFAULT '' NOT NULL",
         }.items():
             if col not in cols_vp:
                 try:
                     conn.execute(text(f"ALTER TABLE tfd_viagem_pacientes ADD COLUMN {col} {ddl}"))
+                except Exception:
+                    pass
+        try:
+            cols_vf = [c["name"] for c in inspect(conn).get_columns("tfd_viagem_fila")]
+        except Exception:
+            cols_vf = []
+        for col, ddl in {
+            "acompanhante_id": "INTEGER",
+            "acompanhante_nome": "VARCHAR(150) DEFAULT '' NOT NULL",
+            "acompanhante_cpf": "VARCHAR(14) DEFAULT '' NOT NULL",
+        }.items():
+            if col not in cols_vf:
+                try:
+                    conn.execute(text(f"ALTER TABLE tfd_viagem_fila ADD COLUMN {col} {ddl}"))
                 except Exception:
                     pass
         try:
@@ -331,6 +349,16 @@ def init_db() -> None:
                     conn.execute(text(f"ALTER TABLE tfd_destinos ADD COLUMN {col} {ddl}"))
                 except Exception:
                     pass
+        # Frota: motoristas vinculados à viagem (seletor + "A definir")
+        try:
+            cols_via2 = [c["name"] for c in inspect(conn).get_columns("tfd_viagens")]
+        except Exception:
+            cols_via2 = []
+        if "motorista_id" not in cols_via2:
+            try:
+                conn.execute(text("ALTER TABLE tfd_viagens ADD COLUMN motorista_id INTEGER"))
+            except Exception:
+                pass
         # Auditoria: payload completo do diff (TEXT p/ Raw Payload na íntegra)
         try:
             cols_al = [c["name"] for c in inspect(conn).get_columns("audit_logs")]
@@ -352,6 +380,14 @@ def init_db() -> None:
                     conn.execute(text(f"ALTER TABLE system_settings ADD COLUMN {col} VARCHAR(500) DEFAULT '' NOT NULL"))
                 except Exception:
                     pass
+        # Prioridade binária (Eletivo/Urgente): colapsa legado 'prioritaria' p/ Eletivo
+        for _tab in ("tfd_exames_fila", "tfd_viagem_fila"):
+            try:
+                conn.execute(text(
+                    f"UPDATE {_tab} SET prioridade = 'rotina' WHERE prioridade = 'prioritaria'"
+                ))
+            except Exception:
+                pass
         # RBAC granular: ações por tela em usuarios (json; ausente = tudo)
         try:
             cols_u2 = [c["name"] for c in inspect(conn).get_columns("usuarios")]
@@ -364,6 +400,20 @@ def init_db() -> None:
                 pass
         try:
             conn.execute(text("UPDATE usuarios SET acoes = '{}' WHERE acoes IS NULL OR acoes = ''"))
+        except Exception:
+            pass
+        # Preferências do quadro semanal por operador (filtros persistidos)
+        try:
+            cols_q = [c["name"] for c in inspect(conn).get_columns("user_dashboard_preferences")]
+        except Exception:
+            cols_q = ["quadro_filtros"]
+        if "quadro_filtros" not in cols_q:
+            try:
+                conn.execute(text("ALTER TABLE user_dashboard_preferences ADD COLUMN quadro_filtros TEXT DEFAULT '{}' NOT NULL"))
+            except Exception:
+                pass
+        try:
+            conn.execute(text("UPDATE user_dashboard_preferences SET quadro_filtros = '{}' WHERE quadro_filtros IS NULL OR quadro_filtros = ''"))
         except Exception:
             pass
 

@@ -28,6 +28,7 @@ import {
   type UnidadeSaude,
 } from "../../services/api";
 import { useAuth } from "../../hooks/useAuth";
+import { useUndo } from "../../components/UndoToast";
 import { Button, Card, Input, Label } from "../../components/ui/primitives";
 import Timeline from "../../components/Timeline";
 import { Combobox, type ComboOption } from "../../components/ui/combobox";
@@ -37,7 +38,7 @@ import PerfilPaciente from "../../components/PerfilPaciente";
 import { PRIO_ROTULO } from "../../utils/rotulos";
 
 const STATUS = ["aguardando", "agendado", "realizado", "cancelado"];
-const PRIOS = ["rotina", "prioritaria", "urgente"];
+const PRIOS = ["rotina", "urgente"];
 const JUST_MIN = 12;
 
 function hoje(): string {
@@ -80,6 +81,14 @@ function nomeLimpo(exame: string): string {
   return (m ? m[1] : s).trim() || s;
 }
 
+/** Rótulo da posição na fila específica (tipo p/ exames, especialidade p/ consultas). */
+function rotuloPosicao(e: { posicao?: number | null; total_fila?: number | null; grupo_fila?: string }): string {
+  if (!e.posicao) return "";
+  const onde = e.grupo_fila ? ` na fila ${e.grupo_fila}` : "";
+  const total = e.total_fila ? ` (de ${e.total_fila})` : "";
+  return `${e.posicao}º${onde}${total}`;
+}
+
 function sigtapDe(exame: string): string {
   const s = (exame || "").trim();
   const m = s.match(/^([0-9.\-]{4,})\s*-/);
@@ -98,6 +107,7 @@ function qrUrl(link: string): string {
 
 export default function FilaExames() {
   const { isMedico, podeAlterarPrioridade, retroativoBloqueado } = useAuth();
+  const { notificarUndo } = useUndo();
   const RETRO_MSG = "Seu perfil não possui permissão para realizar lançamentos com datas retroativas.";
   const hojeISO = () => new Date().toISOString().slice(0, 10);
   const ehRetroativa = (d: string) => !!d && d < hojeISO();
@@ -146,6 +156,8 @@ export default function FilaExames() {
   const [detalhe, setDetalhe] = useState<Exame | null>(null);
   const [perfilId, setPerfilId] = useState<number | null>(null);
   const [page, setPage] = useState(1);
+  const [filtrosAvancados, setFiltrosAvancados] = useState(false);
+  const [ordem, setOrdem] = useState<"prioridade" | "cronologica">("prioridade");
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
   const [sel, setSel] = useState<number[]>([]);
@@ -227,13 +239,46 @@ export default function FilaExames() {
         }
         if (loteForm.observacoes.trim()) payload.observacoes = loteForm.observacoes.trim();
       }
+      const anteriores = lista
+        .filter((x) => sel.includes(x.id))
+        .map((x) => ({ ...x }));
       const r = await tfdAtualizarExamesLote(payload as { ids: number[] });
-      setOk(`${r.atualizados} pedido(s) atualizado(s).`);
       setLoteModal(null);
       setConfirmandoLote(false);
       setSel([]);
       await carregar();
       carregarOpcoes().catch(() => {});
+      if (anteriores.length > 0) {
+        const rotuloLote = loteModal === "agendar" ? "agendados" : loteModal === "status" ? "status alterado" : "modificados";
+        notificarUndo({
+          titulo: `${r.atualizados} pedido(s) ${rotuloLote} em lote.`,
+          descricao: "Desfazer restaura os valores anteriores de cada pedido.",
+          onUndo: async () => {
+            for (const a of anteriores) {
+              await tfdAtualizarExame(a.id, {
+                paciente_id: a.paciente_id, exame: a.exame,
+                especialidade: a.especialidade, tipo_fila: a.tipo_fila,
+                codigo_procedimento: a.codigo_procedimento ?? "",
+                codigo_especialidade: a.codigo_especialidade ?? "",
+                nome_especialidade: a.nome_especialidade ?? "",
+                prioridade: a.prioridade,
+                justificativa_prioridade: a.justificativa_prioridade ?? "",
+                status: a.status, data_pedido: a.data_pedido,
+                data_agendada: a.data_agendada,
+                hora_agendada: a.hora_agendada ?? "",
+                medico_id: a.medico_id ?? null,
+                unidade_saude_id: a.unidade_saude_id ?? null,
+                destino: a.destino ?? "",
+                observacoes: a.observacoes ?? "",
+                codigo_curto: a.codigo_curto ?? "",
+              }).catch(() => null);
+            }
+            await carregar();
+          },
+        });
+      } else {
+        setOk(`${r.atualizados} pedido(s) atualizado(s).`);
+      }
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Erro ao atualizar em lote.";
       setErro(msg);
@@ -242,7 +287,7 @@ export default function FilaExames() {
     }
   }
 
-  async function carregar(p = page, over?: { tipo?: string; proc?: string; esp?: string; meus?: boolean }) {
+  async function carregar(p = page, over?: { tipo?: string; proc?: string; esp?: string; meus?: boolean; ordenacao?: string }) {
     const tipoAtual = over?.tipo !== undefined ? over.tipo : tipoFila;
     const procAtual = over?.proc !== undefined ? over.proc : proc;
     const espAtual = over?.esp !== undefined ? over.esp : espCbo;
@@ -620,7 +665,6 @@ export default function FilaExames() {
   const badgeTotal = lista.length > 0 ? lista[0].total_fila ?? total : total;
   const prioCor: Record<string, string> = {
     rotina: "bg-sus-900/10 text-sus-900",
-    prioritaria: "bg-amber-100 text-amber-800",
     urgente: "bg-red-100 text-red-700",
   };
 
@@ -631,8 +675,22 @@ export default function FilaExames() {
         <span className="rounded-full bg-teal/10 px-2.5 py-0.5 text-xs font-semibold text-teal">
           {total} no filtro · {badgeTotal} na fila
         </span>
-        <ExportarExcel url="/api/tfd/exames/exportar" arquivo="fila_espera" params={{ status: filtro || undefined, q: q.trim() || undefined, prioridade: prio || undefined, tipo_fila: tipoFila.trim() || undefined, procedimento: proc.trim() || undefined, codigo_especialidade: espCbo.trim() || undefined, destino: dest.trim() || undefined, data_de: de || undefined, data_ate: ate || undefined, meus: soMeus || undefined }} />
-        <Button onClick={() => abrirModal()}><Plus className="h-4 w-4" /> Novo pedido</Button>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-xl border border-sus-900/10 bg-white p-1">
+            <button
+              type="button"
+              onClick={() => { setOrdem("prioridade"); setPage(1); carregar(1, { ordenacao: "prioridade" }).catch(() => setErro("Falha ao carregar fila.")); }}
+              className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${ordem === "prioridade" ? "bg-sus-900 text-white" : "text-sus-900 hover:bg-sand"}`}
+            >Ordem na fila (com prioridade)</button>
+            <button
+              type="button"
+              onClick={() => { setOrdem("cronologica"); setPage(1); carregar(1, { ordenacao: "cronologica" }).catch(() => setErro("Falha ao carregar fila.")); }}
+              className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${ordem === "cronologica" ? "bg-sus-900 text-white" : "text-sus-900 hover:bg-sand"}`}
+            >Cronológica (ignora prioridade)</button>
+          </div>
+          <ExportarExcel url="/api/tfd/exames/exportar" arquivo="fila_espera" params={{ status: filtro || undefined, q: q.trim() || undefined, prioridade: prio || undefined, tipo_fila: tipoFila.trim() || undefined, procedimento: proc.trim() || undefined, codigo_especialidade: espCbo.trim() || undefined, destino: dest.trim() || undefined, data_de: de || undefined, data_ate: ate || undefined, meus: soMeus || undefined, ordenacao: ordem }} />
+          <Button onClick={() => abrirModal()}><Plus className="h-4 w-4" /> Novo pedido</Button>
+        </div>
       </div>
       {erro && !modal && !comprovante && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700 print:hidden">{erro}</p>}
       {ok && <p className="mb-3 rounded-xl bg-teal/10 px-3 py-2 text-sm text-teal print:hidden">{ok}</p>}
@@ -645,110 +703,141 @@ export default function FilaExames() {
       )}
 
       <Card className="mb-4 p-4 print:hidden">
-        <form onSubmit={aplicarFiltros} className="grid gap-2 md:grid-cols-12">
-          <div className="md:col-span-4">
-            <Label>Buscar (nome, CNS, CBO ou código)</Label>
-            <Input placeholder="Ex: nome, data nasc., CNS, CBO ou código 482917…" value={q} onChange={(e) => setQ(e.target.value)} />
-          </div>
-          <div className="md:col-span-2">
-            <Label>Status</Label>
-            <select value={filtro} onChange={(e) => setFiltro(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
-              <option value="">Todos</option>
-              {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
-          <div className="md:col-span-2">
-            <Label>Prioridade</Label>
-            <select value={prio} onChange={(e) => setPrio(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
-              <option value="">Todas</option>
-              {PRIOS.map((p) => <option key={p} value={p}>{PRIO_ROTULO[p]}</option>)}
-            </select>
-          </div>
-          <div className="md:col-span-2">
-            <Label>Tipo de fila</Label>
-            <Combobox
-              value={tipoFila}
-              onChange={(v) => {
-                setTipoFila(v);
-                setPage(1);
-                setErro("");
-                carregar(1, { tipo: v }).catch(() => setErro("Falha ao carregar fila."));
-              }}
-              options={opcoesTipo}
-              placeholder="Todos os tipos de fila"
-              emptyText="Nenhum tipo encontrado"
-              searchPlaceholder="Buscar tipo de fila…"
-            />
-          </div>
-          <div className="md:col-span-2">
-            <Label>Procedimento</Label>
-            <Combobox
-              value={proc}
-              onChange={(v) => {
-                setProc(v);
-                setPage(1);
-                setErro("");
-                carregar(1, { proc: v }).catch(() => setErro("Falha ao carregar fila."));
-              }}
-              options={opcoesProc}
-              placeholder="Todos os procedimentos"
-              emptyText="Nenhum procedimento encontrado"
-              searchPlaceholder="Buscar código ou nome…"
-            />
-          </div>
-          <div className="md:col-span-2">
-            <Label>Especialidade (CBO)</Label>
-            <Combobox
-              value={espCbo}
-              onChange={(v) => {
-                setEspCbo(v);
-                setPage(1);
-                setErro("");
-                carregar(1, { esp: v }).catch(() => setErro("Falha ao carregar fila."));
-              }}
-              options={opcoesEsp}
-              placeholder="Todas as especialidades"
-              emptyText="Nenhuma especialidade encontrada"
-              searchPlaceholder="Buscar especialidade ou CBO…"
-            />
-          </div>
-          <div className="md:col-span-4">
-            <Label>Unidade / destino</Label>
-            <Input placeholder="Ex: ESF Centro" value={dest} onChange={(e) => setDest(e.target.value)} />
-          </div>
-          <div className="grid grid-cols-2 gap-2 md:col-span-4">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
             <div>
-              <Label>De</Label>
-              <Input type="date" value={de} onChange={(e) => setDe(e.target.value)} />
+              <h3 className="font-display text-sm font-bold text-sus-950">Filtros rápidos</h3>
+              <p className="text-xs text-ink/55">Busque imediatamente ou refine a lista por status, prioridade e categoria.</p>
             </div>
-            <div>
-              <Label>Até</Label>
-              <Input type="date" value={ate} onChange={(e) => setAte(e.target.value)} />
-            </div>
-          </div>
-          <div className="flex items-end gap-2 md:col-span-4">
-            {isMedico && (
+            <div className="flex flex-wrap items-center gap-2">
+              {isMedico && (
+                <button
+                  type="button"
+                  onClick={() => { const v = !soMeus; setSoMeus(v); setPage(1); setSel([]); setErro(""); carregar(1, { meus: v }).catch(() => setErro("Falha ao carregar fila.")); }}
+                  title="Mostrar apenas solicitações vinculadas ao seu cadastro de médico"
+                  className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-bold transition ${soMeus ? "border-teal bg-teal text-white" : "border-sus-900/10 bg-white text-sus-900 hover:bg-sus-900/5"}`}
+                >
+                  Meus encaminhamentos
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => { const v = !soMeus; setSoMeus(v); setPage(1); setSel([]); setErro(""); carregar(1, { meus: v }).catch(() => setErro("Falha ao carregar fila.")); }}
-                title="Mostrar apenas solicitações vinculadas ao seu cadastro de médico"
-                className={`min-h-[44px] rounded-xl px-4 py-2 text-sm font-bold ${soMeus ? "bg-teal text-white" : "bg-sus-900/10 text-sus-900 hover:bg-sus-900/15"}`}
+                onClick={() => setFiltrosAvancados((v) => !v)}
+                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl border border-sus-900/10 bg-white px-3.5 py-1.5 text-xs font-bold text-sus-900 hover:bg-sus-900/5"
               >
-                Meus encaminhamentos
+                <Search className="h-4 w-4" /> {filtrosAvancados ? "Ocultar avançados" : "Filtros avançados"}
               </button>
-            )}
-            <Button type="submit"><Search className="h-4 w-4" /> Filtrar</Button>
-            <button
-              type="button"
-              onClick={() => { setQ(""); setPrio(""); setTipoFila(""); setProc(""); setEspCbo(""); setDest(""); setDe(""); setAte(""); setFiltro("aguardando"); setSoMeus(false); setPage(1); carregar(1, { tipo: "", proc: "", esp: "" }).catch(() => {}); }}
-              className="rounded-xl px-4 py-2.5 text-sm font-semibold text-sus-900 hover:bg-sus-900/5"
-            >
-              Limpar
-            </button>
+            </div>
           </div>
-        </form>
-      </Card>
 
+          <form onSubmit={aplicarFiltros} className="space-y-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40" />
+              <Input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Buscar por nome, CNS, CBO ou código do procedimento"
+                className="pl-10"
+              />
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-4">
+              <div>
+                <Label>Status</Label>
+                <select value={filtro} onChange={(e) => setFiltro(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                  <option value="">Todos</option>
+                  {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <Label>Prioridade</Label>
+                <select value={prio} onChange={(e) => setPrio(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                  <option value="">Todas</option>
+                  {PRIOS.map((p) => <option key={p} value={p}>{PRIO_ROTULO[p]}</option>)}
+                </select>
+              </div>
+              <div>
+                <Label>Tipo de fila</Label>
+                <Combobox
+                  value={tipoFila}
+                  onChange={(v) => {
+                    setTipoFila(v);
+                    setPage(1);
+                    setErro("");
+                    carregar(1, { tipo: v }).catch(() => setErro("Falha ao carregar fila."));
+                  }}
+                  options={opcoesTipo}
+                  placeholder="Todos os tipos de fila"
+                  emptyText="Nenhum tipo encontrado"
+                  searchPlaceholder="Buscar tipo de fila…"
+                />
+              </div>
+              <div>
+                <Label>Especialidade (CBO)</Label>
+                <Combobox
+                  value={espCbo}
+                  onChange={(v) => {
+                    setEspCbo(v);
+                    setPage(1);
+                    setErro("");
+                    carregar(1, { esp: v }).catch(() => setErro("Falha ao carregar fila."));
+                  }}
+                  options={opcoesEsp}
+                  placeholder="Todas as especialidades"
+                  emptyText="Nenhuma especialidade encontrada"
+                  searchPlaceholder="Buscar especialidade ou CBO…"
+                />
+              </div>
+            </div>
+
+            {filtrosAvancados && (
+              <div className="grid gap-3 rounded-2xl bg-sand/50 p-3 md:grid-cols-6">
+                <div className="md:col-span-2">
+                  <Label>Procedimento</Label>
+                  <Combobox
+                    value={proc}
+                    onChange={(v) => {
+                      setProc(v);
+                      setPage(1);
+                      setErro("");
+                      carregar(1, { proc: v }).catch(() => setErro("Falha ao carregar fila."));
+                    }}
+                    options={opcoesProc}
+                    placeholder="Todos os procedimentos"
+                    emptyText="Nenhum procedimento encontrado"
+                    searchPlaceholder="Buscar código ou nome…"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <Label>Unidade / destino</Label>
+                  <Input placeholder="Ex: ESF Centro" value={dest} onChange={(e) => setDest(e.target.value)} />
+                </div>
+                <div className="md:col-span-1">
+                  <Label>De</Label>
+                  <Input type="date" value={de} onChange={(e) => setDe(e.target.value)} />
+                </div>
+                <div className="md:col-span-1">
+                  <Label>Até</Label>
+                  <Input type="date" value={ate} onChange={(e) => setAte(e.target.value)} />
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="submit" className="!px-5">
+                <Search className="h-4 w-4" /> Filtrar
+              </Button>
+              <button
+                type="button"
+                onClick={() => { setQ(""); setPrio(""); setTipoFila(""); setProc(""); setEspCbo(""); setDest(""); setDe(""); setAte(""); setFiltro("aguardando"); setSoMeus(false); setFiltrosAvancados(false); setPage(1); carregar(1, { tipo: "", proc: "", esp: "" }).catch(() => {}); }}
+                className="rounded-xl px-4 py-2.5 text-sm font-semibold text-ink/70 hover:bg-sus-900/5"
+              >
+                Limpar filtros
+              </button>
+            </div>
+          </form>
+        </div>
+      </Card>
       <Card className="overflow-hidden print:hidden">
         {sel.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 border-b border-sus-900/10 bg-sus-900 px-4 py-2.5 text-sm text-white">
@@ -776,7 +865,7 @@ export default function FilaExames() {
                 </td>
                 <td className="px-4 py-3 font-display text-base font-extrabold text-sus-900">
                   {e.posicao ? `${e.posicao}º` : "—"}
-                  {e.total_fila ? <span className="block text-[10px] font-normal text-ink/45">de {e.total_fila}</span> : null}
+                  {e.total_fila ? <span className="block text-[10px] font-normal text-ink/45">de {e.total_fila}{e.grupo_fila ? ` · ${e.grupo_fila}` : ""}</span> : null}
                 </td>
                 <td className="px-4 py-3 font-semibold">{e.paciente_nome}<p className="text-xs font-normal text-ink/50">pedido {fmtData(e.data_pedido)} {e.destino ? `· ${e.destino}` : ""}</p></td>
                 <td className="px-4 py-3">{nomeLimpo(e.exame)}<p className="text-xs text-ink/50">{e.especialidade || "—"}</p></td>
@@ -797,7 +886,7 @@ export default function FilaExames() {
           </tbody>
         </table>
         </div>
-        <p className="bg-sand/50 px-4 py-2 text-[11px] text-ink/50">* Posição dentro do mesmo procedimento/tipo de serviço.{total > 0 ? ` ${total} registro(s) no filtro.` : ""}{sel.length > 0 ? ` ${sel.length} selecionado(s) no total.` : ""}</p>
+        <p className="bg-sand/50 px-4 py-2 text-[11px] text-ink/50">* Posição na fila específica: por tipo de fila p/ exames, por especialidade p/ consultas especializadas.{total > 0 ? ` ${total} registro(s) no filtro.` : ""}{sel.length > 0 ? ` ${sel.length} selecionado(s) no total.` : ""}</p>
         <Paginacao page={page} pages={pages} total={total} onPage={(p) => { setPage(p); carregar(p).catch(() => setErro("Falha ao carregar fila.")); }} />
       </Card>
 
@@ -1236,13 +1325,16 @@ export default function FilaExames() {
               <button onClick={() => setComprovante(null)} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar"><X className="h-4 w-4" /></button>
             </div>
             <div id="comprovante-dados" className="rounded-2xl border border-sus-900/10 p-4 text-sm print:block">
+              <p className="mb-2 inline-flex items-center gap-2 rounded-xl bg-sus-900 px-3 py-1.5 font-display text-sm font-extrabold text-white print:border print:border-black print:bg-white print:text-black">
+                Número do Pedido: #{comprovante.id}
+              </p>
               <p className="font-display text-base font-bold text-sus-950">{comprovante.exame}</p>
               <p className="text-xs text-ink/55">{comprovante.especialidade || "—"} · {PRIO_ROTULO[comprovante.prioridade] ?? comprovante.prioridade} · pedido {fmtData(comprovante.data_pedido)}</p>
               <p className="mt-2 font-semibold">{comprovante.paciente_nome}</p>
               {comprovante.paciente_cpf && <p className="text-xs text-ink/60">CPF: {comprovante.paciente_cpf}</p>}
               <p className="mt-1 text-xs text-ink/60">
                 Status: <b>{comprovante.status}</b>
-                {comprovante.posicao ? ` · posição ${comprovante.posicao}º no procedimento (de ${comprovante.total_fila ?? "—"})` : ""}
+                {comprovante.posicao ? ` · posição ${rotuloPosicao(comprovante)}` : ""}
               </p>
               {comprovante.public_token && (
                 <>
@@ -1293,7 +1385,7 @@ export default function FilaExames() {
                 </button>
                 {detalhe.posicao ? (
                   <p className="mt-1 text-xs text-ink/60">
-                    Posição <b>{detalhe.posicao}º</b> no procedimento (de {detalhe.total_fila ?? "—"})
+                    Posição <b>{detalhe.posicao}º</b> na fila {detalhe.grupo_fila || "—"} (de {detalhe.total_fila ?? "—"})
                   </p>
                 ) : (
                   <p className="mt-1 text-xs text-ink/60">Fora da fila ativa (status {detalhe.status}).</p>

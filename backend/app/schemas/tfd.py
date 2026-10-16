@@ -1,6 +1,8 @@
 from datetime import date
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.services.validacoes import valida_cnh, valida_cnh_validade, valida_cpf, valida_telefone
 
 
 # ---------- Pacientes ----------
@@ -12,6 +14,7 @@ class PacienteIn(BaseModel):
     telefone: str = Field(default="", max_length=20)
     endereco: str = Field(default="", max_length=255)
     endereco_numero: str = Field(default="", max_length=20)
+    complemento: str = Field(default="", max_length=100)
     bairro: str = Field(default="", max_length=100)
     cep: str = Field(default="", max_length=10)
     unidade_saude_id: int | None = None
@@ -82,6 +85,57 @@ class DestinoOut(DestinoIn):
     id: int
 
 
+# ---------- Motoristas ----------
+class MotoristaIn(BaseModel):
+    nome: str = Field(min_length=2, max_length=120)
+    cpf: str = Field(default="", max_length=14)
+    cnh_numero: str = Field(default="", max_length=20)
+    cnh_categoria: str = Field(default="", max_length=5, pattern="^([A-E]{1,2})?$")
+    cnh_validade: date | None = None
+    telefone: str = Field(default="", max_length=20)
+    ativo: bool = True
+
+    @field_validator("cpf")
+    @classmethod
+    def _cpf_valido(cls, v: str) -> str:
+        if not (v or "").strip():
+            raise ValueError("CPF é obrigatório.")
+        ok, msg = valida_cpf(v)
+        if not ok:
+            raise ValueError(msg)
+        return v
+
+    @field_validator("cnh_numero")
+    @classmethod
+    def _cnh_valida(cls, v: str) -> str:
+        if not (v or "").strip():
+            raise ValueError("CNH é obrigatória.")
+        ok, msg = valida_cnh(v)
+        if not ok:
+            raise ValueError(msg)
+        return v
+
+    @field_validator("cnh_validade")
+    @classmethod
+    def _validade_ok(cls, v: date | None) -> date | None:
+        ok, msg = valida_cnh_validade(v)
+        if not ok:
+            raise ValueError(msg)
+        return v
+
+    @field_validator("telefone")
+    @classmethod
+    def _tel_valido(cls, v: str) -> str:
+        ok, msg = valida_telefone(v)
+        if not ok:
+            raise ValueError(msg)
+        return v
+
+
+class MotoristaOut(MotoristaIn):
+    id: int
+
+
 # ---------- Viagens ----------
 class ViagemIn(BaseModel):
     destino: str = Field(min_length=2, max_length=120)
@@ -90,6 +144,7 @@ class ViagemIn(BaseModel):
     hora_saida: str = Field(default="", max_length=5)
     veiculo_id: int | None = None
     motorista: str = Field(default="", max_length=120)
+    motorista_id: int | None = None
     departamento: str = Field(default="", max_length=120)
     data_retorno: date | None = None
     hora_retorno: str = Field(default="", max_length=5)
@@ -113,6 +168,8 @@ class ViagemOut(ViagemIn):
 class ViagemPacienteIn(BaseModel):
     paciente_id: int
     acompanhante: str = Field(default="", max_length=150)
+    acompanhante_id: int | None = None
+    acompanhante_cpf: str = Field(default="", max_length=14)
     presente: bool = True
     viagem_fila_id: int | None = None
     tratamento: str = Field(default="", max_length=150)
@@ -135,7 +192,10 @@ class ViagemFilaIn(BaseModel):
     data_consulta: date | None = None
     hora_consulta: str = Field(default="", max_length=5)
     acompanhante: bool = False
-    prioridade: str = Field(default="rotina", pattern="^(rotina|prioritaria|urgente)$")
+    acompanhante_id: int | None = None
+    acompanhante_nome: str = Field(default="", max_length=150)
+    acompanhante_cpf: str = Field(default="", max_length=14)
+    prioridade: str = Field(default="rotina", pattern="^(rotina|urgente)$")
     status: str = Field(
         default="aguardando",
         pattern="^(aguardando|alocado|cancelado)$",
@@ -160,7 +220,7 @@ class ExameIn(BaseModel):
     codigo_procedimento: str = Field(default="", max_length=20)
     codigo_especialidade: str = Field(default="", max_length=10)
     nome_especialidade: str = Field(default="", max_length=120)
-    prioridade: str = Field(default="rotina", pattern="^(rotina|prioritaria|urgente)$")
+    prioridade: str = Field(default="rotina", pattern="^(rotina|urgente)$")
     justificativa_prioridade: str = Field(default="", max_length=500)
     status: str = Field(
         default="aguardando",
@@ -187,7 +247,7 @@ class ExameLoteIn(BaseModel):
     unidade_saude_id: int | None = None
     limpar_data_agendada: bool = False
     destino: str = Field(default="", max_length=120)
-    prioridade: str = Field(default="", pattern="^(|rotina|prioritaria|urgente)$")
+    prioridade: str = Field(default="", pattern="^(|rotina|urgente)$")
     justificativa_prioridade: str = Field(default="", max_length=500)
     observacoes: str = Field(default="", max_length=500)
 
@@ -204,6 +264,7 @@ class ExameOut(ExameIn):
     public_token: str = ""
     posicao: int | None = None
     total_fila: int | None = None
+    grupo_fila: str = ""
     # Snapshot do agendamento (resolvido no momento da marcação)
     medico_nome: str = ""
     medico_cpf: str = ""
@@ -221,7 +282,7 @@ class ExameOut(ExameIn):
 class PrioridadeIn(BaseModel):
     """Alteração de prioridade pelo médico envolvido (justificativa obrigatória)."""
 
-    prioridade: str = Field(pattern="^(rotina|prioritaria|urgente)$")
+    prioridade: str = Field(pattern="^(rotina|urgente)$")
     justificativa: str = Field(min_length=1, max_length=500)
 
 
@@ -237,6 +298,7 @@ class ExamePublicoOut(BaseModel):
     destino: str = ""
     posicao: int | None = None
     total_fila: int | None = None
+    grupo_fila: str = ""
     paciente_iniciais: str = ""
 
 

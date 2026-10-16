@@ -2,12 +2,23 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { type Medico, createMedico, deleteMedico, fetchMedicos, updateMedico } from "../services/api";
+import {
+  erros422,
+  normalizaCrm,
+  toastCampos,
+  validaCpf,
+  validaCrm,
+  validaEmail,
+  validaTelefone,
+} from "../utils/validacoes";
 import { Button, Card, Input, Label } from "../components/ui/primitives";
+import { useUndo } from "../components/UndoToast";
 import ExportarExcel from "../components/ExportarExcel";
 
 const vazio = { nome: "", cpf: "", crm: "", cbo_codigo: "", cbo_descricao: "", especialidades: "", telefone: "", email: "", ativo: true };
 
 export default function Medicos() {
+  const { notificarUndo } = useUndo();
   const [lista, setLista] = useState<Medico[]>([]);
   const [sp] = useSearchParams();
   const [form, setForm] = useState<typeof vazio>(vazio);
@@ -16,7 +27,28 @@ export default function Medicos() {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
   const [erroModal, setErroModal] = useState("");
+  const [erros, setErros] = useState<Record<string, string>>({});
   const [ok, setOk] = useState("");
+
+  const ROTULOS: Record<string, string> = {
+    nome: "Nome completo", cpf: "CPF", crm: "CRM", telefone: "Telefone", email: "E-mail",
+  };
+  const borda = (c: string) => (erros[c] ? "!border-red-500 focus:!border-red-500" : "");
+  const msg = (c: string) =>
+    erros[c] ? <p className="mt-1 text-xs font-medium text-red-600">{erros[c]}</p> : null;
+
+  function validar(f: typeof vazio): Record<string, string> {
+    const e: Record<string, string> = {};
+    const cpf = validaCpf(f.cpf);
+    if (cpf) e.cpf = cpf;
+    const crm = validaCrm(f.crm);
+    if (crm) e.crm = crm;
+    const tel = validaTelefone(f.telefone);
+    if (tel) e.telefone = tel;
+    const mail = validaEmail(f.email);
+    if (mail) e.email = mail;
+    return e;
+  }
 
   async function carregar() {
     try { setLista(await fetchMedicos()); }
@@ -31,29 +63,61 @@ export default function Medicos() {
   }, [sp, lista, modal]);
 
   function abrir(m?: Medico) {
-    setErroModal(""); setOk("");
+    setErroModal(""); setErros({}); setOk("");
     if (m) { setEditId(m.id); setForm({ nome: m.nome, cpf: m.cpf, crm: m.crm, cbo_codigo: m.cbo_codigo ?? "", cbo_descricao: m.cbo_descricao ?? "", especialidades: m.especialidades, telefone: m.telefone, email: m.email, ativo: m.ativo }); }
     else { setEditId(null); setForm(vazio); }
     setModal(true);
   }
-  function fechar() { setModal(false); setEditId(null); setForm(vazio); setErroModal(""); }
+  function fechar() { setModal(false); setEditId(null); setForm(vazio); setErroModal(""); setErros({}); }
 
   async function salvar() {
     setErroModal("");
-    if (!form.nome.trim()) { setErroModal("Nome é obrigatório."); return; }
+    const injecao: Record<string, string> = {};
+    if (form.nome.trim().length < 2) injecao.nome = "Nome é obrigatório.";
+    const e = { ...validar(form), ...injecao };
+    if (Object.keys(e).length > 0) {
+      setErros(e);
+      setErroModal(toastCampos(e, ROTULOS));
+      return;
+    }
     setSalvando(true);
     try {
-      if (editId) { await updateMedico(editId, form); setOk("Médico atualizado."); }
-      else { await createMedico(form); setOk("Médico cadastrado."); }
+      const payload = { ...form, crm: normalizaCrm(form.crm) };
+      if (editId) { await updateMedico(editId, payload); setOk("Médico atualizado."); }
+      else { await createMedico(payload); setOk("Médico cadastrado."); }
       fechar(); await carregar();
-    } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Erro ao salvar.";
-      setErroModal(msg);
+    } catch (err: unknown) {
+      const deCampo = erros422(err, ROTULOS);
+      if (Object.keys(deCampo).length > 0) {
+        setErros(deCampo);
+        setErroModal(toastCampos(deCampo, ROTULOS));
+        return;
+      }
+      const detalhe = (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
+      setErroModal(typeof detalhe === "string" ? detalhe : "Erro ao salvar.");
     } finally { setSalvando(false); }
   }
   async function excluir(m: Medico) {
     if (!confirm(`Inativar ${m.nome}?`)) return;
-    try { await deleteMedico(m.id); setOk("Médico inativado."); await carregar(); }
+    const snap = { ...m };
+    try {
+      await deleteMedico(m.id);
+      await carregar();
+      notificarUndo({
+        titulo: `Médico ${snap.nome} inativado.`,
+        descricao: "Desfazer reativa o cadastro.",
+        onUndo: async () => {
+          await updateMedico(snap.id, {
+            nome: snap.nome, cpf: snap.cpf, crm: snap.crm,
+            cbo_codigo: snap.cbo_codigo ?? "",
+            cbo_descricao: snap.cbo_descricao ?? "",
+            especialidades: snap.especialidades,
+            telefone: snap.telefone, email: snap.email, ativo: true,
+          });
+          await carregar();
+        },
+      });
+    }
     catch { setErro("Falha ao inativar."); }
   }
 
@@ -101,14 +165,14 @@ export default function Medicos() {
               <button onClick={fechar} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar"><X className="h-4 w-4" /></button>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
-              <div className="md:col-span-2"><Label>Nome completo *</Label><Input value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></div>
-              <div><Label>CPF</Label><Input value={form.cpf} onChange={(e) => setForm({ ...form, cpf: e.target.value })} /></div>
-              <div><Label>CRM / registro</Label><Input value={form.crm} onChange={(e) => setForm({ ...form, crm: e.target.value })} /></div>
+              <div className="md:col-span-2"><Label>Nome completo *</Label><Input value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} className={borda("nome")} />{msg("nome")}</div>
+              <div><Label>CPF *</Label><Input value={form.cpf} onChange={(e) => setForm({ ...form, cpf: e.target.value })} placeholder="Somente números" inputMode="numeric" className={borda("cpf")} />{msg("cpf")}</div>
+              <div><Label>CRM / registro *</Label><Input value={form.crm} onChange={(e) => setForm({ ...form, crm: e.target.value })} placeholder="Ex: CRM/MG 123456" className={borda("crm")} />{msg("crm")}</div>
               <div><Label>CBO (código)</Label><Input value={form.cbo_codigo} onChange={(e) => setForm({ ...form, cbo_codigo: e.target.value.replace(/\D/g, "").slice(0, 6) })} placeholder="Ex: 225125" inputMode="numeric" /></div>
               <div className="md:col-span-2"><Label>CBO (descrição)</Label><Input value={form.cbo_descricao} onChange={(e) => setForm({ ...form, cbo_descricao: e.target.value })} placeholder="Ex: Médico clínico" /></div>
               <div className="md:col-span-2"><Label>Especialidade(s)</Label><Input value={form.especialidades} onChange={(e) => setForm({ ...form, especialidades: e.target.value })} placeholder="separar por vírgula" /></div>
-              <div><Label>Telefone</Label><Input value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} /></div>
-              <div><Label>E-mail</Label><Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
+              <div><Label>Telefone</Label><Input value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} placeholder="DDD + número" className={borda("telefone")} />{msg("telefone")}</div>
+              <div><Label>E-mail</Label><Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="usuario@dominio.ext" className={borda("email")} />{msg("email")}</div>
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} className="h-4 w-4 accent-teal" /> Ativo</label>
             </div>
             {erroModal && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{erroModal}</p>}
