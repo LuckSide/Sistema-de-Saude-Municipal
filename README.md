@@ -1,6 +1,8 @@
-# 🏥 Sistema de Gestão — Secretaria Municipal de Saúde de Guapé
+# 🏥 Sistema de Gestão da Saúde Municipal
 
-Sistema integrado de gestão para a Secretaria Municipal de Saúde de Guapé-MG, cobrindo regulação de exames e consultas, transporte sanitário (TFD), laboratório municipal, atenção primária (APS) e governança operacional.
+Sistema integrado de gestão para Secretarias Municipais de Saúde, cobrindo regulação de exames e consultas, transporte sanitário (TFD), laboratório municipal, atenção primária (APS) e governança operacional.
+
+> 💡 **Origem & Liberdade de Uso:** Este projeto foi originalmente concebido e desenvolvido em Guapé-MG para a Secretaria Municipal de Saúde de Guapé. No entanto, sua arquitetura foi projetada para atender a **qualquer município brasileiro**, sendo totalmente parametrizável (identidade visual, brasão, regras locais) e **livre para ser utilizado, adaptado e implantado exclusivamente para fins não comerciais**.
 
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React_18-61DAFB?logo=react&logoColor=black)
@@ -418,8 +420,10 @@ npm run dev
 
 > ⚠️ **Troque `SECRET_KEY` e `FIRST_SUPERUSER_PASSWORD`** em produção antes de expor o sistema. O admin será forçado a trocar a senha no primeiro acesso.
 
----
+## 📄 Licença e Termos de Uso
 
-## 📄 Licença
+Este sistema foi concebido e desenvolvido originalmente em Guapé-MG para a Secretaria Municipal de Saúde de Guapé.
 
-Uso restrito à Secretaria Municipal de Saúde de Guapé-MG.
+O código foi estruturado de forma aberta, modular e parametrizável, sendo **livre para utilização, adaptação, estudo e implantação por qualquer município brasileiro ou órgão público**, sob a seguinte condição:
+
+- 🚫 **Uso Não Comercial:** O código é livre, mas **não pode ser comercializado, vendido, sublicenciado ou utilizado para qualquer finalidade lucrativa/comercial**, seja em sua forma original ou modificada.
