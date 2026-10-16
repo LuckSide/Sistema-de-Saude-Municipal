@@ -22,6 +22,7 @@ const STATUS = ["aguardando", "agendado", "realizado", "cancelado"];
 const vazio = {
   paciente_id: "",
   exame: "",
+  justificativa: "",
   especialidade: "",
   prioridade: "rotina",
   status: "aguardando",
@@ -85,6 +86,7 @@ export default function TfdExames() {
         setForm({
           paciente_id: String(e.paciente_id),
           exame: e.exame,
+          justificativa: e.justificativa ?? "",
           especialidade: e.especialidade,
           prioridade: e.prioridade,
           status: e.status,
@@ -119,10 +121,15 @@ export default function TfdExames() {
       setErro("Paciente, exame e data do pedido são obrigatórios.");
       return;
     }
+    if (!form.justificativa || form.justificativa.trim().length < 12) {
+      setErro("A justificativa é obrigatória e deve ter pelo menos 12 caracteres.");
+      return;
+    }
     const payload: Record<string, unknown> = {
       ...form,
       paciente_id: Number(form.paciente_id),
       data_agendada: form.data_agendada || null,
+      justificativa: form.justificativa.trim(),
     };
     try {
       if (editId) {
@@ -223,6 +230,7 @@ export default function TfdExames() {
                               {p.cpf && <span>{p.cpf}</span>}
                               {p.cns && <span>CNS {p.cns}</span>}
                               {p.prontuario && <span>Pront. {p.prontuario}</span>}
+                              {p.nascimento && <span>Nasc. {p.nascimento.slice(0, 10).split("-").reverse().join("/")}</span>}
                               {p.ubs && <span>UBS {p.ubs}</span>}
                               <span className={p.origem === "pec" ? "text-teal" : "text-sus-900"}>{p.origem === "pec" ? "PEC" : "Local"}</span>
                             </div>
@@ -241,6 +249,11 @@ export default function TfdExames() {
                   </select>
                 </div>
                 <div><Label>Exame *</Label><Input value={form.exame} onChange={(e) => setForm({ ...form, exame: e.target.value })} placeholder="Ex: Ressonância" /></div>
+                <div className="md:col-span-2">
+                  <Label>Justificativa do Pedido *</Label>
+                  <Input value={form.justificativa} onChange={(e) => setForm({ ...form, justificativa: e.target.value })} placeholder="Informe a justificativa clínica do pedido..." />
+                  <p className="mt-1 text-xs text-ink/50">{form.justificativa.trim().length}/12 caracteres mínimos</p>
+                </div>
                 <div><Label>Especialidade</Label><Input value={form.especialidade} onChange={(e) => setForm({ ...form, especialidade: e.target.value })} /></div>
                 <div>
                   <Label>Prioridade</Label>

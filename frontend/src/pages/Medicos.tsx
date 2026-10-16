@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
-import { type Medico, createMedico, deleteMedico, fetchMedicos, updateMedico } from "../services/api";
+import { type Medico, createMedico, deleteMedico, fetchMedicos, sigtapCbos, updateMedico, type SigtapCbo } from "../services/api";
 import {
   erros422,
   normalizaCrm,
@@ -29,6 +29,8 @@ export default function Medicos() {
   const [erroModal, setErroModal] = useState("");
   const [erros, setErros] = useState<Record<string, string>>({});
   const [ok, setOk] = useState("");
+  const [cbos, setCbos] = useState<SigtapCbo[]>([]);
+  const [buscaCbo, setBuscaCbo] = useState("");
 
   const ROTULOS: Record<string, string> = {
     nome: "Nome completo", cpf: "CPF", crm: "CRM", telefone: "Telefone", email: "E-mail",
@@ -56,6 +58,13 @@ export default function Medicos() {
   }
   useEffect(() => { carregar(); }, []);
   useEffect(() => {
+    if (!modal) return;
+    const t = setTimeout(() => {
+      sigtapCbos("", buscaCbo.trim() || undefined).then(setCbos).catch(() => setCbos([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [modal, buscaCbo]);
+  useEffect(() => {
     const rid = Number(sp.get("registro"));
     if (!rid || modal) return;
     const m = lista.find((x) => x.id === rid);
@@ -66,9 +75,10 @@ export default function Medicos() {
     setErroModal(""); setErros({}); setOk("");
     if (m) { setEditId(m.id); setForm({ nome: m.nome, cpf: m.cpf, crm: m.crm, cbo_codigo: m.cbo_codigo ?? "", cbo_descricao: m.cbo_descricao ?? "", especialidades: m.especialidades, telefone: m.telefone, email: m.email, ativo: m.ativo }); }
     else { setEditId(null); setForm(vazio); }
+    setBuscaCbo("");
     setModal(true);
   }
-  function fechar() { setModal(false); setEditId(null); setForm(vazio); setErroModal(""); setErros({}); }
+  function fechar() { setModal(false); setEditId(null); setForm(vazio); setErroModal(""); setErros({}); setBuscaCbo(""); }
 
   async function salvar() {
     setErroModal("");
@@ -168,8 +178,17 @@ export default function Medicos() {
               <div className="md:col-span-2"><Label>Nome completo *</Label><Input value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} className={borda("nome")} />{msg("nome")}</div>
               <div><Label>CPF *</Label><Input value={form.cpf} onChange={(e) => setForm({ ...form, cpf: e.target.value })} placeholder="Somente números" inputMode="numeric" className={borda("cpf")} />{msg("cpf")}</div>
               <div><Label>CRM / registro *</Label><Input value={form.crm} onChange={(e) => setForm({ ...form, crm: e.target.value })} placeholder="Ex: CRM/MG 123456" className={borda("crm")} />{msg("crm")}</div>
-              <div><Label>CBO (código)</Label><Input value={form.cbo_codigo} onChange={(e) => setForm({ ...form, cbo_codigo: e.target.value.replace(/\D/g, "").slice(0, 6) })} placeholder="Ex: 225125" inputMode="numeric" /></div>
-              <div className="md:col-span-2"><Label>CBO (descrição)</Label><Input value={form.cbo_descricao} onChange={(e) => setForm({ ...form, cbo_descricao: e.target.value })} placeholder="Ex: Médico clínico" /></div>
+              <div><Label>CBO (código)</Label><Input value={form.cbo_codigo} onChange={(e) => { setForm({ ...form, cbo_codigo: e.target.value.replace(/\D/g, "").slice(0, 6) }); setBuscaCbo(e.target.value.replace(/\D/g, "").slice(0, 6)); }} placeholder="Ex: 225125" inputMode="numeric" /></div>
+              <div className="md:col-span-2"><Label>CBO (descrição — SIGTAP)</Label><Input value={buscaCbo || form.cbo_descricao} onChange={(e) => { setBuscaCbo(e.target.value); setForm({ ...form, cbo_descricao: e.target.value }); }} placeholder="Buscar CBO na tabela SIGTAP…" list="cbo-sigtap-list" /></div>
+              {cbos.length > 0 && (
+                <div className="md:col-span-2 -mt-1 max-h-36 overflow-y-auto rounded-xl border border-sus-900/10 bg-white">
+                  {cbos.slice(0, 20).map((c) => (
+                    <button key={`${c.cbo}-${c.descricao}`} type="button" onClick={() => { setForm({ ...form, cbo_codigo: c.cbo, cbo_descricao: c.descricao }); setBuscaCbo(""); setCbos([]); }} className="block w-full px-3 py-2 text-left text-sm hover:bg-sand">
+                      <b>{c.cbo}</b> <span className="text-xs text-ink/50">{c.descricao} · {c.origem}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="md:col-span-2"><Label>Especialidade(s)</Label><Input value={form.especialidades} onChange={(e) => setForm({ ...form, especialidades: e.target.value })} placeholder="separar por vírgula" /></div>
               <div><Label>Telefone</Label><Input value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} placeholder="DDD + número" className={borda("telefone")} />{msg("telefone")}</div>
               <div><Label>E-mail</Label><Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="usuario@dominio.ext" className={borda("email")} />{msg("email")}</div>

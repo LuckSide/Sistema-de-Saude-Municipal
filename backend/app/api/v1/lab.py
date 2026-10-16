@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, Up
 from sqlmodel import Session, select
 
 from app.core.deps import get_current_user_senha_ok as get_current_user, get_db
-from app.models.lab_exames import LabSolicitacao, SigtapProcedimento
+from app.models.lab_exames import LabSolicitacao, SigtapCbo, SigtapProcedimento
 from app.models.tfd import Paciente
 from app.core.pagination import Pagina, paginar
 from app.schemas.lab import (
@@ -115,6 +115,47 @@ def criar_sigtap(
     db.commit()
     db.refresh(obj)
     return obj
+
+
+@router.get("/sigtap/cbos")
+def listar_cbos_sigtap(
+    procedimento_codigo: str = Query(default="", max_length=20),
+    q: str = Query(default="", max_length=80),
+    limit: int = Query(default=200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """CBOs autorizados por procedimento (Tabela Unificada SIGTAP).
+
+    Leitura ampla (qualquer logado) p/ selects de médico/profissional.
+    Sem CBO importado p/ o procedimento, cai p/ catálogo local de
+    especialidades (tfd_especialidades) como fallback.
+    """
+    from app.models.tfd import Especialidade as _Esp
+
+    cod = "".join(c for c in (procedimento_codigo or "") if c.isdigit())
+    out: list[dict] = []
+    if cod:
+        for c in db.exec(
+            select(SigtapCbo).where(SigtapCbo.procedimento_codigo == cod).order_by(SigtapCbo.cbo)
+        ).all():
+            out.append({"cbo": c.cbo, "descricao": c.descricao or "", "origem": "sigtap"})
+    if not out:
+        base = select(_Esp).where(_Esp.ativo == True).order_by(_Esp.nome)  # noqa: E712
+        for e in db.exec(base.limit(500)).all():
+            out.append({"cbo": e.codigo_cbo, "descricao": e.nome or "", "origem": "catalogo"})
+    termo = (q or "").strip().lower()
+    if termo:
+        out = [c for c in out if termo in (c["cbo"] or "").lower() or termo in (c["descricao"] or "").lower()]
+    vistos: set[str] = set()
+    unicos: list[dict] = []
+    for c in out:
+        chave = f"{c['cbo']}|{c['descricao']}"
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        unicos.append(c)
+    return unicos[:limit]
 
 
 # ---------- Solicitações ----------

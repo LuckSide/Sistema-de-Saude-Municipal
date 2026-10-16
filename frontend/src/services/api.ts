@@ -118,7 +118,8 @@ export type Medico = {
   email: string;
   ativo: boolean;
 };
-export const fetchMedicos = () => api.get<Medico[]>("/api/medicos").then((r) => r.data);
+export const fetchMedicos = (params?: { q?: string; somente_ativos?: boolean }) =>
+  api.get<Medico[]>("/api/medicos", { params }).then((r) => r.data);
 export const createMedico = (payload: Record<string, unknown>) => api.post<Medico>("/api/medicos", payload).then((r) => r.data);
 export const updateMedico = (id: number, payload: Record<string, unknown>) => api.put<Medico>(`/api/medicos/${id}`, payload).then((r) => r.data);
 export const deleteMedico = (id: number) => api.delete(`/api/medicos/${id}`).then((r) => r.data);
@@ -135,7 +136,8 @@ export type UnidadeSaude = {
   telefone: string;
   ativo: boolean;
 };
-export const fetchUnidadesSaude = () => api.get<UnidadeSaude[]>("/api/unidades-saude").then((r) => r.data);
+export const fetchUnidadesSaude = (params?: { q?: string; somente_ativas?: boolean }) =>
+  api.get<UnidadeSaude[]>("/api/unidades-saude", { params }).then((r) => r.data);
 export const fetchMe = () => api.get<Usuario>("/api/me").then((r) => r.data);
 export const createUnidadeSaude = (payload: Record<string, unknown>) => api.post<UnidadeSaude>("/api/unidades-saude", payload).then((r) => r.data);
 export const updateUnidadeSaude = (id: number, payload: Record<string, unknown>) => api.put<UnidadeSaude>(`/api/unidades-saude/${id}`, payload).then((r) => r.data);
@@ -237,11 +239,11 @@ export const fetchDashboard = () =>
   api.get<{ items: DashboardItem[] }>("/api/user/dashboard").then((r) => r.data.items ?? []);
 export const saveDashboard = (items: DashboardItem[]) =>
   api.put<{ items: DashboardItem[] }>("/api/user/dashboard", { items }).then((r) => r.data.items ?? []);
-export type QuadroFiltros = { data: string; destino: string; agrupamento: "destino" | "data" };
+export type QuadroFiltros = { data: string; destino: string; psf?: string; agrupamento: "destino" | "data" };
 export const fetchQuadroFiltros = () =>
   api.get<QuadroFiltros>("/api/user/quadro-viagens").then((r) => r.data);
-export const saveQuadroFiltros = (data: string, destino: string, agrupamento: "destino" | "data" = "destino") =>
-  api.put<QuadroFiltros>("/api/user/quadro-viagens", { data, destino, agrupamento }).then((r) => r.data);
+export const saveQuadroFiltros = (data: string, destino: string, agrupamento: "destino" | "data" = "destino", psf = "") =>
+  api.put<QuadroFiltros>("/api/user/quadro-viagens", { data, destino, psf, agrupamento }).then((r) => r.data);
 
 // ---------- Auditoria ----------
 export type AuditLog = {
@@ -343,6 +345,7 @@ export type Viagem = {
   observacoes: string;
   passageiros: number;
   veiculo_placa: string;
+  veiculo_modelo?: string;
 };
 
 export type Destino = {
@@ -371,6 +374,7 @@ export type Passageiro = {
   tratamento?: string;
   unidade?: string;
   hora_consulta?: string;
+  observacoes?: string;
 };
 
 export type ViagemFila = {
@@ -437,7 +441,7 @@ export type FrotaDia = {
   em_outra_viagem: boolean;
 };
 
-export const tfdFilaViagem = (params?: { destino?: string; status?: string }) =>
+export const tfdFilaViagem = (params?: { destino?: string; psf?: string; status?: string }) =>
   api.get<ViagemFila[]>("/api/tfd/viagens-fila", { params }).then((r) => r.data);
 export const tfdCriarFilaViagem = (p: Record<string, unknown>) =>
   api.post<ViagemFila>("/api/tfd/viagens-fila", p).then((r) => r.data);
@@ -471,8 +475,8 @@ export const tfdSemana = (inicio: string) =>
   api.get<{ inicio: string; dias: DiaSemana[]; frota: FrotaDia[] }>("/api/tfd/viagens/semana", { params: { inicio } }).then((r) => r.data);
 export const tfdFaturarDeslocamento = (id: number) =>
   api.post<{ criados: number; ignorados: number }>(`/api/tfd/viagens/${id}/faturar-deslocamento`).then((r) => r.data);
-export const tfdSugestao = (data: string, destino: string) =>
-  api.get<{ veiculo: FrotaDia | null; demanda: number; assentos: number; motivo: string }>("/api/tfd/viagens/sugestao", { params: { data, destino } }).then((r) => r.data);
+export const tfdSugestao = (data: string, destino: string, viagemId?: number) =>
+  api.get<{ veiculo: FrotaDia | null; demanda: number; assentos: number; motivo: string }>("/api/tfd/viagens/sugestao", { params: { data, destino, viagem_id: viagemId ?? undefined } }).then((r) => r.data);
 export type Disponibilidade = {
   data: string;
   janela: { saida: string; retorno: string };
@@ -512,9 +516,15 @@ export type Exame = {
   unidade_saude_id?: number | null;
   destino: string;
   observacoes: string;
+  justificativa?: string;
+  resultado?: string;
+  recepcionado_em?: string | null;
+  recepcionado_por?: string;
+  status_anterior?: string;
   paciente_nome: string;
   paciente_cpf?: string;
   codigo_curto?: string;
+  numero_pedido?: string;
   public_token?: string;
   posicao?: number | null;
   total_fila?: number | null;
@@ -803,6 +813,12 @@ export const tfdCatalogoExames = (q?: string, tipo_fila?: string) =>
   api.get<CatalogoProc[]>("/api/tfd/exames/catalogo", { params: { q, tipo_fila } }).then((r) => r.data);
 export const tfdRegenerarTokenExame = (id: number) =>
   api.post<Exame>(`/api/tfd/exames/${id}/regenerar-token`).then((r) => r.data);
+export const tfdRecepcionarExame = (id: number) =>
+  api.post<Exame>(`/api/tfd/exames/${id}/recepcionar`).then((r) => r.data);
+export const tfdEstornarRecepcaoExame = (id: number) =>
+  api.post<Exame>(`/api/tfd/exames/${id}/estornar-recepcao`).then((r) => r.data);
+export const tfdAtendimentoStatus = (id: number, status: "faltou" | "realizado" | "cancelado", resultado?: string) =>
+  api.post<Exame>(`/api/tfd/exames/${id}/atendimento-status`, { status, resultado: resultado ?? "" }).then((r) => r.data);
 export const tfdConsultarExamePublico = (token: string) =>
   api.get<ExamePublico>(`/api/tfd/public/exames/${token}`).then((r) => r.data);
 
@@ -863,6 +879,9 @@ export type SigtapImportOut = {
 
 export const sigtapVersoes = () =>
   api.get<SigtapVersao[]>("/api/lab/sigtap/versoes").then((r) => r.data);
+export type SigtapCbo = { cbo: string; descricao: string; origem: string };
+export const sigtapCbos = (procedimento_codigo?: string, q?: string) =>
+  api.get<SigtapCbo[]>("/api/lab/sigtap/cbos", { params: { procedimento_codigo, q } }).then((r) => r.data);
 export const sigtapImportar = (arquivo: File, competencia: string, simular: boolean) => {
   const form = new FormData();
   form.append("file", arquivo);

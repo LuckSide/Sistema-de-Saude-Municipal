@@ -119,6 +119,7 @@ class ViagemPaciente(SQLModel, table=True):
     tratamento: str = Field(default="", max_length=150)
     unidade: str = Field(default="", max_length=150)
     hora_consulta: str = Field(default="", max_length=5)
+    observacoes: str = Field(default="", max_length=500)
 
 
 class ViagemFila(SQLModel, table=True):
@@ -170,7 +171,7 @@ class ExameFila(SQLModel, table=True):
     justificativa_prioridade: str = Field(default="", max_length=500)
     status: str = Field(
         default="aguardando", max_length=20, index=True
-    )  # aguardando|agendado|realizado|cancelado
+    )  # aguardando|agendado|recepcionado|realizado|faltou|cancelado
     data_pedido: date = Field(sa_column=Column(Date, index=True))
     data_agendada: date | None = Field(default=None, sa_column=Column(Date))
     hora_agendada: str = Field(default="", max_length=5)
@@ -195,8 +196,14 @@ class ExameFila(SQLModel, table=True):
     removido_por: str = Field(default="", max_length=120)
     destino: str = Field(default="", max_length=120)
     observacoes: str = Field(default="", max_length=500)
+    justificativa: str = Field(default="", max_length=500)  # justificativa clínica do pedido
+    resultado: str = Field(default="", max_length=2000)  # resultado/laudo do exame realizado
+    recepcionado_em: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=False)))
+    recepcionado_por: str = Field(default="", max_length=120)
+    status_anterior: str = Field(default="", max_length=20)  # p/ estornar recepção
     public_token: str = Field(default="", max_length=64, index=True)
     codigo_curto: str = Field(default="", max_length=12, index=True)  # novo modelo; legado = ""
+    numero_pedido: str = Field(default="", max_length=30, index=True)  # identificação operacional
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=False)),

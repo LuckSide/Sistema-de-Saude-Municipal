@@ -146,6 +146,12 @@ def init_db() -> None:
             "hora_agendada": "VARCHAR(5) DEFAULT '' NOT NULL",
             "medico_id": "INTEGER",
             "unidade_saude_id": "INTEGER",
+            "numero_pedido": "VARCHAR(30) DEFAULT '' NOT NULL",
+            "justificativa": "VARCHAR(500) DEFAULT '' NOT NULL",
+            "resultado": "VARCHAR(2000) DEFAULT '' NOT NULL",
+            "recepcionado_em": "TIMESTAMP",
+            "recepcionado_por": "VARCHAR(120) DEFAULT '' NOT NULL",
+            "status_anterior": "VARCHAR(20) DEFAULT '' NOT NULL",
         }.items():
             if col not in cols_ex2:
                 try:
@@ -314,6 +320,7 @@ def init_db() -> None:
             "hora_consulta": "VARCHAR(5) DEFAULT '' NOT NULL",
             "acompanhante_id": "INTEGER",
             "acompanhante_cpf": "VARCHAR(14) DEFAULT '' NOT NULL",
+            "observacoes": "VARCHAR(500) DEFAULT '' NOT NULL",
         }.items():
             if col not in cols_vp:
                 try:

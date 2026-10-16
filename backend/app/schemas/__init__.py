@@ -82,12 +82,14 @@ class DashboardOut(BaseModel):
 class QuadroFiltrosIn(BaseModel):
     data: str = Field(default="", max_length=10)
     destino: str = Field(default="", max_length=120)
+    psf: str = Field(default="", max_length=150)
     agrupamento: str = Field(default="destino", max_length=10, pattern="^(destino|data)$")
 
 
 class QuadroFiltrosOut(BaseModel):
     data: str = ""
     destino: str = ""
+    psf: str = ""
     agrupamento: str = "destino"
 
 

@@ -34,20 +34,89 @@ def _texto_celula(cel) -> str:
     return "".join("".join(p.itertext()) for p in cel.findall(f"{{{TEXT}}}p"))
 
 
-def _definir_celula(cel, texto: str) -> None:
-    """Troca o conteúdo mantendo o estilo do 1º parágrafo da célula."""
+def _definir_celula(cel, texto: str, estilo_texto: str | None = None) -> None:
+    """Troca o conteúdo mantendo o estilo do 1º parágrafo da célula.
+
+    estilo_texto força o estilo do span (ex: "T8" p/ fonte reduzida);
+    "\n" vira <text:line-break/> p/ não sair literal.
+    """
     pars = cel.findall(f"{{{TEXT}}}p")
     if not pars:
         return
     alvo = pars[0]
-    estilo = alvo.attrib.get(f"{{{TEXT}}}style-name", "")
+    estilo_par = alvo.attrib.get(f"{{{TEXT}}}style-name", "")
+    # Preserva o estilo de texto original do 1º span (ex: T5 negrito no cabeçalho).
+    estilo_span_orig = estilo_par
+    for filho in list(alvo):
+        if filho.tag == f"{{{TEXT}}}span":
+            estilo_span_orig = filho.attrib.get(f"{{{TEXT}}}style-name", "") or estilo_span_orig
+            break
     for filho in list(alvo):
         alvo.remove(filho)
     alvo.text = None
+    estilo_span = estilo_texto or estilo_span_orig or estilo_par
+    partes = (texto or "").split("\n")
     span = ET.SubElement(alvo, f"{{{TEXT}}}span")
-    if estilo:
-        span.set(f"{{{TEXT}}}style-name", estilo)
-    span.text = texto or ""
+    if estilo_span:
+        span.set(f"{{{TEXT}}}style-name", estilo_span)
+    span.text = partes[0] if partes else ""
+    for extra in partes[1:]:
+        ET.SubElement(alvo, f"{{{TEXT}}}line-break")
+        span2 = ET.SubElement(alvo, f"{{{TEXT}}}span")
+        if estilo_span:
+            span2.set(f"{{{TEXT}}}style-name", estilo_span)
+        span2.text = extra
+
+
+def _garantir_estilo_T8(root) -> None:
+    """Cria/atualiza estilo de texto T8 (8pt, sem negrito) p/ tabela de passageiros."""
+    from xml.etree.ElementTree import SubElement as _SE
+    OFFICE = "urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+    STYLE = "urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+    FO = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
+    auto = root.find(f".//{{{OFFICE}}}automatic-styles")
+    if auto is None:
+        return
+    for st in auto.iter(f"{{{STYLE}}}style"):
+        if st.attrib.get(f"{{{STYLE}}}name") == "T8":
+            for tp in st.findall(f"{{{STYLE}}}text-properties"):
+                tp.set(f"{{{FO}}}font-size", "8pt")
+                tp.set(f"{{{STYLE}}}font-size-asian", "8pt")
+                tp.set(f"{{{STYLE}}}font-size-complex", "8pt")
+            return
+    st = _SE(auto, f"{{{STYLE}}}style")
+    st.set(f"{{{STYLE}}}name", "T8")
+    st.set(f"{{{STYLE}}}family", "text")
+    tp = _SE(st, f"{{{STYLE}}}text-properties")
+    tp.set(f"{{{FO}}}font-size", "8pt")
+    tp.set(f"{{{STYLE}}}font-size-asian", "8pt")
+    tp.set(f"{{{STYLE}}}font-size-complex", "8pt")
+
+
+def _centralizar_tabela(t4, root=None) -> None:
+    """Centraliza a tabela de passageiros (align center + style Table5)."""
+    STYLE = "urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+    OFFICE = "urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+    TABLE = "urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+    FO = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
+    t4.set(f"{{{TABLE}}}align", "center")
+    # O alinhamento efetivo vem do style Table5 (table-properties table:align=left);
+    # ajusta p/ center quando o root estiver disponível.
+    try:
+        if root is None:
+            return
+        auto = root.find(f".//{{{OFFICE}}}automatic-styles")
+        if auto is None:
+            return
+        for st in auto.iter(f"{{{STYLE}}}style"):
+            if st.attrib.get(f"{{{STYLE}}}name") != "Table5":
+                continue
+            for tp in st.iter(f"{{{STYLE}}}table-properties"):
+                tp.set(f"{{{TABLE}}}align", "center")
+                tp.set(f"{{{FO}}}margin-left", "auto")
+                tp.set(f"{{{FO}}}margin-right", "auto")
+    except Exception:
+        pass
 
 
 def _anexar_rotulo(cel, valor: str, estilo_span: str = "T3") -> None:
@@ -120,8 +189,18 @@ def preencher_ordem(dados: dict, passageiros: list[dict]) -> bytes:
     # tabela4: passageiros (cabeçalho N|Passageiro|Data nasc.|...)
     t4 = tabela_por_cabeca("Data nasc.")
     if t4 is not None:
+        # Fonte reduzida (8pt) + tabela centralizada na página.
+        _garantir_estilo_T8(root)
+        _centralizar_tabela(t4, root)
         linhas = t4.findall(R)
         cabeca, dados_linhas = linhas[0], linhas[1:]
+        # Cabeçalho: Tratamento passa a exibir Observação junto.
+        try:
+            cels_h = cabeca.findall(C)
+            if len(cels_h) >= 4 and "Tratamento" in _texto_celula(cels_h[3]):
+                _definir_celula(cels_h[3], "Tratamento / Observação", estilo_texto="T5")
+        except Exception:
+            pass
         nums = []
         for r in dados_linhas:
             cels = r.findall(C)
@@ -133,19 +212,22 @@ def preencher_ordem(dados: dict, passageiros: list[dict]) -> bytes:
             nums.append(clone)
         for i, r in enumerate(nums):
             cels = r.findall(C)
-            _definir_celula(cels[0], f"{i + 1:02d}")
+            _definir_celula(cels[0], f"{i + 1:02d}", estilo_texto="T8")
             if i < len(passageiros):
                 ps = passageiros[i]
                 nasc = (ps.get("paciente_nascimento") or "")[:10]
                 nasc = f"{nasc[8:10]}/{nasc[5:7]}/{nasc[0:4]}" if len(nasc) == 10 and nasc[4] == "-" else ""
+                trat = (ps.get("tratamento", "") or "").strip()
+                obs = (ps.get("observacoes", "") or "").strip()
+                trat_obs = f"{trat}\nObs.: {obs}" if obs else trat
                 for j, v in enumerate(
-                    [ps.get("paciente_nome", ""), nasc, ps.get("tratamento", ""),
+                    [ps.get("paciente_nome", ""), nasc, trat_obs,
                      ps.get("unidade", ""), ps.get("hora_consulta", ""),
                      dados.get("destino", "")],
                     start=1,
                 ):
                     if j < len(cels):
-                        _definir_celula(cels[j], v)
+                        _definir_celula(cels[j], v, estilo_texto="T8")
             else:
                 for j in range(1, len(cels)):
                     _definir_celula(cels[j], "")

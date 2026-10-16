@@ -16,12 +16,14 @@ import {
   tfdRegenerarTokenExame,
   pagData,
   pagMeta,
+  sigtapCbos,
   type CatalogoProc,
   type Exame,
   type FilaExamesParams,
   type OpcaoFiltro,
   type Paciente,
   type PacientePec,
+  type SigtapCbo,
   fetchMedicos,
   fetchUnidadesSaude,
   type Medico,
@@ -50,6 +52,9 @@ function novoForm() {
     paciente_id: "",
     exame: "",
     codigo_curto: "",
+    justificativa: "",
+    // Número do Pedido (identificação operacional; o nº oficial segue sendo o id).
+    numero_pedido: "",
     especialidade: "",
     tipo_fila: "ELETIVO",
     codigo_procedimento: "",
@@ -82,11 +87,10 @@ function nomeLimpo(exame: string): string {
 }
 
 /** Rótulo da posição na fila específica (tipo p/ exames, especialidade p/ consultas). */
-function rotuloPosicao(e: { posicao?: number | null; total_fila?: number | null; grupo_fila?: string }): string {
+function rotuloPosicao(e: { posicao?: number | null; grupo_fila?: string }): string {
   if (!e.posicao) return "";
   const onde = e.grupo_fila ? ` na fila ${e.grupo_fila}` : "";
-  const total = e.total_fila ? ` (de ${e.total_fila})` : "";
-  return `${e.posicao}º${onde}${total}`;
+  return `${e.posicao}º${onde}`;
 }
 
 function sigtapDe(exame: string): string {
@@ -165,6 +169,9 @@ export default function FilaExames() {
   const [loteForm, setLoteForm] = useState({ data_agendada: "", hora_agendada: "", medico_id: "", unidade_id: "", destino: "", status: "", prioridade: "", justificativa: "", observacoes: "" });
   const [loteSalvando, setLoteSalvando] = useState(false);
   const [medicos, setMedicos] = useState<Medico[]>([]);
+  const [medicosErro, setMedicosErro] = useState("");
+  const [cbos, setCbos] = useState<SigtapCbo[]>([]);
+  const [mostrarAgendamento, setMostrarAgendamento] = useState(false);
   const [unidades, setUnidades] = useState<UnidadeSaude[]>([]);
   const [confirmandoLote, setConfirmandoLote] = useState(false);
 
@@ -399,6 +406,16 @@ export default function FilaExames() {
     };
   }, [buscaDebounce]);
 
+  // CBO SIGTAP do procedimento selecionado p/ o médico do agendamento.
+  useEffect(() => {
+    if (!modal || !mostrarAgendamento) return;
+    const cod = (form.codigo_procedimento || sigtapDe(form.exame) || "").replace(/\D/g, "");
+    if (!cod) { setCbos([]); return; }
+    let vivo = true;
+    sigtapCbos(cod).then((r) => vivo && setCbos(r)).catch(() => vivo && setCbos([]));
+    return () => { vivo = false; };
+  }, [modal, mostrarAgendamento, form.codigo_procedimento, form.exame]);
+
   function aplicarFiltros(e?: React.FormEvent) {
     e?.preventDefault();
     setErro("");
@@ -437,7 +454,9 @@ export default function FilaExames() {
   useEffect(() => {
     // Opções com contagem p/ Tipo / Procedimento / CBO ao abrir a tela.
     carregarOpcoes("aguardando").catch(() => {});
-    fetchMedicos().then(setMedicos).catch(() => {});
+    fetchMedicos({ somente_ativos: true })
+      .then((m) => { setMedicos(m); setMedicosErro(""); })
+      .catch(() => { setMedicos([]); setMedicosErro("Falha ao carregar médicos. Confira o cadastro em Médicos/profissionais."); });
     fetchUnidadesSaude().then(setUnidades).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -470,6 +489,8 @@ export default function FilaExames() {
           paciente_id: String(e.paciente_id),
           exame: e.exame,
           codigo_curto: e.codigo_curto ?? "",
+          justificativa: e.justificativa ?? "",
+          numero_pedido: e.numero_pedido ?? "",
           especialidade: e.especialidade,
           tipo_fila: e.tipo_fila ?? "",
           codigo_procedimento: e.codigo_procedimento ?? sigtapDe(e.exame),
@@ -488,6 +509,8 @@ export default function FilaExames() {
         });
         setBuscaPac(e.paciente_nome);
         setBuscaExame("");
+        // Edição com agendamento existente abre a seção expandida.
+        setMostrarAgendamento(!!(e.data_agendada || e.medico_id || e.unidade_saude_id || e.hora_agendada));
       }
     } else {
       setEditId(null);
@@ -495,6 +518,7 @@ export default function FilaExames() {
       setBuscaPac("");
       setBuscaExame("");
       setBuscaExameDeb("");
+      setMostrarAgendamento(false);
     }
     setModal(true);
   }
@@ -509,6 +533,7 @@ export default function FilaExames() {
     setBuscaExame("");
     setBuscaExameDeb("");
     setExameFoco(false);
+    setMostrarAgendamento(false);
     setErro("");
   }
 
@@ -517,6 +542,15 @@ export default function FilaExames() {
     setOk("");
     if (!form.paciente_id || !form.exame.trim() || !form.data_pedido) {
       setErro("Paciente, exame e data do pedido são obrigatórios.");
+      return;
+    }
+    if (!form.justificativa || form.justificativa.trim().length < 12) {
+      setErro("A justificativa é obrigatória e deve ter pelo menos 12 caracteres.");
+      return;
+    }
+    // Agendamento expandido exige data + médico + unidade.
+    if (mostrarAgendamento && (!form.data_agendada || !form.medico_id || !form.unidade_saude_id)) {
+      setErro("Agendamento exige data agendada, médico e unidade de atendimento.");
       return;
     }
     const pid = Number(form.paciente_id);
@@ -557,6 +591,8 @@ export default function FilaExames() {
       codigo_especialidade: (form.codigo_especialidade || "").replace(/\D/g, "").slice(0, 6),
       nome_especialidade: espFinal,
       codigo_curto: form.codigo_curto.trim().toUpperCase(),
+      numero_pedido: form.numero_pedido.trim().toUpperCase(),
+      justificativa: form.justificativa.trim(),
       paciente_id: pid,
       data_agendada: form.data_agendada || null,
       hora_agendada: form.hora_agendada || "",
@@ -1092,6 +1128,7 @@ export default function FilaExames() {
                                 {p.cpf && <span>{p.cpf}</span>}
                                 {p.cns && <span>CNS {p.cns}</span>}
                                 {p.prontuario && <span>Pront. {p.prontuario}</span>}
+                                {p.nascimento && <span>Nasc. {fmtData(p.nascimento)}</span>}
                                 <span className={p.origem === "pec" ? "text-teal" : "text-sus-900"}>{p.origem === "pec" ? "PEC" : "Local"}</span>
                               </div>
                             </div>
@@ -1221,6 +1258,37 @@ export default function FilaExames() {
                     {opTipos.map((o) => <option key={o.value} value={o.value} />)}
                   </datalist>
                 </div>
+                <div>
+                  <Label>Número do Pedido</Label>
+                  <Input value={form.numero_pedido} onChange={(e) => setForm({ ...form, numero_pedido: e.target.value.toUpperCase().slice(0, 30) })} placeholder="Ex: PED-2026-00123" />
+                  <p className="mt-1 text-xs text-ink/50">Identificação operacional do pedido (o nº oficial segue sendo o #{editId ?? "novo"}).</p>
+                </div>
+                </div>
+                {/* Justificativa do Pedido */}
+                <div className="mt-3">
+                  <Label>Justificativa do Pedido *</Label>
+                  <textarea
+                    rows={3}
+                    maxLength={500}
+                    value={form.justificativa}
+                    onChange={(e) => setForm({ ...form, justificativa: e.target.value })}
+                    placeholder="Informe a justificativa clínica do pedido..."
+                    className={`w-full rounded-xl border bg-white px-3 py-2 text-sm outline-none transition focus:border-teal ${
+                      form.justificativa.length > 0 && form.justificativa.trim().length < 12
+                        ? "border-red-500 focus:border-red-500"
+                        : "border-sus-900/15"
+                    }`}
+                  />
+                  <div className="mt-1 flex items-center justify-between text-xs">
+                    <span className={form.justificativa.trim().length < 12 ? "font-medium text-red-600" : "font-medium text-teal"}>
+                      {form.justificativa.trim().length < 12
+                        ? "A justificativa é obrigatória e deve ter pelo menos 12 caracteres."
+                        : "Justificativa clínica válida."}
+                    </span>
+                    <span className={form.justificativa.trim().length < 12 ? "text-ink/45" : "text-teal"}>
+                      {form.justificativa.trim().length}/12 caracteres mínimos
+                    </span>
+                  </div>
                 </div>
               </section>
               {/* Classificação */}
@@ -1277,21 +1345,43 @@ export default function FilaExames() {
               </section>
               {/* Agendamento: médico + unidade */}
               <section>
-                <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-sus-900/55">Agendamento — médico e unidade *</p>
-                <div className="grid gap-4 md:grid-cols-3">
+                <button
+                  type="button"
+                  onClick={() => setMostrarAgendamento((v) => !v)}
+                  aria-expanded={mostrarAgendamento}
+                  className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left transition ${mostrarAgendamento ? "border-teal bg-teal/5" : "border-sus-900/15 bg-sand/40 hover:border-teal/50"}`}
+                >
+                  <span>
+                    <span className="block text-[11px] font-bold uppercase tracking-wide text-sus-900/55">Agendamento — médico e unidade</span>
+                    <span className="block text-xs text-ink/55">{mostrarAgendamento ? "Seção expandida: data, horário, médico e unidade." : "Expandir para marcar data, horário, médico e unidade."}</span>
+                  </span>
+                  <span className={`rounded-full px-3 py-1.5 text-xs font-bold ${mostrarAgendamento ? "bg-teal text-white" : "bg-sus-900/10 text-sus-900"}`}>
+                    {mostrarAgendamento ? "Ocultar" : "Agendar Atendimento"}
+                  </span>
+                </button>
+                {mostrarAgendamento && (
+                <>
+                <div className="mt-3 grid gap-4 md:grid-cols-3">
+                  <div><Label>Data agendada *</Label><Input type="date" value={form.data_agendada} min={retroativoBloqueado ? hojeISO() : undefined} onChange={(e) => setForm({ ...form, data_agendada: e.target.value })} /></div>
                   <div>
-                    <Label>Médico(a) solicitante/atendente</Label>
+                    <Label>Médico(a) solicitante/atendente *</Label>
                     <select value={form.medico_id} onChange={(e) => setForm({ ...form, medico_id: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
                       <option value="">Selecionar…</option>
-                      {medicos.filter((m) => m.ativo).map((m) => <option key={m.id} value={m.id}>{m.nome}{m.crm ? ` · ${m.crm}` : ""}</option>)}
+                      {medicos.filter((m) => m.ativo).map((m) => <option key={m.id} value={m.id}>{m.nome}{m.crm ? ` · ${m.crm}` : ""}{m.cbo_codigo ? ` · CBO ${m.cbo_codigo}` : ""}</option>)}
                     </select>
+                    {medicosErro && <p className="mt-1 text-xs text-red-600">{medicosErro}</p>}
+                    {cbos.length > 0 && (
+                      <p className="mt-1 text-xs text-ink/55">
+                        CBO SIGTAP do procedimento: {cbos.slice(0, 3).map((c) => `${c.cbo}${c.descricao ? ` ${c.descricao}` : ""}`).join(" · ")}{cbos.length > 3 ? ` (+${cbos.length - 3})` : ""}
+                      </p>
+                    )}
                   </div>
                   <div>
                     <Label>Hora</Label>
                     <Input type="time" value={form.hora_agendada} onChange={(e) => setForm({ ...form, hora_agendada: e.target.value })} />
                   </div>
                   <div>
-                    <Label>PSF / Unidade de atendimento</Label>
+                    <Label>PSF / Unidade de atendimento *</Label>
                     <select value={form.unidade_saude_id} onChange={(e) => setForm({ ...form, unidade_saude_id: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
                       <option value="">Selecionar…</option>
                       {unidades.filter((u) => u.ativo).map((u) => <option key={u.id} value={u.id}>{u.nome}</option>)}
@@ -1299,6 +1389,8 @@ export default function FilaExames() {
                   </div>
                 </div>
                 <p className="mt-1 text-xs text-ink/50">Obrigatórios ao marcar data agendada. Nome, CPF, CBO do médico e endereço da unidade ficam registrados no pedido.</p>
+                </>
+                )}
               </section>
               {/* Destino e observações */}
               <section>
@@ -1326,7 +1418,7 @@ export default function FilaExames() {
             </div>
             <div id="comprovante-dados" className="rounded-2xl border border-sus-900/10 p-4 text-sm print:block">
               <p className="mb-2 inline-flex items-center gap-2 rounded-xl bg-sus-900 px-3 py-1.5 font-display text-sm font-extrabold text-white print:border print:border-black print:bg-white print:text-black">
-                Número do Pedido: #{comprovante.id}
+                Número do Pedido: #{comprovante.numero_pedido || comprovante.id}
               </p>
               <p className="font-display text-base font-bold text-sus-950">{comprovante.exame}</p>
               <p className="text-xs text-ink/55">{comprovante.especialidade || "—"} · {PRIO_ROTULO[comprovante.prioridade] ?? comprovante.prioridade} · pedido {fmtData(comprovante.data_pedido)}</p>
@@ -1406,6 +1498,12 @@ export default function FilaExames() {
                   <div><dt className="text-ink/45">Data agendada</dt><dd className="font-semibold">{fmtData(detalhe.data_agendada)}</dd></div>
                   <div><dt className="text-ink/45">Destino</dt><dd className="font-semibold">{detalhe.destino || "—"}</dd></div>
                 </dl>
+                {detalhe.justificativa && (
+                  <p className="mt-2 rounded-xl bg-teal/10 p-3 text-xs text-ink/80">
+                    <span className="font-bold text-sus-950">Justificativa do pedido: </span>
+                    {detalhe.justificativa}
+                  </p>
+                )}
                 {detalhe.observacoes && (
                   <p className="mt-2 rounded-xl bg-sand/60 px-3 py-2 text-xs text-ink/70">{detalhe.observacoes}</p>
                 )}

@@ -12,6 +12,7 @@ import TfdResumo from "./pages/tfd/TfdResumo";
 import TfdViagens from "./pages/tfd/TfdViagens";
 import TfdPacientes from "./pages/tfd/TfdPacientes";
 import AgendaTfd from "./pages/tfd/AgendaTfd";
+import Agendamentos from "./pages/tfd/Agendamentos";
 import QuadroViagens from "./pages/tfd/QuadroViagens";
 import TfdDestinos from "./pages/tfd/TfdDestinos";
 import CatalogoExames from "./pages/tfd/CatalogoExames";
@@ -164,6 +165,7 @@ export default function App() {
             <Route path="quadro" element={<GuardQualquer telas={["tfd_viagens", "tfd_frota_gestao"]}><QuadroViagens /></GuardQualquer>} />
             <Route path="pacientes" element={<Guard tela="tfd_pacientes"><TfdPacientes /></Guard>} />
             <Route path="agenda" element={<Guard tela="tfd_agenda"><AgendaTfd /></Guard>} />
+            <Route path="agendamentos" element={<Guard tela="tfd_agenda"><Agendamentos /></Guard>} />
             <Route path="exames" element={<Navigate to="/fila-exames" replace />} />
             <Route path="catalogo" element={<Guard tela="tfd_catalogo"><CatalogoExames /></Guard>} />
             <Route path="destinos" element={<Guard tela="tfd_destinos"><TfdDestinos /></Guard>} />

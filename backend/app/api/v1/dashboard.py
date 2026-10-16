@@ -79,13 +79,14 @@ def salvar_dashboard(data: DashboardIn, db: Session = Depends(get_db), user: Use
 
 def _ler_quadro(row: UserDashboardPrefs | None) -> dict:
     if not row or not (getattr(row, "quadro_filtros", "") or "").strip():
-        return {"data": "", "destino": "", "agrupamento": "destino"}
+        return {"data": "", "destino": "", "psf": "", "agrupamento": "destino"}
     try:
         d = json.loads(row.quadro_filtros)
         if not isinstance(d, dict):
-            return {"data": "", "destino": "", "agrupamento": "destino"}
+            return {"data": "", "destino": "", "psf": "", "agrupamento": "destino"}
         data = str(d.get("data") or "")
         dest = str(d.get("destino") or "")[:120]
+        psf = str(d.get("psf") or "")[:150]
         agrup = str(d.get("agrupamento") or "destino")
         import re as _re
 
@@ -93,9 +94,9 @@ def _ler_quadro(row: UserDashboardPrefs | None) -> dict:
             data = ""
         if agrup not in ("destino", "data"):
             agrup = "destino"
-        return {"data": data, "destino": dest, "agrupamento": agrup}
+        return {"data": data, "destino": dest, "psf": psf, "agrupamento": agrup}
     except Exception:
-        return {"data": "", "destino": "", "agrupamento": "destino"}
+        return {"data": "", "destino": "", "psf": "", "agrupamento": "destino"}
 
 
 @router.get("/user/quadro-viagens", response_model=QuadroFiltrosOut)
@@ -115,6 +116,7 @@ def salvar_quadro(data: QuadroFiltrosIn, db: Session = Depends(get_db), user: Us
     row.quadro_filtros = json.dumps({
         "data": data.data,
         "destino": (data.destino or "")[:120],
+        "psf": (data.psf or "")[:150],
         "agrupamento": data.agrupamento or "destino",
     })
     db.add(row)

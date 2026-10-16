@@ -163,6 +163,7 @@ class ViagemOut(ViagemIn):
     id: int
     passageiros: int = 0
     veiculo_placa: str = ""
+    veiculo_modelo: str = ""
 
 
 class ViagemPacienteIn(BaseModel):
@@ -175,12 +176,14 @@ class ViagemPacienteIn(BaseModel):
     tratamento: str = Field(default="", max_length=150)
     unidade: str = Field(default="", max_length=150)
     hora_consulta: str = Field(default="", max_length=5)
+    observacoes: str = Field(default="", max_length=500)
 
 
 class ViagemPacienteOut(ViagemPacienteIn):
     id: int
     viagem_id: int
     paciente_nome: str = ""
+    observacoes: str = ""
 
 
 # ---------- Fila de espera para viagem ----------
@@ -224,7 +227,7 @@ class ExameIn(BaseModel):
     justificativa_prioridade: str = Field(default="", max_length=500)
     status: str = Field(
         default="aguardando",
-        pattern="^(aguardando|agendado|realizado|cancelado)$",
+        pattern="^(aguardando|agendado|recepcionado|realizado|faltou|cancelado)$",
     )
     data_pedido: date
     data_agendada: date | None = None
@@ -233,14 +236,25 @@ class ExameIn(BaseModel):
     unidade_saude_id: int | None = None
     destino: str = Field(default="", max_length=120)
     observacoes: str = Field(default="", max_length=500)
+    justificativa: str = Field(default="", max_length=500)
+    resultado: str = Field(default="", max_length=2000)
     codigo_curto: str = Field(default="", max_length=12)  # novo modelo; legado ignora
+    numero_pedido: str = Field(default="", max_length=30)  # identificação operacional
+
+    @field_validator("justificativa")
+    @classmethod
+    def _valida_justificativa(cls, v: str) -> str:
+        s = (v or "").strip()
+        if len(s) < 12:
+            raise ValueError("A justificativa é obrigatória e deve ter pelo menos 12 caracteres.")
+        return s
 
 
 class ExameLoteIn(BaseModel):
     """Atualização em lote: só campos enviados são aplicados."""
 
     ids: list[int] = Field(min_length=1, max_length=200)
-    status: str = Field(default="", pattern="^(|aguardando|agendado|realizado|cancelado)$")
+    status: str = Field(default="", pattern="^(|aguardando|agendado|recepcionado|realizado|faltou|cancelado)$")
     data_agendada: date | None = None
     hora_agendada: str = Field(default="", max_length=5)
     medico_id: int | None = None
@@ -287,7 +301,10 @@ class PrioridadeIn(BaseModel):
 
 
 class ExamePublicoOut(BaseModel):
-    """Visão pública LGPD: sem CPF/CNS/nascimento/telefone/observações."""
+    """Visão pública LGPD: sem CPF/CNS/nascimento/telefone/observações/total.
+
+    O QR abre só posição individual; total da fila não sai no payload.
+    """
 
     exame: str = ""
     especialidade: str = ""

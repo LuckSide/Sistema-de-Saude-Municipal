@@ -138,7 +138,12 @@ export default function LabMarcacao() {
       setErro("Adicione ao menos um exame SIGTAP.");
       return;
     }
-    if (!labId || !diaSel) {
+    // Data é estritamente obrigatória p/ exame de sangue/laboratório.
+    if (!diaSel) {
+      setErro("Escolha o dia da marcação no calendário (data obrigatória).");
+      return;
+    }
+    if (!labId) {
       setErro("Escolha laboratório e dia no calendário.");
       return;
     }
@@ -233,7 +238,7 @@ export default function LabMarcacao() {
                 <Input placeholder="Buscar paciente…" value={buscaPac} onChange={(e) => setBuscaPac(e.target.value)} />
                 <select value={pacienteId} onChange={(e) => setPacienteId(e.target.value)} className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
                   <option value="">Selecionar…</option>
-                  {pacientes.slice(0, 15).map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                  {pacientes.slice(0, 15).map((p) => <option key={p.id} value={p.id}>{p.nome}{p.nascimento ? ` · Nasc. ${p.nascimento.slice(0, 10).split("-").reverse().join("/")}` : ""}</option>)}
                 </select>
               </div>
               <div>

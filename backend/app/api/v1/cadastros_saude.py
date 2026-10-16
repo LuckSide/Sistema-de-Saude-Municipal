@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from app.core.deps import get_db as _get_db
@@ -16,8 +16,32 @@ router = APIRouter()
 
 # ---------- Médicos ----------
 @router.get("/medicos", response_model=list[MedicoOut])
-def listar_medicos(db: Session = Depends(_get_db), _=Depends(need_any_perm("usuarios", "tfd_exames", "tfd_medico"))):
-    return [MedicoOut(**m.model_dump()) for m in db.exec(select(Medico).order_by(Medico.nome)).all()]
+def listar_medicos(
+    q: str = Query(default="", max_length=80),
+    somente_ativos: bool | None = Query(default=None),
+    db: Session = Depends(_get_db),
+    _=Depends(need_any_perm("usuarios", "tfd", "tfd_exames", "tfd_medico", "tfd_agenda", "lab", "lab_marcacao", "lab_fila")),
+):
+    """Lista geral de médicos p/ todas as telas de seleção/agendamento.
+
+    Busca por nome/CRM/CPF/CBO; `somente_ativos=true` filtra ativos.
+    Permissão ampla (qualquer TFD/Lab) p/ não esvaziar selects.
+    """
+    base = select(Medico).order_by(Medico.nome)
+    if somente_ativos:
+        base = select(Medico).where(Medico.ativo == True).order_by(Medico.nome)  # noqa: E712
+    medicos = list(db.exec(base).all())
+    termo = (q or "").strip().lower()
+    if termo:
+        medicos = [
+            m for m in medicos
+            if termo in (m.nome or "").lower()
+            or termo in (m.crm or "").lower()
+            or termo in (m.cpf or "").lower()
+            or termo in (m.cbo_codigo or "").lower()
+            or termo in (m.cbo_descricao or "").lower()
+        ]
+    return [MedicoOut(**m.model_dump()) for m in medicos]
 
 
 @router.post("/medicos", response_model=MedicoOut, status_code=201)
@@ -54,8 +78,23 @@ def inativar_medico(mid: int, db: Session = Depends(_get_db), _=Depends(need_per
 
 # ---------- Unidades / PSFs ----------
 @router.get("/unidades-saude", response_model=list[UnidadeOut])
-def listar_unidades(db: Session = Depends(_get_db), _=Depends(need_any_perm("usuarios", "tfd_exames", "tfd_medico"))):
-    return [UnidadeOut(**u.model_dump()) for u in db.exec(select(UnidadeSaude).order_by(UnidadeSaude.nome)).all()]
+def listar_unidades(
+    q: str = Query(default="", max_length=80),
+    somente_ativas: bool | None = Query(default=None),
+    db: Session = Depends(_get_db),
+    _=Depends(need_any_perm("usuarios", "tfd", "tfd_exames", "tfd_medico", "tfd_agenda", "lab", "lab_marcacao", "lab_fila")),
+):
+    base = select(UnidadeSaude).order_by(UnidadeSaude.nome)
+    if somente_ativas:
+        base = select(UnidadeSaude).where(UnidadeSaude.ativo == True).order_by(UnidadeSaude.nome)  # noqa: E712
+    unidades = list(db.exec(base).all())
+    termo = (q or "").strip().lower()
+    if termo:
+        unidades = [
+            u for u in unidades
+            if termo in (u.nome or "").lower() or termo in (u.cnes or "").lower()
+        ]
+    return [UnidadeOut(**u.model_dump()) for u in unidades]
 
 
 @router.post("/unidades-saude", response_model=UnidadeOut, status_code=201)

@@ -22,6 +22,7 @@ import {
   tfdAtualizarViagem,
   tfdCriarFilaViagem,
   tfdCriarViagem,
+  tfdDestinos,
   tfdExcluirFilaViagem,
   tfdExcluirViagem,
   tfdFaturarDeslocamento,
@@ -40,6 +41,7 @@ import {
   fetchQuadroFiltros,
   saveQuadroFiltros,
   pagData,
+  type Destino,
   type DiaDestino,
   type DiaSemana,
   type DiaViagem,
@@ -83,6 +85,8 @@ const vazioFila = {
   data_consulta: "", hora_consulta: "", acompanhante: false,
   acompanhante_id: "", acompanhante_nome: "", acompanhante_cpf: "",
   prioridade: "rotina", observacoes: "",
+  // Segunda etapa visível do fluxo: agendamento expandido ou só fila.
+  agendar: false,
 };
 
 const NOMES_DIA = ["SEG", "TER", "QUA", "QUI", "SEX", "SÁB", "DOM"];
@@ -156,10 +160,13 @@ export default function QuadroViagens() {
   const podeVerPacientes = podeEditar;
   const podeFaturar = can("tfd_faturamento");
   const [dia, setDia] = useState(hojeISO());
+  // Quantidade de dias visíveis na grade (desktop padrão 5; mobile sempre 1).
+  const [qtdDias, setQtdDias] = useState(5);
   const [semana, setSemana] = useState<DiaSemana[]>([]);
   const [frota, setFrota] = useState<FrotaDia[]>([]);
   const [fila, setFila] = useState<ViagemFila[]>([]);
   const [buscaDestino, setBuscaDestino] = useState("");
+  const [buscaPsf, setBuscaPsf] = useState("");
   // Filtros avançados da visão semanal (persistidos por operador).
   const [filtroDia, setFiltroDia] = useState("");
   const [agrupFila, setAgrupFila] = useState<"destino" | "data">("destino");
@@ -182,7 +189,8 @@ export default function QuadroViagens() {
   const [buscaAcomp, setBuscaAcomp] = useState("");
   // Gestão direta da viagem no card semanal.
   const [editViagem, setEditViagem] = useState<DiaViagem | null>(null);
-  const [formViagem, setFormViagem] = useState({ data_viagem: "", hora_saida: "", hora_retorno: "", motorista: "", motorista_id: "", observacoes: "" });
+  const [formViagem, setFormViagem] = useState({ destino: "", data_viagem: "", hora_saida: "", hora_retorno: "", motorista: "", motorista_id: "", observacoes: "" });
+  const [destinos, setDestinos] = useState<Destino[]>([]);
   const [trocaVeiculo, setTrocaVeiculo] = useState<DiaViagem | null>(null);
   const [trocaVeiculoId, setTrocaVeiculoId] = useState("");
   const [trocaMotorista, setTrocaMotorista] = useState("");
@@ -244,8 +252,8 @@ export default function QuadroViagens() {
     : motoristas;
 
   const diasSemana = useMemo(
-    () => Array.from({ length: 7 }, (_, i) => somaDias(dia, i)),
-    [dia]
+    () => Array.from({ length: ehMobile ? 1 : qtdDias }, (_, i) => somaDias(dia, i)),
+    [dia, ehMobile, qtdDias]
   );
 
   async function recarregar(ini = dia) {
@@ -253,7 +261,10 @@ export default function QuadroViagens() {
       if (podeVerPacientes) {
         const [sem, fl] = await Promise.all([
           tfdSemana(ini),
-          tfdFilaViagem({ destino: buscaDestino.trim() || undefined }),
+          tfdFilaViagem({
+            destino: buscaDestino.trim() || undefined,
+            psf: buscaPsf.trim() || undefined,
+          }),
         ]);
         setSemana(sem.dias);
         setFrota(sem.frota);
@@ -273,6 +284,7 @@ export default function QuadroViagens() {
     recarregar().catch(() => setErro("Falha ao carregar quadro."));
     tfdPacientes("").then((r) => setPacientes(pagData<Paciente>(r))).catch(() => {});
     tfdMotoristas({ limit: 200 }).then((r) => setMotoristas(pagData<Motorista>(r))).catch(() => {});
+    tfdDestinos(1, 500).then((r) => setDestinos(pagData<Destino>(r))).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dia]);
 
@@ -282,6 +294,7 @@ export default function QuadroViagens() {
       .then((p) => {
         if (p.data) setFiltroDia(p.data);
         if (p.destino) setBuscaDestino(p.destino);
+        if (p.psf) setBuscaPsf(p.psf);
         if (p.agrupamento === "data" || p.agrupamento === "destino") setAgrupFila(p.agrupamento);
       })
       .catch(() => {})
@@ -293,16 +306,16 @@ export default function QuadroViagens() {
   useEffect(() => {
     if (!prefsProntas) return;
     const t = setTimeout(() => {
-      saveQuadroFiltros(filtroDia, buscaDestino.trim().toUpperCase(), agrupFila).catch(() => {});
+      saveQuadroFiltros(filtroDia, buscaDestino.trim().toUpperCase(), agrupFila, buscaPsf.trim().toUpperCase()).catch(() => {});
     }, 600);
     return () => clearTimeout(t);
-  }, [filtroDia, buscaDestino, agrupFila, prefsProntas]);
+  }, [filtroDia, buscaDestino, buscaPsf, agrupFila, prefsProntas]);
 
   useEffect(() => {
     const t = setTimeout(() => recarregar().catch(() => {}), 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [buscaDestino]);
+  }, [buscaDestino, buscaPsf]);
 
   const filaAguardando = fila.filter((f) => f.status === "aguardando");
 
@@ -366,6 +379,7 @@ export default function QuadroViagens() {
         tratamento: f.tratamento,
         unidade: f.unidade,
         hora_consulta: f.hora_consulta,
+        observacoes: f.observacoes || "",
       });
       setSelFila(null);
       await recarregar();
@@ -408,6 +422,7 @@ export default function QuadroViagens() {
         tratamento: p.tratamento,
         unidade: p.unidade,
         hora_consulta: p.hora_consulta,
+        observacoes: p.observacoes || "",
       });
       await tfdRemoverPassageiro(vidOrigem, passId);
       await recarregar();
@@ -424,6 +439,7 @@ export default function QuadroViagens() {
             tratamento: p.tratamento,
             unidade: p.unidade,
             hora_consulta: p.hora_consulta,
+            observacoes: p.observacoes || "",
           }).catch(() => null);
           await tfdRemoverPassageiro(vidDestino, criado.id).catch(() => null);
           await recarregar();
@@ -466,6 +482,7 @@ export default function QuadroViagens() {
               tratamento: s2.tratamento,
               unidade: s2.unidade,
               hora_consulta: s2.hora_consulta,
+              observacoes: s2.observacoes || "",
             });
             await recarregar();
           },
@@ -508,14 +525,20 @@ export default function QuadroViagens() {
     }
   }
 
-  async function sugerir(data: string, destino: string) {
+  async function sugerir(data: string, destino: string, viagemId?: number) {
     try {
-      const r = await tfdSugestao(data, destino);
-      const chave = `${data}|${destino}`;
-      setSugestao((s) => ({ ...s, [chave]: r.veiculo ? `${r.veiculo.placa} — ${r.motivo}` : r.motivo }));
+      const r = await tfdSugestao(data, destino, viagemId);
+      const chave = viagemId ? `viag:${viagemId}` : `${data}|${destino}`;
+      setSugestao((s) => ({ ...s, [chave]: r.veiculo ? `${r.veiculo.modelo || r.veiculo.placa} (${r.veiculo.placa}) — ${r.motivo}` : r.motivo }));
       if (r.veiculo) {
-        setAlocandoEm(chave);
-        setNovoVeiculo((n) => ({ ...n, veiculo_id: String(r.veiculo!.id) }));
+        if (viagemId) {
+          await tfdTrocarVeiculoViagem(viagemId, r.veiculo.id).catch(() => null);
+          setOk(`Veículo sugerido aplicado: ${r.veiculo.modelo || r.veiculo.placa} (${r.veiculo.placa}).`);
+          await recarregar();
+        } else {
+          setAlocandoEm(`${data}|${destino}`);
+          setNovoVeiculo((n) => ({ ...n, veiculo_id: String(r.veiculo!.id) }));
+        }
       }
     } catch {
       setErro("Falha ao sugerir veículo.");
@@ -704,6 +727,7 @@ export default function QuadroViagens() {
         acompanhante_nome: f.acompanhante_nome || "",
         acompanhante_cpf: f.acompanhante_cpf || "",
         prioridade: f.prioridade, observacoes: f.observacoes,
+        agendar: !!(f.data_consulta || f.hora_consulta),
       });
       setBuscaPac(f.paciente_nome);
       setBuscaAcomp(f.acompanhante_nome || "");
@@ -721,15 +745,23 @@ export default function QuadroViagens() {
       setErro("Paciente e destino são obrigatórios.");
       return;
     }
+    // Segunda etapa do fluxo: agendamento expandido exige data.
+    if (formFila.agendar && !formFila.data_consulta) {
+      setErro("Agendamento exige a data da consulta.");
+      return;
+    }
     if (formFila.acompanhante_id && Number(formFila.acompanhante_id) === Number(formFila.paciente_id)) {
       setErro("Acompanhante não pode ser o próprio paciente.");
       return;
     }
     const payload: Record<string, unknown> = {
-      ...formFila,
       paciente_id: Number(formFila.paciente_id),
       destino: formFila.destino.trim().toUpperCase(),
-      data_consulta: formFila.data_consulta || null,
+      unidade: formFila.unidade,
+      tratamento: formFila.tratamento,
+      // Sem agendamento expandido, não fixa data (fila contínua).
+      data_consulta: formFila.agendar ? formFila.data_consulta || null : null,
+      hora_consulta: formFila.agendar ? formFila.hora_consulta : "",
       acompanhante_id: formFila.acompanhante && formFila.acompanhante_id ? Number(formFila.acompanhante_id) : null,
       acompanhante_nome: formFila.acompanhante ? formFila.acompanhante_nome.trim() : "",
       acompanhante_cpf: formFila.acompanhante ? formFila.acompanhante_cpf.replace(/\D/g, "").slice(0, 11) : "",
@@ -752,6 +784,7 @@ export default function QuadroViagens() {
       const full = await tfdObterViagem(v.id);
       setEditViagem(v);
       setFormViagem({
+        destino: full.destino || v.destino || "",
         data_viagem: (full.data_viagem || "").slice(0, 10),
         hora_saida: full.hora_saida || "",
         hora_retorno: full.hora_retorno || "",
@@ -770,6 +803,10 @@ export default function QuadroViagens() {
       setErro("Data da viagem é obrigatória.");
       return;
     }
+    if (!formViagem.destino.trim()) {
+      setErro("Destino da viagem é obrigatório.");
+      return;
+    }
     if (retroativoBloqueado && formViagem.data_viagem < hoje) {
       setErro(RETRO_MSG);
       return;
@@ -779,7 +816,7 @@ export default function QuadroViagens() {
       const full = await tfdObterViagem(editViagem.id);
       const mid = /^\d+$/.test(formViagem.motorista_id) ? Number(formViagem.motorista_id) : null;
       await tfdAtualizarViagem(editViagem.id, {
-        destino: full.destino,
+        destino: formViagem.destino.trim().toUpperCase(),
         unidade: full.unidade,
         data_viagem: formViagem.data_viagem,
         hora_saida: formViagem.hora_saida,
@@ -926,7 +963,21 @@ export default function QuadroViagens() {
 
   function destinosDoDia(d: DiaSemana): DiaDestino[] {
     const mapa = new Map<string, DiaDestino>();
-    for (const x of d.destinos) mapa.set(x.destino, x);
+    const termoCidade = buscaDestino.trim().toUpperCase();
+    const termoPsf = buscaPsf.trim().toUpperCase();
+    for (const x of d.destinos) {
+      // Filtro cidade destino na grade (exclui PSF de origem).
+      if (termoCidade && !x.destino.toUpperCase().includes(termoCidade)) continue;
+      let viagens = x.viagens;
+      // Filtro PSF origem na grade: casa Viagem.unidade.
+      if (termoPsf) {
+        viagens = viagens.filter((v) =>
+          (v.unidade || "").toUpperCase().includes(termoPsf),
+        );
+        if (viagens.length === 0) continue;
+      }
+      mapa.set(x.destino, { ...x, viagens });
+    }
     // Só fila com data marcada p/ este dia gera card; fila contínua usa "+ Criar Nova Viagem".
     for (const f of filaAguardando) {
       if ((f.data_consulta || "").slice(0, 10) !== d.data) continue;
@@ -947,8 +998,23 @@ export default function QuadroViagens() {
           <Bus className="h-5 w-5 text-sus-900" /> Quadro de viagens e frota
         </h2>
         <span className="rounded-full bg-teal/10 px-2.5 py-0.5 text-xs font-semibold text-teal">
-          {fmtDia(dia)} a {fmtDia(somaDias(dia, 6))} · {filaAguardando.length} na fila
+          {fmtDia(dia)} a {fmtDia(somaDias(dia, (ehMobile ? 1 : qtdDias) - 1))} · {filaAguardando.length} na fila
         </span>
+        {!ehMobile && (
+          <div className="ml-auto inline-flex items-center gap-1 rounded-xl border border-sus-900/10 bg-white p-1" title="Dias visíveis na grade">
+            <span className="px-2 text-[11px] font-bold text-ink/55">Dias:</span>
+            {([1, 3, 5, 7] as const).map((n) => (
+              <button
+                key={n}
+                onClick={() => setQtdDias(n)}
+                aria-pressed={qtdDias === n}
+                className={`min-h-[44px] min-w-[44px] rounded-lg px-3 py-1.5 text-xs font-bold transition ${qtdDias === n ? "bg-sus-900 text-white" : "text-sus-900 hover:bg-sand"}`}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {ehMobile && (() => {
@@ -982,11 +1048,11 @@ export default function QuadroViagens() {
       {/* Navegação semanal (no mobile: dia a dia com Anterior/Próximo acima) */}
       <Card className="mb-3 p-3">
         <div className="flex flex-wrap items-center gap-2">
-          <button onClick={() => setDia(somaDias(dia, -7))} aria-label="Semana anterior" className="grid min-h-[44px] min-w-[44px] place-items-center rounded-xl bg-sus-900/10 text-sus-900 hover:bg-sus-900/15" title="Semana anterior"><ChevronsLeft className="h-4 w-4" /></button>
+          <button onClick={() => setDia(somaDias(dia, -(ehMobile ? 1 : qtdDias)))} aria-label="Período anterior" className="grid min-h-[44px] min-w-[44px] place-items-center rounded-xl bg-sus-900/10 text-sus-900 hover:bg-sus-900/15" title="Período anterior"><ChevronsLeft className="h-4 w-4" /></button>
           <button onClick={() => setDia(somaDias(dia, -1))} aria-label="Dia anterior" className="grid min-h-[44px] min-w-[44px] place-items-center rounded-xl bg-sus-900/10 text-sus-900 hover:bg-sus-900/15" title="Dia anterior"><ArrowLeft className="h-4 w-4" /></button>
           <Input type="date" value={dia} onChange={(e) => e.target.value && setDia(e.target.value)} className="!w-auto" />
           <button onClick={() => setDia(somaDias(dia, 1))} aria-label="Próximo dia" className="grid min-h-[44px] min-w-[44px] place-items-center rounded-xl bg-sus-900/10 text-sus-900 hover:bg-sus-900/15" title="Próximo dia"><ArrowRight className="h-4 w-4" /></button>
-          <button onClick={() => setDia(somaDias(dia, 7))} aria-label="Próxima semana" className="grid min-h-[44px] min-w-[44px] place-items-center rounded-xl bg-sus-900/10 text-sus-900 hover:bg-sus-900/15" title="Próxima semana"><ChevronsRight className="h-4 w-4" /></button>
+          <button onClick={() => setDia(somaDias(dia, (ehMobile ? 1 : qtdDias)))} aria-label="Próximo período" className="grid min-h-[44px] min-w-[44px] place-items-center rounded-xl bg-sus-900/10 text-sus-900 hover:bg-sus-900/15" title="Próximo período"><ChevronsRight className="h-4 w-4" /></button>
           <button onClick={() => setDia(hojeISO())} className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-teal px-3 py-2 text-xs font-bold text-white hover:brightness-110">
             <CalendarDays className="h-4 w-4" /> Hoje
           </button>
@@ -998,15 +1064,15 @@ export default function QuadroViagens() {
 
       <div className="space-y-3">
         {/* Grade semanal primeiro; fila de espera embaixo */}
-        {/* Grade semanal: 7 dias lado a lado */}
+        {/* Grade semanal: N dias lado a lado (padrão 5 no desktop; 1 no mobile) */}
         <section className="overflow-x-auto pb-2">
           <div
             className={
               ehMobile
                 ? "grid grid-cols-1 gap-2"
-                : "grid min-w-[980px] grid-cols-7 gap-2 min-[1400px]:min-w-0"
+                : `grid gap-2 ${qtdDias >= 6 ? "min-w-[980px] min-[1400px]:min-w-0" : "min-w-0"}`
             }
-            style={ehMobile ? undefined : { gridTemplateColumns: "repeat(7, minmax(0, 1fr))" }}
+            style={ehMobile ? undefined : { gridTemplateColumns: `repeat(${qtdDias}, minmax(0, 1fr))` }}
           >
             {(ehMobile ? [dia] : diasSemana).map((data) => {
               const di = (new Date(`${data}T12:00:00`).getDay() + 6) % 7;
@@ -1073,7 +1139,7 @@ export default function QuadroViagens() {
                               if (!podeEditar) { setArrastando(null); return; }
                               const f = e.dataTransfer.getData("text/fila");
                               if (f) {
-                                if (v.vagas <= 0) { setErro(`Veículo ${v.veiculo_placa || ""} lotado.`); setArrastando(null); return; }
+                                if (v.veiculo_id && v.vagas <= 0) { setErro(`Veículo ${v.veiculo_placa || ""} lotado.`); setArrastando(null); return; }
                                 alocar(Number(f), v.id, v.destino);
                                 return;
                               }
@@ -1090,9 +1156,27 @@ export default function QuadroViagens() {
                               {v.nome || nomeViagem(v)}
                             </p>
                             <div className="mt-0.5 flex items-center gap-1 text-[11px]">
-                              <p className="rounded bg-sus-900/10 px-1.5 py-0.5 font-display font-bold text-sus-900" title={v.veiculo_modelo ? `${v.veiculo_placa} · ${v.veiculo_modelo}` : v.veiculo_placa}>{v.veiculo_placa || "A definir"}</p>
-                              <span className="ml-auto font-bold">{v.ocupados}/{v.capacidade || "—"}</span>
+                              <p className="truncate rounded bg-sus-900/10 px-1.5 py-0.5 font-display font-bold text-sus-900" title={v.veiculo_id ? (v.veiculo_placa ? `${v.veiculo_modelo || "Veículo"} · placa ${v.veiculo_placa}` : (v.veiculo_modelo || "Veículo")) : "Viagem sem veículo — A definir carro"}>{v.veiculo_id ? (v.veiculo_modelo || "Veículo") : "A definir carro"}</p>
+                              <span className="ml-auto shrink-0 font-bold" title={v.veiculo_placa ? `Placa ${v.veiculo_placa}` : "Sem veículo"}>{v.ocupados}/{v.capacidade || "—"}</span>
                             </div>
+                            {v.veiculo_placa && v.veiculo_modelo && (
+                              <p className="mt-0.5 truncate text-[10px] text-ink/45" title={`Placa ${v.veiculo_placa}`}>Placa {v.veiculo_placa}</p>
+                            )}
+                            {!v.veiculo_id && v.passageiros.length > 0 && (
+                              <div className="mt-1 flex flex-wrap items-center gap-1">
+                                <p className="w-full truncate text-[10px] font-bold text-amber-700" title={`${v.passageiros.length} passageiro(s) sem veículo`}>
+                                  Sem veículo · {v.passageiros.length} passageiro(s)
+                                </p>
+                                {podeGerirFrota && (
+                                  <button onClick={() => sugerir(v.data_viagem, v.destino, v.id)} className="inline-flex min-h-[44px] items-center gap-1 rounded-md bg-amber-100 px-1.5 py-1 text-[10px] font-bold text-amber-900 hover:bg-amber-200" title={`Sugerir veículo p/ ${v.ocupados} assento(s) ocupado(s)`}>
+                                    <Sparkles className="h-3 w-3" /> Sugerir veículo
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                            {sugestao[`viag:${v.id}`] && (
+                              <p className="mt-1 rounded-lg bg-teal/10 px-2 py-1 text-[10px] font-semibold text-teal">{sugestao[`viag:${v.id}`]}</p>
+                            )}
                             <div className="mt-1 h-1 overflow-hidden rounded-full bg-sus-900/10">
                               <div
                                 className={`h-full rounded-full ${v.capacidade && v.ocupados >= v.capacidade ? "bg-red-500" : v.capacidade && v.ocupados >= v.capacidade * 0.75 ? "bg-amber-500" : "bg-teal"}`}
@@ -1108,7 +1192,9 @@ export default function QuadroViagens() {
                             <p className="mt-0.5 truncate text-[10px] text-ink/55">{v.motorista || "Motorista a definir"}{v.hora_saida ? ` · ${v.hora_saida}→${v.hora_retorno || retornoAutomatico(v.hora_saida)}` : ""}</p>
                             {podeVerPacientes ? (
                             <div className="mt-1 space-y-1">
-                              {v.passageiros.map((p) => (
+                              {v.passageiros.map((p) => {
+                                const acomp = (p.acompanhante_nome || p.acompanhante || "").trim();
+                                return (
                                 <div
                                   key={p.id}
                                   draggable={podeEditar}
@@ -1116,13 +1202,17 @@ export default function QuadroViagens() {
                                   onDragEnd={() => setArrastando(null)}
                                   className="flex items-center gap-1 rounded-md bg-sand/70 px-1.5 py-1 text-[10px]"
                                 >
-                                  <span className="truncate font-semibold">{p.paciente_nome}</span>
-                                  {(p.acompanhante_nome || p.acompanhante) && <span className="rounded-full bg-teal/15 px-1 text-[9px] font-bold text-teal" title={p.acompanhante_nome || p.acompanhante}>+1</span>}
+                                  <span className="min-w-0 flex-1 truncate font-semibold" title={acomp ? `${p.paciente_nome} + ${acomp} (Acompanhante de ${p.paciente_nome})` : p.paciente_nome}>
+                                    {p.paciente_nome}
+                                    {acomp && <span className="block truncate font-normal text-ink/55">{acomp} (Acompanhante de {p.paciente_nome})</span>}
+                                  </span>
+                                  {acomp && <span className="shrink-0 rounded-full bg-teal/15 px-1 text-[9px] font-bold text-teal" title={acomp}>+1</span>}
                                   {podeEditar && (
                                     <button onClick={() => devolver(v.id, p.id)} className="ml-auto rounded p-0.5 text-ink/40 hover:bg-red-50 hover:text-red-600" title="Devolver à fila"><X className="h-3 w-3" /></button>
                                   )}
                                 </div>
-                              ))}
+                                );
+                              })}
                             </div>
                             ) : (
                             <p className="mt-1 rounded-md bg-sand/70 px-1.5 py-1 text-[10px] text-ink/55">
@@ -1130,8 +1220,8 @@ export default function QuadroViagens() {
                             </p>
                             )}
                             <div className="mt-1 flex flex-wrap gap-1">
-                              {selFila && v.vagas > 0 && podeEditar && (
-                                <button onClick={() => alocar(selFila, v.id, v.destino)} className="inline-flex items-center gap-0.5 rounded-md bg-teal px-1.5 py-1 text-[10px] font-bold text-white hover:brightness-110 ${toque}" title="Alocar paciente selecionado">
+                              {selFila && (!v.veiculo_id || v.vagas > 0) && podeEditar && (
+                                <button onClick={() => alocar(selFila, v.id, v.destino)} className="inline-flex items-center gap-0.5 rounded-md bg-teal px-1.5 py-1 text-[10px] font-bold text-white hover:brightness-110 ${toque}" title={v.veiculo_id ? "Alocar paciente selecionado" : "Alocar paciente (viagem sem veículo)"}>
                                   <UserPlus className="h-3 w-3" />
                                 </button>
                               )}
@@ -1171,7 +1261,7 @@ export default function QuadroViagens() {
                           <div className="rounded-lg border border-teal/40 bg-white p-2 text-[11px]">
                             <Label>Veículo</Label>
                             <select value={novoVeiculo.veiculo_id} onChange={(e) => setNovoVeiculo({ ...novoVeiculo, veiculo_id: e.target.value })} className="w-full rounded-lg border border-sus-900/15 bg-white px-2 py-1.5 text-[11px]">
-                              <option value="">A definir</option>
+                              <option value="">A definir carro</option>
                               {veiculosLivresCriacao.filter((f) => f.status === "disponivel").map((f) => (
                                 <option key={f.id} value={f.id}>{f.placa} ({f.capacidade}){f.em_outra_viagem ? " · em outra viagem" : ""}</option>
                               ))}
@@ -1203,10 +1293,20 @@ export default function QuadroViagens() {
                   {podeGerirFrota && alocandoEm === `nova:${data}` && (
                         <div className="rounded-lg border border-teal/40 bg-white p-2 text-[11px]">
                           <Label>Cidade de destino *</Label>
-                          <Input value={novoDestino} onChange={(e) => setNovoDestino(e.target.value.toUpperCase())} placeholder="Ex: BELO HORIZONTE" className="!py-1.5 text-[11px]" />
+                          <select value={destinos.some((d) => d.nome_destino === novoDestino) ? novoDestino : ""} onChange={(e) => setNovoDestino(e.target.value.toUpperCase())} className="w-full rounded-lg border border-sus-900/15 bg-white px-2 py-1.5 text-[11px]">
+                            <option value="">Selecionar destino cadastrado…</option>
+                            {destinos.filter((d) => d.ativo).map((d) => (
+                              <option key={d.id} value={d.nome_destino}>
+                                {d.nome_destino}{d.hospital_referencia ? ` · ${d.hospital_referencia}` : ""}
+                              </option>
+                            ))}
+                          </select>
+                          {!destinos.some((d) => d.nome_destino === novoDestino) && novoDestino && (
+                            <p className="mt-1 text-[10px] text-ink/55">Destino atual: <b>{novoDestino}</b> (fora da tabela cadastrada).</p>
+                          )}
                           <div className="mt-1"><Label>Veículo</Label>
                             <select value={novoVeiculo.veiculo_id} onChange={(e) => setNovoVeiculo({ ...novoVeiculo, veiculo_id: e.target.value })} className="w-full rounded-lg border border-sus-900/15 bg-white px-2 py-1.5 text-[11px]">
-                              <option value="">A definir</option>
+                              <option value="">A definir carro</option>
                               {veiculosLivresCriacao.filter((f) => f.status === "disponivel").map((f) => (
                                 <option key={f.id} value={f.id}>{f.placa} ({f.capacidade}){f.em_outra_viagem ? " · em outra viagem" : ""}</option>
                               ))}
@@ -1263,10 +1363,11 @@ export default function QuadroViagens() {
               className="!w-auto !py-2 text-xs"
               title="Filtrar por dia específico"
             />
-            <Input value={buscaDestino} onChange={(e) => setBuscaDestino(e.target.value.toUpperCase())} placeholder="Filtrar destino…" className="!w-52 !py-2 text-xs" />
-            {(filtroDia || buscaDestino.trim()) && (
+            <Input value={buscaDestino} onChange={(e) => setBuscaDestino(e.target.value.toUpperCase())} placeholder="Cidade destino…" title="Filtrar por cidade de destino" className="!w-44 !py-2 text-xs" />
+            <Input value={buscaPsf} onChange={(e) => setBuscaPsf(e.target.value.toUpperCase())} placeholder="PSF origem…" title="Filtrar por PSF de origem" className="!w-44 !py-2 text-xs" />
+            {(filtroDia || buscaDestino.trim() || buscaPsf.trim()) && (
               <button
-                onClick={() => { setFiltroDia(""); setBuscaDestino(""); }}
+                onClick={() => { setFiltroDia(""); setBuscaDestino(""); setBuscaPsf(""); }}
                 className="rounded-xl border border-sus-900/15 px-3 py-2 text-xs font-bold text-sus-900 hover:bg-sand"
                 title="Limpar filtros da fila"
               >
@@ -1294,9 +1395,9 @@ export default function QuadroViagens() {
               <button onClick={() => abrirFilaModal()} className="ml-auto rounded-lg bg-teal p-2 text-white hover:brightness-110" title="Novo na fila"><Plus className="h-4 w-4" /></button>
             )}
           </div>
-          {(filtroDia || buscaDestino.trim()) && (
+          {(filtroDia || buscaDestino.trim() || buscaPsf.trim()) && (
             <p className="mb-2 text-xs text-ink/55">
-              Fila filtrada{filtroDia ? ` · dia ${fmtDia(filtroDia)}` : ""}{buscaDestino.trim() ? ` · destino “${buscaDestino.trim()}”` : ""} — salva no seu perfil.
+              Fila filtrada{filtroDia ? ` · dia ${fmtDia(filtroDia)}` : ""}{buscaDestino.trim() ? ` · cidade “${buscaDestino.trim()}”` : ""}{buscaPsf.trim() ? ` · PSF “${buscaPsf.trim()}”` : ""} — salva no seu perfil.
             </p>
           )}
           <div className="max-h-[42vh] space-y-3 overflow-y-auto pr-1">
@@ -1306,7 +1407,7 @@ export default function QuadroViagens() {
                   <span className="rounded-lg bg-sus-900/10 px-2.5 py-1">{g.titulo}</span>
                   <span className="font-semibold normal-case text-ink/45">{g.itens.length} paciente(s)</span>
                 </p>
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                <div className="grid gap-1.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
                   {g.itens.map((f) => (
               <div
                 key={f.id}
@@ -1314,20 +1415,20 @@ export default function QuadroViagens() {
                 onDragStart={(e) => dragFila(e, f.id)}
                 onDragEnd={() => setArrastando(null)}
                 onClick={() => setSelFila(selFila === f.id ? null : f.id)}
-                className={`cursor-pointer rounded-xl border p-2.5 text-xs ${selFila === f.id ? "border-teal bg-teal/5 ring-1 ring-teal" : "border-sus-900/10 bg-sand/50 hover:border-teal/40"}`}
+                className={`min-w-0 cursor-pointer rounded-lg border p-1.5 text-[11px] leading-tight ${selFila === f.id ? "border-teal bg-teal/5 ring-1 ring-teal" : "border-sus-900/10 bg-sand/50 hover:border-teal/40"}`}
               >
-                <p className="font-bold text-sus-950">{f.paciente_nome}</p>
-                <p className="text-ink/55">Nasc. {fmtNasc(f.paciente_nascimento)} · {f.paciente_cpf || "sem CPF"}</p>
-                <p className="mt-1 font-semibold text-sus-900">{f.destino}</p>
-                <p className="text-ink/55">{f.unidade || "—"}{f.hora_consulta ? ` · ${f.hora_consulta}` : ""}</p>
+                <p className="truncate font-bold text-sus-950">{f.paciente_nome}</p>
+                <p className="truncate text-ink/55">Nasc. {fmtNasc(f.paciente_nascimento)} · {f.paciente_cpf || "sem CPF"}</p>
+                <p className="truncate font-semibold text-sus-900">{f.destino}</p>
+                <p className="truncate text-ink/55">{f.unidade || "—"}{f.hora_consulta ? ` · ${f.hora_consulta}` : ""}</p>
                 <p className="mt-1 flex flex-wrap gap-1">
-                  <span className="rounded-full bg-sus-900/10 px-2 py-0.5 font-semibold">{rotuloPrioridade(f.prioridade)}</span>
-                  {f.acompanhante && <span className="rounded-full bg-teal/15 px-2 py-0.5 font-semibold text-teal" title={f.acompanhante_nome || f.acompanhante_cpf || "com acompanhante"}>c/ acompanhante{f.acompanhante_nome ? ` · ${f.acompanhante_nome}` : ""}</span>}
+                  <span className="rounded-full bg-sus-900/10 px-1.5 py-px font-semibold">{rotuloPrioridade(f.prioridade)}</span>
+                  {f.acompanhante && <span className="rounded-full bg-teal/15 px-1.5 py-px font-semibold text-teal" title={f.acompanhante_nome || f.acompanhante_cpf || "com acompanhante"}>c/ acomp.{f.acompanhante_nome ? ` · ${f.acompanhante_nome}` : ""}</span>}
                 </p>
                 {podeEditar && (
                   <div className="mt-1 flex gap-1">
-                    <button onClick={(ev) => { ev.stopPropagation(); abrirFilaModal(f); }} className="rounded-lg p-1.5 text-sus-800 hover:bg-sus-100" title="Editar"><Pencil className="h-3.5 w-3.5" /></button>
-                    <button onClick={async (ev) => { ev.stopPropagation(); if (confirm("Excluir da fila de viagem?")) { await tfdExcluirFilaViagem(f.id); recarregar(); } }} className="rounded-lg p-1.5 text-red-600 hover:bg-red-50" title="Excluir"><Trash2 className="h-3.5 w-3.5" /></button>
+                    <button onClick={(ev) => { ev.stopPropagation(); abrirFilaModal(f); }} className="rounded-md p-1 text-sus-800 hover:bg-sus-100" title="Editar"><Pencil className="h-3 w-3" /></button>
+                    <button onClick={async (ev) => { ev.stopPropagation(); if (confirm("Excluir da fila de viagem?")) { await tfdExcluirFilaViagem(f.id); recarregar(); } }} className="rounded-md p-1 text-red-600 hover:bg-red-50" title="Excluir"><Trash2 className="h-3 w-3" /></button>
                   </div>
                 )}
               </div>
@@ -1461,12 +1562,12 @@ export default function QuadroViagens() {
             <div className="grid gap-3 md:grid-cols-2">
               <div className="md:col-span-2">
                 <Label>Paciente *</Label>
-                <Input value={buscaPac} onChange={(e) => { setBuscaPac(e.target.value); setFormFila({ ...formFila, paciente_id: "" }); }} placeholder="Buscar nome/CPF…" />
+                <Input value={buscaPac} onChange={(e) => { setBuscaPac(e.target.value); setFormFila({ ...formFila, paciente_id: "" }); }} placeholder="Buscar nome/CPF/CNS…" />
                 {pacFiltrados.length > 0 && !formFila.paciente_id && (
                   <div className="mt-1 max-h-36 overflow-y-auto rounded-xl border border-sus-900/10">
                     {pacFiltrados.map((p) => (
                       <button key={p.id} onClick={() => { setFormFila({ ...formFila, paciente_id: String(p.id) }); setBuscaPac(p.nome); }} className="block w-full px-3 py-2 text-left text-sm hover:bg-sand">
-                        <b>{p.nome}</b> <span className="text-xs text-ink/50">{p.cpf || ""}</span>
+                        <b>{p.nome}</b> <span className="text-xs text-ink/50">{p.cpf || "sem CPF"}{p.nascimento ? ` · Nasc. ${fmtNasc(p.nascimento)}` : ""}</span>
                       </button>
                     ))}
                   </div>
@@ -1475,8 +1576,28 @@ export default function QuadroViagens() {
               <div><Label>Cidade de destino *</Label><Input value={formFila.destino} onChange={(e) => setFormFila({ ...formFila, destino: e.target.value.toUpperCase() })} placeholder="Ex: BELO HORIZONTE" /></div>
               <div><Label>Unidade / hospital</Label><Input value={formFila.unidade} onChange={(e) => setFormFila({ ...formFila, unidade: e.target.value })} /></div>
               <div className="md:col-span-2"><Label>Tratamento / exame</Label><Input value={formFila.tratamento} onChange={(e) => setFormFila({ ...formFila, tratamento: e.target.value })} /></div>
-              <div><Label>Data da consulta</Label><Input type="date" value={formFila.data_consulta} onChange={(e) => setFormFila({ ...formFila, data_consulta: e.target.value })} /></div>
+              <div className="md:col-span-2">
+                <button
+                  type="button"
+                  onClick={() => setFormFila({ ...formFila, agendar: !formFila.agendar })}
+                  aria-expanded={formFila.agendar}
+                  className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left transition ${formFila.agendar ? "border-teal bg-teal/5" : "border-sus-900/15 bg-sand/40 hover:border-teal/50"}`}
+                >
+                  <span>
+                    <span className="block text-[11px] font-bold uppercase tracking-wide text-sus-900/55">Agendamento</span>
+                    <span className="block text-xs text-ink/55">{formFila.agendar ? "Etapa 2 expandida: data e horário da consulta." : "Etapa 2: expandir para marcar data e horário."}</span>
+                  </span>
+                  <span className={`rounded-full px-3 py-1.5 text-xs font-bold ${formFila.agendar ? "bg-teal text-white" : "bg-sus-900/10 text-sus-900"}`}>
+                    {formFila.agendar ? "Ocultar" : "Agendar Atendimento"}
+                  </span>
+                </button>
+              </div>
+              {formFila.agendar && (
+              <>
+              <div><Label>Data da consulta *</Label><Input type="date" value={formFila.data_consulta} onChange={(e) => setFormFila({ ...formFila, data_consulta: e.target.value })} /></div>
               <div><Label>Horário da consulta</Label><Input type="time" value={formFila.hora_consulta} onChange={(e) => setFormFila({ ...formFila, hora_consulta: e.target.value })} /></div>
+              </>
+              )}
               <div>
                 <Label>Risco / prioridade</Label>
                 <select value={formFila.prioridade} onChange={(e) => setFormFila({ ...formFila, prioridade: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
@@ -1504,7 +1625,7 @@ export default function QuadroViagens() {
                             }}
                             className="block w-full px-3 py-2 text-left text-sm hover:bg-sand"
                           >
-                            <b>{p.nome}</b> <span className="text-xs text-ink/50">{p.cpf || "sem CPF"}</span>
+                            <b>{p.nome}</b> <span className="text-xs text-ink/50">{p.cpf || "sem CPF"}{p.nascimento ? ` · Nasc. ${fmtNasc(p.nascimento)}` : ""}</span>
                           </button>
                         ))}
                       </div>
@@ -1559,6 +1680,20 @@ export default function QuadroViagens() {
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               <div><Label>Data *</Label><Input type="date" value={formViagem.data_viagem} min={retroativoBloqueado ? hoje : undefined} onChange={(e) => setFormViagem({ ...formViagem, data_viagem: e.target.value })} /></div>
+              <div>
+                <Label>Destino *</Label>
+                <select value={formViagem.destino} onChange={(e) => setFormViagem({ ...formViagem, destino: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                  <option value="">Selecionar destino cadastrado…</option>
+                  {destinos.filter((d) => d.ativo).map((d) => (
+                    <option key={d.id} value={d.nome_destino}>
+                      {d.nome_destino}{d.hospital_referencia ? ` · ${d.hospital_referencia}` : ""}
+                    </option>
+                  ))}
+                  {formViagem.destino && !destinos.some((d) => d.nome_destino === formViagem.destino) && (
+                    <option value={formViagem.destino}>{formViagem.destino} (atual)</option>
+                  )}
+                </select>
+              </div>
               <div><Label>Horário de saída</Label><Input type="time" value={formViagem.hora_saida} onChange={(e) => { const h = e.target.value; setFormViagem({ ...formViagem, hora_saida: h, hora_retorno: formViagem.hora_retorno || retornoAutomatico(h) }); }} /></div>
               <div><Label>Horário de retorno (auto +9h, editável)</Label><Input type="time" value={formViagem.hora_retorno} onChange={(e) => setFormViagem({ ...formViagem, hora_retorno: e.target.value })} placeholder={retornoAutomatico(formViagem.hora_saida || "05:00")} /></div>
               <div className="md:col-span-2"><Label>Motorista</Label><CampoMotorista motoristas={motoristasLivresEdicao} motoristaId={formViagem.motorista_id} motoristaNome={formViagem.motorista} onMudar={(id, nome) => setFormViagem({ ...formViagem, motorista_id: id, motorista: nome })} /></div>
@@ -1589,7 +1724,7 @@ export default function QuadroViagens() {
               <div>
                 <Label>Veículo *</Label>
                 <select value={trocaVeiculoId} onChange={(e) => setTrocaVeiculoId(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
-                  <option value="">A definir (sem veículo)</option>
+                  <option value="">A definir carro (sem veículo)</option>
                   {veiculosLivresTroca.filter((f) => f.status === "disponivel").map((f) => (
                     <option key={f.id} value={f.id}>
                       {f.placa} · {f.modelo} ({f.capacidade} pax){f.em_outra_viagem && String(f.id) !== String(trocaVeiculo.veiculo_id) ? " · em outra viagem" : ""}

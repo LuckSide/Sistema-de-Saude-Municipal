@@ -60,17 +60,19 @@ def _celula(linha, idx, texto, negrito=False, centralizar=False, tamanho=9):
     return cel
 
 
-def _tabela(doc, cabecalhos, linhas, larguras=None, altura_linhas=None):
+def _tabela(doc, cabecalhos, linhas, larguras=None, altura_linhas=None, tamanho=9, centralizar_tabela=True):
     tab = doc.add_table(rows=1 + len(linhas), cols=len(cabecalhos))
     tab.style = "Table Grid"
     _borda_fina(tab)
+    if centralizar_tabela:
+        tab.alignment = WD_ALIGN_PARAGRAPH.CENTER
     if larguras:
         _larguras(tab, larguras)
     for i, h in enumerate(cabecalhos):
-        _celula(tab.rows[0], i, h, negrito=True, centralizar=True)
+        _celula(tab.rows[0], i, h, negrito=True, centralizar=True, tamanho=tamanho)
     for r, lin in enumerate(linhas, start=1):
         for i, v in enumerate(lin):
-            _celula(tab.rows[r], i, v, centralizar=(i == 0))
+            _celula(tab.rows[r], i, v, centralizar=(i == 0), tamanho=tamanho)
         if altura_linhas:
             _altura_minima(tab.rows[r], altura_linhas)
     return tab
@@ -171,11 +173,14 @@ def gerar_ordem(
     _titulo(doc, "RELAÇÃO DE PASSAGEIROS", tamanho=11)
     linhas = []
     for i, ps in enumerate(passageiros, start=1):
+        trat = (ps.get("tratamento", "") or "—").strip() or "—"
+        obs = (ps.get("observacoes", "") or "").strip()
+        trat_obs = f"{trat}\nObs.: {obs}" if obs else trat
         linhas.append([
             f"{i:02d}",
             ps.get("paciente_nome", "") or "—",
             _nasc_br(ps.get("paciente_nascimento", "")),
-            ps.get("tratamento", "") or "—",
+            trat_obs,
             ps.get("unidade", "") or "—",
             ps.get("hora_consulta", "") or "—",
             destino or "—",
@@ -183,9 +188,10 @@ def gerar_ordem(
     # 15 linhas fixas p/ preenchimento manual limpo (completa com vazias).
     while len(linhas) < 15:
         linhas.append([f"{len(linhas) + 1:02d}", "", "", "", "", "", ""])
-    _tabela(doc, ["N", "Passageiro", "Data nasc.", "Tratamento", "Unidade",
+    _tabela(doc, ["N", "Passageiro", "Data nasc.", "Tratamento / Observação", "Unidade",
                   "Horário consulta", "Cidade"], linhas,
-            larguras=[0.9, 3.6, 2.0, 2.8, 2.8, 1.8, 2.6], altura_linhas=0.6)
+            larguras=[0.9, 3.6, 2.0, 2.8, 2.8, 1.8, 2.6], altura_linhas=0.6,
+            tamanho=8, centralizar_tabela=True)
 
     buf = BytesIO()
     doc.save(buf)

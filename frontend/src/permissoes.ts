@@ -62,6 +62,7 @@ export const MODULOS: NoPermissao[] = [
       { codigo: "tfd_pacientes", rotulo: "Pacientes", icone: Users, rota: "/tfd/pacientes" },
       { codigo: "tfd_exames", rotulo: "Fila de exames", icone: ListOrdered, rota: "/fila-exames" },
       { codigo: "tfd_agenda", rotulo: "Agenda TFD", icone: CalendarDays, rota: "/tfd/agenda" },
+      { codigo: "tfd_agendamentos", rotulo: "Agendamentos (calendário)", icone: CalendarDays, rota: "/tfd/agendamentos" },
       { codigo: "tfd_medico", rotulo: "Painel Médico (prioridades)", icone: Stethoscope, rota: "/painel-medico" },
       { codigo: "tfd_catalogo", rotulo: "Catálogo exames", icone: BookOpenText, rota: "/tfd/catalogo" },
       { codigo: "tfd_destinos", rotulo: "Destinos", icone: MapPin, rota: "/tfd/destinos" },

@@ -45,6 +45,7 @@ const TFD_SUB = [
   { to: "/tfd/viagens", label: "Viagens", icon: Ambulance, tela: "tfd_viagens" },
   { to: "/tfd/quadro", label: "Quadro semanal", icon: Bus, tela: "tfd_viagens", ou: ["tfd_frota_gestao"] },
   { to: "/tfd/agenda", label: "Agenda", icon: CalendarDays, tela: "tfd_agenda" },
+  { to: "/tfd/agendamentos", label: "Agendamentos", icon: CalendarDays, tela: "tfd_agenda" },
   { to: "/tfd/destinos", label: "Destinos", icon: MapPin, tela: "tfd_destinos" },
   { to: "/tfd/pacientes", label: "Pacientes", icon: Users, tela: "tfd_pacientes" },
   { to: "/tfd/catalogo", label: "Catálogo exames", icon: BookOpenText, tela: "tfd_catalogo" },

@@ -286,7 +286,7 @@ export default function TfdViagens() {
               <tr key={v.id} className="border-b border-sus-900/5 last:border-0">
                 <td className="px-4 py-3 font-semibold">{v.data_viagem.split("-").reverse().join("/")} {v.hora_saida}</td>
                 <td className="px-4 py-3">{v.destino}<p className="text-xs text-ink/50">{v.unidade || v.finalidade}</p></td>
-                <td className="px-4 py-3 text-xs">{v.veiculo_placa || "—"}</td>
+                <td className="px-4 py-3 text-xs" title={v.veiculo_placa ? `Placa ${v.veiculo_placa}` : "Sem veículo"}>{v.veiculo_modelo || "A definir"}{v.veiculo_placa ? <span className="block text-ink/50">Placa {v.veiculo_placa}</span> : null}</td>
                 <td className="px-4 py-3"><span className="rounded-full bg-sus-900/10 px-2 py-0.5 text-xs font-semibold">{v.status}</span></td>
                 <td className="px-4 py-3">{v.passageiros}</td>
                 <td className="px-4 py-3"><div className="flex justify-end gap-1">
@@ -341,7 +341,7 @@ export default function TfdViagens() {
                         {p.cpf && <span>{p.cpf}</span>}
                         {p.cns && <span>CNS {p.cns}</span>}
                         {p.prontuario && <span>Pront. {p.prontuario}</span>}
-                        {p.ubs && <span>UBS {p.ubs}</span>}
+                        {p.nascimento && <span>Nasc. {p.nascimento.slice(0, 10).split("-").reverse().join("/")}</span>}
                         <Badge variant={p.origem === "pec" ? "success" : "outline"}>
                           {p.origem === "pec" ? "PEC" : "Local"}
                         </Badge>
@@ -358,7 +358,7 @@ export default function TfdViagens() {
             <div className="mt-3 space-y-1">
               {pass.map((p) => (
                 <div key={p.id} className="flex items-center justify-between rounded-xl bg-sand px-3 py-2 text-sm">
-                  <span className="font-medium">{p.paciente_nome}{p.acompanhante ? ` + ${p.acompanhante}` : ""}</span>
+                  <span className="font-medium">{p.paciente_nome}{(p.acompanhante_nome || p.acompanhante) ? ` + ${(p.acompanhante_nome || p.acompanhante).trim()} (Acompanhante de ${p.paciente_nome})` : ""}</span>
                   <button onClick={async () => { await tfdRemoverPassageiro(sel.id, p.id); setPass(await tfdPassageiros(sel.id)); carregar(); }} className="rounded-lg p-1.5 text-red-600 hover:bg-red-50"><X className="h-4 w-4" /></button>
                 </div>
               ))}

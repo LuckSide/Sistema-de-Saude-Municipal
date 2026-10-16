@@ -1,5 +1,8 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlmodel import Session, func, select
+
+import re as _re
 
 from app.core.deps import get_current_user_senha_ok as get_current_user, get_db
 from app.models.cadastros_saude import Medico, UnidadeSaude
@@ -248,7 +251,7 @@ def listar_destinos(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    _=Depends(need_perm("tfd_destinos")),
+    _=Depends(need_any_perm("tfd_destinos", "tfd_viagens", "tfd_frota_gestao")),
 ):
     base = select(Destino).order_by(Destino.nome_destino)
     if ativos is not None:
@@ -654,11 +657,13 @@ def listar_viagens(
             )
         ).one()
         placa = ""
+        modelo = ""
         if v.veiculo_id:
             veh = db.get(Veiculo, v.veiculo_id)
             placa = veh.placa if veh else ""
+            modelo = veh.modelo if veh else ""
         out.append(
-            ViagemOut(**v.model_dump(), passageiros=n or 0, veiculo_placa=placa)
+            ViagemOut(**v.model_dump(), passageiros=n or 0, veiculo_placa=placa, veiculo_modelo=modelo)
         )
     return {"data": out, "total": total, "page": meta["page"], "pages": meta["pages"]}
 
@@ -728,7 +733,12 @@ def criar_viagem(
     db.add(obj)
     db.commit()
     db.refresh(obj)
-    return ViagemOut(**obj.model_dump(), passageiros=0)
+    placa = modelo = ""
+    if obj.veiculo_id:
+        veh = db.get(Veiculo, obj.veiculo_id)
+        placa = veh.placa if veh else ""
+        modelo = veh.modelo if veh else ""
+    return ViagemOut(**obj.model_dump(), passageiros=0, veiculo_placa=placa, veiculo_modelo=modelo)
 
 
 @router.put("/viagens/{vid}", response_model=ViagemOut)
@@ -752,7 +762,12 @@ def atualizar_viagem(
     n = db.exec(
         select(func.count(ViagemPaciente.id)).where(ViagemPaciente.viagem_id == vid)
     ).one()
-    return ViagemOut(**obj.model_dump(), passageiros=n or 0)
+    placa = modelo = ""
+    if obj.veiculo_id:
+        veh = db.get(Veiculo, obj.veiculo_id)
+        placa = veh.placa if veh else ""
+        modelo = veh.modelo if veh else ""
+    return ViagemOut(**obj.model_dump(), passageiros=n or 0, veiculo_placa=placa, veiculo_modelo=modelo)
 
 
 @router.patch("/viagens/{vid}/veiculo", response_model=ViagemOut)
@@ -802,10 +817,12 @@ def trocar_veiculo_viagem(
         select(func.count(ViagemPaciente.id)).where(ViagemPaciente.viagem_id == vid)
     ).one()
     placa = ""
+    modelo = ""
     if obj.veiculo_id:
         veh = db.get(Veiculo, obj.veiculo_id)
         placa = veh.placa if veh else ""
-    return ViagemOut(**obj.model_dump(), passageiros=n or 0, veiculo_placa=placa)
+        modelo = veh.modelo if veh else ""
+    return ViagemOut(**obj.model_dump(), passageiros=n or 0, veiculo_placa=placa, veiculo_modelo=modelo)
 
 
 @router.delete("/viagens/{vid}", status_code=204)
@@ -907,6 +924,7 @@ def add_passageiro(
         obj.tratamento = obj.tratamento or fila.tratamento or ""
         obj.unidade = obj.unidade or fila.unidade or ""
         obj.hora_consulta = obj.hora_consulta or fila.hora_consulta or ""
+        obj.observacoes = getattr(obj, "observacoes", "") or fila.observacoes or ""
     db.add(obj)
     db.flush()
     ocup, cap = _assentos(db, vid)
@@ -1057,8 +1075,12 @@ def _status_rotulo(e: ExameFila) -> str:
         return f"Marcado ({data})" if data else "Marcado"
     if status == "aguardando":
         return "Em Regulação" if (e.prioridade or "") == "urgente" else "Aguardando Agendamento"
+    if status == "recepcionado":
+        return "Recepcionado"
     if status == "realizado":
         return "Realizado"
+    if status == "faltou":
+        return "Faltou"
     if status == "cancelado":
         return "Cancelado"
     return e.status or ""
@@ -1503,6 +1525,8 @@ def criar_exame(data: ExameIn, db: Session = Depends(get_db), ator: User = Depen
     payload = data.model_dump()
     if payload.get("codigo_curto"):
         payload["codigo_curto"] = str(payload["codigo_curto"]).strip().upper()
+    if payload.get("numero_pedido"):
+        payload["numero_pedido"] = str(payload["numero_pedido"]).strip().upper()[:30]
     if not str(payload.get("tipo_fila") or "").strip():
         payload["tipo_fila"] = "ELETIVO"
     if payload.get("data_agendada"):
@@ -1667,6 +1691,8 @@ def atualizar_exame(
     _garantir_token(obj)
     if hasattr(data, "codigo_curto") and getattr(data, "codigo_curto"):
         obj.codigo_curto = data.codigo_curto.strip().upper()  # type: ignore[attr-defined]
+    if getattr(data, "numero_pedido", ""):
+        obj.numero_pedido = str(data.numero_pedido).strip().upper()[:30]
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -1679,6 +1705,84 @@ def atualizar_exame(
         posicao=pos,
         grupo_fila=rotulo or "",
     )
+
+
+@router.post("/exames/{eid}/recepcionar", response_model=ExameOut)
+def recepcionar_exame(
+    eid: int, db: Session = Depends(get_db), ator: User = Depends(need_perm("tfd_agenda", "editar"))
+):
+    """Check-in na recepção: agendado -> recepcionado (guarda status anterior)."""
+    from datetime import datetime
+
+    obj = db.get(ExameFila, eid)
+    if not obj or not obj.ativo:
+        raise HTTPException(404, "Agendamento não encontrado")
+    if (obj.status or "") != "agendado":
+        raise HTTPException(400, f"Só agendados podem ser recepcionados (atual: {obj.status or '—'}).")
+    obj.status_anterior = obj.status or ""
+    obj.status = "recepcionado"
+    obj.recepcionado_em = datetime.now()
+    obj.recepcionado_por = (ator.nome or ator.username or "")[:120]
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return _com_posicao(db, [obj])[0]
+
+
+@router.post("/exames/{eid}/estornar-recepcao", response_model=ExameOut)
+def estornar_recepcao_exame(
+    eid: int, db: Session = Depends(get_db), _=Depends(need_perm("tfd_agenda", "editar"))
+):
+    """Reverte recepção lançada por engano: recepcionado -> status anterior."""
+    obj = db.get(ExameFila, eid)
+    if not obj or not obj.ativo:
+        raise HTTPException(404, "Agendamento não encontrado")
+    if (obj.status or "") != "recepcionado":
+        raise HTTPException(400, f"Só recepcionados podem ser estornados (atual: {obj.status or '—'}).")
+    obj.status = (obj.status_anterior or "agendado").strip() or "agendado"
+    obj.status_anterior = ""
+    obj.recepcionado_em = None
+    obj.recepcionado_por = ""
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return _com_posicao(db, [obj])[0]
+
+
+class AtendimentoStatusIn(BaseModel):
+    status: str
+    resultado: str = ""
+
+
+@router.post("/exames/{eid}/atendimento-status", response_model=ExameOut)
+def definir_status_atendimento(
+    eid: int, data: AtendimentoStatusIn, db: Session = Depends(get_db),
+    _=Depends(need_perm("tfd_agenda", "editar")),
+):
+    """Gestão do atendimento: faltou | realizado (+resultado) | cancelado.
+
+    Aceita a partir de agendado/recepcionado. Resultado obrigatório
+    ao marcar realizado.
+    """
+    alvo = (data.status or "").strip().lower()
+    if alvo not in ("faltou", "realizado", "cancelado"):
+        raise HTTPException(400, "Status inválido (use faltou, realizado ou cancelado).")
+    obj = db.get(ExameFila, eid)
+    if not obj or not obj.ativo:
+        raise HTTPException(404, "Agendamento não encontrado")
+    if (obj.status or "") not in ("agendado", "recepcionado"):
+        raise HTTPException(400, f"Só agendados/recepcionados mudam de status (atual: {obj.status or '—'}).")
+    if alvo == "realizado":
+        texto = (data.resultado or "").strip()
+        if not texto:
+            raise HTTPException(400, "Informe o resultado do exame realizado.")
+        obj.resultado = texto[:2000]
+    obj.status_anterior = obj.status or ""
+    obj.status = alvo
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return _com_posicao(db, [obj])[0]
 
 
 @router.delete("/exames/{eid}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1758,7 +1862,7 @@ def consultar_exame_publico(token: str, db: Session = Depends(get_db)):
     if not obj or not obj.ativo:
         raise HTTPException(404, "Pedido não encontrado")
     rank = _rank_por_grupo(db)
-    pos, total_grupo, rotulo = rank.get(obj.id, (None, None, ""))
+    pos, _total_grupo, rotulo = rank.get(obj.id, (None, None, ""))
     pac = db.get(Paciente, obj.paciente_id)
     return Response(
         content=ExamePublicoOut(
@@ -1770,7 +1874,7 @@ def consultar_exame_publico(token: str, db: Session = Depends(get_db)):
             data_agendada=obj.data_agendada,
             destino=obj.destino,
             posicao=pos,
-            total_fila=total_grupo,
+            total_fila=None,
             grupo_fila=rotulo or "",
             paciente_iniciais=_iniciais(pac.nome if pac else ""),
         ).model_dump_json(),
@@ -2258,6 +2362,15 @@ def excluir_fatura(fid: int, db: Session = Depends(get_db), _=Depends(need_perm(
 
 
 # ---------- Quadro de viagens: fila de espera p/ transporte ----------
+def _eh_psf(destino: str) -> bool:
+    """Destino é PSF de origem (padrão e-SUS "N - ESF ..."), não cidade."""
+    s = (destino or "").strip()
+    return bool(
+        _re.match(r"^\d+\s*-\s*(ESF|PSF|UBS)\b", s, _re.IGNORECASE)
+        or _re.match(r"^(ESF|PSF|UBS)\b", s, _re.IGNORECASE)
+    )
+
+
 def _fila_out(db: Session, o) -> ViagemFilaOut:
     pac = db.get(Paciente, o.paciente_id)
     return ViagemFilaOut(
@@ -2271,14 +2384,28 @@ def _fila_out(db: Session, o) -> ViagemFilaOut:
 @router.get("/viagens-fila", response_model=list[ViagemFilaOut])
 def listar_fila_viagem(
     destino: str = Query(default="", max_length=120),
+    psf: str = Query(default="", max_length=150),
     status_: str | None = Query(default=None, alias="status"),
     db: Session = Depends(get_db),
     _=Depends(need_perm("tfd_viagens")),
 ):
     base = select(ViagemFila).order_by(ViagemFila.created_at)
     filtros = []
-    if destino:
-        filtros.append(ViagemFila.destino.ilike(f"%{destino}%"))
+    if destino or psf:
+        # PSF e cidade convivem em ViagemFila.destino (legado puxar); como o
+        # volume da fila é pequeno, aplica-se o recorte em Python p/ precisão.
+        todos = list(db.exec(select(ViagemFila)).all())
+        if destino:
+            termo = destino.strip().upper()
+            todos = [o for o in todos
+                     if termo in (o.destino or "").upper() and not _eh_psf(o.destino)]
+        if psf:
+            termo = psf.strip().upper()
+            todos = [o for o in todos
+                     if _eh_psf(o.destino) and termo in (o.destino or "").upper()
+                     or termo in (o.unidade or "").upper()]
+        ids = {o.id for o in todos}
+        filtros.append(ViagemFila.id.in_(ids) if ids else ViagemFila.id == -1)
     if status_:
         filtros.append(ViagemFila.status == status_)
     else:
@@ -2474,6 +2601,7 @@ def _passageiro_out(db: Session, p) -> dict:
         "viagem_fila_id": p.viagem_fila_id,
         "tratamento": p.tratamento or "", "unidade": p.unidade or "",
         "hora_consulta": p.hora_consulta or "",
+        "observacoes": getattr(p, "observacoes", "") or "",
     }
 
 
@@ -2664,18 +2792,24 @@ def semana_viagens(
 def sugestao_frota(
     data: str = Query(pattern=r"^\d{4}-\d{2}-\d{2}$"),
     destino: str = Query(min_length=2, max_length=120),
+    viagem_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
     _=Depends(need_any_perm("tfd_viagens", "tfd_frota_gestao")),
 ):
     """Sugere o veículo ideal p/ a demanda do destino no dia.
 
     Só conta a fila com data marcada para o dia (fila contínua sem data
-    fixa não força sugestão automática).
+    fixa não força sugestão automática). Com `viagem_id`, soma os assentos
+    já embarcados na viagem (passageiros + acompanhantes) — cobre o caso
+    "A definir carro" com passageiros sem veículo.
     """
     fila = list(db.exec(select(ViagemFila).where(
         ViagemFila.destino == destino, ViagemFila.status == "aguardando",
         func.to_char(ViagemFila.data_consulta, "YYYY-MM-DD") == data)).all())
     assentos = sum(2 if f.acompanhante else 1 for f in fila)
+    if viagem_id:
+        ocup, _cap = _assentos(db, viagem_id)
+        assentos = max(assentos, ocup)
     viagens_dia = list(db.exec(select(Viagem).where(
         func.to_char(Viagem.data_viagem, "YYYY-MM-DD") == data)).all())
     alocados = {v.veiculo_id for v in viagens_dia if v.veiculo_id}
@@ -2891,10 +3025,12 @@ def obter_viagem(
         select(func.count(ViagemPaciente.id)).where(ViagemPaciente.viagem_id == vid)
     ).one()
     placa = ""
+    modelo = ""
     if obj.veiculo_id:
         veh = db.get(Veiculo, obj.veiculo_id)
         placa = veh.placa if veh else ""
-    return ViagemOut(**obj.model_dump(), passageiros=n or 0, veiculo_placa=placa)
+        modelo = veh.modelo if veh else ""
+    return ViagemOut(**obj.model_dump(), passageiros=n or 0, veiculo_placa=placa, veiculo_modelo=modelo)
 
 
 @router.get("/viagens/{vid}/ordem-circulacao")
@@ -2938,13 +3074,31 @@ def ordem_circulacao(
             if v.km_final and v.km_inicial and v.km_final >= v.km_inicial else ""
         ),
     }
-    lista = [{
+    lista_base = [{
         "paciente_nome": p.get("paciente_nome", ""),
         "paciente_nascimento": (p.get("paciente_nascimento") or "")[:10],
         "tratamento": p.get("tratamento", ""),
         "unidade": p.get("unidade", ""),
         "hora_consulta": p.get("hora_consulta", ""),
+        "observacoes": (p.get("observacoes") or "").strip(),
+        "acompanhante": (p.get("acompanhante_nome") or p.get("acompanhante") or "").strip(),
     } for p in passageiros]
+    # Acompanhante ocupa assento: entra como linha própria
+    # "Nome (Acompanhante de Paciente)" preservando ocupação.
+    lista: list[dict] = []
+    for item in lista_base:
+        lista.append(item)
+        acomp = (item.get("acompanhante") or "").strip()
+        if acomp:
+            lista.append({
+                "paciente_nome": f"{acomp} (Acompanhante de {item.get('paciente_nome', '').strip() or 'Paciente'})",
+                "paciente_nascimento": "",
+                "tratamento": item.get("tratamento", ""),
+                "unidade": item.get("unidade", ""),
+                "hora_consulta": item.get("hora_consulta", ""),
+                "observacoes": item.get("observacoes", ""),
+                "acompanhante": "",
+            })
 
     import os as _os
 
@@ -2982,6 +3136,8 @@ def ordem_circulacao(
             "tratamento": x["tratamento"],
             "unidade": x["unidade"],
             "hora_consulta": x["hora_consulta"],
+            "observacoes": x.get("observacoes", ""),
+            "acompanhante": x.get("acompanhante", ""),
         } for x in lista],
     )
     return Response(

@@ -29,6 +29,7 @@ PAI_DE: dict[str, str] = {
     "tfd_faturamento": "tfd",
     "tfd_medico": "tfd",
     "tfd_agenda": "tfd",
+    "tfd_agendamentos": "tfd_agenda",
     "lab_marcacao": "lab",
     "lab_fila": "lab",
     "lab_agenda": "lab",
