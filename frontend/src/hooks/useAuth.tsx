@@ -19,8 +19,12 @@ type AuthCtx = {
   can: (tela: string) => boolean;
   /** Perfil Médico: tela tfd_medico explícita (exclusiva) ou superuser. */
   isMedico: boolean;
+  /** Perfil de lançamento restrito (sem urgente/agendamento direto). */
+  isLancamentoRestrito: boolean;
   /** Trava de lançamentos retroativos (data < hoje), salvo flag ou superuser. */
   retroativoBloqueado: boolean;
+  /** Permissão para alterar viagens em datas passadas. */
+  podeEditarPassadas: boolean;
   /** Pode alterar prioridade/justificativa deste pedido (superuser ou médico envolvido). */
   podeAlterarPrioridade: (medicoIdDoPedido?: number | null) => boolean;
   precisaTrocarSenha: boolean;
@@ -75,7 +79,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isMedico = !!user && (user.is_superuser || concedida(user.telas, "tfd_medico"));
 
+  /** Perfil de lançamento restrito: pode adicionar à fila, mas não pode setar urgente nem agendar direto. */
+  const isLancamentoRestrito = !!user && !user.is_superuser && concedida(user.telas, "tfd_fila_lancamento") && !concedida(user.telas, "tfd_medico");
+
   const retroativoBloqueado = !!user && !user.is_superuser && user.permite_retroativo === false;
+
+  const podeEditarPassadas = !!user && (user.is_superuser || (user.permite_retroativo !== false && (concedida(user.telas, "tfd_viagens_passadas") || concedida(user.telas, "usuarios"))));
 
   const podeAlterarPrioridade = useCallback(
     (medicoIdDoPedido?: number | null) => {
@@ -89,8 +98,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ user, loading, login, logout, refreshMe, can, isMedico, retroativoBloqueado, podeAlterarPrioridade, precisaTrocarSenha }),
-    [user, loading, login, logout, refreshMe, can, isMedico, retroativoBloqueado, podeAlterarPrioridade, precisaTrocarSenha]
+    () => ({ user, loading, login, logout, refreshMe, can, isMedico, isLancamentoRestrito, retroativoBloqueado, podeEditarPassadas, podeAlterarPrioridade, precisaTrocarSenha }),
+    [user, loading, login, logout, refreshMe, can, isMedico, isLancamentoRestrito, retroativoBloqueado, podeEditarPassadas, podeAlterarPrioridade, precisaTrocarSenha]
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

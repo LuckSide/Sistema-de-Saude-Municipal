@@ -197,7 +197,7 @@ export default function AgendaTfd() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] text-left text-sm">
             <thead><tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
-              <th className="px-4 py-3">Paciente / CPF</th><th className="px-4 py-3">Especialidade / exame</th><th className="px-4 py-3">Local e horário</th><th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Paciente / CPF</th><th className="px-4 py-3">Especialidade / procedimento</th><th className="px-4 py-3">Local e horário</th><th className="px-4 py-3">Status</th>
             </tr></thead>
             <tbody>
               {lista.map((e) => (
@@ -230,7 +230,7 @@ export default function AgendaTfd() {
                 <Label>Buscar na fila de espera (aguardando)</Label>
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40" />
-                  <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Nome, CNS, CPF ou exame…" className="pl-10" />
+                  <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Nome, CNS, CPF ou procedimento…" className="pl-10" />
                 </div>
                 {buscando && <p className="mt-1 text-xs text-ink/45">Buscando…</p>}
                 {candidatos.length > 0 && !alvo && (

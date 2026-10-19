@@ -120,6 +120,43 @@ body {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
+
+  /* Impressão da Ordem de Circulação de Veículos: folha limpa, tabela centralizada */
+  body.imprimindo-ordem #root {
+    display: none !important;
+  }
+  body.imprimindo-ordem #ordem-overlay {
+    position: static !important;
+    display: block !important;
+    inset: auto !important;
+    z-index: auto !important;
+    background: #fff !important;
+    padding: 0 !important;
+  }
+  body.imprimindo-ordem #ordem-print {
+    position: static !important;
+    display: block !important;
+    visibility: visible !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    border: none !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    font-size: 11px !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  body.imprimindo-ordem .ordem-acoes {
+    display: none !important;
+  }
+  body.imprimindo-ordem .ordem-quebra-pagina {
+    page-break-before: always;
+    break-before: page;
+  }
 }
 
 /* Undo toast: barra regressiva 100% -> 0 em 5s */

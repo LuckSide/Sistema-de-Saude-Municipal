@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowLeft,
   ArrowRight,
@@ -9,6 +10,7 @@ import {
   FileDown,
   Pencil,
   Plus,
+  Printer,
   ReceiptText,
   Sparkles,
   Trash2,
@@ -150,9 +152,10 @@ function CampoMotorista({
 }
 
 export default function QuadroViagens() {
-  const { can, retroativoBloqueado } = useAuth();
+  const { can, retroativoBloqueado, podeEditarPassadas } = useAuth();
   const { notificarUndo } = useUndo();
   const RETRO_MSG = "Seu perfil não possui permissão para realizar lançamentos com datas retroativas.";
+  const PASSADA_MSG = "Seu perfil não possui permissão para alterar viagens de datas passadas.";
   const hoje = hojeISO();
   const podeEditar = can("tfd_viagens");
   // Gestão de frota restrita: vê o quadro e gerencia veículos/motoristas, sem PII de pacientes.
@@ -216,6 +219,18 @@ export default function QuadroViagens() {
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
   const [arrastando, setArrastando] = useState<string | null>(null);
+  const [visualizarOrdem, setVisualizarOrdem] = useState<DiaViagem | null>(null);
+
+  useEffect(() => {
+    if (visualizarOrdem) {
+      document.body.classList.add("imprimindo-ordem");
+    } else {
+      document.body.classList.remove("imprimindo-ordem");
+    }
+    return () => {
+      document.body.classList.remove("imprimindo-ordem");
+    };
+  }, [visualizarOrdem]);
 
   const dataCriacao = alocandoEm
     ? (alocandoEm.startsWith("nova:") ? alocandoEm.slice(5) : alocandoEm.split("|")[0])
@@ -361,6 +376,16 @@ export default function QuadroViagens() {
   }
 
   async function alocar(fid: number, vid: number, destVeiculo: string) {
+    let viagemAlvo: DiaViagem | undefined;
+    for (const d of semana) {
+      viagemAlvo = d.destinos.flatMap((x) => x.viagens).find((v) => v.id === vid);
+      if (viagemAlvo) break;
+    }
+    if (viagemAlvo && viagemAlvo.data_viagem < hoje && !podeEditarPassadas) {
+      setErro(PASSADA_MSG);
+      setArrastando(null);
+      return;
+    }
     const f = fila.find((x) => x.id === fid);
     if (!f) return;
     if (!destinoCompativel(f.destino, destVeiculo)) {
@@ -404,9 +429,15 @@ export default function QuadroViagens() {
     setErro("");
     try {
       let origem: DiaViagem | undefined;
+      let destinoViagem: DiaViagem | undefined;
       for (const d of semana) {
-        origem = d.destinos.flatMap((x) => x.viagens).find((v) => v.id === vidOrigem);
-        if (origem) break;
+        if (!origem) origem = d.destinos.flatMap((x) => x.viagens).find((v) => v.id === vidOrigem);
+        if (!destinoViagem) destinoViagem = d.destinos.flatMap((x) => x.viagens).find((v) => v.id === vidDestino);
+        if (origem && destinoViagem) break;
+      }
+      if (((origem && origem.data_viagem < hoje) || (destinoViagem && destinoViagem.data_viagem < hoje)) && !podeEditarPassadas) {
+        setErro(PASSADA_MSG);
+        return;
       }
       const p = origem?.passageiros.find((x) => x.id === passId);
       if (!p || !origem) return;
@@ -456,13 +487,20 @@ export default function QuadroViagens() {
   async function devolver(vid: number, passId: number) {
     setErro("");
     let snap: DiaPassageiro | null = null;
+    let viagemAlvo: DiaViagem | undefined;
     for (const d of semana) {
       for (const v of d.destinos.flatMap((x) => x.viagens)) {
         if (v.id !== vid) continue;
+        viagemAlvo = v;
         const achou = v.passageiros.find((x) => x.id === passId);
         if (achou) { snap = achou; break; }
       }
       if (snap) break;
+    }
+    if (viagemAlvo && viagemAlvo.data_viagem < hoje && !podeEditarPassadas) {
+      setErro(PASSADA_MSG);
+      setArrastando(null);
+      return;
     }
     try {
       await tfdRemoverPassageiro(vid, passId);
@@ -500,6 +538,10 @@ export default function QuadroViagens() {
   async function criarViagemDestino(data: string, destino: string) {
     if (!destino.trim()) {
       setErro("Informe a cidade de destino.");
+      return;
+    }
+    if (data < hoje && !podeEditarPassadas) {
+      setErro(PASSADA_MSG);
       return;
     }
     setErro("");
@@ -583,6 +625,10 @@ export default function QuadroViagens() {
     } catch { info = null; }
     info = info ?? viagemArrastada();
     if (!info || info.origem === destino) return;
+    if ((info.origem < hoje || destino < hoje) && !podeEditarPassadas) {
+      setErro(PASSADA_MSG);
+      return;
+    }
     if (retroativoBloqueado && destino < hoje) {
       setErro(RETRO_MSG);
       return;
@@ -625,6 +671,10 @@ export default function QuadroViagens() {
 
   async function confirmarReagendar() {
     if (!reagendar || reagendando) return;
+    if ((reagendar.origem < hoje || reagendar.destino < hoje) && !podeEditarPassadas) {
+      setErro(PASSADA_MSG);
+      return;
+    }
     setReagendando(true);
     setErro("");
     try {
@@ -779,6 +829,10 @@ export default function QuadroViagens() {
 
   // Gestão direta da viagem no card semanal: editar / trocar veículo / excluir.
   async function abrirEditarViagem(v: DiaViagem) {
+    if (v.data_viagem < hoje && !podeEditarPassadas) {
+      setErro(PASSADA_MSG);
+      return;
+    }
     setErro("");
     try {
       const full = await tfdObterViagem(v.id);
@@ -805,6 +859,10 @@ export default function QuadroViagens() {
     }
     if (!formViagem.destino.trim()) {
       setErro("Destino da viagem é obrigatório.");
+      return;
+    }
+    if (((editViagem && editViagem.data_viagem < hoje) || formViagem.data_viagem < hoje) && !podeEditarPassadas) {
+      setErro(PASSADA_MSG);
       return;
     }
     if (retroativoBloqueado && formViagem.data_viagem < hoje) {
@@ -843,6 +901,10 @@ export default function QuadroViagens() {
   }
 
   function abrirTrocaVeiculo(v: DiaViagem) {
+    if (v.data_viagem < hoje && !podeEditarPassadas) {
+      setErro(PASSADA_MSG);
+      return;
+    }
     setTrocaVeiculo(v);
     setTrocaVeiculoId(v.veiculo_id ? String(v.veiculo_id) : "");
     setTrocaMotorista(v.motorista || "");
@@ -851,6 +913,10 @@ export default function QuadroViagens() {
 
   async function confirmarTrocaVeiculo() {
     if (!trocaVeiculo) return;
+    if (trocaVeiculo.data_viagem < hoje && !podeEditarPassadas) {
+      setErro(PASSADA_MSG);
+      return;
+    }
     setErro("");
     try {
       const mid = /^\d+$/.test(trocaMotoristaId) ? Number(trocaMotoristaId) : null;
@@ -871,6 +937,10 @@ export default function QuadroViagens() {
 
   async function confirmarExclusaoViagem() {
     if (!excluirViagem) return;
+    if (excluirViagem.data_viagem < hoje && !podeEditarPassadas) {
+      setErro(PASSADA_MSG);
+      return;
+    }
     setErro("");
     try {
       const alvo = excluirViagem;
@@ -1083,39 +1153,176 @@ export default function QuadroViagens() {
               return (
                 <div
                   key={data}
-                  onDragOver={(e) => { if (viagemArrastada() && podeGerirFrota) e.preventDefault(); }}
+                  onDragOver={(e) => { if (viagemArrastada() && podeGerirFrota && (data >= hoje || podeEditarPassadas)) e.preventDefault(); }}
                   onDrop={(e) => {
                     e.preventDefault();
+                    if (data < hoje && !podeEditarPassadas) {
+                      setErro(PASSADA_MSG);
+                      return;
+                    }
                     soltarViagem(data, e.dataTransfer.getData("text/viagem"));
                   }}
-                  className={`rounded-2xl border p-2 ${data === hojeISO() ? "border-teal bg-teal/5" : "border-sus-900/10 bg-white"} ${recebendoViagem ? "ring-2 ring-teal/50" : ""}`}
+                  className={`rounded-2xl border p-2.5 ${data === hojeISO() ? "border-teal bg-teal/5" : "border-sus-900/10 bg-white"} ${recebendoViagem ? "ring-2 ring-teal/50" : ""}`}
                 >
-                  <p className="mb-2 text-center">
-                    <span className="block text-[10px] font-bold uppercase text-ink/50">{NOMES_DIA[di]}</span>
-                    <span className="font-display text-sm font-extrabold text-sus-950">{data.slice(8, 10)}/{data.slice(5, 7)}</span>
-                  </p>
-                  {!temViagem && (
-                    <div className="py-2 text-center">
-                      <p className="mb-2 text-[11px] text-ink/40">Sem viagens</p>
-                      {podeGerirFrota && (
-                        <button onClick={() => { setAlocandoEm(`nova:${data}`); setNovoDestino(""); setNovoVeiculo({ veiculo_id: "", motorista: "", motorista_id: "", hora: "05:00", retorno: retornoAutomatico("05:00") }); }} className="w-full rounded-xl border border-sus-900/20 bg-white px-2 py-2.5 text-[11px] font-bold text-sus-900 hover:border-teal hover:text-teal">
-                          + Criar Nova Viagem
+                  {/* Topo do dia com data e botão de Nova Viagem alinhado à direita */}
+                  <div className="mb-2.5 flex items-center justify-between gap-1 border-b border-sus-900/10 pb-1.5">
+                    <div className="min-w-0">
+                      <span className="block text-[11px] font-bold uppercase tracking-wider text-ink/60 leading-none">
+                        {NOMES_DIA[di]}
+                      </span>
+                      <span className="font-display text-sm font-extrabold text-sus-950 leading-tight">
+                        {data.slice(8, 10)}/{data.slice(5, 7)}
+                      </span>
+                    </div>
+                    {podeGerirFrota && (data >= hoje || podeEditarPassadas) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (alocandoEm === `nova:${data}`) {
+                            setAlocandoEm(null);
+                          } else {
+                            setAlocandoEm(`nova:${data}`);
+                            setNovoDestino("");
+                            setNovoVeiculo({
+                              veiculo_id: "",
+                              motorista: "",
+                              motorista_id: "",
+                              hora: "05:00",
+                              retorno: retornoAutomatico("05:00"),
+                            });
+                          }
+                        }}
+                        className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-bold transition shrink-0 ${
+                          alocandoEm === `nova:${data}`
+                            ? "border-teal bg-teal text-white shadow-sm"
+                            : "border-teal/30 bg-teal/5 text-teal hover:border-teal hover:bg-teal hover:text-white"
+                        }`}
+                        title={`Criar nova viagem para ${data.slice(8, 10)}/${data.slice(5, 7)}`}
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        <span>Viagem</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Formulário de criação de nova viagem neste dia */}
+                  {podeGerirFrota && (data >= hoje || podeEditarPassadas) && alocandoEm === `nova:${data}` && (
+                    <div className="mb-2.5 rounded-xl border border-teal/40 bg-white p-2.5 text-xs shadow-sm">
+                      <div className="mb-1.5 flex items-center justify-between">
+                        <span className="font-bold text-teal text-xs">Nova Viagem ({data.slice(8, 10)}/{data.slice(5, 7)})</span>
+                        <button
+                          type="button"
+                          onClick={() => setAlocandoEm(null)}
+                          className="rounded p-0.5 text-ink/50 hover:bg-sand/60 hover:text-ink"
+                          title="Fechar formulário"
+                        >
+                          <X className="h-3.5 w-3.5" />
                         </button>
+                      </div>
+                      <Label>Cidade de destino *</Label>
+                      <select
+                        value={destinos.some((d) => d.nome_destino === novoDestino) ? novoDestino : ""}
+                        onChange={(e) => setNovoDestino(e.target.value.toUpperCase())}
+                        className="w-full rounded-lg border border-sus-900/15 bg-white px-2.5 py-2 text-xs"
+                      >
+                        <option value="">Selecionar destino cadastrado…</option>
+                        {destinos.filter((d) => d.ativo).map((d) => (
+                          <option key={d.id} value={d.nome_destino}>
+                            {d.nome_destino}{d.hospital_referencia ? ` · ${d.hospital_referencia}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                      {!destinos.some((d) => d.nome_destino === novoDestino) && novoDestino && (
+                        <p className="mt-1 text-[11px] text-ink/60">Destino atual: <b>{novoDestino}</b> (fora da tabela cadastrada).</p>
                       )}
+                      <div className="mt-1.5">
+                        <Label>Veículo</Label>
+                        <select
+                          value={novoVeiculo.veiculo_id}
+                          onChange={(e) => setNovoVeiculo({ ...novoVeiculo, veiculo_id: e.target.value })}
+                          className="w-full rounded-lg border border-sus-900/15 bg-white px-2.5 py-2 text-xs"
+                        >
+                          <option value="">A definir carro</option>
+                          {veiculosLivresCriacao.filter((f) => f.status === "disponivel").map((f) => (
+                            <option key={f.id} value={f.id}>{f.placa} ({f.capacidade}){f.em_outra_viagem ? " · em outra viagem" : ""}</option>
+                          ))}
+                        </select>
+                        {dispCriacao && (
+                          <p className="mt-1 text-[11px] text-ink/60">
+                            {veiculosLivresCriacao.length} veículo(s) livre(s) na janela
+                            {novoVeiculo.hora ? ` ${novoVeiculo.hora}→${novoVeiculo.retorno || retornoAutomatico(novoVeiculo.hora)}` : ""}.
+                          </p>
+                        )}
+                      </div>
+                      <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                        <div>
+                          <Label>Motorista</Label>
+                          <CampoMotorista
+                            motoristas={motoristasLivresCriacao}
+                            motoristaId={novoVeiculo.motorista_id}
+                            motoristaNome={novoVeiculo.motorista}
+                            onMudar={(id, nome) => setNovoVeiculo({ ...novoVeiculo, motorista_id: id, motorista: nome })}
+                          />
+                        </div>
+                        <div>
+                          <Label>Saída</Label>
+                          <Input
+                            type="time"
+                            value={novoVeiculo.hora}
+                            onChange={(e) => {
+                              const h = e.target.value;
+                              setNovoVeiculo({ ...novoVeiculo, hora: h, retorno: novoVeiculo.retorno || retornoAutomatico(h) });
+                            }}
+                            className="!py-2 text-xs"
+                          />
+                        </div>
+                      </div>
+                      <div className="mt-1.5">
+                        <Label>Retorno (auto +9h, editável)</Label>
+                        <Input
+                          type="time"
+                          value={novoVeiculo.retorno}
+                          onChange={(e) => setNovoVeiculo({ ...novoVeiculo, retorno: e.target.value })}
+                          placeholder={retornoAutomatico(novoVeiculo.hora || "05:00")}
+                          className="!py-2 text-xs"
+                        />
+                      </div>
+                      <div className="mt-2 flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => criarViagemDestino(data, novoDestino.trim().toUpperCase())}
+                          className="flex-1 rounded-lg bg-teal px-3 py-2 text-xs font-bold text-white hover:brightness-110"
+                        >
+                          Confirmar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAlocandoEm(null)}
+                          className="rounded-lg border border-sus-900/15 px-3 py-2 text-xs font-semibold"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {!temViagem && alocandoEm !== `nova:${data}` && (
+                    <div className="py-3 text-center">
+                      <p className="text-xs font-medium text-ink/40">Sem viagens</p>
                     </div>
                   )}
                   {colunas.map((dd) => (
-                    <div key={dd.destino} className="mb-2 rounded-xl bg-sand/50 p-2">
-                      <div className="mb-1 flex items-center gap-1">
-                        <p className="truncate text-[11px] font-extrabold text-sus-950">{dd.destino}</p>
-                        {podeGerirFrota && (
+                    <div key={dd.destino} className="mb-2.5 rounded-xl bg-sand/50 p-2.5">
+                      <div className="mb-1.5 flex items-center gap-1.5">
+                        <p className="truncate text-xs font-extrabold text-sus-950">{dd.destino}</p>
+                        {podeGerirFrota && (data >= hoje || podeEditarPassadas) && (
                           <button onClick={() => sugerir(data, dd.destino)} className="ml-auto rounded-lg bg-teal/10 p-1.5 text-teal hover:bg-teal/20" title="Sugerir veículo">
-                            <Sparkles className="h-3.5 w-3.5" />
+                            <Sparkles className="h-4 w-4" />
                           </button>
                         )}
                       </div>
                       {sugestao[`${data}|${dd.destino}`] && (
-                        <p className="mb-1 rounded-lg bg-teal/10 px-2 py-1 text-[10px] font-semibold text-teal">{sugestao[`${data}|${dd.destino}`]}</p>
+                        <p className="mb-1.5 rounded-lg bg-teal/10 px-2.5 py-1 text-xs font-semibold text-teal">{sugestao[`${data}|${dd.destino}`]}</p>
                       )}
                       {dd.viagens.map((v) => {
                         const chave = `${v.id}`;
@@ -1124,8 +1331,15 @@ export default function QuadroViagens() {
                         return (
                           <div
                             key={chave}
-                            draggable={podeGerirFrota}
-                            onDragStart={(e) => { if (podeGerirFrota) dragViagem(e, v, data); }}
+                            draggable={podeGerirFrota && (data >= hoje || podeEditarPassadas)}
+                            onDragStart={(e) => {
+                              if (data < hoje && !podeEditarPassadas) {
+                                e.preventDefault();
+                                setErro(PASSADA_MSG);
+                                return;
+                              }
+                              if (podeGerirFrota) dragViagem(e, v, data);
+                            }}
                             onDragEnd={() => setArrastando(null)}
                             onDragOver={(e) => e.preventDefault()}
                             onDrop={(e) => {
@@ -1133,202 +1347,196 @@ export default function QuadroViagens() {
                               const tv = e.dataTransfer.getData("text/viagem");
                               if (tv) {
                                 e.stopPropagation();
+                                if (data < hoje && !podeEditarPassadas) {
+                                  setErro(PASSADA_MSG);
+                                  return;
+                                }
                                 soltarViagem(data, tv);
                                 return;
                               }
                               if (!podeEditar) { setArrastando(null); return; }
                               const f = e.dataTransfer.getData("text/fila");
                               if (f) {
+                                if (data < hoje && !podeEditarPassadas) {
+                                  setErro(PASSADA_MSG);
+                                  setArrastando(null);
+                                  return;
+                                }
                                 if (v.veiculo_id && v.vagas <= 0) { setErro(`Veículo ${v.veiculo_placa || ""} lotado.`); setArrastando(null); return; }
                                 alocar(Number(f), v.id, v.destino);
                                 return;
                               }
                               const d = e.dataTransfer.getData("text/pass");
                               if (d) {
+                                if (data < hoje && !podeEditarPassadas) {
+                                  setErro(PASSADA_MSG);
+                                  setArrastando(null);
+                                  return;
+                                }
                                 const [vid, pid] = d.split(":").map(Number);
                                 mover(vid, pid, v.id, v.destino);
                               }
                             }}
-                            className={`mb-1.5 rounded-lg border bg-white p-2 ${bloqueado ? "border-red-400 ring-1 ring-red-300" : arrastando ? "border-dashed border-teal" : "border-sus-900/15"} ${podeGerirFrota ? "cursor-grab active:cursor-grabbing" : ""} ${arrastViag && arrastando === `viag:${v.id}:${data}` ? "opacity-50" : ""}`}
+                            className={`mb-2 rounded-xl border bg-white p-2.5 ${bloqueado ? "border-red-400 ring-1 ring-red-300" : arrastando ? "border-dashed border-teal" : "border-sus-900/15"} ${podeGerirFrota ? "cursor-grab active:cursor-grabbing" : ""} ${arrastViag && arrastando === `viag:${v.id}:${data}` ? "opacity-50" : ""}`}
                             title={bloqueado && destArrasto ? msgDestino(destArrasto) : nomeViagem(v)}
                           >
-                            <p className="truncate text-[11px] font-extrabold text-sus-950" title={v.nome || nomeViagem(v)}>
+                            <p className="truncate text-xs font-extrabold text-sus-950" title={v.nome || nomeViagem(v)}>
                               {v.nome || nomeViagem(v)}
                             </p>
-                            <div className="mt-0.5 flex items-center gap-1 text-[11px]">
-                              <p className="truncate rounded bg-sus-900/10 px-1.5 py-0.5 font-display font-bold text-sus-900" title={v.veiculo_id ? (v.veiculo_placa ? `${v.veiculo_modelo || "Veículo"} · placa ${v.veiculo_placa}` : (v.veiculo_modelo || "Veículo")) : "Viagem sem veículo — A definir carro"}>{v.veiculo_id ? (v.veiculo_modelo || "Veículo") : "A definir carro"}</p>
-                              <span className="ml-auto shrink-0 font-bold" title={v.veiculo_placa ? `Placa ${v.veiculo_placa}` : "Sem veículo"}>{v.ocupados}/{v.capacidade || "—"}</span>
+                            <div className="mt-1 flex items-center gap-1.5 text-xs">
+                              <p className="truncate rounded bg-sus-900/10 px-2 py-0.5 font-display font-bold text-sus-900" title={v.veiculo_id ? (v.veiculo_placa ? `${v.veiculo_modelo || "Veículo"} · placa ${v.veiculo_placa}` : (v.veiculo_modelo || "Veículo")) : "Viagem sem veículo — A definir carro"}>{v.veiculo_id ? (v.veiculo_modelo || "Veículo") : "A definir carro"}</p>
+                              <span className="ml-auto shrink-0 font-extrabold text-xs" title={v.veiculo_placa ? `Placa ${v.veiculo_placa}` : "Sem veículo"}>{v.ocupados}/{v.capacidade || "—"}</span>
                             </div>
                             {v.veiculo_placa && v.veiculo_modelo && (
-                              <p className="mt-0.5 truncate text-[10px] text-ink/45" title={`Placa ${v.veiculo_placa}`}>Placa {v.veiculo_placa}</p>
+                              <p className="mt-0.5 truncate text-[11px] font-medium text-ink/60" title={`Placa ${v.veiculo_placa}`}>Placa {v.veiculo_placa}</p>
                             )}
                             {!v.veiculo_id && v.passageiros.length > 0 && (
-                              <div className="mt-1 flex flex-wrap items-center gap-1">
-                                <p className="w-full truncate text-[10px] font-bold text-amber-700" title={`${v.passageiros.length} passageiro(s) sem veículo`}>
+                              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                                <p className="w-full truncate text-xs font-bold text-amber-700" title={`${v.passageiros.length} passageiro(s) sem veículo`}>
                                   Sem veículo · {v.passageiros.length} passageiro(s)
                                 </p>
                                 {podeGerirFrota && (
-                                  <button onClick={() => sugerir(v.data_viagem, v.destino, v.id)} className="inline-flex min-h-[44px] items-center gap-1 rounded-md bg-amber-100 px-1.5 py-1 text-[10px] font-bold text-amber-900 hover:bg-amber-200" title={`Sugerir veículo p/ ${v.ocupados} assento(s) ocupado(s)`}>
-                                    <Sparkles className="h-3 w-3" /> Sugerir veículo
+                                  <button onClick={() => sugerir(v.data_viagem, v.destino, v.id)} className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-900 hover:bg-amber-200" title={`Sugerir veículo p/ ${v.ocupados} assento(s) ocupado(s)`}>
+                                    <Sparkles className="h-3.5 w-3.5" /> Sugerir veículo
                                   </button>
                                 )}
                               </div>
                             )}
                             {sugestao[`viag:${v.id}`] && (
-                              <p className="mt-1 rounded-lg bg-teal/10 px-2 py-1 text-[10px] font-semibold text-teal">{sugestao[`viag:${v.id}`]}</p>
+                              <p className="mt-1 rounded-lg bg-teal/10 px-2.5 py-1 text-xs font-semibold text-teal">{sugestao[`viag:${v.id}`]}</p>
                             )}
-                            <div className="mt-1 h-1 overflow-hidden rounded-full bg-sus-900/10">
+                            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-sus-900/10">
                               <div
                                 className={`h-full rounded-full ${v.capacidade && v.ocupados >= v.capacidade ? "bg-red-500" : v.capacidade && v.ocupados >= v.capacidade * 0.75 ? "bg-amber-500" : "bg-teal"}`}
                                 style={{ width: v.capacidade ? `${Math.min(100, (v.ocupados / v.capacidade) * 100)}%` : "0%" }}
                               />
                             </div>
                             {v.capacidade > 0 && v.ocupados >= v.capacidade && (
-                              <p className="mt-0.5 text-[10px] font-bold text-red-600">Lotado</p>
+                              <p className="mt-1 text-xs font-bold text-red-600">Lotado</p>
                             )}
                             {bloqueado && destArrasto && (
-                              <p className="mt-0.5 text-[10px] font-bold text-red-600">Destino diferente</p>
+                              <p className="mt-1 text-xs font-bold text-red-600">Destino diferente</p>
                             )}
-                            <p className="mt-0.5 truncate text-[10px] text-ink/55">{v.motorista || "Motorista a definir"}{v.hora_saida ? ` · ${v.hora_saida}→${v.hora_retorno || retornoAutomatico(v.hora_saida)}` : ""}</p>
+                            <p className="mt-1 truncate text-[11px] font-medium text-ink/70">{v.motorista || "Motorista a definir"}{v.hora_saida ? ` · ${v.hora_saida}→${v.hora_retorno || retornoAutomatico(v.hora_saida)}` : ""}</p>
                             {podeVerPacientes ? (
-                            <div className="mt-1 space-y-1">
+                            <div className="mt-1.5 space-y-1">
                               {v.passageiros.map((p) => {
                                 const acomp = (p.acompanhante_nome || p.acompanhante || "").trim();
                                 return (
                                 <div
                                   key={p.id}
-                                  draggable={podeEditar}
-                                  onDragStart={(e) => dragPass(e, v.id, p.id)}
+                                  draggable={podeEditar && (data >= hoje || podeEditarPassadas)}
+                                  onDragStart={(e) => {
+                                    if (data < hoje && !podeEditarPassadas) {
+                                      e.preventDefault();
+                                      setErro(PASSADA_MSG);
+                                      return;
+                                    }
+                                    dragPass(e, v.id, p.id);
+                                  }}
                                   onDragEnd={() => setArrastando(null)}
-                                  className="flex items-center gap-1 rounded-md bg-sand/70 px-1.5 py-1 text-[10px]"
+                                  className="flex items-center gap-1.5 rounded-lg bg-sand/80 px-2 py-1.5 text-xs"
                                 >
-                                  <span className="min-w-0 flex-1 truncate font-semibold" title={acomp ? `${p.paciente_nome} + ${acomp} (Acompanhante de ${p.paciente_nome})` : p.paciente_nome}>
-                                    {p.paciente_nome}
-                                    {acomp && <span className="block truncate font-normal text-ink/55">{acomp} (Acompanhante de {p.paciente_nome})</span>}
+                                  <span className="min-w-0 flex-1 truncate font-semibold text-sus-950" title={acomp ? `${p.paciente_nome} + ${acomp} (Acompanhante de ${p.paciente_nome})` : p.paciente_nome}>
+                                    <span className="inline-flex items-center gap-1.5 max-w-full">
+                                      <span className="truncate">{p.paciente_nome}</span>
+                                      {p.prioridade ? (
+                                        <span className={`shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${p.prioridade === "urgente" ? "bg-red-100 text-red-700" : "bg-sus-900/10 text-sus-900"}`}>
+                                          {rotuloPrioridade(p.prioridade)}
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                    {acomp && <span className="block truncate text-[11px] font-normal text-ink/60">{acomp} (Acompanhante de {p.paciente_nome})</span>}
                                   </span>
-                                  {acomp && <span className="shrink-0 rounded-full bg-teal/15 px-1 text-[9px] font-bold text-teal" title={acomp}>+1</span>}
-                                  {podeEditar && (
-                                    <button onClick={() => devolver(v.id, p.id)} className="ml-auto rounded p-0.5 text-ink/40 hover:bg-red-50 hover:text-red-600" title="Devolver à fila"><X className="h-3 w-3" /></button>
+                                  {acomp && <span className="shrink-0 rounded-full bg-teal/15 px-1.5 text-[10px] font-bold text-teal" title={acomp}>+1</span>}
+                                  {podeEditar && (data >= hoje || podeEditarPassadas) && (
+                                    <button onClick={() => devolver(v.id, p.id)} className="ml-auto rounded p-1 text-ink/40 hover:bg-red-50 hover:text-red-600" title="Devolver à fila"><X className="h-3.5 w-3.5" /></button>
                                   )}
                                 </div>
                                 );
                               })}
                             </div>
                             ) : (
-                            <p className="mt-1 rounded-md bg-sand/70 px-1.5 py-1 text-[10px] text-ink/55">
+                            <p className="mt-1.5 rounded-lg bg-sand/70 px-2 py-1 text-xs text-ink/65">
                               {v.ocupados} passageiro(s) · detalhe restrito ao TFD
                             </p>
                             )}
-                            <div className="mt-1 flex flex-wrap gap-1">
-                              {selFila && (!v.veiculo_id || v.vagas > 0) && podeEditar && (
-                                <button onClick={() => alocar(selFila, v.id, v.destino)} className="inline-flex items-center gap-0.5 rounded-md bg-teal px-1.5 py-1 text-[10px] font-bold text-white hover:brightness-110 ${toque}" title={v.veiculo_id ? "Alocar paciente selecionado" : "Alocar paciente (viagem sem veículo)"}>
-                                  <UserPlus className="h-3 w-3" />
+                            <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-sus-900/5 pt-1.5">
+                              {selFila && (!v.veiculo_id || v.vagas > 0) && podeEditar && (data >= hoje || podeEditarPassadas) && (
+                                <button onClick={() => alocar(selFila, v.id, v.destino)} className="inline-flex min-h-[32px] items-center gap-1 rounded-lg bg-teal px-2 py-1 text-xs font-bold text-white hover:brightness-110" title={v.veiculo_id ? "Alocar paciente selecionado" : "Alocar paciente (viagem sem veículo)"}>
+                                  <UserPlus className="h-3.5 w-3.5" />
                                 </button>
                               )}
                               {podeVerPacientes && (
-                              <button onClick={() => baixarDocx(v)} className="inline-flex items-center gap-0.5 rounded-md bg-sus-900/10 px-1.5 py-1 text-[10px] font-bold text-sus-900 hover:bg-sus-900/15 ${toque}" title="Ordem de Circulação (.docx)">
-                                <FileDown className="h-3 w-3" />
-                              </button>
-                              )}
-                              {podeFaturar && (
-                                <button onClick={() => faturar(v)} className="inline-flex items-center gap-0.5 rounded-md bg-teal/10 px-1.5 py-1 text-[10px] font-bold text-teal hover:bg-teal/20 ${toque}" title="Gerar faturamento de deslocamento SIGTAP">
-                                  <ReceiptText className="h-3 w-3" />
-                                </button>
-                              )}
-                              {podeEditar && (
-                                <button onClick={() => abrirEditarViagem(v)} className="inline-flex items-center gap-0.5 rounded-md bg-sus-900/10 px-1.5 py-1 text-[10px] font-bold text-sus-900 hover:bg-sus-900/15 ${toque}" title="Editar viagem (data, horário, motorista, observações)">
-                                  <Pencil className="h-3 w-3" />
-                                </button>
-                              )}
-                              {podeGerirFrota && (
                                 <>
-                                  <button onClick={() => abrirTrocaVeiculo(v)} className="inline-flex items-center gap-0.5 rounded-md bg-sus-900/10 px-1.5 py-1 text-[10px] font-bold text-sus-900 hover:bg-sus-900/15 ${toque}" title="Trocar veículo/motorista">
-                                    <Bus className="h-3 w-3" />
+                                  <button onClick={() => setVisualizarOrdem(v)} className="inline-flex min-h-[32px] items-center gap-1 rounded-lg bg-sus-900/10 px-2 py-1 text-xs font-bold text-sus-900 hover:bg-sus-900/15" title="Visualizar / Imprimir Ordem de Viagem">
+                                    <Printer className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button onClick={() => baixarDocx(v)} className="inline-flex min-h-[32px] items-center gap-1 rounded-lg bg-sus-900/10 px-2 py-1 text-xs font-bold text-sus-900 hover:bg-sus-900/15" title="Baixar Ordem de Circulação (.docx)">
+                                    <FileDown className="h-3.5 w-3.5" />
                                   </button>
                                 </>
                               )}
-                              {podeEditar && (
-                                  <button onClick={() => setExcluirViagem(v)} className="inline-flex items-center gap-0.5 rounded-md bg-red-50 px-1.5 py-1 text-[10px] font-bold text-red-600 hover:bg-red-100 ${toque}" title="Excluir viagem (passageiros voltam à fila)">
-                                    <Trash2 className="h-3 w-3" />
+                              {podeFaturar && (
+                                <button onClick={() => faturar(v)} className="inline-flex min-h-[32px] items-center gap-1 rounded-lg bg-teal/10 px-2 py-1 text-xs font-bold text-teal hover:bg-teal/20" title="Gerar faturamento de deslocamento SIGTAP">
+                                  <ReceiptText className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                              {podeEditar && (data >= hoje || podeEditarPassadas) && (
+                                <button onClick={() => abrirEditarViagem(v)} className="inline-flex min-h-[32px] items-center gap-1 rounded-lg bg-sus-900/10 px-2 py-1 text-xs font-bold text-sus-900 hover:bg-sus-900/15" title="Editar viagem (data, horário, motorista, observações)">
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                              {podeGerirFrota && (data >= hoje || podeEditarPassadas) && (
+                                <>
+                                  <button onClick={() => abrirTrocaVeiculo(v)} className="inline-flex min-h-[32px] items-center gap-1 rounded-lg bg-sus-900/10 px-2 py-1 text-xs font-bold text-sus-900 hover:bg-sus-900/15" title="Trocar veículo/motorista">
+                                    <Bus className="h-3.5 w-3.5" />
+                                  </button>
+                                </>
+                              )}
+                              {podeEditar && (data >= hoje || podeEditarPassadas) && (
+                                  <button onClick={() => setExcluirViagem(v)} className="inline-flex min-h-[32px] items-center gap-1 rounded-lg bg-red-50 px-2 py-1 text-xs font-bold text-red-600 hover:bg-red-100 ml-auto" title="Excluir viagem (passageiros voltam à fila)">
+                                    <Trash2 className="h-3.5 w-3.5" />
                                   </button>
                               )}
                             </div>
                           </div>
                         );
                       })}
-                                            {podeGerirFrota && (
+                                            {podeGerirFrota && (data >= hoje || podeEditarPassadas) && (
                         alocandoEm === `${data}|${dd.destino}` ? (
-                          <div className="rounded-lg border border-teal/40 bg-white p-2 text-[11px]">
+                          <div className="rounded-xl border border-teal/40 bg-white p-2.5 text-xs">
                             <Label>Veículo</Label>
-                            <select value={novoVeiculo.veiculo_id} onChange={(e) => setNovoVeiculo({ ...novoVeiculo, veiculo_id: e.target.value })} className="w-full rounded-lg border border-sus-900/15 bg-white px-2 py-1.5 text-[11px]">
+                            <select value={novoVeiculo.veiculo_id} onChange={(e) => setNovoVeiculo({ ...novoVeiculo, veiculo_id: e.target.value })} className="w-full rounded-lg border border-sus-900/15 bg-white px-2.5 py-2 text-xs">
                               <option value="">A definir carro</option>
                               {veiculosLivresCriacao.filter((f) => f.status === "disponivel").map((f) => (
                                 <option key={f.id} value={f.id}>{f.placa} ({f.capacidade}){f.em_outra_viagem ? " · em outra viagem" : ""}</option>
                               ))}
                             </select>
                             {dispCriacao && (
-                              <p className="mt-1 text-[10px] text-ink/55">
+                              <p className="mt-1 text-[11px] text-ink/60">
                                 {veiculosLivresCriacao.length} veículo(s) livre(s) na janela
                                 {novoVeiculo.hora ? ` ${novoVeiculo.hora}→${novoVeiculo.retorno || retornoAutomatico(novoVeiculo.hora)}` : ""}.
                               </p>
                             )}
-                            <div className="mt-1 grid grid-cols-2 gap-1">
+                            <div className="mt-1.5 grid grid-cols-2 gap-1.5">
                               <div><Label>Motorista</Label><CampoMotorista motoristas={motoristasLivresCriacao} motoristaId={novoVeiculo.motorista_id} motoristaNome={novoVeiculo.motorista} onMudar={(id, nome) => setNovoVeiculo({ ...novoVeiculo, motorista_id: id, motorista: nome })} /></div>
-                              <div><Label>Saída</Label><Input type="time" value={novoVeiculo.hora} onChange={(e) => { const h = e.target.value; setNovoVeiculo({ ...novoVeiculo, hora: h, retorno: novoVeiculo.retorno || retornoAutomatico(h) }); }} className="!py-1.5 text-[11px]" /></div>
+                              <div><Label>Saída</Label><Input type="time" value={novoVeiculo.hora} onChange={(e) => { const h = e.target.value; setNovoVeiculo({ ...novoVeiculo, hora: h, retorno: novoVeiculo.retorno || retornoAutomatico(h) }); }} className="!py-2 text-xs" /></div>
                             </div>
-                            <div className="mt-1"><Label>Retorno (auto +9h, editável)</Label><Input type="time" value={novoVeiculo.retorno} onChange={(e) => setNovoVeiculo({ ...novoVeiculo, retorno: e.target.value })} placeholder={retornoAutomatico(novoVeiculo.hora || "05:00")} className="!py-1.5 text-[11px]" /></div>
-                            <div className="mt-1 flex gap-1">
-                              <button onClick={() => criarViagemDestino(data, dd.destino)} className="flex-1 rounded-lg bg-teal px-2 py-1.5 text-[10px] font-bold text-white hover:brightness-110">Confirmar</button>
-                              <button onClick={() => setAlocandoEm(null)} className="rounded-lg border border-sus-900/15 px-2 py-1.5 text-[10px] font-semibold">Cancelar</button>
+                            <div className="mt-1.5"><Label>Retorno (auto +9h, editável)</Label><Input type="time" value={novoVeiculo.retorno} onChange={(e) => setNovoVeiculo({ ...novoVeiculo, retorno: e.target.value })} placeholder={retornoAutomatico(novoVeiculo.hora || "05:00")} className="!py-2 text-xs" /></div>
+                            <div className="mt-2 flex gap-1.5">
+                              <button onClick={() => criarViagemDestino(data, dd.destino)} className="flex-1 rounded-lg bg-teal px-3 py-2 text-xs font-bold text-white hover:brightness-110">Confirmar</button>
+                              <button onClick={() => setAlocandoEm(null)} className="rounded-lg border border-sus-900/15 px-3 py-2 text-xs font-semibold">Cancelar</button>
                             </div>
                           </div>
                         ) : (
-                          <button onClick={() => { setAlocandoEm(`${data}|${dd.destino}`); setNovoVeiculo({ veiculo_id: "", motorista: "", motorista_id: "", hora: "05:00", retorno: retornoAutomatico("05:00") }); }} className="w-full rounded-lg border border-dashed border-sus-900/25 px-1 py-1.5 text-[10px] font-bold text-sus-900/70 hover:border-teal hover:text-teal">
+                          <button onClick={() => { setAlocandoEm(`${data}|${dd.destino}`); setNovoVeiculo({ veiculo_id: "", motorista: "", motorista_id: "", hora: "05:00", retorno: retornoAutomatico("05:00") }); }} className="w-full rounded-xl border border-dashed border-sus-900/25 px-2 py-2 text-xs font-bold text-sus-900/70 hover:border-teal hover:text-teal">
                             + Veículo
                           </button>
                         )
                       )}
                     </div>
                   ))}
-                  {podeGerirFrota && alocandoEm === `nova:${data}` && (
-                        <div className="rounded-lg border border-teal/40 bg-white p-2 text-[11px]">
-                          <Label>Cidade de destino *</Label>
-                          <select value={destinos.some((d) => d.nome_destino === novoDestino) ? novoDestino : ""} onChange={(e) => setNovoDestino(e.target.value.toUpperCase())} className="w-full rounded-lg border border-sus-900/15 bg-white px-2 py-1.5 text-[11px]">
-                            <option value="">Selecionar destino cadastrado…</option>
-                            {destinos.filter((d) => d.ativo).map((d) => (
-                              <option key={d.id} value={d.nome_destino}>
-                                {d.nome_destino}{d.hospital_referencia ? ` · ${d.hospital_referencia}` : ""}
-                              </option>
-                            ))}
-                          </select>
-                          {!destinos.some((d) => d.nome_destino === novoDestino) && novoDestino && (
-                            <p className="mt-1 text-[10px] text-ink/55">Destino atual: <b>{novoDestino}</b> (fora da tabela cadastrada).</p>
-                          )}
-                          <div className="mt-1"><Label>Veículo</Label>
-                            <select value={novoVeiculo.veiculo_id} onChange={(e) => setNovoVeiculo({ ...novoVeiculo, veiculo_id: e.target.value })} className="w-full rounded-lg border border-sus-900/15 bg-white px-2 py-1.5 text-[11px]">
-                              <option value="">A definir carro</option>
-                              {veiculosLivresCriacao.filter((f) => f.status === "disponivel").map((f) => (
-                                <option key={f.id} value={f.id}>{f.placa} ({f.capacidade}){f.em_outra_viagem ? " · em outra viagem" : ""}</option>
-                              ))}
-                            </select>
-                            {dispCriacao && (
-                              <p className="mt-1 text-[10px] text-ink/55">
-                                {veiculosLivresCriacao.length} veículo(s) livre(s) na janela
-                                {novoVeiculo.hora ? ` ${novoVeiculo.hora}→${novoVeiculo.retorno || retornoAutomatico(novoVeiculo.hora)}` : ""}.
-                              </p>
-                            )}
-                          </div>
-                          <div className="mt-1 grid grid-cols-2 gap-1">
-                            <div><Label>Motorista</Label><CampoMotorista motoristas={motoristasLivresCriacao} motoristaId={novoVeiculo.motorista_id} motoristaNome={novoVeiculo.motorista} onMudar={(id, nome) => setNovoVeiculo({ ...novoVeiculo, motorista_id: id, motorista: nome })} /></div>
-                            <div><Label>Saída</Label><Input type="time" value={novoVeiculo.hora} onChange={(e) => { const h = e.target.value; setNovoVeiculo({ ...novoVeiculo, hora: h, retorno: novoVeiculo.retorno || retornoAutomatico(h) }); }} className="!py-1.5 text-[11px]" /></div>
-                          </div>
-                          <div className="mt-1"><Label>Retorno (auto +9h, editável)</Label><Input type="time" value={novoVeiculo.retorno} onChange={(e) => setNovoVeiculo({ ...novoVeiculo, retorno: e.target.value })} placeholder={retornoAutomatico(novoVeiculo.hora || "05:00")} className="!py-1.5 text-[11px]" /></div>
-                          <div className="mt-1 flex gap-1">
-                            <button onClick={() => criarViagemDestino(data, novoDestino.trim().toUpperCase())} className="flex-1 rounded-lg bg-teal px-2 py-1.5 text-[10px] font-bold text-white hover:brightness-110">Confirmar</button>
-                            <button onClick={() => setAlocandoEm(null)} className="rounded-lg border border-sus-900/15 px-2 py-1.5 text-[10px] font-semibold">Cancelar</button>
-                          </div>
-                        </div>
-                      )}
                 </div>
               );
             })}
@@ -1417,14 +1625,20 @@ export default function QuadroViagens() {
                 onClick={() => setSelFila(selFila === f.id ? null : f.id)}
                 className={`min-w-0 cursor-pointer rounded-lg border p-1.5 text-[11px] leading-tight ${selFila === f.id ? "border-teal bg-teal/5 ring-1 ring-teal" : "border-sus-900/10 bg-sand/50 hover:border-teal/40"}`}
               >
-                <p className="truncate font-bold text-sus-950">{f.paciente_nome}</p>
+                <div className="flex items-center gap-1 min-w-0">
+                  <span className="truncate font-bold text-sus-950">{f.paciente_nome}</span>
+                  <span className={`shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${f.prioridade === "urgente" ? "bg-red-100 text-red-700" : "bg-sus-900/10 text-sus-900"}`}>
+                    {rotuloPrioridade(f.prioridade)}
+                  </span>
+                </div>
                 <p className="truncate text-ink/55">Nasc. {fmtNasc(f.paciente_nascimento)} · {f.paciente_cpf || "sem CPF"}</p>
                 <p className="truncate font-semibold text-sus-900">{f.destino}</p>
                 <p className="truncate text-ink/55">{f.unidade || "—"}{f.hora_consulta ? ` · ${f.hora_consulta}` : ""}</p>
-                <p className="mt-1 flex flex-wrap gap-1">
-                  <span className="rounded-full bg-sus-900/10 px-1.5 py-px font-semibold">{rotuloPrioridade(f.prioridade)}</span>
-                  {f.acompanhante && <span className="rounded-full bg-teal/15 px-1.5 py-px font-semibold text-teal" title={f.acompanhante_nome || f.acompanhante_cpf || "com acompanhante"}>c/ acomp.{f.acompanhante_nome ? ` · ${f.acompanhante_nome}` : ""}</span>}
-                </p>
+                {f.acompanhante && (
+                  <p className="mt-1 flex flex-wrap gap-1">
+                    <span className="rounded-full bg-teal/15 px-1.5 py-px font-semibold text-teal" title={f.acompanhante_nome || f.acompanhante_cpf || "com acompanhante"}>c/ acomp.{f.acompanhante_nome ? ` · ${f.acompanhante_nome}` : ""}</span>
+                  </p>
+                )}
                 {podeEditar && (
                   <div className="mt-1 flex gap-1">
                     <button onClick={(ev) => { ev.stopPropagation(); abrirFilaModal(f); }} className="rounded-md p-1 text-sus-800 hover:bg-sus-100" title="Editar"><Pencil className="h-3 w-3" /></button>
@@ -1489,13 +1703,17 @@ export default function QuadroViagens() {
                       className="mt-0.5 h-4 w-4 accent-teal"
                     />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate font-bold text-sus-950">{c.paciente_nome}</p>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="truncate font-bold text-sus-950">{c.paciente_nome}</span>
+                        <span className={`shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${c.prioridade === "urgente" ? "bg-red-100 text-red-700" : "bg-sus-900/10 text-sus-900"}`}>
+                          {rotuloPrioridade(c.prioridade)}
+                        </span>
+                      </div>
                       <p className="truncate text-ink/70">{c.exame}</p>
                       <p className="mt-0.5 text-ink/55">
                         {c.destino}{c.data_agendada ? ` · ${fmtDia(c.data_agendada)}` : ""}{c.hora_agendada ? ` ${c.hora_agendada}` : ""}
                       </p>
                     </div>
-                    <span className="shrink-0 rounded-full bg-sus-900/10 px-2 py-0.5 font-semibold">{rotuloPrioridade(c.prioridade)}</span>
                   </label>
                 );
               })}
@@ -1679,7 +1897,7 @@ export default function QuadroViagens() {
               <button onClick={() => setEditViagem(null)} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar"><X className="h-4 w-4" /></button>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
-              <div><Label>Data *</Label><Input type="date" value={formViagem.data_viagem} min={retroativoBloqueado ? hoje : undefined} onChange={(e) => setFormViagem({ ...formViagem, data_viagem: e.target.value })} /></div>
+              <div><Label>Data *</Label><Input type="date" value={formViagem.data_viagem} min={!podeEditarPassadas ? hoje : (retroativoBloqueado ? hoje : undefined)} onChange={(e) => setFormViagem({ ...formViagem, data_viagem: e.target.value })} /></div>
               <div>
                 <Label>Destino *</Label>
                 <select value={formViagem.destino} onChange={(e) => setFormViagem({ ...formViagem, destino: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
@@ -1770,6 +1988,226 @@ export default function QuadroViagens() {
             </div>
           </div>
         </div>
+      )}
+
+      {visualizarOrdem && createPortal(
+        <div
+          id="ordem-overlay"
+          className="fixed inset-0 z-50 overflow-y-auto bg-sus-950/60 p-4 print:p-0 print:bg-white"
+          onClick={() => setVisualizarOrdem(null)}
+        >
+          <div
+            id="ordem-print"
+            className="mx-auto my-4 w-full max-w-4xl rounded-2xl bg-white p-6 shadow-2xl print:my-0 print:max-w-none print:rounded-none print:p-0 print:shadow-none"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Barra de ações - escondida na impressão */}
+            <div className="ordem-acoes mb-4 flex items-center justify-between border-b border-sus-900/10 pb-3 print:hidden">
+              <div className="flex items-center gap-2">
+                <Printer className="h-5 w-5 text-sus-900" />
+                <h3 className="font-display text-base font-bold text-sus-950">
+                  Ordem de Circulação de Veículo
+                </h3>
+                <span className="rounded-full bg-teal/10 px-2.5 py-0.5 text-xs font-semibold text-teal">
+                  {visualizarOrdem.destino} · {fmtDia(visualizarOrdem.data_viagem)}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => window.print()}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-sus-900 px-3.5 py-2 text-xs font-bold text-white hover:bg-sus-800 shadow-sm"
+                  title="Imprimir documento oficial"
+                >
+                  <Printer className="h-4 w-4" />
+                  Imprimir
+                </button>
+                <button
+                  onClick={() => baixarDocx(visualizarOrdem)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-xs font-bold text-sus-900 hover:bg-sand"
+                  title="Baixar em formato Word (.docx)"
+                >
+                  <FileDown className="h-4 w-4" />
+                  Baixar DOCX
+                </button>
+                <button
+                  onClick={() => setVisualizarOrdem(null)}
+                  className="rounded-xl p-2 text-ink/50 hover:bg-sand"
+                  aria-label="Fechar"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Documento oficial formatado */}
+            <div className="font-sans text-black leading-tight">
+              {/* Cabeçalho */}
+              <div className="text-center mb-3">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-black">
+                  Prefeitura Municipal de Guapé · Secretaria Municipal de Saúde
+                </p>
+                <h2 className="text-xs md:text-sm font-extrabold uppercase mt-1 tracking-tight">
+                  Ordem de Circulação de Veículos e Prestação de Contas de Viagem
+                </h2>
+              </div>
+
+              {/* Tabela de Dados do Veículo e Viagem */}
+              <table className="w-full border-collapse border border-black text-[10px] md:text-[11px] mb-3 table-fixed">
+                <tbody>
+                  <tr className="border-b border-black">
+                    <td className="border-r border-black p-1.5 font-bold bg-gray-50 w-1/4">VEÍCULO</td>
+                    <td className="border-r border-black p-1.5 w-1/4">{visualizarOrdem.veiculo_modelo || "—"}</td>
+                    <td className="border-r border-black p-1.5 font-bold bg-gray-50 w-1/6">PLACA</td>
+                    <td className="p-1.5 w-1/3 font-semibold">{visualizarOrdem.veiculo_placa || "—"}</td>
+                  </tr>
+                  <tr className="border-b border-black">
+                    <td className="border-r border-black p-1.5 font-bold bg-gray-50">DESTINO</td>
+                    <td className="border-r border-black p-1.5">{visualizarOrdem.destino || "—"}</td>
+                    <td className="border-r border-black p-1.5 font-bold bg-gray-50">DEPARTAMENTO</td>
+                    <td className="p-1.5">{visualizarOrdem.unidade || "Saúde"}</td>
+                  </tr>
+                  <tr className="border-b border-black">
+                    <td className="border-r border-black p-1.5 font-bold bg-gray-50">MOTORISTA/FAVORECIDO</td>
+                    <td colSpan={3} className="p-1.5 font-semibold">{visualizarOrdem.motorista || "—"}</td>
+                  </tr>
+                  <tr className="border-b border-black">
+                    <td className="border-r border-black p-1 font-bold bg-gray-50">Data saída:</td>
+                    <td className="border-r border-black p-1">{fmtDia(visualizarOrdem.data_viagem)}</td>
+                    <td className="border-r border-black p-1 font-bold bg-gray-50">Hora saída:</td>
+                    <td className="p-1">{visualizarOrdem.hora_saida || "—"}</td>
+                  </tr>
+                  <tr className="border-b border-black">
+                    <td className="border-r border-black p-1 font-bold bg-gray-50">Data retorno:</td>
+                    <td className="border-r border-black p-1">{fmtDia(visualizarOrdem.data_viagem)}</td>
+                    <td className="border-r border-black p-1 font-bold bg-gray-50">Hora retorno:</td>
+                    <td className="p-1">{visualizarOrdem.hora_retorno || "—"}</td>
+                  </tr>
+                  <tr>
+                    <td className="border-r border-black p-1 font-bold bg-gray-50">Km inicial:</td>
+                    <td className="border-r border-black p-1">__________</td>
+                    <td className="border-r border-black p-1 font-bold bg-gray-50">Km final:</td>
+                    <td className="p-1">__________</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              {/* Despesas de Viagem */}
+              <div className="mb-3">
+                <p className="text-[11px] font-bold uppercase mb-1 tracking-wide">Despesas de Viagem</p>
+                <table className="w-full border-collapse border border-black text-[10px] table-fixed">
+                  <thead>
+                    <tr className="border-b border-black bg-gray-100">
+                      <th className="border-r border-black p-1 text-left w-1/3">Despesa</th>
+                      <th className="border-r border-black p-1 text-center w-1/3">Valor (R$)</th>
+                      <th className="p-1 text-center w-1/3">Vistos</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {["Alimentação", "Hospedagem", "Combustível", "Peças", "Serviços", "Pedágio / Ônibus / Outros"].map((item) => (
+                      <tr key={item} className="border-b border-black h-5">
+                        <td className="border-r border-black px-1.5 py-0.5">{item}</td>
+                        <td className="border-r border-black px-1.5 py-0.5 text-center"></td>
+                        <td className="px-1.5 py-0.5 text-center"></td>
+                      </tr>
+                    ))}
+                    <tr className="font-bold bg-gray-50 h-5">
+                      <td className="border-r border-black px-1.5 py-0.5">TOTAL</td>
+                      <td className="border-r border-black px-1.5 py-0.5 text-center">R$</td>
+                      <td className="px-1.5 py-0.5"></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Assinaturas */}
+              <div className="grid grid-cols-2 gap-3 mb-4 text-[10px]">
+                <div className="border-t border-black pt-1 text-center">
+                  <p className="font-bold">Favorecido / Motorista</p>
+                </div>
+                <div className="border-t border-black pt-1 text-center">
+                  <p className="font-bold">Chefe do Departamento</p>
+                </div>
+              </div>
+
+              {/* Quebra de página no documento oficial caso necessário */}
+              <div className="ordem-quebra-pagina my-3 border-t-2 border-dashed border-gray-300 print:border-none"></div>
+
+              {/* Relação de Passageiros */}
+              <div className="text-center mb-2">
+                <h3 className="text-xs md:text-sm font-extrabold uppercase tracking-tight">
+                  Relação de Passageiros
+                </h3>
+                <p className="text-[10px] text-gray-600">
+                  {visualizarOrdem.passageiros?.length || 0} passageiro(s) agendado(s) · {visualizarOrdem.destino}
+                </p>
+              </div>
+
+              {/* Tabela de Passageiros Centralizada na Página */}
+              <div className="w-full flex justify-center">
+                <table
+                  className="w-full border-collapse border border-black text-[10px] md:text-[11px] leading-tight"
+                  style={{ margin: "0 auto" }}
+                >
+                  <thead>
+                    <tr className="border-b border-black bg-gray-100 font-bold text-center">
+                      <th className="border-r border-black p-1 w-8">Nº</th>
+                      <th className="border-r border-black p-1 text-left">Passageiro</th>
+                      <th className="border-r border-black p-1 w-20">Data Nasc.</th>
+                      <th className="border-r border-black p-1 text-left">Tratamento / Observação</th>
+                      <th className="border-r border-black p-1 text-left w-28">Unidade</th>
+                      <th className="border-r border-black p-1 w-16">Horário</th>
+                      <th className="p-1 text-left w-24">Cidade</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* Linhas preenchidas + completadas até 15 para impressão equilibrada */}
+                    {Array.from({ length: Math.max(15, visualizarOrdem.passageiros?.length || 0) }).map((_, idx) => {
+                      const p = visualizarOrdem.passageiros?.[idx];
+                      const tratObs = p
+                        ? [p.tratamento, p.observacoes ? `Obs.: ${p.observacoes}` : ""].filter(Boolean).join(" - ")
+                        : "";
+                      return (
+                        <tr key={idx} className="border-b border-black h-6">
+                          <td className="border-r border-black p-1 text-center font-bold">
+                            {String(idx + 1).padStart(2, "0")}
+                          </td>
+                          <td className="border-r border-black px-1.5 py-0.5 truncate max-w-[180px]">
+                            {p?.paciente_nome ? (
+                              <div>
+                                <span className="font-semibold">{p.paciente_nome}</span>
+                                {p.acompanhante_nome && (
+                                  <span className="block text-[9px] text-gray-600">
+                                    Acomp: {p.acompanhante_nome}
+                                  </span>
+                                )}
+                              </div>
+                            ) : ""}
+                          </td>
+                          <td className="border-r border-black p-1 text-center">
+                            {p ? fmtNasc(p.paciente_nascimento) : ""}
+                          </td>
+                          <td className="border-r border-black px-1.5 py-0.5 truncate max-w-[160px]">
+                            {tratObs}
+                          </td>
+                          <td className="border-r border-black px-1.5 py-0.5 truncate max-w-[120px]">
+                            {p?.unidade || ""}
+                          </td>
+                          <td className="border-r border-black p-1 text-center font-semibold">
+                            {p?.hora_consulta || ""}
+                          </td>
+                          <td className="px-1.5 py-0.5 truncate max-w-[100px]">
+                            {p ? (visualizarOrdem.destino || "") : ""}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

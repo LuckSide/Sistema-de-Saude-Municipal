@@ -109,11 +109,11 @@ export default function App() {
           <Route path="/acompanhar/:token" element={<AcompanharExame />} />
           <Route path="/fila-exames" element={
             <Protected>
-              <Guard tela="tfd_exames">
+              <GuardQualquer telas={["tfd_exames", "tfd_fila_lancamento", "tfd_medico", "tfd"]}>
                 <Shell>
                   <FilaExames />
                 </Shell>
-              </Guard>
+              </GuardQualquer>
             </Protected>
           } />
           <Route path="/painel-medico" element={

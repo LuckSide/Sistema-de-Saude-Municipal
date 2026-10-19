@@ -65,7 +65,13 @@ def get_by_username(db: Session, username: str) -> User | None:
 
 
 def authenticate(db: Session, username: str, password: str) -> User | None:
-    user = get_by_username(db, username.strip().lower())
+    u_clean = username.strip().lower()
+    user = get_by_username(db, u_clean)
+    if not user:
+        # Se for CPF com pontuação (ex: 123.456.789-00), busca pelos dígitos
+        digits = "".join(c for c in u_clean if c.isdigit())
+        if digits and len(digits) == 11:
+            user = get_by_username(db, digits)
     if not user or not user.is_active:
         return None
     if not verify_password(password, user.password_hash):
@@ -102,6 +108,11 @@ def create_user(db: Session, data: UserCreate) -> tuple[User, str | None]:
     db.add(user)
     db.commit()
     db.refresh(user)
+    try:
+        from app.services.dashboard_default import criar_dashboard_padrao_se_ausente
+        criar_dashboard_padrao_se_ausente(db, user)
+    except Exception:
+        pass
     return user, temporaria
 
 

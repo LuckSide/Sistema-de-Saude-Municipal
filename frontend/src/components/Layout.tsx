@@ -62,7 +62,7 @@ export function Shell({ children, estreito }: { children: ReactNode; estreito?: 
               </button>
             </div>
             <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-              <SidebarConteudo onNavegar={() => setAberto(false)} />
+              <SidebarConteudo onNavegar={() => setAberto(false)} forcarExpandido />
             </div>
           </div>
         </div>

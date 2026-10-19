@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { createPortal } from "react-dom";
-import { CheckCircle2, Copy, Eye, Pencil, Plus, Printer, QrCode, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { Calendar, CheckCircle2, Copy, Download, Eye, Pencil, Plus, Printer, QrCode, RefreshCw, Search, Trash2, X } from "lucide-react";
 import {
   tfdAtualizarExame,
   tfdAtualizarExamesLote,
@@ -80,6 +80,28 @@ function fmtData(s: string | null | undefined): string {
   return base.split("-").reverse().join("/");
 }
 
+function tempoEspera(s: string | null | undefined): string {
+  if (!s || typeof s !== "string") return "";
+  const base = s.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(base)) return "";
+  const [ano, mes, dia] = base.split("-").map(Number);
+  const data = new Date(ano, mes - 1, dia);
+  if (isNaN(data.getTime())) return "";
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  const diffMs = hoje.getTime() - data.getTime();
+  const dias = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (dias < 0) return "";
+  if (dias === 0) return "hoje";
+  if (dias === 1) return "1 dia";
+  if (dias < 30) return `${dias} dias`;
+  const meses = Math.floor(dias / 30.4375);
+  if (meses < 12) return `${meses} ${meses === 1 ? "mês" : "meses"}`;
+  const anos = Math.floor(dias / 365.25);
+  const mesesResto = Math.floor((dias % 365.25) / 30.4375);
+  return mesesResto > 0 ? `${anos}a ${mesesResto}m` : `${anos} ${anos === 1 ? "ano" : "anos"}`;
+}
+
 function nomeLimpo(exame: string): string {
   const s = (exame || "").trim();
   const m = s.match(/^[0-9.\-]{4,}\s*-\s*(.+)$/);
@@ -110,7 +132,7 @@ function qrUrl(link: string): string {
 }
 
 export default function FilaExames() {
-  const { isMedico, podeAlterarPrioridade, retroativoBloqueado } = useAuth();
+  const { isMedico, podeAlterarPrioridade, retroativoBloqueado, isLancamentoRestrito } = useAuth();
   const { notificarUndo } = useUndo();
   const RETRO_MSG = "Seu perfil não possui permissão para realizar lançamentos com datas retroativas.";
   const hojeISO = () => new Date().toISOString().slice(0, 10);
@@ -144,6 +166,7 @@ export default function FilaExames() {
   const [exameFoco, setExameFoco] = useState(false);
   const [catLoading, setCatLoading] = useState(false);
   const [salvando, setSalvando] = useState(false);
+  const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
   const [toast, setToast] = useState("");
@@ -174,6 +197,32 @@ export default function FilaExames() {
   const [mostrarAgendamento, setMostrarAgendamento] = useState(false);
   const [unidades, setUnidades] = useState<UnidadeSaude[]>([]);
   const [confirmandoLote, setConfirmandoLote] = useState(false);
+
+  // Modo de visualização da fila: por tipo de fila, por especialidade ou simultâneo (ambas)
+  const [modoVisualizacao, setModoVisualizacao] = useState<"tipo" | "especialidade" | "ambas">("ambas");
+  // Modal de seleção de colunas para exportação
+  const [exportModal, setExportModal] = useState(false);
+  const COLUNAS_EXPORTACAO = [
+    { id: "posicao", label: "Posição na fila (Geral/Legado)", padrao: true },
+    { id: "posicao_tipo", label: "Posição por Tipo de Fila", padrao: true },
+    { id: "posicao_especialidade", label: "Posição por Especialidade", padrao: true },
+    { id: "paciente_nome", label: "Paciente", padrao: true },
+    { id: "exame", label: "Procedimento", padrao: true },
+    { id: "codigo_procedimento", label: "Código do Procedimento", padrao: true },
+    { id: "especialidade", label: "Especialidade", padrao: true },
+    { id: "prioridade", label: "Prioridade", padrao: true },
+    { id: "status", label: "Status", padrao: true },
+    { id: "data_pedido", label: "Data do Pedido", padrao: true },
+    { id: "data_agendada", label: "Data Agendada", padrao: false },
+    { id: "tipo_fila", label: "Tipo de Fila", padrao: false },
+    { id: "destino", label: "Destino/Unidade", padrao: false },
+    { id: "observacoes", label: "Observações", padrao: false },
+    { id: "numero_pedido", label: "Nº do Pedido", padrao: false },
+    { id: "justificativa", label: "Justificativa", padrao: false },
+  ];
+  const [colunasExport, setColunasExport] = useState<string[]>(
+    COLUNAS_EXPORTACAO.filter((c) => c.padrao).map((c) => c.id)
+  );
 
   const idsVisiveis = useMemo(() => lista.map((e) => e.id), [lista]);
   const todosVisiveis = idsVisiveis.length > 0 && idsVisiveis.every((id) => sel.includes(id));
@@ -299,6 +348,7 @@ export default function FilaExames() {
     const procAtual = over?.proc !== undefined ? over.proc : proc;
     const espAtual = over?.esp !== undefined ? over.esp : espCbo;
     const meusAtual = over?.meus !== undefined ? over.meus : soMeus;
+    const ordAtual = over?.ordenacao !== undefined ? over.ordenacao : ordem;
     const params: FilaExamesParams = {
       status: filtro || undefined,
       meus: meusAtual || undefined,
@@ -310,15 +360,27 @@ export default function FilaExames() {
       destino: dest.trim() || undefined,
       data_de: de || undefined,
       data_ate: ate || undefined,
+      ordenacao: ordAtual,
       page: p,
       limit: 100,
     };
-    const r = await tfdExames(params);
-    setLista(pagData<Exame>(r));
-    const m = pagMeta(r);
-    setTotal(m.total);
-    setPage(m.page);
-    setPages(m.pages);
+    setCarregando(true);
+    setErro("");
+    try {
+      const r = await tfdExames(params);
+      setLista(pagData<Exame>(r));
+      const m = pagMeta(r);
+      setTotal(m.total);
+      setPage(m.page);
+      setPages(m.pages);
+    } catch (e: unknown) {
+      console.error("Erro ao carregar fila de procedimentos:", e);
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Falha ao carregar fila de procedimentos.";
+      setErro(msg);
+      setLista([]);
+    } finally {
+      setCarregando(false);
+    }
   }
 
   async function carregarOpcoes(st = filtro) {
@@ -706,29 +768,27 @@ export default function FilaExames() {
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-2 print:hidden">
-        <h2 className="font-display text-lg font-bold text-sus-950">Fila de exames e procedimentos</h2>
-        <span className="rounded-full bg-teal/10 px-2.5 py-0.5 text-xs font-semibold text-teal">
-          {total} no filtro · {badgeTotal} na fila
-        </span>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <div className="inline-flex rounded-xl border border-sus-900/10 bg-white p-1">
-            <button
-              type="button"
-              onClick={() => { setOrdem("prioridade"); setPage(1); carregar(1, { ordenacao: "prioridade" }).catch(() => setErro("Falha ao carregar fila.")); }}
-              className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${ordem === "prioridade" ? "bg-sus-900 text-white" : "text-sus-900 hover:bg-sand"}`}
-            >Ordem na fila (com prioridade)</button>
-            <button
-              type="button"
-              onClick={() => { setOrdem("cronologica"); setPage(1); carregar(1, { ordenacao: "cronologica" }).catch(() => setErro("Falha ao carregar fila.")); }}
-              className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${ordem === "cronologica" ? "bg-sus-900 text-white" : "text-sus-900 hover:bg-sand"}`}
-            >Cronológica (ignora prioridade)</button>
-          </div>
-          <ExportarExcel url="/api/tfd/exames/exportar" arquivo="fila_espera" params={{ status: filtro || undefined, q: q.trim() || undefined, prioridade: prio || undefined, tipo_fila: tipoFila.trim() || undefined, procedimento: proc.trim() || undefined, codigo_especialidade: espCbo.trim() || undefined, destino: dest.trim() || undefined, data_de: de || undefined, data_ate: ate || undefined, meus: soMeus || undefined, ordenacao: ordem }} />
-          <Button onClick={() => abrirModal()}><Plus className="h-4 w-4" /> Novo pedido</Button>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 print:hidden">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="font-display text-lg font-bold text-sus-950">Fila de Procedimentos</h2>
+          <span className="rounded-full bg-teal/10 px-2.5 py-0.5 text-xs font-semibold text-teal">
+            {total} no filtro · {badgeTotal} na fila
+          </span>
         </div>
+        <Button onClick={() => abrirModal()}><Plus className="h-4 w-4" /> Novo pedido</Button>
       </div>
-      {erro && !modal && !comprovante && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700 print:hidden">{erro}</p>}
+      {erro && !modal && !comprovante && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-red-50 px-4 py-2.5 text-sm text-red-700 print:hidden">
+          <span>{erro}</span>
+          <button
+            type="button"
+            onClick={() => carregar(page)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-red-100 px-3 py-1 text-xs font-bold text-red-800 hover:bg-red-200"
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Tentar novamente
+          </button>
+        </div>
+      )}
       {ok && <p className="mb-3 rounded-xl bg-teal/10 px-3 py-2 text-sm text-teal print:hidden">{ok}</p>}
       {toast && (
         <div className="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 print:hidden">
@@ -816,6 +876,9 @@ export default function FilaExames() {
                     setEspCbo(v);
                     setPage(1);
                     setErro("");
+                    if (v && modoVisualizacao === "tipo") {
+                      setModoVisualizacao("especialidade");
+                    }
                     carregar(1, { esp: v }).catch(() => setErro("Falha ao carregar fila."));
                   }}
                   options={opcoesEsp}
@@ -859,17 +922,78 @@ export default function FilaExames() {
               </div>
             )}
 
-            <div className="flex flex-wrap items-center gap-2">
-              <Button type="submit" className="!px-5">
-                <Search className="h-4 w-4" /> Filtrar
-              </Button>
-              <button
-                type="button"
-                onClick={() => { setQ(""); setPrio(""); setTipoFila(""); setProc(""); setEspCbo(""); setDest(""); setDe(""); setAte(""); setFiltro("aguardando"); setSoMeus(false); setFiltrosAvancados(false); setPage(1); carregar(1, { tipo: "", proc: "", esp: "" }).catch(() => {}); }}
-                className="rounded-xl px-4 py-2.5 text-sm font-semibold text-ink/70 hover:bg-sus-900/5"
-              >
-                Limpar filtros
-              </button>
+            {/* Barra de Ferramentas / Controles Integrados da Fila */}
+            <div className="mt-4 flex flex-col gap-3.5 border-t border-sus-900/10 pt-4 xl:flex-row xl:items-center xl:justify-between">
+              {/* Controles de Ordenação e Visualização de Posição */}
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Bloco 1: Ordenação da Fila */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-semibold text-sus-900/70">Ordenação:</span>
+                  <div className="inline-flex rounded-xl border border-sus-900/10 bg-sand/60 p-1">
+                    <button
+                      type="button"
+                      onClick={() => { setOrdem("prioridade"); setPage(1); carregar(1, { ordenacao: "prioridade" }).catch(() => setErro("Falha ao carregar fila.")); }}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${ordem === "prioridade" ? "bg-sus-900 text-white shadow-xs" : "text-sus-900 hover:bg-sand"}`}
+                      title="Prioriza pacientes com urgência médica seguidos por data de solicitação"
+                    >Com prioridade</button>
+                    <button
+                      type="button"
+                      onClick={() => { setOrdem("cronologica"); setPage(1); carregar(1, { ordenacao: "cronologica" }).catch(() => setErro("Falha ao carregar fila.")); }}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${ordem === "cronologica" ? "bg-sus-900 text-white shadow-xs" : "text-sus-900 hover:bg-sand"}`}
+                      title="Ordena estritamente por tempo de espera / data de pedido"
+                    >Cronológica</button>
+                  </div>
+                </div>
+
+                <div className="hidden h-5 w-px bg-sus-900/15 md:block" />
+
+                {/* Bloco 2: Modo de Exibição da Posição */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-semibold text-sus-900/70">Posição:</span>
+                  <div className="inline-flex rounded-xl border border-sus-900/10 bg-sand/60 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setModoVisualizacao("tipo")}
+                      className={`rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${modoVisualizacao === "tipo" ? "bg-sus-900 text-white shadow-xs" : "text-sus-900 hover:bg-sand"}`}
+                      title="Exibe a posição geral em relação ao Tipo de Fila (ex: Consultas Especializadas)"
+                    >Por Tipo</button>
+                    <button
+                      type="button"
+                      onClick={() => setModoVisualizacao("especialidade")}
+                      className={`rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${modoVisualizacao === "especialidade" ? "bg-sus-900 text-white shadow-xs" : "text-sus-900 hover:bg-sand"}`}
+                      title="Exibe a posição na Especialidade médica"
+                    >Por Especialidade</button>
+                    <button
+                      type="button"
+                      onClick={() => setModoVisualizacao("ambas")}
+                      className={`rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${modoVisualizacao === "ambas" ? "bg-sus-900 text-white shadow-xs" : "text-sus-900 hover:bg-sand"}`}
+                      title="Exibe simultaneamente a posição Geral e na Especialidade"
+                    >Ambas (Geral + Esp)</button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bloco 3: Ações de Filtragem e Exportação Excel */}
+              <div className="flex flex-wrap items-center gap-2 sm:self-start xl:self-center">
+                <Button type="submit" className="!px-4 !py-2 text-xs">
+                  <Search className="h-3.5 w-3.5" /> Filtrar
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => { setQ(""); setPrio(""); setTipoFila(""); setProc(""); setEspCbo(""); setDest(""); setDe(""); setAte(""); setFiltro("aguardando"); setSoMeus(false); setFiltrosAvancados(false); setPage(1); carregar(1, { tipo: "", proc: "", esp: "" }).catch(() => {}); }}
+                  className="rounded-xl px-3 py-2 text-xs font-semibold text-ink/70 hover:bg-sus-900/5 transition"
+                >
+                  Limpar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExportModal(true)}
+                  className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl border border-sus-900/15 bg-white px-3.5 py-1.5 text-xs font-bold text-sus-900 hover:bg-sus-900/5 transition shadow-xs"
+                  title="Selecionar colunas e exportar a fila para arquivo Excel"
+                >
+                  <Download className="h-4 w-4 text-teal" /> Exportar Excel
+                </button>
+              </div>
             </div>
           </form>
         </div>
@@ -892,21 +1016,99 @@ export default function FilaExames() {
             <th className="w-10 px-3 py-3">
               <input type="checkbox" checked={todosVisiveis} ref={(el) => { if (el) el.indeterminate = !todosVisiveis && algunsVisiveis; }} onChange={toggleTodos} aria-label="Selecionar todos visíveis" className="h-4 w-4 accent-teal" />
             </th>
-            <th className="px-4 py-3">Posição*</th><th className="px-4 py-3">Paciente</th><th className="px-4 py-3">Exame</th><th className="px-4 py-3">Especialidade</th><th className="px-4 py-3">Prioridade</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Ações</th>          </tr></thead>
+            <th className={modoVisualizacao === "ambas" ? "min-w-[210px] px-4 py-3 whitespace-nowrap" : "w-40 px-4 py-3"}>
+              {modoVisualizacao === "tipo"
+                ? "Posição / Tipo"
+                : modoVisualizacao === "especialidade"
+                ? "Posição / Especialidade"
+                : "Posições (Geral | Esp)"}
+            </th>
+            <th className="min-w-[220px] px-4 py-3">Paciente</th>
+            <th className="min-w-[200px] px-4 py-3">Procedimento</th>
+            {modoVisualizacao !== "tipo" && <th className="w-40 px-4 py-3">Cód. Procedimento</th>}
+            <th className="w-36 px-4 py-3">Status</th>
+            <th className="w-32 px-4 py-3 text-right">Ações</th>
+          </tr></thead>
           <tbody>
-            {lista.map((e) => (
+            {carregando && (
+              <tr>
+                <td colSpan={modoVisualizacao === "tipo" ? 6 : 7} className="px-4 py-12 text-center text-ink/50">
+                  <div className="flex flex-col items-center justify-center gap-2">
+                    <RefreshCw className="h-6 w-6 animate-spin text-teal" />
+                    <span className="text-xs font-medium">Carregando procedimentos da fila…</span>
+                  </div>
+                </td>
+              </tr>
+            )}
+            {!carregando && lista.map((e) => (
               <tr key={e.id} className={`border-b border-sus-900/5 last:border-0 ${sel.includes(e.id) ? "bg-teal/5" : ""}`}>
                 <td className="px-3 py-3">
                   <input type="checkbox" checked={sel.includes(e.id)} onChange={() => toggleUm(e.id)} aria-label={`Selecionar pedido ${e.id}`} className="h-4 w-4 accent-teal" />
                 </td>
-                <td className="px-4 py-3 font-display text-base font-extrabold text-sus-900">
-                  {e.posicao ? `${e.posicao}º` : "—"}
-                  {e.total_fila ? <span className="block text-[10px] font-normal text-ink/45">de {e.total_fila}{e.grupo_fila ? ` · ${e.grupo_fila}` : ""}</span> : null}
+                <td className={`px-4 py-3 font-display ${modoVisualizacao === "ambas" ? "whitespace-nowrap" : ""}`}>
+                  {modoVisualizacao === "tipo" && (
+                    <div>
+                      <span className="text-base font-extrabold text-teal">
+                        {(e.posicao_tipo ?? e.posicao) ? `${e.posicao_tipo ?? e.posicao}º` : "—"}
+                      </span>
+                      {(e.total_tipo ?? e.total_fila) ? (
+                        <span className="block text-[10px] font-normal text-ink/45">
+                          de {e.total_tipo ?? e.total_fila} · {e.grupo_tipo || e.tipo_fila || "Geral"}
+                        </span>
+                      ) : null}
+                    </div>
+                  )}
+                  {modoVisualizacao === "especialidade" && (
+                    <div>
+                      <span className="text-base font-extrabold text-sus-900">
+                        {(e.posicao_especialidade ?? e.posicao) ? `${e.posicao_especialidade ?? e.posicao}º` : "—"}
+                      </span>
+                      {(e.total_especialidade ?? e.total_fila) ? (
+                        <span className="block text-[10px] font-normal text-ink/45">
+                          de {e.total_especialidade ?? e.total_fila} · {e.grupo_especialidade || e.nome_especialidade || e.especialidade || "Especialidade"}
+                        </span>
+                      ) : null}
+                    </div>
+                  )}
+                  {modoVisualizacao === "ambas" && (
+                    <div className="whitespace-nowrap">
+                      <div className="flex items-center gap-1.5 text-xs font-bold whitespace-nowrap">
+                        <span className="inline-flex items-center rounded-md bg-teal/15 px-2 py-0.5 text-teal whitespace-nowrap" title="Posição no Tipo de Fila Geral (ex: Consultas Especializadas)">
+                          G: {(e.posicao_tipo ?? e.posicao) ? `${e.posicao_tipo ?? e.posicao}` : "—"}{e.total_tipo ? `/${e.total_tipo}` : ""}
+                        </span>
+                        <span className="inline-flex items-center rounded-md bg-sus-900/10 px-2 py-0.5 text-sus-900 whitespace-nowrap" title="Posição na Especialidade">
+                          Esp: {(e.posicao_especialidade ?? e.posicao) ? `${e.posicao_especialidade ?? e.posicao}` : "—"}{e.total_especialidade ? `/${e.total_especialidade}` : ""}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 block max-w-[210px] truncate text-[10px] font-normal text-ink/45" title={`${e.grupo_tipo || e.tipo_fila || "Tipo"} · ${e.grupo_especialidade || e.nome_especialidade || "Especialidade"}`}>
+                        {e.grupo_tipo || e.tipo_fila || "Geral"} · {e.grupo_especialidade || e.nome_especialidade || e.especialidade || "Esp."}
+                      </p>
+                    </div>
+                  )}
                 </td>
-                <td className="px-4 py-3 font-semibold">{e.paciente_nome}<p className="text-xs font-normal text-ink/50">pedido {fmtData(e.data_pedido)} {e.destino ? `· ${e.destino}` : ""}</p></td>
-                <td className="px-4 py-3">{nomeLimpo(e.exame)}<p className="text-xs text-ink/50">{e.especialidade || "—"}</p></td>
-                <td className="px-4 py-3 text-xs">{e.nome_especialidade || e.especialidade || "—"}</td>
-                <td className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${prioCor[e.prioridade] ?? ""}`}>{PRIO_ROTULO[e.prioridade] ?? e.prioridade}</span></td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-semibold text-sus-950">{e.paciente_nome}</span>
+                    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${prioCor[e.prioridade] ?? "bg-sand"}`}>
+                      {PRIO_ROTULO[e.prioridade] ?? e.prioridade}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                    <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 border border-amber-600/30 px-2 py-0.5 text-[11px] font-bold text-amber-950 shadow-xs" title="Data em que o paciente foi adicionado à fila de espera">
+                      <Calendar className="h-3.5 w-3.5 text-amber-800 shrink-0" />
+                      <span>Na fila desde: <strong className="font-black text-amber-950">{fmtData(e.data_pedido)}</strong></span>
+                      {tempoEspera(e.data_pedido) ? <span className="font-semibold text-amber-900/80">({tempoEspera(e.data_pedido)})</span> : null}
+                    </span>
+                    {e.destino && <span className="text-[11px] text-ink/60 truncate max-w-[180px]" title={e.destino}>· {e.destino}</span>}
+                  </div>
+                </td>
+                <td className="px-4 py-3">{nomeLimpo(e.exame)}</td>
+                {modoVisualizacao !== "tipo" && (
+                  <td className="px-4 py-3">
+                    <span className="font-mono text-xs font-semibold text-sus-900">{e.codigo_procedimento || sigtapDe(e.exame) || "—"}</span>
+                    <p className="text-xs text-ink/50">{e.nome_especialidade || e.especialidade || "—"}</p>
+                  </td>
+                )}
                 <td className="px-4 py-3 text-xs">{e.status}{e.data_agendada ? ` · ${fmtData(e.data_agendada)}` : ""}</td>
                 <td className="px-4 py-3"><div className="flex justify-end gap-1">
                   <button onClick={() => setDetalhe(e)} className="rounded-lg p-2 text-sus-900 hover:bg-sand" title="Detalhes"><Eye className="h-4 w-4" /></button>
@@ -918,7 +1120,23 @@ export default function FilaExames() {
                 </div></td>
               </tr>
             ))}
-            {lista.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-ink/45">Fila vazia.</td></tr>}
+            {!carregando && lista.length === 0 && (
+              <tr>
+                <td colSpan={modoVisualizacao === "tipo" ? 6 : 7} className="px-4 py-12 text-center text-ink/50">
+                  <p className="font-semibold text-sus-950">Nenhum procedimento encontrado</p>
+                  <p className="mt-1 text-xs text-ink/40">
+                    {filtro ? `Não há registros com o status "${filtro}".` : "Não há procedimentos cadastrados na fila."}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => { setQ(""); setPrio(""); setTipoFila(""); setProc(""); setEspCbo(""); setDest(""); setDe(""); setAte(""); setFiltro(""); setSoMeus(false); setPage(1); carregar(1, { tipo: "", proc: "", esp: "" }).catch(() => {}); }}
+                    className="mt-3 inline-flex items-center gap-1.5 rounded-xl border border-sus-900/15 bg-white px-3 py-1.5 text-xs font-bold text-sus-900 hover:bg-sand"
+                  >
+                    Exibir todos os registros
+                  </button>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
         </div>
@@ -1151,10 +1369,10 @@ export default function FilaExames() {
               </section>
               {/* Procedimento */}
               <section>
-                <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-sus-900/55">Exame / procedimento</p>
+                <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-sus-900/55">Procedimento</p>
                 <div className="grid gap-4 md:grid-cols-3">
                   <div className="md:col-span-2">
-                    <Label>Exame / procedimento (código, curto ou nome) *</Label>
+                    <Label>Procedimento (código, curto ou nome) *</Label>
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40" />
                     <Input
@@ -1305,16 +1523,17 @@ export default function FilaExames() {
                 <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-sus-900/55">Situação e datas</p>
                 <div className="grid gap-4 md:grid-cols-4">
                   <div>
-                    <Label>Prioridade{editId && !podeEditarPrio ? " (somente leitura)" : ""}</Label>
+                    <Label>Prioridade{(editId && !podeEditarPrio) || isLancamentoRestrito ? " (somente leitura)" : ""}</Label>
                     <select
                       value={form.prioridade}
-                      disabled={!!editId && !podeEditarPrio}
+                      disabled={(!!editId && !podeEditarPrio) || isLancamentoRestrito}
                       onChange={(e) => setForm({ ...form, prioridade: e.target.value })}
                       className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm disabled:bg-sand disabled:text-ink/50"
-                      title={editId && !podeEditarPrio ? "Somente o médico envolvido altera a prioridade" : undefined}
+                      title={(editId && !podeEditarPrio) ? "Somente o médico envolvido altera a prioridade" : isLancamentoRestrito ? "Seu perfil não permite definir urgência" : undefined}
                     >
-                      {PRIOS.map((p) => <option key={p} value={p}>{PRIO_ROTULO[p]}</option>)}
+                      {PRIOS.filter((p) => !isLancamentoRestrito || p === "rotina").map((p) => <option key={p} value={p}>{PRIO_ROTULO[p]}</option>)}
                     </select>
+                    {isLancamentoRestrito && <p className="mt-1 text-xs text-amber-700">Seu perfil permite apenas lançamentos com prioridade Rotina.</p>}
                   </div>
                   <div>
                     <Label>Status</Label>
@@ -1345,7 +1564,13 @@ export default function FilaExames() {
               </section>
               {/* Agendamento: médico + unidade */}
               <section>
-                <button
+              {isLancamentoRestrito ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-amber-800">Agendamento bloqueado</p>
+                  <p className="mt-0.5 text-xs text-amber-700">Seu perfil permite apenas adicionar o paciente à fila de espera. O agendamento deve ser realizado por um operador com perfil de regulação.</p>
+                </div>
+              ) : (
+              <button
                   type="button"
                   onClick={() => setMostrarAgendamento((v) => !v)}
                   aria-expanded={mostrarAgendamento}
@@ -1359,6 +1584,7 @@ export default function FilaExames() {
                     {mostrarAgendamento ? "Ocultar" : "Agendar Atendimento"}
                   </span>
                 </button>
+              )}
                 {mostrarAgendamento && (
                 <>
                 <div className="mt-3 grid gap-4 md:grid-cols-3">
@@ -1475,16 +1701,21 @@ export default function FilaExames() {
                 <button onClick={() => setPerfilId(detalhe.paciente_id)} className="mt-2 inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-teal/10 px-3 py-2 text-xs font-bold text-teal hover:bg-teal/15">
                   <Eye className="h-4 w-4" /> Ver perfil e demanda reprimida
                 </button>
-                {detalhe.posicao ? (
-                  <p className="mt-1 text-xs text-ink/60">
-                    Posição <b>{detalhe.posicao}º</b> na fila {detalhe.grupo_fila || "—"} (de {detalhe.total_fila ?? "—"})
-                  </p>
+                {(detalhe.posicao || detalhe.posicao_tipo || detalhe.posicao_especialidade) ? (
+                  <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                    <span className="rounded-lg bg-teal/15 px-2.5 py-1 text-xs font-bold text-teal">
+                      Tipo de Fila: {detalhe.posicao_tipo ?? detalhe.posicao}º (de {detalhe.total_tipo ?? detalhe.total_fila ?? "—"}) · {detalhe.grupo_tipo || detalhe.tipo_fila || "Geral"}
+                    </span>
+                    <span className="rounded-lg bg-sus-900/10 px-2.5 py-1 text-xs font-bold text-sus-900">
+                      Especialidade: {detalhe.posicao_especialidade ?? detalhe.posicao}º (de {detalhe.total_especialidade ?? detalhe.total_fila ?? "—"}) · {detalhe.grupo_especialidade || detalhe.nome_especialidade || "Esp."}
+                    </span>
+                  </div>
                 ) : (
                   <p className="mt-1 text-xs text-ink/60">Fora da fila ativa (status {detalhe.status}).</p>
                 )}
               </div>
               <div className="rounded-2xl border border-sus-900/10 p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-sus-900/50">Exame / procedimento</p>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-sus-900/50">Procedimento</p>
                 <p className="mt-1 font-display text-base font-bold text-sus-950">{nomeLimpo(detalhe.exame)}</p>
                 <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2.5 text-xs md:grid-cols-3">
                   <div><dt className="text-ink/45">Código SIGTAP</dt><dd className="font-semibold">{sigtapDe(detalhe.exame) || detalhe.codigo_procedimento || "—"}</dd></div>
@@ -1492,9 +1723,22 @@ export default function FilaExames() {
                   <div><dt className="text-ink/45">Tipo de fila</dt><dd className="font-semibold">{detalhe.tipo_fila || "—"}</dd></div>
                   <div><dt className="text-ink/45">Tipo / especialidade</dt><dd className="font-semibold">{detalhe.especialidade || "—"}</dd></div>
                   <div><dt className="text-ink/45">Especialidade (CBO)</dt><dd className="font-semibold">{detalhe.nome_especialidade || "—"}{detalhe.codigo_especialidade ? ` · ${detalhe.codigo_especialidade}` : ""}</dd></div>
-                  <div><dt className="text-ink/45">Prioridade</dt><dd className="font-semibold">{PRIO_ROTULO[detalhe.prioridade] ?? detalhe.prioridade}</dd></div>
+                  <div>
+                    <dt className="text-ink/45">Prioridade</dt>
+                    <dd className="mt-0.5">
+                      <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${prioCor[detalhe.prioridade] ?? "bg-sand"}`}>
+                        {PRIO_ROTULO[detalhe.prioridade] ?? detalhe.prioridade}
+                      </span>
+                    </dd>
+                  </div>
                   <div><dt className="text-ink/45">Status</dt><dd className="font-semibold">{detalhe.status}</dd></div>
-                  <div><dt className="text-ink/45">Data pedido</dt><dd className="font-semibold">{fmtData(detalhe.data_pedido)}</dd></div>
+                  <div>
+                    <dt className="text-ink/45">Data do pedido (fila)</dt>
+                    <dd className="mt-0.5 inline-flex items-center gap-1 font-bold text-amber-950 bg-amber-500/15 border border-amber-600/30 px-2 py-0.5 rounded text-xs">
+                      <Calendar className="h-3 w-3 text-amber-800" />
+                      {fmtData(detalhe.data_pedido)} {tempoEspera(detalhe.data_pedido) ? `(${tempoEspera(detalhe.data_pedido)})` : ""}
+                    </dd>
+                  </div>
                   <div><dt className="text-ink/45">Data agendada</dt><dd className="font-semibold">{fmtData(detalhe.data_agendada)}</dd></div>
                   <div><dt className="text-ink/45">Destino</dt><dd className="font-semibold">{detalhe.destino || "—"}</dd></div>
                 </dl>
@@ -1532,7 +1776,7 @@ export default function FilaExames() {
                 </dl>
               </div>
               <div className="rounded-2xl border border-sus-900/10 p-4">
-                <Timeline pacienteId={detalhe.paciente_id} />
+                <Timeline pacienteId={detalhe.paciente_id} filtrarProcedimento={detalhe.exame} />
               </div>
               </div>
               <div className="space-y-4">
@@ -1575,6 +1819,64 @@ export default function FilaExames() {
               <button onClick={() => setPerfilId(null)} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar"><X className="h-4 w-4" /></button>
             </div>
             <PerfilPaciente pid={perfilId} />
+          </div>
+        </div>
+      )}
+      {/* Modal de seleção de colunas para exportação */}
+      {exportModal && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4 print:hidden" onClick={() => setExportModal(false)}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <p className="font-display text-base font-bold text-sus-950">Selecionar colunas para exportação</p>
+              <button onClick={() => setExportModal(false)} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="space-y-2">
+              {COLUNAS_EXPORTACAO.map((col) => (
+                <label key={col.id} className="flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 hover:bg-sand">
+                  <input
+                    type="checkbox"
+                    checked={colunasExport.includes(col.id)}
+                    onChange={(e) => {
+                      setColunasExport((prev) =>
+                        e.target.checked ? [...prev, col.id] : prev.filter((c) => c !== col.id)
+                      );
+                    }}
+                    className="h-4 w-4 accent-teal"
+                  />
+                  <span className="text-sm font-medium text-sus-950">{col.label}</span>
+                </label>
+              ))}
+            </div>
+            <div className="mt-5 flex gap-2">
+              <button
+                onClick={() => setColunasExport(COLUNAS_EXPORTACAO.map((c) => c.id))}
+                className="rounded-xl border border-sus-900/15 px-4 py-2.5 text-xs font-semibold text-sus-900 hover:bg-sand"
+              >Selecionar todas</button>
+              <button
+                onClick={() => setColunasExport(COLUNAS_EXPORTACAO.filter((c) => c.padrao).map((c) => c.id))}
+                className="rounded-xl border border-sus-900/15 px-4 py-2.5 text-xs font-semibold text-sus-900 hover:bg-sand"
+              >Padrão</button>
+              <ExportarExcel
+                url="/api/tfd/exames/exportar"
+                arquivo="fila_procedimentos"
+                params={{
+                  status: filtro || undefined,
+                  q: q.trim() || undefined,
+                  prioridade: prio || undefined,
+                  tipo_fila: tipoFila.trim() || undefined,
+                  procedimento: proc.trim() || undefined,
+                  codigo_especialidade: espCbo.trim() || undefined,
+                  destino: dest.trim() || undefined,
+                  data_de: de || undefined,
+                  data_ate: ate || undefined,
+                  meus: soMeus || undefined,
+                  ordenacao: ordem,
+                  colunas: colunasExport.join(","),
+                }}
+                rotulo="Exportar"
+                className="ml-auto inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-sus-900 px-4 py-2 text-xs font-bold text-white hover:brightness-110"
+              />
+            </div>
           </div>
         </div>
       )}

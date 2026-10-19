@@ -94,22 +94,26 @@ def _garantir_estilo_T8(root) -> None:
 
 
 def _centralizar_tabela(t4, root=None) -> None:
-    """Centraliza a tabela de passageiros (align center + style Table5)."""
+    """Centraliza a tabela de passageiros (margin-left: auto; margin-right: auto; table:align="center")."""
     STYLE = "urn:oasis:names:tc:opendocument:xmlns:style:1.0"
     OFFICE = "urn:oasis:names:tc:opendocument:xmlns:office:1.0"
     TABLE = "urn:oasis:names:tc:opendocument:xmlns:table:1.0"
     FO = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
     t4.set(f"{{{TABLE}}}align", "center")
-    # O alinhamento efetivo vem do style Table5 (table-properties table:align=left);
-    # ajusta p/ center quando o root estiver disponível.
+    # O alinhamento efetivo vem do style da tabela (ex: Table5);
+    # ajusta p/ center com margens automáticas para centralização perfeita na página.
     try:
         if root is None:
             return
         auto = root.find(f".//{{{OFFICE}}}automatic-styles")
         if auto is None:
             return
+        alvos = {"Table5"}
+        estilo_t4 = t4.attrib.get(f"{{{TABLE}}}style-name")
+        if estilo_t4:
+            alvos.add(estilo_t4)
         for st in auto.iter(f"{{{STYLE}}}style"):
-            if st.attrib.get(f"{{{STYLE}}}name") != "Table5":
+            if st.attrib.get(f"{{{STYLE}}}name") not in alvos:
                 continue
             for tp in st.iter(f"{{{STYLE}}}table-properties"):
                 tp.set(f"{{{TABLE}}}align", "center")

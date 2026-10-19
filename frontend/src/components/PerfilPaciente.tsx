@@ -85,51 +85,83 @@ export default function PerfilPaciente({ pid }: { pid: number }) {
             Nenhuma solicitação pendente ou ativa para este paciente.
           </p>
         ) : (
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-xs">
-              <thead>
-                <tr className="border-b border-sus-900/10 bg-sand text-[11px] uppercase text-sus-900/60">
-                  <th className="px-3 py-2">Data de inclusão</th>
-                  <th className="px-3 py-2">Especialidade / procedimento</th>
-                  <th className="px-3 py-2">Classificação de risco</th>
-                  <th className="px-3 py-2">Posição na fila</th>
-                  <th className="px-3 py-2">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {perfil.demanda.map((d) => (
-                  <tr key={d.id} className="border-b border-sus-900/5 last:border-0">
-                    <td className="px-3 py-2 font-semibold">{d.data_inclusao || "—"}</td>
-                    <td className="px-3 py-2">
-                      <p className="font-semibold text-sus-950">{d.nome_especialidade || d.especialidade || d.tipo_fila || "—"}</p>
-                      <p className="text-ink/50">{d.exame}</p>
-                    </td>
-                    <td className="px-3 py-2">
-                      <span className={`rounded-full px-2 py-0.5 font-semibold ${RISCO_COR[d.classificacao_risco] ?? "bg-sand"}`}>
-                        {d.classificacao_risco}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 font-semibold">
-                      {d.posicao_especialidade ? `${d.posicao_especialidade}º da fila` : "—"}
-                      {d.total_fila_especialidade ? <span className="block font-normal text-ink/45">de {d.total_fila_especialidade} na especialidade</span> : null}
-                    </td>
-                    <td className="px-3 py-2">
-                      <span className="font-semibold">{d.status_rotulo}</span>
-                      {d.data_agendada && (
-                        <span className="mt-1 flex items-center gap-1 text-ink/50">
-                          <CalendarDays className="h-3 w-3" />
-                          {d.data_agendada.slice(0, 10).split("-").reverse().join("/")}{d.hora_agendada ? ` · ${d.hora_agendada}` : ""}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="mt-4 space-y-4">
+            {(() => {
+              // Ordenação estritamente cronológica por tempo de espera (data do pedido / inclusão mais antiga primeiro)
+              const ordenados = [...perfil.demanda].sort((a, b) => {
+                const da = a.data_pedido || a.data_inclusao || "";
+                const db = b.data_pedido || b.data_inclusao || "";
+                return da.localeCompare(db);
+              });
+              // Agrupamento por Procedimento
+              const grupos = new Map<string, typeof perfil.demanda>();
+              for (const item of ordenados) {
+                const proc = item.exame?.trim() || "Procedimento não especificado";
+                if (!grupos.has(proc)) grupos.set(proc, []);
+                grupos.get(proc)!.push(item);
+              }
+
+              return Array.from(grupos.entries()).map(([proc, itens]) => (
+                <div key={proc} className="overflow-hidden rounded-xl border border-sus-900/10 bg-white">
+                  <div className="flex items-center justify-between border-b border-sus-900/10 bg-sus-900/5 px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-teal" />
+                      <h4 className="font-display text-xs font-bold uppercase tracking-wide text-sus-950">{proc}</h4>
+                    </div>
+                    <span className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-semibold text-sus-900 shadow-xs">
+                      {itens.length} {itens.length === 1 ? "solicitação" : "solicitações"}
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[700px] text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-sus-900/10 bg-sand/50 text-[11px] uppercase text-sus-900/60">
+                          <th className="px-3 py-2">Data do Pedido / Inclusão</th>
+                          <th className="px-3 py-2">Especialidade</th>
+                          <th className="px-3 py-2">Classificação de risco</th>
+                          <th className="px-3 py-2">Posição na fila</th>
+                          <th className="px-3 py-2">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {itens.map((d) => (
+                          <tr key={d.id} className="border-b border-sus-900/5 last:border-0 hover:bg-sand/30">
+                            <td className="px-3 py-2 font-semibold">
+                              {d.data_pedido ? d.data_pedido.split("-").reverse().join("/") : (d.data_inclusao || "—")}
+                            </td>
+                            <td className="px-3 py-2">
+                              <p className="font-semibold text-sus-950">{d.nome_especialidade || d.especialidade || d.tipo_fila || "—"}</p>
+                            </td>
+                            <td className="px-3 py-2">
+                              <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${RISCO_COR[d.classificacao_risco] ?? "bg-sand"}`}>
+                                {d.classificacao_risco}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 font-semibold">
+                              {d.posicao_especialidade ? `${d.posicao_especialidade}º da fila` : "—"}
+                              {d.total_fila_especialidade ? <span className="block font-normal text-ink/45">de {d.total_fila_especialidade} na especialidade</span> : null}
+                            </td>
+                            <td className="px-3 py-2">
+                              <span className="font-semibold">{d.status_rotulo}</span>
+                              {d.data_agendada && (
+                                <span className="mt-1 flex items-center gap-1 text-ink/50">
+                                  <CalendarDays className="h-3 w-3" />
+                                  {d.data_agendada.slice(0, 10).split("-").reverse().join("/")}{d.hora_agendada ? ` · ${d.hora_agendada}` : ""}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ));
+            })()}
           </div>
         )}
-        <p className="mt-2 text-[11px] text-ink/45">
-          Ordem cronológica de inclusão · posição calculada na fila global da especialidade (risco + antiguidade).
+        <p className="mt-3 text-[11px] text-ink/45">
+          Listagem agrupada por Procedimento e ordenada estritamente por ordem cronológica (tempo de espera).
         </p>
       </section>
     </div>

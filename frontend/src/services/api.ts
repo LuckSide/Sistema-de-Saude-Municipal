@@ -117,6 +117,8 @@ export type Medico = {
   telefone: string;
   email: string;
   ativo: boolean;
+  usuario_criado?: string | null;
+  senha_temporaria?: string | null;
 };
 export const fetchMedicos = (params?: { q?: string; somente_ativos?: boolean }) =>
   api.get<Medico[]>("/api/medicos", { params }).then((r) => r.data);
@@ -371,6 +373,7 @@ export type Passageiro = {
   presente: boolean;
   paciente_nome: string;
   viagem_fila_id?: number | null;
+  prioridade?: string;
   tratamento?: string;
   unidade?: string;
   hora_consulta?: string;
@@ -529,6 +532,12 @@ export type Exame = {
   posicao?: number | null;
   total_fila?: number | null;
   grupo_fila?: string;
+  posicao_tipo?: number | null;
+  total_tipo?: number | null;
+  grupo_tipo?: string;
+  posicao_especialidade?: number | null;
+  total_especialidade?: number | null;
+  grupo_especialidade?: string;
   medico_nome?: string;
   medico_cpf?: string;
   medico_cbo_codigo?: string;
@@ -1265,4 +1274,64 @@ export const auditMarcarStatus = (id: number, status: string) =>
 export const auditSolicitarAutorizacao = (id: number, _motivo = "") =>
   api.post(`/api/exames/auditoria/${id}/solicitar-autorizacao`).then((r) => mapAudit(r.data));
 
+// ---------- Backup e Restauração Criptografados ----------
+export async function exportarBackup(senha: string): Promise<Blob> {
+  try {
+    const res = await api.post("/api/backup/exportar", { senha }, { responseType: "blob" });
+    const contentType = (res.headers?.["content-type"] as string | undefined) ?? "application/octet-stream";
+    const blob = new Blob([res.data as BlobPart], { type: contentType });
+
+    const disp = (res.headers?.["content-disposition"] as string | undefined) ?? "";
+    let nomeArquivo = "";
+    const match = disp.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+    if (match && match[1]) {
+      nomeArquivo = decodeURIComponent(match[1].replace(/['"]/g, ""));
+    }
+    if (!nomeArquivo) {
+      const agora = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const yyyy = agora.getFullYear();
+      const mm = pad(agora.getMonth() + 1);
+      const dd = pad(agora.getDate());
+      const hh = pad(agora.getHours());
+      const min = pad(agora.getMinutes());
+      nomeArquivo = `backup_sistema_${yyyy}${mm}${dd}_${hh}${min}.bak`;
+    }
+
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = nomeArquivo;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+
+    return blob;
+  } catch (err: any) {
+    if (err.response?.data instanceof Blob) {
+      try {
+        const text = await err.response.data.text();
+        const json = JSON.parse(text);
+        if (json?.detail) {
+          err.friendlyMessage = json.detail;
+          if (err.response?.data) err.response.data.detail = json.detail;
+        }
+      } catch {
+        // fallback
+      }
+    }
+    throw err;
+  }
+}
+
+export async function restaurarBackup(arquivo: File, senha: string): Promise<any> {
+  const form = new FormData();
+  form.append("arquivo", arquivo);
+  form.append("senha", senha);
+  const { data } = await api.post("/api/backup/restaurar", form);
+  return data;
+}
+
 export default api;
+

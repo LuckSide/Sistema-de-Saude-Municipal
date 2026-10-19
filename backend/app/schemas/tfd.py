@@ -184,6 +184,7 @@ class ViagemPacienteOut(ViagemPacienteIn):
     viagem_id: int
     paciente_nome: str = ""
     observacoes: str = ""
+    prioridade: str = ""
 
 
 # ---------- Fila de espera para viagem ----------
@@ -214,21 +215,18 @@ class ViagemFilaOut(ViagemFilaIn):
     paciente_nascimento: date | None = None
 
 
-# ---------- Fila de exames ----------
-class ExameIn(BaseModel):
+# ---------- Fila de exames / procedimentos ----------
+class ExameBase(BaseModel):
     paciente_id: int
-    exame: str = Field(min_length=2, max_length=120)
+    exame: str = Field(default="", max_length=120)
     especialidade: str = Field(default="", max_length=80)
     tipo_fila: str = Field(default="ELETIVO", max_length=80)
     codigo_procedimento: str = Field(default="", max_length=20)
     codigo_especialidade: str = Field(default="", max_length=10)
     nome_especialidade: str = Field(default="", max_length=120)
-    prioridade: str = Field(default="rotina", pattern="^(rotina|urgente)$")
+    prioridade: str = Field(default="rotina", max_length=20)
     justificativa_prioridade: str = Field(default="", max_length=500)
-    status: str = Field(
-        default="aguardando",
-        pattern="^(aguardando|agendado|recepcionado|realizado|faltou|cancelado)$",
-    )
+    status: str = Field(default="aguardando", max_length=20)
     data_pedido: date
     data_agendada: date | None = None
     hora_agendada: str = Field(default="", max_length=5)
@@ -241,12 +239,22 @@ class ExameIn(BaseModel):
     codigo_curto: str = Field(default="", max_length=12)  # novo modelo; legado ignora
     numero_pedido: str = Field(default="", max_length=30)  # identificação operacional
 
+
+class ExameIn(ExameBase):
+    exame: str = Field(min_length=2, max_length=120)
+    prioridade: str = Field(default="rotina", pattern="^(rotina|urgente)$")
+    status: str = Field(
+        default="aguardando",
+        pattern="^(aguardando|agendado|recepcionado|realizado|faltou|cancelado)$",
+    )
+
     @field_validator("justificativa")
     @classmethod
     def _valida_justificativa(cls, v: str) -> str:
         s = (v or "").strip()
-        if len(s) < 12:
-            raise ValueError("A justificativa é obrigatória e deve ter pelo menos 12 caracteres.")
+        # Se preenchida, deve ter pelo menos 12 caracteres. Se vazia, permite.
+        if s and len(s) < 12:
+            raise ValueError("A justificativa deve ter pelo menos 12 caracteres.")
         return s
 
 
@@ -271,7 +279,7 @@ class ExameLoteOut(BaseModel):
     nao_encontrados: list[int] = []
 
 
-class ExameOut(ExameIn):
+class ExameOut(ExameBase):
     id: int
     paciente_nome: str = ""
     paciente_cpf: str = ""
@@ -279,6 +287,13 @@ class ExameOut(ExameIn):
     posicao: int | None = None
     total_fila: int | None = None
     grupo_fila: str = ""
+    # Duplo cálculo de posições independentes
+    posicao_tipo: int | None = None
+    total_tipo: int | None = None
+    grupo_tipo: str = ""
+    posicao_especialidade: int | None = None
+    total_especialidade: int | None = None
+    grupo_especialidade: str = ""
     # Snapshot do agendamento (resolvido no momento da marcação)
     medico_nome: str = ""
     medico_cpf: str = ""

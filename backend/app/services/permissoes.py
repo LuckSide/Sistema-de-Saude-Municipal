@@ -20,6 +20,7 @@ PAI_DE: dict[str, str] = {
     "dash_indicadores": "dashboard",
     "tfd_resumo": "tfd",
     "tfd_viagens": "tfd",
+    "tfd_viagens_passadas": "tfd",
     "tfd_pacientes": "tfd",
     "tfd_exames": "tfd",
     "tfd_catalogo": "tfd",
@@ -28,6 +29,7 @@ PAI_DE: dict[str, str] = {
     "tfd_frota_gestao": "tfd",
     "tfd_faturamento": "tfd",
     "tfd_medico": "tfd",
+    "tfd_fila_lancamento": "tfd",
     "tfd_agenda": "tfd",
     "tfd_agendamentos": "tfd_agenda",
     "lab_marcacao": "lab",
@@ -41,15 +43,17 @@ PAI_DE: dict[str, str] = {
     "cfg_filas": "integracoes",
     "cfg_pec": "integracoes",
     "cfg_rnds": "integracoes",
+    "cfg_backup": "integracoes",
+    "auditoria": "usuarios",
 }
 
 PAIS = ("dashboard", "tfd", "lab", "aps", "usuarios", "integracoes")
 
 TODAS_TELAS = frozenset(list(PAI_DE) + list(PAI_DE.values()) + list(PAIS))
 
-# Telas exclusivas: o pai NÃO implica a filha (ex: perfil Médico exige
-# concessão explícita — ter "tfd" não dá acesso a "tfd_medico").
-EXCLUSIVAS = frozenset({"tfd_medico"})
+# Telas exclusivas: o pai NÃO implica a filha (ex: perfil Médico e Lançamento Restrito
+# exigem concessão explícita).
+EXCLUSIVAS = frozenset({"tfd_medico", "tfd_fila_lancamento", "tfd_viagens_passadas"})
 
 
 def telas_list(user) -> list[str]:

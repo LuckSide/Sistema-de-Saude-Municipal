@@ -1,20 +1,47 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Building2, FlaskConical, GitBranch, ImagePlus, RefreshCw, Save, ScrollText, Stethoscope, MapPin } from "lucide-react";
+import {
+  AlertTriangle,
+  Archive,
+  Building2,
+  CheckCircle2,
+  CloudUpload,
+  Database,
+  Download,
+  Eye,
+  EyeOff,
+  FileArchive,
+  FlaskConical,
+  GitBranch,
+  ImagePlus,
+  Loader2,
+  Lock,
+  MapPin,
+  RefreshCw,
+  Save,
+  ScrollText,
+  ShieldAlert,
+  ShieldCheck,
+  Stethoscope,
+  UploadCloud,
+  X,
+} from "lucide-react";
 import { Badge, Button, Card, Input, Label } from "../components/ui/primitives";
 import { useAuth } from "../hooks/useAuth";
 import { useUndo } from "../components/UndoToast";
 import Medicos from "./Medicos";
 import UnidadesSaude from "./UnidadesSaude";
 import {
+  exportarBackup,
   fetchIntegracoes,
   fetchSettings,
   importarFilas,
-  savePec,
   labsAtualizar,
   labsCriar,
   labsListar,
   labsRemover,
+  restaurarBackup,
+  savePec,
   saveRnds,
   saveSettings,
   testarPec,
@@ -27,7 +54,7 @@ import {
   type UpdateStatus,
 } from "../services/api";
 
-type Aba = "geral" | "filas" | "pec" | "rnds" | "medicos" | "unidades" | "laboratorios";
+type Aba = "geral" | "filas" | "pec" | "rnds" | "medicos" | "unidades" | "laboratorios" | "backup";
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "geral", rotulo: "Geral" },
   { id: "filas", rotulo: "Importar filas" },
@@ -36,6 +63,7 @@ const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "medicos", rotulo: "Médicos e Profissionais de Saúde" },
   { id: "unidades", rotulo: "Unidades de Saúde e PSFs" },
   { id: "laboratorios", rotulo: "Laboratórios" },
+  { id: "backup", rotulo: "Backup e Restauração" },
 ];
 
 function msgErro(e: unknown, padrao: string): string {
@@ -58,6 +86,7 @@ export default function Configuracoes() {
     if (a.id === "filas") return can("cfg_filas");
     if (a.id === "pec") return can("cfg_pec");
     if (a.id === "medicos" || a.id === "unidades" || a.id === "laboratorios") return can("usuarios") || can("lab_vagas");
+    if (a.id === "backup") return can("cfg_backup") || can("usuarios") || can("cfg_geral");
     return can("cfg_rnds");
   });
   const pedida = (params.get("aba") as Aba) || "geral";
@@ -65,6 +94,13 @@ export default function Configuracoes() {
     ? pedida
     : (abasVisiveis[0]?.id ?? "geral");
   const [aba, setAba] = useState<Aba>(inicial);
+
+  useEffect(() => {
+    const p = (params.get("aba") as Aba) || "geral";
+    if (abasVisiveis.some((a) => a.id === p) && p !== aba) {
+      setAba(p);
+    }
+  }, [params, abasVisiveis, aba]);
 
   function trocar(a: Aba) {
     setAba(a);
@@ -75,17 +111,18 @@ export default function Configuracoes() {
     <div>
       <h1 className="font-display text-2xl font-extrabold text-sus-950">Configurações do sistema</h1>
       <p className="mb-4 mt-1 text-sm text-ink/55">
-        Módulo administrativo único: município e marca, filas, PEC e RNDS.
+        Módulo administrativo único: município e marca, filas, PEC, RNDS e backup do sistema.
       </p>
       <div className="mb-4 flex flex-wrap gap-2">
         {abasVisiveis.map((a) => (
           <button
             key={a.id}
             onClick={() => trocar(a.id)}
-            className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
+            className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition ${
               aba === a.id ? "bg-sus-900 text-white" : "border border-sus-900/15 text-sus-900 hover:bg-sand"
             }`}
           >
+            {a.id === "backup" && <Database className="h-4 w-4" />}
             {a.rotulo}
           </button>
         ))}
@@ -97,6 +134,7 @@ export default function Configuracoes() {
       {aba === "medicos" && <Medicos />}
       {aba === "unidades" && <UnidadesSaude />}
       {aba === "laboratorios" && <AbaLaboratorios />}
+      {aba === "backup" && <AbaBackup />}
     </div>
   );
 }
@@ -795,3 +833,521 @@ function AbaLaboratorios() {
     </Card>
   );
 }
+
+// ---------- Aba: Backup e Restauração Criptografados ----------
+function AbaBackup() {
+  const [modalGerar, setModalGerar] = useState(false);
+  const [modalRestaurar, setModalRestaurar] = useState(false);
+
+  return (
+    <div className="space-y-6">
+      <div className="grid max-w-4xl grid-cols-1 gap-6 md:grid-cols-2">
+        {/* Card 1: Gerar Backup Criptografado */}
+        <Card className="flex flex-col justify-between p-6">
+          <div>
+            <div className="mb-4 flex items-center gap-3">
+              <div className="rounded-xl bg-sus-900/10 p-3 text-sus-900">
+                <Database className="h-6 w-6" />
+              </div>
+              <div>
+                <h2 className="font-display text-lg font-bold text-sus-950">Gerar Backup Criptografado</h2>
+                <Badge variant="outline" className="border-teal/30 bg-teal/10 text-teal">
+                  Criptografia AES-256
+                </Badge>
+              </div>
+            </div>
+
+            <p className="text-sm leading-relaxed text-ink/75">
+              Gera um arquivo de segurança criptografado contendo todos os dados do sistema (banco de dados relacional, cadastros, usuários, configurações e histórico de viagens).
+            </p>
+
+            <div className="mt-4 space-y-2 rounded-xl bg-sand/60 p-3.5 text-xs text-ink/80">
+              <div className="flex items-center gap-2">
+                <Lock className="h-4 w-4 shrink-0 text-sus-900" />
+                <span>Chave de criptografia derivada de senha mestra</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Download className="h-4 w-4 shrink-0 text-sus-900" />
+                <span>Download de arquivo seguro com extensão <strong>.bak</strong></span>
+              </div>
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 shrink-0 text-teal" />
+                <span>Proteção total contra acesso indevido</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 border-t border-sus-900/10 pt-4">
+            <Button onClick={() => setModalGerar(true)} className="w-full">
+              <Download className="h-4 w-4" /> Gerar Backup do Sistema
+            </Button>
+          </div>
+        </Card>
+
+        {/* Card 2: Restaurar Backup do Sistema */}
+        <Card className="flex flex-col justify-between p-6">
+          <div>
+            <div className="mb-4 flex items-center gap-3">
+              <div className="rounded-xl bg-red-100 p-3 text-red-700">
+                <UploadCloud className="h-6 w-6" />
+              </div>
+              <div>
+                <h2 className="font-display text-lg font-bold text-sus-950">Restaurar Backup do Sistema</h2>
+                <Badge variant="danger">
+                  Operação Crítica
+                </Badge>
+              </div>
+            </div>
+
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3.5 text-xs leading-relaxed text-red-900">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+                <div>
+                  <strong className="block font-bold">ATENÇÃO: Operação Irreversível</strong>
+                  A restauração substituirá os dados atuais pelos dados contidos no arquivo de backup.
+                </div>
+              </div>
+            </div>
+
+            <p className="text-sm leading-relaxed text-ink/75">
+              Permite restaurar o estado completo do sistema a partir de um arquivo <strong>.bak</strong> previamente exportado e protegido por senha.
+            </p>
+          </div>
+
+          <div className="mt-6 border-t border-sus-900/10 pt-4">
+            <Button
+              onClick={() => setModalRestaurar(true)}
+              className="w-full !border !border-sus-900/20 !bg-white !text-sus-900 hover:!bg-sand"
+            >
+              <Archive className="h-4 w-4" /> Restaurar a partir de Arquivo .bak
+            </Button>
+          </div>
+        </Card>
+      </div>
+
+      {/* Modais de ação */}
+      <ModalGerarBackup aberto={modalGerar} onFechar={() => setModalGerar(false)} />
+      <ModalRestaurarBackup aberto={modalRestaurar} onFechar={() => setModalRestaurar(false)} />
+    </div>
+  );
+}
+
+// ---------- Modal: Gerar Backup Criptografado ----------
+function ModalGerarBackup({ aberto, onFechar }: { aberto: boolean; onFechar: () => void }) {
+  const [senha, setSenha] = useState("");
+  const [confirmacao, setConfirmacao] = useState("");
+  const [mostrarSenha, setMostrarSenha] = useState(false);
+  const [carregando, setCarregando] = useState(false);
+  const [erro, setErro] = useState("");
+  const [sucesso, setSucesso] = useState("");
+
+  if (!aberto) return null;
+
+  function resetar() {
+    setSenha("");
+    setConfirmacao("");
+    setMostrarSenha(false);
+    setErro("");
+    setSucesso("");
+  }
+
+  function fechar() {
+    if (carregando) return;
+    resetar();
+    onFechar();
+  }
+
+  async function handleExportar(e: React.FormEvent) {
+    e.preventDefault();
+    setErro("");
+    setSucesso("");
+
+    if (!senha) {
+      setErro("Informe a senha de criptografia.");
+      return;
+    }
+    if (senha.length < 6) {
+      setErro("A senha de criptografia deve conter no mínimo 6 caracteres.");
+      return;
+    }
+    if (senha !== confirmacao) {
+      setErro("A confirmação da senha não coincide com a senha digitada.");
+      return;
+    }
+
+    setCarregando(true);
+    try {
+      await exportarBackup(senha);
+      setSucesso("Backup gerado e baixado com sucesso! Arquivo .bak salvo no seu computador.");
+    } catch (err: unknown) {
+      setErro(msgErro(err, "Falha ao gerar o arquivo de backup. Verifique a conexão e tente novamente."));
+    } finally {
+      setCarregando(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" onClick={fechar}>
+      <div
+        className="rise max-h-[90vh] w-full max-w-lg overflow-auto rounded-2xl bg-white p-6 shadow-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center justify-between gap-2 border-b border-sus-900/10 pb-3">
+          <div className="flex items-center gap-2">
+            <div className="rounded-lg bg-teal/10 p-2 text-teal">
+              <Database className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="font-display text-base font-bold text-sus-950">Gerar Backup Criptografado</p>
+              <p className="text-xs text-ink/55">Criptografia AES-256 com derivação de chave segura</p>
+            </div>
+          </div>
+          <button
+            onClick={fechar}
+            disabled={carregando}
+            className="rounded-lg p-2 text-ink/50 hover:bg-sand disabled:opacity-50"
+            aria-label="Fechar"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <form onSubmit={handleExportar} className="space-y-4">
+          <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3.5 text-xs text-amber-900">
+            <div className="flex items-start gap-2.5">
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+              <div>
+                <p className="font-bold">Guarde esta senha com segurança!</p>
+                <p className="mt-1 leading-relaxed">
+                  Sem ela, será <strong>impossível restaurar</strong> os dados deste arquivo. O sistema não guarda sua chave de criptografia.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <Label>Senha de Criptografia *</Label>
+            <div className="relative">
+              <Input
+                type={mostrarSenha ? "text" : "password"}
+                value={senha}
+                onChange={(e) => setSenha(e.target.value)}
+                placeholder="Mínimo de 6 caracteres"
+                disabled={carregando}
+                className="pr-10"
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                onClick={() => setMostrarSenha(!mostrarSenha)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/50 hover:text-ink"
+                tabIndex={-1}
+              >
+                {mostrarSenha ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <Label>Confirmação da Senha *</Label>
+            <Input
+              type={mostrarSenha ? "text" : "password"}
+              value={confirmacao}
+              onChange={(e) => setConfirmacao(e.target.value)}
+              placeholder="Digite a mesma senha para confirmar"
+              disabled={carregando}
+              autoComplete="new-password"
+            />
+          </div>
+
+          {erro && (
+            <div className="rounded-xl bg-red-50 p-3 text-sm font-medium text-red-700">
+              {erro}
+            </div>
+          )}
+
+          {sucesso && (
+            <div className="flex items-center gap-2 rounded-xl bg-teal/10 p-3 text-sm font-medium text-teal">
+              <CheckCircle2 className="h-5 w-5 shrink-0" />
+              <span>{sucesso}</span>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={fechar}
+              disabled={carregando}
+              className="rounded-xl border border-sus-900/15 px-4 py-2.5 text-sm font-bold text-sus-900 hover:bg-sand disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+            <Button
+              type="submit"
+              disabled={carregando || !senha || !confirmacao}
+              className="!w-auto"
+            >
+              {carregando ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Gerando e baixando…
+                </>
+              ) : (
+                <>
+                  <Download className="h-4 w-4" />
+                  Exportar e Baixar Arquivo .bak
+                </>
+              )}
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Modal: Restaurar Backup do Sistema ----------
+function ModalRestaurarBackup({ aberto, onFechar }: { aberto: boolean; onFechar: () => void }) {
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [senha, setSenha] = useState("");
+  const [mostrarSenha, setMostrarSenha] = useState(false);
+  const [ciente, setCiente] = useState(false);
+  const [carregando, setCarregando] = useState(false);
+  const [erro, setErro] = useState("");
+  const [sucesso, setSucesso] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  if (!aberto) return null;
+
+  function resetar() {
+    setArquivo(null);
+    setSenha("");
+    setMostrarSenha(false);
+    setCiente(false);
+    setErro("");
+    setSucesso(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function fechar() {
+    if (carregando) return;
+    resetar();
+    onFechar();
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) {
+      setArquivo(file);
+      setErro("");
+    }
+  }
+
+  async function handleRestaurar(e: React.FormEvent) {
+    e.preventDefault();
+    setErro("");
+
+    if (!arquivo) {
+      setErro("Selecione o arquivo de backup (.bak) para restaurar.");
+      return;
+    }
+    if (!senha) {
+      setErro("Informe a senha de descriptografia do backup.");
+      return;
+    }
+    if (!ciente) {
+      setErro("Você precisa marcar a caixa de ciência antes de prosseguir.");
+      return;
+    }
+
+    setCarregando(true);
+    try {
+      await restaurarBackup(arquivo, senha);
+      setSucesso(true);
+    } catch (err: unknown) {
+      setErro(msgErro(err, "Falha ao restaurar o backup. Verifique se o arquivo e a senha estão corretos."));
+    } finally {
+      setCarregando(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" onClick={sucesso ? undefined : fechar}>
+      <div
+        className="rise max-h-[90vh] w-full max-w-lg overflow-auto rounded-2xl bg-white p-6 shadow-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center justify-between gap-2 border-b border-sus-900/10 pb-3">
+          <div className="flex items-center gap-2">
+            <div className="rounded-lg bg-red-100 p-2 text-red-700">
+              <ShieldAlert className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="font-display text-base font-bold text-sus-950">Restaurar Backup do Sistema</p>
+              <p className="text-xs text-ink/55">Substituição da base de dados atual</p>
+            </div>
+          </div>
+          {!sucesso && (
+            <button
+              onClick={fechar}
+              disabled={carregando}
+              className="rounded-lg p-2 text-ink/50 hover:bg-sand disabled:opacity-50"
+              aria-label="Fechar"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+
+        {sucesso ? (
+          <div className="space-y-4 py-2">
+            <div className="rounded-2xl border border-teal/20 bg-teal/10 p-5 text-center">
+              <CheckCircle2 className="mx-auto mb-2 h-12 w-12 text-teal" />
+              <h3 className="font-display text-lg font-bold text-sus-950">Restauração Concluída com Sucesso!</h3>
+              <p className="mt-2 text-sm text-ink/75">
+                Os dados foram restaurados a partir do arquivo de backup. Para garantir a sincronização de todas as telas e dados, recarregue o sistema agora.
+              </p>
+            </div>
+            <Button
+              onClick={() => window.location.reload()}
+              className="w-full !bg-teal !text-sus-950 hover:opacity-90"
+            >
+              <RefreshCw className="h-4 w-4" /> Recarregar Sistema Agora
+            </Button>
+          </div>
+        ) : (
+          <form onSubmit={handleRestaurar} className="space-y-4">
+            <div className="rounded-xl border border-red-200 bg-red-50 p-3.5 text-xs text-red-900">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+                <div>
+                  <p className="font-bold">ATENÇÃO: A restauração substituirá os dados atuais pelos dados contidos no arquivo de backup. Esta operação é irreversível.</p>
+                  <p className="mt-1 leading-relaxed">
+                    Certifique-se de que selecionou o arquivo correto e de que possui uma cópia de segurança recente antes de prosseguir.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <Label>Arquivo de Backup (.bak) *</Label>
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed p-4 text-center transition ${
+                  arquivo
+                    ? "border-teal bg-teal/5 text-sus-950"
+                    : "border-sus-900/20 bg-sand/30 hover:border-sus-900/40 hover:bg-sand/60"
+                }`}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".bak,application/octet-stream"
+                  onChange={handleFileChange}
+                  className="hidden"
+                  disabled={carregando}
+                />
+                {arquivo ? (
+                  <div className="flex items-center gap-2 text-sm font-semibold text-sus-900">
+                    <FileArchive className="h-6 w-6 text-teal" />
+                    <span className="max-w-[280px] truncate">{arquivo.name}</span>
+                    <span className="text-xs text-ink/50">
+                      ({(arquivo.size / (1024 * 1024)).toFixed(2)} MB)
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    <UploadCloud className="mb-1 h-8 w-8 text-sus-900/50" />
+                    <p className="text-sm font-semibold text-sus-900">Clique para selecionar o arquivo .bak</p>
+                    <p className="text-xs text-ink/50">Arquivo gerado pela ferramenta de backup</p>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <Label>Senha de Descriptografia *</Label>
+              <div className="relative">
+                <Input
+                  type={mostrarSenha ? "text" : "password"}
+                  value={senha}
+                  onChange={(e) => setSenha(e.target.value)}
+                  placeholder="Senha utilizada na geração do backup"
+                  disabled={carregando}
+                  className="pr-10"
+                  autoComplete="current-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setMostrarSenha(!mostrarSenha)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/50 hover:text-ink"
+                  tabIndex={-1}
+                >
+                  {mostrarSenha ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-sus-900/10 bg-sand/40 p-3">
+              <label className="flex cursor-pointer items-start gap-2.5 text-xs leading-relaxed text-sus-950">
+                <input
+                  type="checkbox"
+                  checked={ciente}
+                  onChange={(e) => setCiente(e.target.checked)}
+                  disabled={carregando}
+                  className="mt-0.5 h-4 w-4 rounded border-sus-900/30 text-sus-900 focus:ring-sus-700"
+                />
+                <span className="font-semibold">
+                  Estou ciente de que os dados atuais serão substituídos pelo conteúdo do backup.
+                </span>
+              </label>
+            </div>
+
+            {erro && (
+              <div className="rounded-xl bg-red-50 p-3 text-sm font-medium text-red-700">
+                {erro}
+              </div>
+            )}
+
+            {carregando && (
+              <div className="rounded-xl border border-sus-900/10 bg-sand p-3.5 text-center text-xs text-ink/75">
+                <Loader2 className="mx-auto mb-1.5 h-5 w-5 animate-spin text-sus-900" />
+                <p className="font-bold text-sus-950">Enviando e restaurando base de dados…</p>
+                <p className="mt-0.5">Por favor aguarde, o processo pode levar alguns instantes.</p>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={fechar}
+                disabled={carregando}
+                className="rounded-xl border border-sus-900/15 px-4 py-2.5 text-sm font-bold text-sus-900 hover:bg-sand disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <Button
+                type="submit"
+                disabled={carregando || !arquivo || !senha.trim() || !ciente}
+                className="!w-auto !bg-red-700 !text-white hover:!bg-red-800 disabled:!bg-sus-900 disabled:opacity-50"
+              >
+                {carregando ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Restaurando…
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-4 w-4" />
+                    Iniciar Restauração
+                  </>
+                )}
+              </Button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+

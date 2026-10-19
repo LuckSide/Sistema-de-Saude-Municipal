@@ -176,7 +176,7 @@ export default function CatalogoExames() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <h2 className="font-display text-lg font-bold text-sus-950">Catálogo de exames</h2>
+        <h2 className="font-display text-lg font-bold text-sus-950">Catálogo de Procedimentos</h2>
         <span className="rounded-full bg-teal/10 px-2.5 py-0.5 text-xs font-semibold text-teal">
           {total} registro(s)
         </span>

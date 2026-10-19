@@ -17,12 +17,19 @@ from app.services.permissoes import TODAS_TELAS, tem_tela
 
 router = APIRouter()
 
+from app.services.dashboard_default import criar_dashboard_padrao_se_ausente
+
 # Widgets fixos do catálogo (espelha frontend/src/widgets.tsx)
 WIDGETS: dict[str, list[str]] = {
-    "resumo-tfd": ["tfd_resumo"],
-    "fila-especialidade": ["tfd_exames"],
-    "agenda-semana": ["lab_agenda", "lab_vagas"],
+    "resumo-tfd": ["tfd_resumo", "tfd"],
+    "fila-especialidade": ["tfd_exames", "tfd_medico", "tfd"],
+    "fila-prioridades": ["tfd_exames", "tfd_medico", "tfd"],
+    "agenda-semana": ["lab_agenda", "lab_vagas", "lab"],
     "painel-aps": ["aps"],
+    "frota-status": ["tfd_frota", "tfd_frota_gestao", "tfd"],
+    "viagens-proximas": ["tfd_viagens", "tfd_frota_gestao", "tfd"],
+    "tempo-fila-indicadores": ["dash_indicadores", "dashboard", "tfd", "tfd_exames"],
+    "faturamento-resumo": ["tfd_faturamento", "tfd"],
 }
 
 
@@ -60,8 +67,8 @@ def ler_layout(row: UserDashboardPrefs | None) -> list[dict]:
 
 @router.get("/user/dashboard", response_model=DashboardOut)
 def obter_dashboard(db: Session = Depends(get_db), user: User = Depends(get_user_ok)):
-    row = db.get(UserDashboardPrefs, user.id)
-    return DashboardOut(items=ler_layout(row))
+    items = criar_dashboard_padrao_se_ausente(db, user)
+    return DashboardOut(items=items)
 
 
 @router.put("/user/dashboard", response_model=DashboardOut)

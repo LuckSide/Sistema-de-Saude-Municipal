@@ -71,7 +71,7 @@ export default function AcompanharExame() {
               )}
             </div>
             <p className="text-center text-[11px] text-ink/45">
-              Dúvidas? Procure a UBS ou a Secretaria de Saúde. Leve este comprovante no dia do exame.
+              Dúvidas? Procure a UBS ou a Secretaria de Saúde. Leve este comprovante no dia do procedimento.
             </p>
           </div>
         )}

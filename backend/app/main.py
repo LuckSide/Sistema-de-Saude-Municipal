@@ -1,18 +1,18 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 
 from app.api.v1.auth import router as auth_router
 from app.api.v1.auditoria import router as auditoria_router
+from app.api.v1.backup import router as backup_router
 from app.api.v1.cadastros_saude import router as cadastros_saude_router
 from app.api.v1.dashboard import router as dashboard_router
 from app.api.v1.indicadores import router as indicadores_router
 from app.api.v1.integracoes import router as integracoes_router
 from app.api.v1.lab import router as lab_router
 from app.api.v1.lab_fase6 import router as lab_fase6_router
-from app.api.v1.indicadores import router as indicadores_router
 from app.api.v1.pec import router as pec_router
 from app.api.v1.settings import router as settings_router
 from app.api.v1.tfd import router as tfd_router
@@ -71,6 +71,17 @@ app.include_router(integracoes_router, prefix="/api", tags=["integracoes"])
 app.include_router(pec_router, prefix="/api", tags=["pec"])
 app.include_router(settings_router, prefix="/api", tags=["settings"])
 app.include_router(update_router, prefix="/api/update", tags=["update"])
+app.include_router(backup_router, prefix="/api/backup", tags=["backup"])
+
+
+# Compatibilidade de rotas legadas/diretas p/ fila de procedimentos
+@app.get("/api/fila", include_in_schema=False)
+@app.get("/api/procedimentos", include_in_schema=False)
+@app.get("/api/procedimentos/fila", include_in_schema=False)
+def alias_fila(request: Request):
+    from starlette.responses import RedirectResponse
+    url = f"/api/tfd/exames?{request.query_params}" if request.query_params else "/api/tfd/exames"
+    return RedirectResponse(url=url, status_code=307)
 
 
 @app.get("/health")

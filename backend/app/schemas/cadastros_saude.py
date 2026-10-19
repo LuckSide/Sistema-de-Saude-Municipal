@@ -24,17 +24,21 @@ class MedicoIn(BaseModel):
     @field_validator("cpf")
     @classmethod
     def _cpf_valido(cls, v: str) -> str:
-        if not (v or "").strip():
-            raise ValueError("CPF é obrigatório.")
-        ok, msg = valida_cpf(v)
+        v_clean = (v or "").strip()
+        if not v_clean:
+            return ""
+        ok, msg = valida_cpf(v_clean)
         if not ok:
             raise ValueError(msg)
-        return v
+        return v_clean
 
     @field_validator("crm")
     @classmethod
     def _crm_valido(cls, v: str) -> str:
-        ok, msg, normalizado = valida_crm(v)
+        v_clean = (v or "").strip()
+        if not v_clean:
+            return ""
+        ok, msg, normalizado = valida_crm(v_clean)
         if not ok:
             raise ValueError(msg)
         return normalizado
@@ -42,22 +46,39 @@ class MedicoIn(BaseModel):
     @field_validator("telefone")
     @classmethod
     def _tel_valido(cls, v: str) -> str:
-        ok, msg = valida_telefone(v)
+        v_clean = (v or "").strip()
+        if not v_clean:
+            return ""
+        ok, msg = valida_telefone(v_clean)
         if not ok:
             raise ValueError(msg)
-        return v
+        return v_clean
 
     @field_validator("email")
     @classmethod
     def _email_valido(cls, v: str) -> str:
-        ok, msg = valida_email(v)
+        v_clean = (v or "").strip()
+        if not v_clean:
+            return ""
+        ok, msg = valida_email(v_clean)
         if not ok:
             raise ValueError(msg)
-        return v
+        return v_clean
 
 
-class MedicoOut(MedicoIn):
+class MedicoOut(BaseModel):
     id: int
+    nome: str = ""
+    cpf: str = ""
+    crm: str = ""
+    cbo_codigo: str = ""
+    cbo_descricao: str = ""
+    especialidades: str = ""
+    telefone: str = ""
+    email: str = ""
+    ativo: bool = True
+    usuario_criado: str | None = None
+    senha_temporaria: str | None = None
 
 
 class UnidadeIn(BaseModel):
@@ -74,19 +95,34 @@ class UnidadeIn(BaseModel):
     @field_validator("cnes")
     @classmethod
     def _cnes_valido(cls, v: str) -> str:
-        ok, msg = valida_cnes(v)
+        v_clean = (v or "").strip()
+        if not v_clean:
+            return ""
+        ok, msg = valida_cnes(v_clean)
         if not ok:
             raise ValueError(msg)
-        return so_digitos(v)
+        return so_digitos(v_clean)
 
     @field_validator("telefone")
     @classmethod
     def _tel_valido(cls, v: str) -> str:
-        ok, msg = valida_telefone(v)
+        v_clean = (v or "").strip()
+        if not v_clean:
+            return ""
+        ok, msg = valida_telefone(v_clean)
         if not ok:
             raise ValueError(msg)
-        return v
+        return v_clean
 
 
-class UnidadeOut(UnidadeIn):
+class UnidadeOut(BaseModel):
     id: int
+    nome: str = ""
+    cnes: str = ""
+    endereco: str = ""
+    numero: str = ""
+    bairro: str = ""
+    municipio: str = ""
+    cep: str = ""
+    telefone: str = ""
+    ativo: bool = True

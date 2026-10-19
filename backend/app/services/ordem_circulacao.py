@@ -52,6 +52,9 @@ def _celula(linha, idx, texto, negrito=False, centralizar=False, tamanho=9):
     cel = linha.cells[idx]
     cel.text = ""
     p = cel.paragraphs[0]
+    p.paragraph_format.space_before = Pt(1)
+    p.paragraph_format.space_after = Pt(1)
+    p.paragraph_format.line_spacing = 1.0
     if centralizar:
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = p.add_run(texto or "")
@@ -61,18 +64,28 @@ def _celula(linha, idx, texto, negrito=False, centralizar=False, tamanho=9):
 
 
 def _tabela(doc, cabecalhos, linhas, larguras=None, altura_linhas=None, tamanho=9, centralizar_tabela=True):
+    from docx.oxml import OxmlElement
     tab = doc.add_table(rows=1 + len(linhas), cols=len(cabecalhos))
     tab.style = "Table Grid"
     _borda_fina(tab)
     if centralizar_tabela:
-        tab.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        try:
+            tab.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        except Exception:
+            pass
+        tblPr = tab._tbl.tblPr
+        jc = tblPr.find(qn("w:jc"))
+        if jc is None:
+            jc = OxmlElement("w:jc")
+            tblPr.append(jc)
+        jc.set(qn("w:val"), "center")
     if larguras:
         _larguras(tab, larguras)
     for i, h in enumerate(cabecalhos):
         _celula(tab.rows[0], i, h, negrito=True, centralizar=True, tamanho=tamanho)
     for r, lin in enumerate(linhas, start=1):
         for i, v in enumerate(lin):
-            _celula(tab.rows[r], i, v, centralizar=(i == 0), tamanho=tamanho)
+            _celula(tab.rows[r], i, v, centralizar=(i in (0, 2, 5)), tamanho=tamanho)
         if altura_linhas:
             _altura_minima(tab.rows[r], altura_linhas)
     return tab
@@ -188,9 +201,9 @@ def gerar_ordem(
     # 15 linhas fixas p/ preenchimento manual limpo (completa com vazias).
     while len(linhas) < 15:
         linhas.append([f"{len(linhas) + 1:02d}", "", "", "", "", "", ""])
-    _tabela(doc, ["N", "Passageiro", "Data nasc.", "Tratamento / Observação", "Unidade",
+    _tabela(doc, ["Nº", "Passageiro", "Data nasc.", "Tratamento / Observação", "Unidade",
                   "Horário consulta", "Cidade"], linhas,
-            larguras=[0.9, 3.6, 2.0, 2.8, 2.8, 1.8, 2.6], altura_linhas=0.6,
+            larguras=[0.9, 4.4, 2.0, 3.5, 2.8, 1.8, 2.6], altura_linhas=0.6,
             tamanho=8, centralizar_tabela=True)
 
     buf = BytesIO()

@@ -213,7 +213,7 @@ export default function Agendamentos() {
   async function acaoStatus(status: "faltou" | "realizado" | "cancelado") {
     if (!sel) return;
     if (status === "realizado" && !resultado.trim()) {
-      setErroModal("Informe o resultado do exame realizado.");
+      setErroModal("Informe o resultado do procedimento realizado.");
       return;
     }
     const alvo = sel;
@@ -291,7 +291,7 @@ export default function Agendamentos() {
         />
       </div>
       <p className="mb-4 mt-1 text-sm text-ink/55">
-        Calendário de exames agendados · clique num agendamento p/ recepcionar, registrar resultado, faltou ou cancelar.
+        Calendário de procedimentos agendados · clique num agendamento p/ recepcionar, registrar resultado, faltou ou cancelar.
       </p>
       {erro && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
       {ok && <p className="mb-3 rounded-xl bg-teal/10 px-3 py-2 text-sm text-teal">{ok}</p>}
@@ -319,7 +319,7 @@ export default function Agendamentos() {
         </div>
         <div className="mt-3 grid gap-2 md:grid-cols-4">
           <div>
-            <Label>Tipo de exame</Label>
+            <Label>Tipo de procedimento</Label>
             <select value={fTipo} onChange={(e) => setFTipo(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
               <option value="">Todos</option>
               {tiposUnicos.map((t) => <option key={t} value={t}>{t}</option>)}
@@ -445,13 +445,13 @@ export default function Agendamentos() {
             </div>
             {mostraResultado ? (
               <div className="mt-3">
-                <Label>Resultado do exame *</Label>
+                <Label>Resultado do procedimento *</Label>
                 <textarea
                   value={resultado}
                   onChange={(e) => setResultado(e.target.value)}
                   rows={4}
                   maxLength={2000}
-                  placeholder="Registre o resultado/laudo do exame realizado…"
+                  placeholder="Registre o resultado/laudo do procedimento realizado…"
                   className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm outline-none focus:border-teal"
                 />
                 <p className="mt-1 text-xs text-ink/45">{resultado.trim().length} caracteres</p>

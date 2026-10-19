@@ -93,8 +93,17 @@ export default function Medicos() {
     setSalvando(true);
     try {
       const payload = { ...form, crm: normalizaCrm(form.crm) };
-      if (editId) { await updateMedico(editId, payload); setOk("Médico atualizado."); }
-      else { await createMedico(payload); setOk("Médico cadastrado."); }
+      if (editId) {
+        await updateMedico(editId, payload);
+        setOk("Médico atualizado com sucesso.");
+      } else {
+        const criado = await createMedico(payload);
+        if (criado?.usuario_criado && criado?.senha_temporaria) {
+          setOk(`Médico cadastrado com sucesso! Usuário criado: "${criado.usuario_criado}" | Senha provisória: "${criado.senha_temporaria}".`);
+        } else {
+          setOk("Médico cadastrado com sucesso.");
+        }
+      }
       fechar(); await carregar();
     } catch (err: unknown) {
       const deCampo = erros422(err, ROTULOS);

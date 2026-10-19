@@ -24,7 +24,7 @@ export default function TfdResumo() {
   const cards = [
     { label: "Viagens no mês", valor: res?.viagens_mes ?? "—", icon: Ambulance, to: "/tfd/viagens" },
     { label: "Passageiros", valor: res?.passageiros_mes ?? "—", icon: Users, to: "/tfd/viagens" },
-    { label: "Exames aguardando", valor: res?.exames_aguardando ?? "—", icon: ClipboardList, to: "/tfd/exames" },
+    { label: "Procedimentos aguardando", valor: res?.exames_aguardando ?? "—", icon: ClipboardList, to: "/fila-exames" },
     { label: "Valor competência", valor: res ? brl(res.valor_competencia) : "—", icon: ReceiptText, to: "/tfd/faturamento" },
   ];
 

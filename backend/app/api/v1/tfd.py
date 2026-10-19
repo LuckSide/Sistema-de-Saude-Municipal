@@ -68,6 +68,32 @@ from app.services.permissoes import need_any_perm, need_perm, tem_tela
 JUSTIFICATIVA_MIN = 12
 
 RETRO_MSG = "Seu perfil não possui permissão para realizar lançamentos com datas retroativas."
+VIAGEM_PASSADA_MSG = "Seu perfil não possui permissão para alterar viagens de datas passadas."
+
+
+def exige_permissao_viagem_passada(user: User, valor) -> None:
+    """Se a data da viagem for anterior a hoje e o usuário não for superusuário,
+    exigir que possua tem_tela(ator, 'tfd_viagens_passadas') e user.permite_retroativo != False.
+    """
+    from datetime import date as _date
+
+    if valor is None:
+        return
+    try:
+        if isinstance(valor, str):
+            from datetime import date
+            valor = date.fromisoformat(valor[:10])
+        passada = valor < _date.today()
+    except Exception:
+        return
+    if not passada:
+        return
+    if bool(getattr(user, "is_superuser", False)):
+        return
+    if getattr(user, "permite_retroativo", True) is False:
+        raise HTTPException(403, RETRO_MSG)
+    if not tem_tela(user, "tfd_viagens_passadas"):
+        raise HTTPException(403, VIAGEM_PASSADA_MSG)
 
 
 def exige_sem_retroativo(user: User, valor, mudou: bool = True) -> None:
@@ -453,7 +479,10 @@ def exportar_demanda(
     from app.services.export_xlsx import resposta_xlsx
 
     perfil = perfil_paciente(pid, db, ator)
-    p = perfil.paciente
+    demandas_ordenadas = sorted(
+        perfil.demanda,
+        key=lambda d: ((d.exame or "").strip().lower(), str(d.data_pedido or d.data_inclusao or ""))
+    )
     linhas = [{
         "inclusao": d.data_inclusao,
         "especialidade": d.nome_especialidade or d.especialidade or d.tipo_fila,
@@ -461,7 +490,7 @@ def exportar_demanda(
         "risco": d.classificacao_risco,
         "posicao": f"{d.posicao_especialidade}º de {d.total_fila_especialidade}" if d.posicao_especialidade else "",
         "status": d.status_rotulo,
-    } for d in perfil.demanda]
+    } for d in demandas_ordenadas]
     return resposta_xlsx(
         f"Demanda reprimida — {p.nome}",
         ator.nome or ator.username,
@@ -725,6 +754,7 @@ def exportar_viagens(
 def criar_viagem(
     data: ViagemIn, db: Session = Depends(get_db), ator: User = Depends(need_perm("tfd_viagens", "criar"))
 ):
+    exige_permissao_viagem_passada(ator, data.data_viagem)
     exige_sem_retroativo(ator, data.data_viagem, True)
     mid, mnome = _resolver_motorista(db, data.motorista_id, data.motorista)
     _exigir_sem_conflito(db, data.data_viagem, data.hora_saida, data.hora_retorno,
@@ -748,6 +778,8 @@ def atualizar_viagem(
     obj = db.get(Viagem, vid)
     if not obj:
         raise HTTPException(404, "Viagem não encontrada")
+    exige_permissao_viagem_passada(ator, obj.data_viagem)
+    exige_permissao_viagem_passada(ator, data.data_viagem)
     exige_sem_retroativo(ator, data.data_viagem, data.data_viagem != obj.data_viagem)
     mid, mnome = _resolver_motorista(db, data.motorista_id, data.motorista)
     _exigir_sem_conflito(db, data.data_viagem, data.hora_saida, data.hora_retorno,
@@ -775,13 +807,14 @@ def trocar_veiculo_viagem(
     vid: int,
     data: dict,
     db: Session = Depends(get_db),
-    _=Depends(need_any_perm("tfd_viagens", "tfd_frota_gestao", acoes=("editar",))),
+    ator: User = Depends(need_any_perm("tfd_viagens", "tfd_frota_gestao", acoes=("editar",))),
 ):
     """Troca rápida de veículo na visão semanal (seletor direto no card)."""
 
     obj = db.get(Viagem, vid)
     if not obj:
         raise HTTPException(404, "Viagem não encontrada")
+    exige_permissao_viagem_passada(ator, obj.data_viagem)
     veiculo_id = (data or {}).get("veiculo_id")
     if veiculo_id is not None and veiculo_id != "":
         try:
@@ -826,10 +859,11 @@ def trocar_veiculo_viagem(
 
 
 @router.delete("/viagens/{vid}", status_code=204)
-def excluir_viagem(vid: int, db: Session = Depends(get_db), _=Depends(need_perm("tfd_viagens", "excluir"))):
+def excluir_viagem(vid: int, db: Session = Depends(get_db), ator: User = Depends(need_perm("tfd_viagens", "excluir"))):
     obj = db.get(Viagem, vid)
     if not obj:
         raise HTTPException(404, "Viagem não encontrada")
+    exige_permissao_viagem_passada(ator, obj.data_viagem)
     for vp in db.exec(select(ViagemPaciente).where(ViagemPaciente.viagem_id == vid)).all():
         if vp.viagem_fila_id:
             fila = db.get(ViagemFila, vp.viagem_fila_id)
@@ -864,9 +898,14 @@ def listar_passageiros(vid: int, db: Session = Depends(get_db), _=Depends(need_p
     out: list[ViagemPacienteOut] = []
     for vp in db.exec(select(ViagemPaciente).where(ViagemPaciente.viagem_id == vid)).all():
         pac = db.get(Paciente, vp.paciente_id)
+        prio = getattr(vp, "prioridade", "") or ""
+        if not prio and vp.viagem_fila_id:
+            vf = db.get(ViagemFila, vp.viagem_fila_id)
+            if vf and vf.prioridade:
+                prio = vf.prioridade
         out.append(
             ViagemPacienteOut(
-                **vp.model_dump(), paciente_nome=pac.nome if pac else "?"
+                **vp.model_dump(), paciente_nome=pac.nome if pac else "?", prioridade=prio
             )
         )
     return out
@@ -877,10 +916,12 @@ def add_passageiro(
     vid: int,
     data: ViagemPacienteIn,
     db: Session = Depends(get_db),
-    _=Depends(need_perm("tfd_viagens", "criar")),
+    ator: User = Depends(need_perm("tfd_viagens", "criar")),
 ):
-    if not db.get(Viagem, vid):
+    viagem = db.get(Viagem, vid)
+    if not viagem:
         raise HTTPException(404, "Viagem não encontrada")
+    exige_permissao_viagem_passada(ator, viagem.data_viagem)
     if not db.get(Paciente, data.paciente_id):
         raise HTTPException(404, "Paciente não encontrado")
     dup = db.exec(
@@ -937,13 +978,18 @@ def add_passageiro(
     db.commit()
     db.refresh(obj)
     pac = db.get(Paciente, obj.paciente_id)
-    return ViagemPacienteOut(**obj.model_dump(), paciente_nome=pac.nome if pac else "")
+    prio = (fila.prioridade if fila and fila.prioridade else "")
+    return ViagemPacienteOut(**obj.model_dump(), paciente_nome=pac.nome if pac else "", prioridade=prio)
 
 
 @router.delete("/viagens/{vid}/passageiros/{vpid}", status_code=204)
 def remover_passageiro(
-    vid: int, vpid: int, db: Session = Depends(get_db), _=Depends(need_perm("tfd_viagens", "excluir"))
+    vid: int, vpid: int, db: Session = Depends(get_db), ator: User = Depends(need_perm("tfd_viagens", "excluir"))
 ):
+    viagem = db.get(Viagem, vid)
+    if not viagem:
+        raise HTTPException(404, "Viagem não encontrada")
+    exige_permissao_viagem_passada(ator, viagem.data_viagem)
     obj = db.get(ViagemPaciente, vpid)
     if not obj or obj.viagem_id != vid:
         raise HTTPException(404, "Passageiro não encontrado")
@@ -989,41 +1035,136 @@ def _grupo_procedimento(e: ExameFila) -> str:
 # Tipos de atendimento que são consulta especializada (posição por especialidade).
 TIPOS_CONSULTA_ESPECIALIZADA = frozenset({
     "CONSULTAS ESPECIALIZADAS",
+    "CONSULTA ESPECIALIZADA",
     "RETORNO CONSULTA ESPECIALIZADA",
 })
 
+MAPA_ESPECIALIDADES_CANONICAS = [
+    ("GASTROENTEROLOG", "225125", "Médico Gastroenterologista"),
+    ("CARDIOLOG", "225120", "Médico Cardiologista"),
+    ("DERMATOLOG", "225135", "Médico Dermatologista"),
+    ("ORTOPED", "225270", "Médico Ortopedista e Traumatologista"),
+    ("TRAUMATOLOG", "225270", "Médico Ortopedista e Traumatologista"),
+    ("OFTALMOLOG", "225265", "Médico Oftalmologista"),
+    ("NEUROLOG", "225112", "Médico Neurologista"),
+    ("UROLOG", "225285", "Médico Urologista"),
+    ("PEDIATR", "225124", "Médico Pediatra"),
+    ("GINECOLOG", "225250", "Médico Ginecologista e Obstetra"),
+    ("OBSTETR", "225250", "Médico Ginecologista e Obstetra"),
+    ("ENDOCRINOLOG", "225155", "Médico Endocrinologista e Metabologista"),
+    ("PSIQUIATR", "225133", "Médico Psiquiatra"),
+    ("CIRURGIA GERAL", "225225", "Médico Cirurgião Geral"),
+    ("CIRURGIAO GERAL", "225225", "Médico Cirurgião Geral"),
+    ("OTORRINOLARINGOLOG", "225275", "Médico Otorrinolaringologista"),
+    ("OTORRINO", "225275", "Médico Otorrinolaringologista"),
+    ("REUMATOLOG", "225145", "Médico Reumatologista"),
+    ("PNEUMOLOG", "225180", "Médico Pneumologista"),
+    ("INFECTOLOG", "225103", "Médico Infectologista"),
+    ("NEFROLOG", "225109", "Médico Nefrologista"),
+    ("HEMATOLOG", "225185", "Médico Hematologista"),
+    ("VASCULAR", "225280", "Médico Cirurgião Vascular"),
+    ("ANGIOLOG", "225280", "Médico Cirurgião Vascular"),
+    ("MASTOLOG", "225255", "Médico Mastologista"),
+    ("ONCOLOG", "225122", "Médico Cancerologista / Oncologista"),
+    ("CANCEROLOG", "225122", "Médico Cancerologista / Oncologista"),
+    ("GERIATRA", "225180", "Médico Geriatra"),
+    ("GERIATRI", "225180", "Médico Geriatra"),
+    ("ALERG", "225110", "Médico Alergista e Imunologista"),
+]
+
+CBO_PARA_NOME_CANONICO = {cbo: nome for _, cbo, nome in MAPA_ESPECIALIDADES_CANONICAS}
+
+TERMOS_FILA_GENERICOS = {
+    "CONSULTAS ESPECIALIZADAS",
+    "CONSULTA ESPECIALIZADA",
+    "RETORNO CONSULTA ESPECIALIZADA",
+    "CONSULTAS",
+    "CONSULTA",
+    "EXAMES",
+    "EXAME",
+    "PROCEDIMENTOS",
+    "PROCEDIMENTO",
+    "GERAL",
+    "",
+}
+
+
+def _remover_acentos(texto: str) -> str:
+    if not texto:
+        return ""
+    import unicodedata
+
+    nfkd = unicodedata.normalize("NFKD", texto)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _identificar_grupo_especialidade(e: ExameFila) -> tuple[str, str]:
+    """Retorna (chave_unica, rotulo_amigavel) unificando estritamente qualquer variação
+    da mesma especialidade médica (CBO, nome de especialidade ou menção no procedimento)
+    para garantir que NUNCA existam duas pessoas em 1º ou 2º lugar e que a ordenação seja
+    estritamente sequencial (1, 2, 3...) dentro da especialidade.
+    """
+    cbo = (e.codigo_especialidade or "").strip()
+    if cbo and cbo in CBO_PARA_NOME_CANONICO:
+        return f"CBO:{cbo}", CBO_PARA_NOME_CANONICO[cbo]
+
+    haystack = _remover_acentos(
+        f"{e.nome_especialidade or ''} {e.especialidade or ''} {e.exame or ''}"
+    ).upper()
+
+    for padrao, cbo_padrao, rotulo_padrao in MAPA_ESPECIALIDADES_CANONICAS:
+        if padrao in haystack:
+            return f"CBO:{cbo_padrao}", rotulo_padrao
+
+    if cbo:
+        rot = (e.nome_especialidade or "").strip() or f"Especialidade CBO {cbo}"
+        return f"CBO:{cbo}", rot
+
+    nome_esp = (e.nome_especialidade or "").strip()
+    esp = (e.especialidade or "").strip()
+    tipo = (e.tipo_fila or "").strip()
+    ex = (e.exame or "").strip()
+
+    if nome_esp and _remover_acentos(nome_esp).upper() not in TERMOS_FILA_GENERICOS:
+        return f"ESP:{_remover_acentos(nome_esp).upper()}", nome_esp
+    if esp and _remover_acentos(esp).upper() not in TERMOS_FILA_GENERICOS:
+        return f"ESP:{_remover_acentos(esp).upper()}", esp
+
+    import re as _re
+    m = _re.match(r"^[0-9.\-]{4,}\s*-\s*(.+)$", ex)
+    nome_proc = (m.group(1) if m else ex).strip() or ex or tipo or "GERAL"
+    cod_proc = (e.codigo_procedimento or "").strip()
+    chave = f"PROC:{cod_proc}" if cod_proc else f"PROC:{_remover_acentos(nome_proc).upper()}"
+    return chave, nome_proc
+
 
 def _eh_consulta_especializada(e: ExameFila) -> bool:
-    return (e.tipo_fila or "").strip().upper() in TIPOS_CONSULTA_ESPECIALIZADA
+    tf = _remover_acentos(e.tipo_fila or "").upper()
+    esp = _remover_acentos(e.especialidade or "").upper()
+    cbo = (e.codigo_especialidade or "").strip()
+    if tf in TIPOS_CONSULTA_ESPECIALIZADA or "CONSULTA" in tf or "CONSULTA" in esp:
+        return True
+    if bool(cbo) or bool(e.nome_especialidade):
+        return True
+    haystack = _remover_acentos(f"{e.nome_especialidade or ''} {e.especialidade or ''} {e.exame or ''}").upper()
+    return any(p in haystack for p, _, _ in MAPA_ESPECIALIDADES_CANONICAS)
 
 
 def _grupo_fila(e: ExameFila) -> tuple[str, str]:
     """Fila específica do encaminhamento: (chave, rótulo).
 
-    - Exames: agrupa pelo Tipo de Fila do procedimento.
-    - Consultas especializadas: agrupa pela Especialidade médica.
+    - Consultas especializadas: agrupa pela Especialidade médica canônica.
+    - Demais procedimentos: agrupa pelo Tipo de Fila / Procedimento.
     """
     if _eh_consulta_especializada(e):
-        rotulo = ((e.nome_especialidade or "").strip()
-                  or (e.especialidade or "").strip()) or "GERAL"
-        return f"ESP|{rotulo.upper()}", rotulo
+        return _identificar_grupo_especialidade(e)
     rotulo = (e.tipo_fila or "").strip() or "GERAL"
     return f"TIPO|{rotulo.upper()}", rotulo
 
 
 def _grupo_especialidade(e: ExameFila) -> str:
-    """Chave da fila global da especialidade (CBO/nome > tipo > exame).
-
-    A posição do paciente é calculada dentro da especialidade solicitada,
-    não por procedimento individual.
-    """
-    chave = (
-        (e.nome_especialidade or "").strip()
-        or (e.especialidade or "").strip()
-        or (e.tipo_fila or "").strip()
-        or (e.exame or "").strip()
-    ).upper()
-    return chave or "GERAL"
+    chave, _ = _identificar_grupo_especialidade(e)
+    return chave
 
 
 def _ordenar_regulacao(itens: list[ExameFila]) -> list[ExameFila]:
@@ -1098,57 +1239,183 @@ def _data_inclusao_iso(e: ExameFila) -> str:
         return ""
 
 
-def _rank_por_grupo(db: Session) -> dict[int, tuple[int, int, str]]:
-    """Posição na fila específica do encaminhamento.
+def _identificar_grupo_tipo(e: ExameFila) -> tuple[str, str]:
+    if _eh_consulta_especializada(e):
+        return "CONSULTAS ESPECIALIZADAS", "Consultas Especializadas"
+    rot = (e.tipo_fila or "").strip() or "PROCEDIMENTOS"
+    return rot.upper(), rot
 
-    Exames agrupam por Tipo de Fila; consultas especializadas, por
-    Especialidade. Retorna {id: (posicao, total_grupo, rotulo_grupo)}.
+
+def _calcular_duplo_rank(
+    db: Session,
+    status_filtro: str | None = None,
+) -> tuple[dict[int, tuple[int, int, str]], dict[int, tuple[int, int, str]]]:
+    """Calcula ordenações sequenciais independentes e estritas:
+    1. rank_tipo: ordenação sequencial estrita (1, 2, 3...) dentro do Tipo de Fila geral (ex: Consultas Especializadas).
+    2. rank_esp: ordenação sequencial estrita (1, 2, 3...) unificada canonicamente por Especialidade / Procedimento.
+    Garante que para qualquer especialidade SEMPRE exista apenas uma pessoa em cada posição (1º, 2º, 3º...).
+    Retorna (rank_tipo, rank_esp) como dicionários {id: (posicao, total, rotulo)}.
     """
+    filtro_st = [ExameFila.status == status_filtro] if status_filtro else [ExameFila.status == "aguardando"]
     base = list(
         db.exec(
-            select(ExameFila).where(ExameFila.ativo == True, ExameFila.status.in_(["aguardando", "agendado"]))  # noqa: E712
+            select(ExameFila).where(ExameFila.ativo == True, *filtro_st)
         ).all()
     )
-    grupos: dict[str, list[ExameFila]] = {}
-    rotulos: dict[str, str] = {}
+    if not base:
+        base = list(
+            db.exec(
+                select(ExameFila).where(ExameFila.ativo == True, ExameFila.status.in_(["aguardando", "agendado"]))
+            ).all()
+        )
+    # 1. Posição Global por Tipo de Fila
+    grupos_tipo: dict[str, list[ExameFila]] = {}
+    rotulos_tipo: dict[str, str] = {}
     for e in base:
-        chave, rotulo = _grupo_fila(e)
-        grupos.setdefault(chave, []).append(e)
-        rotulos[chave] = rotulo
-    rank: dict[int, tuple[int, int, str]] = {}
-    for chave, membros in grupos.items():
+        chave, rot = _identificar_grupo_tipo(e)
+        grupos_tipo.setdefault(chave, []).append(e)
+        rotulos_tipo[chave] = rot
+
+    rank_tipo: dict[int, tuple[int, int, str]] = {}
+    for chave, membros in grupos_tipo.items():
         total = len(membros)
         for i, m in enumerate(_ordenar_fila(membros)):
-            rank[m.id] = (i + 1, total, rotulos[chave])
-    return rank
+            rank_tipo[m.id] = (i + 1, total, rotulos_tipo[chave])
+
+    # 2. Posição por Especialidade / Procedimento (Canônica e Sem Duplicidade de Posições)
+    grupos_esp: dict[str, list[ExameFila]] = {}
+    rotulos_esp: dict[str, str] = {}
+    for e in base:
+        chave, rot = _identificar_grupo_especialidade(e)
+        grupos_esp.setdefault(chave, []).append(e)
+        rotulos_esp[chave] = rot
+
+    rank_esp: dict[int, tuple[int, int, str]] = {}
+    for chave, membros in grupos_esp.items():
+        total = len(membros)
+        for i, m in enumerate(_ordenar_fila(membros)):
+            rank_esp[m.id] = (i + 1, total, rotulos_esp[chave])
+
+    return rank_tipo, rank_esp
 
 
-def _com_posicao(db: Session, itens: list[ExameFila]) -> list[dict]:
-    """Posição segmentada por procedimento + total global p/ badge."""
-    rank = _rank_por_grupo(db)
-    total = len(
+def _rank_por_grupo(db: Session, status_filtro: str | None = None) -> dict[int, tuple[int, int, str]]:
+    """Posição na fila específica do encaminhamento (legado / exportação)."""
+    rank_tipo, rank_esp = _calcular_duplo_rank(db, status_filtro)
+    filtro_st = [ExameFila.status == status_filtro] if status_filtro else [ExameFila.status == "aguardando"]
+    base = list(
         db.exec(
-            select(ExameFila).where(ExameFila.ativo == True, ExameFila.status.in_(["aguardando", "agendado"]))  # noqa: E712
+            select(ExameFila).where(ExameFila.ativo == True, *filtro_st)
         ).all()
     )
-    out = []
-    for e in itens:
+    if not base:
+        base = list(
+            db.exec(
+                select(ExameFila).where(ExameFila.ativo == True, ExameFila.status.in_(["aguardando", "agendado"]))
+            ).all()
+        )
+    rank_misto: dict[int, tuple[int, int, str]] = {}
+    for e in base:
+        if _eh_consulta_especializada(e):
+            rank_misto[e.id] = rank_esp.get(e.id, (None, None, ""))
+        else:
+            rank_misto[e.id] = rank_tipo.get(e.id, (None, None, ""))
+    return rank_misto
+
+
+def _com_posicao(
+    db: Session,
+    itens: list[ExameFila],
+    status_filtro: str | None = None,
+    filtro_tipo: str = "",
+    filtro_esp: str = "",
+    filtro_proc: str = "",
+    filtro_q: str = "",
+    offset_base: int = 0,
+    total_filtrado: int | None = None,
+) -> list[ExameOut]:
+    """Posições segmentadas: tipo de fila, especialidade e legado.
+    - Fila por Especialidade: ordem sequencial estrita dos pacientes aguardando aquela especialidade (1º, 2º, 3º...).
+    - Fila por Tipo de Fila: posição do paciente em relação a TODAS as consultas especializadas daquele tipo (ex: 2º de 659).
+    """
+    rank_tipo, rank_esp = _calcular_duplo_rank(db, status_filtro)
+    total_geral = len(
+        db.exec(
+            select(ExameFila).where(
+                ExameFila.ativo == True,
+                ExameFila.status == (status_filtro or "aguardando"),
+            )
+        ).all()
+    ) or 1
+
+    filtrando_especialidade = bool(
+        filtro_esp
+        or (filtro_q and any(p in filtro_q.upper() for p, _, _ in MAPA_ESPECIALIDADES_CANONICAS))
+    )
+    filtrando_tipo = bool(filtro_tipo)
+
+    out: list[ExameOut] = []
+    for idx_item, e in enumerate(itens):
         pac = db.get(Paciente, e.paciente_id)
-        pos, total_grupo, rotulo = rank.get(e.id, (None, None, ""))
+        pos_t_global, tot_t_global, rot_t_global = rank_tipo.get(e.id, (None, None, ""))
+        pos_esp_global, tot_esp_global, rot_esp_global = rank_esp.get(e.id, (None, None, ""))
+
+        pos_seq = offset_base + idx_item + 1
+
+        if filtrando_especialidade:
+            # Ao filtrar por Especialidade (ex: Cardiologista, mesmo que o filtro de Tipo também esteja preenchido):
+            # - Posição por Especialidade: 1º, 2º, 3º... daquela especialidade
+            # - Posição por Tipo de Fila: posição do paciente em relação a TODAS as consultas especializadas (ex: 2º de 659)
+            pos_esp = pos_seq
+            tot_esp = total_filtrado or tot_esp_global
+            rot_esp = rot_esp_global or (e.nome_especialidade or e.especialidade or "Especialidade")
+            pos_t = pos_t_global
+            tot_t = tot_t_global
+            rot_t = rot_t_global or "Consultas Especializadas"
+        elif filtrando_tipo:
+            # Ao filtrar apenas por Tipo de Fila (ex: Consultas Especializadas como um todo):
+            # - Posição por Tipo de Fila: 1º, 2º, 3º... de todas as consultas especializadas
+            # - Posição por Especialidade: posição individual de cada um na sua respectiva especialidade
+            pos_t = pos_seq
+            tot_t = total_filtrado or tot_t_global
+            rot_t = rot_t_global or (e.tipo_fila or "Tipo de Fila")
+            pos_esp = pos_esp_global
+            tot_esp = tot_esp_global
+            rot_esp = rot_esp_global
+        else:
+            pos_t = pos_t_global
+            tot_t = tot_t_global
+            rot_t = rot_t_global
+            pos_esp = pos_esp_global
+            tot_esp = tot_esp_global
+            rot_esp = rot_esp_global
+
+        pos_leg = pos_esp if _eh_consulta_especializada(e) else pos_t
+        tot_leg = tot_esp if _eh_consulta_especializada(e) else tot_t
+        rot_leg = rot_esp if _eh_consulta_especializada(e) else rot_t
+
         out.append(
             ExameOut(
                 **e.model_dump(),
                 paciente_nome=pac.nome if pac else "?",
                 paciente_cpf=pac.cpf if pac else "",
-                posicao=pos,
-                total_fila=total_grupo if total_grupo is not None else total,
-                grupo_fila=rotulo or "",
+                posicao=pos_leg,
+                total_fila=tot_leg if tot_leg is not None else total_geral,
+                grupo_fila=rot_leg or "",
+                posicao_tipo=pos_t,
+                total_tipo=tot_t,
+                grupo_tipo=rot_t or "",
+                posicao_especialidade=pos_esp,
+                total_especialidade=tot_esp,
+                grupo_especialidade=rot_esp or "",
             )
         )
     return out
 
 
 @router.get("/exames", response_model=Pagina[ExameOut])
+@router.get("/fila", response_model=Pagina[ExameOut])
+@router.get("/procedimentos/fila", response_model=Pagina[ExameOut])
 def listar_exames(
     status_: str | None = Query(default=None, alias="status"),
     q: str = Query(default="", max_length=80),
@@ -1166,7 +1433,7 @@ def listar_exames(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    ator: User = Depends(need_any_perm("tfd_exames", "tfd_medico")),
+    ator: User = Depends(need_any_perm("tfd_exames", "tfd_medico", "tfd_fila_lancamento")),
 ):
     itens = _filtrar_exames_lista(
         db, ator, status_, q, prioridade, especialidade, tipo_fila,
@@ -1175,9 +1442,20 @@ def listar_exames(
     )
     total = len(itens)
     meta = paginar(total, page, limit)
-    pagina = _ordenar_fila(itens, ordenacao)[meta["offset"]:meta["offset"] + limit]
+    offset = meta["offset"]
+    pagina = _ordenar_fila(itens, ordenacao)[offset:offset + limit]
     return {
-        "data": _com_posicao(db, pagina),
+        "data": _com_posicao(
+            db,
+            pagina,
+            status_filtro=status_,
+            filtro_tipo=tipo_fila,
+            filtro_esp=codigo_especialidade or especialidade,
+            filtro_proc=procedimento,
+            filtro_q=q,
+            offset_base=offset,
+            total_filtrado=total,
+        ),
         "total": total,
         "page": meta["page"],
         "pages": meta["pages"],
@@ -1215,24 +1493,51 @@ def _filtrar_exames_lista(
     if prioridade:
         filtros.append(ExameFila.prioridade == prioridade)
     if especialidade:
-        # Compat: busca em especialidade legada + CBO + nome especialidade novo modelo
-        like_esp = f"%{especialidade}%"
+        # Compat: busca em especialidade legada + CBO + nome especialidade novo modelo + exame
+        like_esp = f"%{especialidade.strip()}%"
         filtros.append(
             (ExameFila.especialidade.ilike(like_esp))
             | (ExameFila.codigo_especialidade.ilike(like_esp))
             | (ExameFila.nome_especialidade.ilike(like_esp))
+            | (ExameFila.exame.ilike(like_esp))
         )
     if tipo_fila:
-        filtros.append(ExameFila.tipo_fila.ilike(f"%{tipo_fila}%"))
+        tf_strip = tipo_fila.strip()
+        if tf_strip.upper() in ("EXAME", "PROCEDIMENTO", "EXAMES", "PROCEDIMENTOS"):
+            filtros.append(
+                (ExameFila.tipo_fila.ilike("%EXAME%"))
+                | (ExameFila.tipo_fila.ilike("%PROCEDIMENTO%"))
+            )
+        else:
+            filtros.append(ExameFila.tipo_fila.ilike(f"%{tf_strip}%"))
     if procedimento:
         # Busca por nome exato do procedimento OU código procedimento OU texto exame
-        like_proc = f"%{procedimento}%"
-        filtros.append(
-            (ExameFila.exame.ilike(like_proc))
-            | (ExameFila.codigo_procedimento.ilike(like_proc))
-        )
+        p_strip = procedimento.strip()
+        if p_strip.upper() in ("EXAME", "PROCEDIMENTO", "EXAMES", "PROCEDIMENTOS"):
+            filtros.append(
+                (ExameFila.exame.ilike("%EXAME%"))
+                | (ExameFila.exame.ilike("%PROCEDIMENTO%"))
+                | (ExameFila.codigo_procedimento.ilike(f"%{p_strip}%"))
+            )
+        else:
+            filtros.append(
+                (ExameFila.exame.ilike(f"%{p_strip}%"))
+                | (ExameFila.codigo_procedimento.ilike(f"%{p_strip}%"))
+            )
     if codigo_especialidade:
-        filtros.append(ExameFila.codigo_especialidade == codigo_especialidade.strip())
+        cbo_strip = codigo_especialidade.strip()
+        nome_cbo = CBO_PARA_NOME_CANONICO.get(cbo_strip, "")
+        if nome_cbo:
+            nome_simples = nome_cbo.replace("Médico ", "").replace("médico ", "").strip()
+            like_cbo_nome = f"%{nome_simples}%"
+            filtros.append(
+                (ExameFila.codigo_especialidade == cbo_strip)
+                | (ExameFila.nome_especialidade.ilike(like_cbo_nome))
+                | (ExameFila.especialidade.ilike(like_cbo_nome))
+                | (ExameFila.exame.ilike(like_cbo_nome))
+            )
+        else:
+            filtros.append(ExameFila.codigo_especialidade == cbo_strip)
     if destino:
         filtros.append(ExameFila.destino.ilike(f"%{destino}%"))
     if data_de:
@@ -1247,6 +1552,7 @@ def _filtrar_exames_lista(
     itens = list(db.exec(base).all())
     if q:
         ql = q.strip().lower()
+        palavras = [p for p in ql.split() if p]
         com_nome = []
         for e in itens:
             pac = db.get(Paciente, e.paciente_id)
@@ -1257,7 +1563,7 @@ def _filtrar_exames_lista(
                 pac.nome if pac else "", pac.cns if pac else "",
                 pac.cpf if pac else "",
             ]).lower()
-            if ql in hay:
+            if all(p in hay for p in palavras):
                 com_nome.append(e)
         itens = com_nome
     return _ordenar_fila(itens)
@@ -1265,21 +1571,27 @@ def _filtrar_exames_lista(
 
 COLS_FILA = [
     {"chave": "posicao", "rotulo": "Posição", "largura": 10},
+    {"chave": "posicao_tipo", "rotulo": "Posição Tipo de Fila", "largura": 16},
+    {"chave": "posicao_especialidade", "rotulo": "Posição Especialidade", "largura": 16},
     {"chave": "grupo_fila", "rotulo": "Fila específica", "largura": 28},
     {"chave": "paciente", "rotulo": "Paciente", "largura": 32},
     {"chave": "cpf", "rotulo": "CPF", "largura": 18, "formato": "texto"},
     {"chave": "cns", "rotulo": "Cartão SUS / CNS", "largura": 20, "formato": "texto"},
     {"chave": "telefone", "rotulo": "Telefone", "largura": 18, "formato": "texto"},
     {"chave": "endereco_completo", "rotulo": "Endereço completo", "largura": 44},
-    {"chave": "exame", "rotulo": "Exame / procedimento", "largura": 42},
+    {"chave": "exame", "rotulo": "Procedimento", "largura": 42},
+    {"chave": "codigo_procedimento", "rotulo": "Código do Procedimento", "largura": 22},
     {"chave": "especialidade", "rotulo": "Especialidade", "largura": 28},
-    {"chave": "risco", "rotulo": "Classificação de risco", "largura": 18},
+    {"chave": "risco", "rotulo": "Prioridade / Classificação de risco", "largura": 18},
     {"chave": "status", "rotulo": "Status", "largura": 14},
     {"chave": "data_pedido", "rotulo": "Data do pedido", "largura": 14, "formato": "data"},
     {"chave": "data_agendada", "rotulo": "Data agendada", "largura": 14, "formato": "data"},
     {"chave": "hora", "rotulo": "Hora", "largura": 10},
     {"chave": "medico", "rotulo": "Médico", "largura": 28},
     {"chave": "unidade", "rotulo": "Unidade / destino", "largura": 28},
+    {"chave": "numero_pedido", "rotulo": "Nº do Pedido", "largura": 16},
+    {"chave": "justificativa", "rotulo": "Justificativa", "largura": 35},
+    {"chave": "observacoes", "rotulo": "Observações", "largura": 35},
 ]
 
 
@@ -1339,7 +1651,14 @@ def _pec_documentos(cpfs: set, cnss: set) -> dict:
     return out
 
 
-def _linha_fila(db: Session, cache: dict, e, pos: int | None = None) -> dict:
+def _linha_fila(
+    db: Session,
+    cache: dict,
+    e,
+    pos: int | None = None,
+    pos_tipo: int | None = None,
+    pos_esp: int | None = None,
+) -> dict:
     pac = cache.get(e.paciente_id)
     if pac is None:
         pac = db.get(Paciente, e.paciente_id)
@@ -1351,6 +1670,8 @@ def _linha_fila(db: Session, cache: dict, e, pos: int | None = None) -> dict:
     comp = pec.get(f"cpf:{cpf}") or pec.get(f"cns:{cns}") or {}
     return {
         "posicao": pos or "",
+        "posicao_tipo": pos_tipo or "",
+        "posicao_especialidade": pos_esp or "",
         "grupo_fila": rotulo,
         "paciente": pac.nome if pac else "?",
         "cpf": pac.cpf if pac else "",
@@ -1358,6 +1679,7 @@ def _linha_fila(db: Session, cache: dict, e, pos: int | None = None) -> dict:
         "telefone": pac.telefone if pac else "",
         "endereco_completo": _endereco_completo(pac),
         "exame": e.exame or "",
+        "codigo_procedimento": e.codigo_procedimento or "",
         "especialidade": e.nome_especialidade or e.especialidade or e.tipo_fila or "",
         "risco": _risco_rotulo(e.prioridade),
         "status": _status_rotulo(e),
@@ -1366,6 +1688,9 @@ def _linha_fila(db: Session, cache: dict, e, pos: int | None = None) -> dict:
         "hora": e.hora_agendada or "",
         "medico": e.medico_nome or "",
         "unidade": e.unidade_nome or e.destino or "",
+        "numero_pedido": e.numero_pedido or "",
+        "justificativa": e.justificativa or e.justificativa_prioridade or "",
+        "observacoes": e.observacoes or "",
     }
 
 
@@ -1383,10 +1708,12 @@ def exportar_fila(
     data_ate: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     agendada_em: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     meus: bool = Query(default=False),
+    ordenacao: str = Query(default="prioridade", pattern="^(prioridade|cronologica)$"),
+    colunas: str | None = Query(default=None),
     db: Session = Depends(get_db),
-    ator: User = Depends(need_any_perm("tfd_exames", "tfd_medico")),
+    ator: User = Depends(need_any_perm("tfd_exames", "tfd_medico", "tfd_fila_lancamento")),
 ):
-    """Exporta a fila de espera em XLSX respeitando os filtros ativos."""
+    """Exporta a fila de espera em XLSX respeitando os filtros ativos e seleção de colunas."""
     from app.services.export_xlsx import resposta_xlsx
 
     itens = _filtrar_exames_lista(
@@ -1394,7 +1721,15 @@ def exportar_fila(
         procedimento, codigo_especialidade, destino, data_de, data_ate,
         agendada_em, meus,
     )
-    rank = _rank_por_grupo(db)
+    itens = _ordenar_fila(itens, ordenacao)
+    filtrando_especialidade = bool(
+        especialidade
+        or codigo_especialidade
+        or procedimento
+        or (q and any(p in q.upper() for p, _, _ in MAPA_ESPECIALIDADES_CANONICAS))
+    )
+    filtrando_tipo = bool(tipo_fila)
+    rank_tipo, rank_esp = _calcular_duplo_rank(db, status_filtro=status_)
     cache: dict = {}
     for e in itens:
         if e.paciente_id not in cache:
@@ -1402,11 +1737,74 @@ def exportar_fila(
     cpfs = {"".join(c for c in (p.cpf or "") if c.isdigit()) for p in cache.values() if p}
     cnss = {"".join(c for c in (p.cns or "") if c.isdigit()) for p in cache.values() if p}
     cache["pec"] = _pec_documentos({c for c in cpfs if c}, {c for c in cnss if c})
-    linhas = [_linha_fila(db, cache, e, (rank.get(e.id) or (None,))[0]) for e in itens]
+    linhas = []
+    for idx_item, e in enumerate(itens):
+        pos_t_global, _, _ = rank_tipo.get(e.id, (None, None, ""))
+        pos_esp_global, _, _ = rank_esp.get(e.id, (None, None, ""))
+        pos_seq = idx_item + 1
+
+        if filtrando_especialidade:
+            pos_esp = pos_seq
+            pos_tipo = pos_t_global
+        elif filtrando_tipo:
+            pos_tipo = pos_seq
+            pos_esp = pos_esp_global
+        else:
+            pos_tipo = pos_t_global
+            pos_esp = pos_esp_global
+
+        pos_leg = pos_esp if _eh_consulta_especializada(e) else pos_tipo
+        linhas.append(
+            _linha_fila(
+                db,
+                cache,
+                e,
+                pos=pos_leg,
+                pos_tipo=pos_tipo,
+                pos_esp=pos_esp,
+            )
+        )
+
+    # Filtragem de colunas caso informadas pelo seletor de exportação
+    cols = COLS_FILA
+    if colunas:
+        mapa_colunas_frontend: dict[str, list[str]] = {
+            "posicao": ["posicao"],
+            "posicao_tipo": ["posicao_tipo"],
+            "posicao_especialidade": ["posicao_especialidade"],
+            "paciente_nome": ["paciente", "cpf", "cns"],
+            "paciente": ["paciente"],
+            "exame": ["exame"],
+            "codigo_procedimento": ["codigo_procedimento"],
+            "especialidade": ["especialidade"],
+            "prioridade": ["risco"],
+            "risco": ["risco"],
+            "status": ["status"],
+            "data_pedido": ["data_pedido"],
+            "data_agendada": ["data_agendada", "hora"],
+            "tipo_fila": ["grupo_fila"],
+            "destino": ["unidade"],
+            "observacoes": ["observacoes"],
+            "numero_pedido": ["numero_pedido"],
+            "justificativa": ["justificativa"],
+        }
+        chaves_selecionadas = set()
+        for c in colunas.split(","):
+            c_trim = c.strip()
+            if not c_trim:
+                continue
+            if c_trim in mapa_colunas_frontend:
+                chaves_selecionadas.update(mapa_colunas_frontend[c_trim])
+            else:
+                chaves_selecionadas.add(c_trim)
+        filtradas = [c for c in COLS_FILA if c["chave"] in chaves_selecionadas]
+        if filtradas:
+            cols = filtradas
+
     return resposta_xlsx(
-        "Fila de espera — exames e procedimentos",
+        "Fila de espera — procedimentos",
         ator.nome or ator.username,
-        COLS_FILA, linhas, "fila_espera",
+        cols, linhas, "fila_procedimentos",
     )
 
 
@@ -1432,10 +1830,12 @@ def exportar_agenda(
 
 # ---------- Opções p/ filtros avançados (com contagem) ----------
 @router.get("/exames/filtros-opcoes", response_model=FiltrosOpcoesOut)
+@router.get("/procedimentos/filtros-opcoes", response_model=FiltrosOpcoesOut)
+@router.get("/fila/filtros-opcoes", response_model=FiltrosOpcoesOut)
 def filtros_opcoes(
     status_: str | None = Query(default="aguardando", alias="status"),
     db: Session = Depends(get_db),
-    _=Depends(need_perm("tfd_exames")),
+    _=Depends(need_any_perm("tfd_exames", "tfd_fila_lancamento", "tfd_medico")),
 ):
     """Agrega Tipo de Fila / Procedimento / Especialidade-CBO com totais.
 
@@ -1478,33 +1878,29 @@ def filtros_opcoes(
         label = f"{nome_curto} ({n})" if nome_curto else f"{cod} ({n})"
         if value:
             procs.append(OpcaoFiltro(value=value, label=label, total=n or 0))
-    # Especialidades CBO
-    esps: list[OpcaoFiltro] = []
-    rows_e = db.exec(
-        select(
-            ExameFila.codigo_especialidade,
-            ExameFila.nome_especialidade,
-            sa_func.count(ExameFila.id),
+    # Especialidades CBO (agrupamento canônico unificado)
+    esps_map: dict[str, dict] = {}
+    todos_itens = db.exec(select(ExameFila).where(*base_f)).all()
+    for e in todos_itens:
+        chave, rot = _identificar_grupo_especialidade(e)
+        if chave.startswith("CBO:"):
+            cbo = chave.split(":", 1)[1]
+            if cbo not in esps_map:
+                esps_map[cbo] = {"val": cbo, "rot": rot, "total": 0}
+            esps_map[cbo]["total"] += 1
+        elif chave.startswith("ESP:") and rot.strip().upper() not in TERMOS_FILA_GENERICOS:
+            if rot not in esps_map:
+                esps_map[rot] = {"val": rot, "rot": rot, "total": 0}
+            esps_map[rot]["total"] += 1
+
+    esps: list[OpcaoFiltro] = [
+        OpcaoFiltro(
+            value=d["val"],
+            label=f"{d['rot']} - CBO {d['val']} ({d['total']})" if d["val"].isdigit() else f"{d['rot']} ({d['total']})",
+            total=d["total"],
         )
-        .where(*base_f, ExameFila.codigo_especialidade != "")
-        .group_by(ExameFila.codigo_especialidade, ExameFila.nome_especialidade)
-        .order_by(sa_func.count(ExameFila.id).desc())
-        .limit(100)
-    ).all()
-    for cbo, nome, n in rows_e:
-        rot = (nome or "").strip() or f"CBO {cbo}"
-        esps.append(OpcaoFiltro(value=cbo, label=f"{rot} - CBO {cbo} ({n})", total=n or 0))
-    # Fallback legado: especialidade textual sem CBO (compat fila antiga)
-    if not esps:
-        rows_leg = db.exec(
-            select(ExameFila.especialidade, sa_func.count(ExameFila.id))
-            .where(*base_f, ExameFila.especialidade != "")
-            .group_by(ExameFila.especialidade)
-            .order_by(sa_func.count(ExameFila.id).desc())
-            .limit(100)
-        ).all()
-        for nome, n in rows_leg:
-            esps.append(OpcaoFiltro(value=nome, label=f"{nome} ({n})", total=n or 0))
+        for d in sorted(esps_map.values(), key=lambda x: x["total"], reverse=True)[:100]
+    ]
     return FiltrosOpcoesOut(tipos=tipos, procedimentos=procs, especialidades=esps)
 
 
@@ -1517,12 +1913,21 @@ def _garantir_token(obj: ExameFila) -> str:
 
 
 @router.post("/exames", response_model=ExameOut, status_code=201)
-def criar_exame(data: ExameIn, db: Session = Depends(get_db), ator: User = Depends(need_perm("tfd_exames", "criar"))):
+def criar_exame(data: ExameIn, db: Session = Depends(get_db), ator: User = Depends(need_any_perm("tfd_exames", "tfd_fila_lancamento", acoes=("criar",)))):
     if not db.get(Paciente, data.paciente_id):
         raise HTTPException(404, "Paciente não encontrado")
     exige_sem_retroativo(ator, data.data_pedido, True)
     exige_sem_retroativo(ator, data.data_agendada, data.data_agendada is not None)
     payload = data.model_dump()
+
+    # Perfil de Lançamento Restrito: apenas adiciona à fila, sem marcar urgente e sem agendar direto
+    from app.services.permissoes import tem_tela
+    if not ator.is_superuser and tem_tela(ator, "tfd_fila_lancamento") and not tem_tela(ator, "tfd_exames") and not tem_tela(ator, "tfd_medico"):
+        if (payload.get("prioridade") or "").lower() == "urgente":
+            raise HTTPException(403, "Perfil de lançamento restrito não pode definir prioridade urgente.")
+        if payload.get("data_agendada"):
+            raise HTTPException(403, "Perfil de lançamento restrito não pode realizar agendamento direto.")
+
     if payload.get("codigo_curto"):
         payload["codigo_curto"] = str(payload["codigo_curto"]).strip().upper()
     if payload.get("numero_pedido"):
@@ -2589,6 +2994,11 @@ def _passageiro_out(db: Session, p) -> dict:
     acomp_id = getattr(p, "acompanhante_id", None)
     acomp = db.get(Paciente, acomp_id) if acomp_id else None
     acomp_nome = (p.acompanhante or "").strip() or (acomp.nome if acomp else "")
+    prio = getattr(p, "prioridade", "") or ""
+    if not prio and p.viagem_fila_id:
+        vf = db.get(ViagemFila, p.viagem_fila_id)
+        if vf and vf.prioridade:
+            prio = vf.prioridade
     return {
         "id": p.id, "viagem_id": p.viagem_id, "paciente_id": p.paciente_id,
         "paciente_nome": pac.nome if pac else "?",
@@ -2599,6 +3009,7 @@ def _passageiro_out(db: Session, p) -> dict:
         "acompanhante_nome": acomp.nome if acomp else acomp_nome,
         "acompanhante_cpf": getattr(p, "acompanhante_cpf", "") or (acomp.cpf if acomp else ""),
         "viagem_fila_id": p.viagem_fila_id,
+        "prioridade": prio,
         "tratamento": p.tratamento or "", "unidade": p.unidade or "",
         "hora_consulta": p.hora_consulta or "",
         "observacoes": getattr(p, "observacoes", "") or "",
