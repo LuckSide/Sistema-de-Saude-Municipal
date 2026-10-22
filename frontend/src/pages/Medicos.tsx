@@ -1,7 +1,17 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Pencil, Plus, Trash2, X } from "lucide-react";
-import { type Medico, createMedico, deleteMedico, fetchMedicos, sigtapCbos, updateMedico, type SigtapCbo } from "../services/api";
+import { Building2, Pencil, Plus, Trash2, X } from "lucide-react";
+import {
+  type Medico,
+  type SigtapCbo,
+  type UnidadeSaude,
+  createMedico,
+  deleteMedico,
+  fetchMedicos,
+  fetchUnidadesSaude,
+  sigtapCbos,
+  updateMedico,
+} from "../services/api";
 import {
   erros422,
   normalizaCrm,
@@ -15,11 +25,23 @@ import { Button, Card, Input, Label } from "../components/ui/primitives";
 import { useUndo } from "../components/UndoToast";
 import ExportarExcel from "../components/ExportarExcel";
 
-const vazio = { nome: "", cpf: "", crm: "", cbo_codigo: "", cbo_descricao: "", especialidades: "", telefone: "", email: "", ativo: true };
+const vazio = {
+  nome: "",
+  cpf: "",
+  crm: "",
+  cbo_codigo: "",
+  cbo_descricao: "",
+  especialidades: "",
+  telefone: "",
+  email: "",
+  ativo: true,
+  unidades_ids: [] as number[],
+};
 
 export default function Medicos() {
   const { notificarUndo } = useUndo();
   const [lista, setLista] = useState<Medico[]>([]);
+  const [unidades, setUnidades] = useState<UnidadeSaude[]>([]);
   const [sp] = useSearchParams();
   const [form, setForm] = useState<typeof vazio>(vazio);
   const [editId, setEditId] = useState<number | null>(null);
@@ -53,8 +75,13 @@ export default function Medicos() {
   }
 
   async function carregar() {
-    try { setLista(await fetchMedicos()); }
-    catch { setErro("Falha ao carregar médicos."); }
+    try {
+      const [meds, unis] = await Promise.all([fetchMedicos(), fetchUnidadesSaude()]);
+      setLista(meds);
+      setUnidades(unis);
+    } catch {
+      setErro("Falha ao carregar médicos e unidades de saúde.");
+    }
   }
   useEffect(() => { carregar(); }, []);
   useEffect(() => {
@@ -73,8 +100,24 @@ export default function Medicos() {
 
   function abrir(m?: Medico) {
     setErroModal(""); setErros({}); setOk("");
-    if (m) { setEditId(m.id); setForm({ nome: m.nome, cpf: m.cpf, crm: m.crm, cbo_codigo: m.cbo_codigo ?? "", cbo_descricao: m.cbo_descricao ?? "", especialidades: m.especialidades, telefone: m.telefone, email: m.email, ativo: m.ativo }); }
-    else { setEditId(null); setForm(vazio); }
+    if (m) {
+      setEditId(m.id);
+      setForm({
+        nome: m.nome,
+        cpf: m.cpf,
+        crm: m.crm,
+        cbo_codigo: m.cbo_codigo ?? "",
+        cbo_descricao: m.cbo_descricao ?? "",
+        especialidades: m.especialidades,
+        telefone: m.telefone,
+        email: m.email,
+        ativo: m.ativo,
+        unidades_ids: m.unidades_ids ? [...m.unidades_ids] : [],
+      });
+    } else {
+      setEditId(null);
+      setForm(vazio);
+    }
     setBuscaCbo("");
     setModal(true);
   }
@@ -92,7 +135,7 @@ export default function Medicos() {
     }
     setSalvando(true);
     try {
-      const payload = { ...form, crm: normalizaCrm(form.crm) };
+      const payload = { ...form, crm: normalizaCrm(form.crm), unidades_ids: form.unidades_ids };
       if (editId) {
         await updateMedico(editId, payload);
         setOk("Médico atualizado com sucesso.");
@@ -154,13 +197,35 @@ export default function Medicos() {
         <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead><tr className="border-b border-sus-900/10 bg-sand text-xs uppercase tracking-wide text-sus-900/60">
-            <th className="px-4 py-3">Nome</th><th className="px-4 py-3">CRM</th><th className="px-4 py-3">Especialidades</th><th className="px-4 py-3">Contato</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Ações</th>
+            <th className="px-4 py-3">Nome</th>
+            <th className="px-4 py-3">CRM</th>
+            <th className="px-4 py-3">Unidades de Atuação (PSF)</th>
+            <th className="px-4 py-3">Especialidades</th>
+            <th className="px-4 py-3">Contato</th>
+            <th className="px-4 py-3">Status</th>
+            <th className="px-4 py-3 text-right">Ações</th>
           </tr></thead>
           <tbody>
             {lista.map((m) => (
               <tr key={m.id} className="border-b border-sus-900/5 last:border-0">
                 <td className="px-4 py-3"><p className="font-semibold text-sus-950">{m.nome}</p><p className="text-xs text-ink/50">{m.cpf || "—"}</p></td>
                 <td className="px-4 py-3">{m.crm || "—"}<p className="text-xs text-ink/50">{m.cbo_codigo ? `CBO ${m.cbo_codigo}` : ""}{m.cbo_descricao ? ` · ${m.cbo_descricao}` : ""}</p></td>
+                <td className="px-4 py-3">
+                  {m.unidades_ids && m.unidades_ids.length > 0 ? (
+                    <div className="flex flex-wrap gap-1 max-w-[240px]">
+                      {m.unidades_ids.map((uid) => {
+                        const u = unidades.find((x) => x.id === uid);
+                        return u ? (
+                          <span key={uid} className="inline-flex items-center rounded-md bg-teal/10 px-1.5 py-0.5 text-[10px] font-semibold text-teal">
+                            {u.nome}
+                          </span>
+                        ) : null;
+                      })}
+                    </div>
+                  ) : (
+                    <span className="text-xs text-ink/40">Todas / Não restrito</span>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-xs text-ink/60">{m.especialidades || "—"}</td>
                 <td className="px-4 py-3 text-xs text-ink/60">{m.telefone || "—"} {m.email ? `· ${m.email}` : ""}</td>
                 <td className="px-4 py-3 text-xs">{m.ativo ? "ativo" : "inativo"}</td>
@@ -170,7 +235,7 @@ export default function Medicos() {
                 </div></td>
               </tr>
             ))}
-            {lista.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-ink/45">Nenhum médico.</td></tr>}
+            {lista.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-ink/45">Nenhum médico.</td></tr>}
           </tbody>
         </table>
         </div>
@@ -201,6 +266,69 @@ export default function Medicos() {
               <div className="md:col-span-2"><Label>Especialidade(s)</Label><Input value={form.especialidades} onChange={(e) => setForm({ ...form, especialidades: e.target.value })} placeholder="separar por vírgula" /></div>
               <div><Label>Telefone</Label><Input value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} placeholder="DDD + número" className={borda("telefone")} />{msg("telefone")}</div>
               <div><Label>E-mail</Label><Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="usuario@dominio.ext" className={borda("email")} />{msg("email")}</div>
+
+              {/* Vínculo com Unidades de Saúde / PSF */}
+              <div className="md:col-span-2">
+                <div className="mb-1.5 flex items-center justify-between">
+                  <Label className="!mb-0 flex items-center gap-1.5">
+                    <Building2 className="h-3.5 w-3.5 text-teal" />
+                    Unidades de Saúde / PSF de Atuação ({form.unidades_ids.length} selecionada{form.unidades_ids.length === 1 ? "" : "s"})
+                  </Label>
+                  <div className="flex gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setForm({ ...form, unidades_ids: unidades.filter((u) => u.ativo).map((u) => u.id) })}
+                      className="font-bold text-teal hover:underline"
+                    >
+                      Todas
+                    </button>
+                    <span className="text-ink/30">|</span>
+                    <button
+                      type="button"
+                      onClick={() => setForm({ ...form, unidades_ids: [] })}
+                      className="font-bold text-red-600 hover:underline"
+                    >
+                      Nenhuma
+                    </button>
+                  </div>
+                </div>
+                <div className="grid max-h-40 grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-sus-900/10 bg-sand/30 p-2.5 sm:grid-cols-2">
+                  {unidades.filter((u) => u.ativo).map((u) => {
+                    const marcado = form.unidades_ids.includes(u.id);
+                    return (
+                      <label
+                        key={u.id}
+                        className={`flex cursor-pointer items-start gap-2 rounded-lg border p-2 text-xs transition ${
+                          marcado ? "border-teal bg-teal/10 font-bold text-teal" : "border-sus-900/10 bg-white text-ink/75 hover:bg-sand"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={marcado}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setForm((f) => ({
+                              ...f,
+                              unidades_ids: checked
+                                ? [...f.unidades_ids, u.id]
+                                : f.unidades_ids.filter((id) => id !== u.id),
+                            }));
+                          }}
+                          className="mt-0.5 h-3.5 w-3.5 cursor-pointer accent-teal"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate leading-tight">{u.nome}</p>
+                          {u.cnes && <p className="text-[10px] font-normal text-ink/45">CNES: {u.cnes}</p>}
+                        </div>
+                      </label>
+                    );
+                  })}
+                  {unidades.length === 0 && (
+                    <p className="col-span-2 py-3 text-center text-xs text-ink/45">Nenhuma unidade de saúde cadastrada.</p>
+                  )}
+                </div>
+              </div>
+
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} className="h-4 w-4 accent-teal" /> Ativo</label>
             </div>
             {erroModal && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{erroModal}</p>}

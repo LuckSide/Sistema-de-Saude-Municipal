@@ -100,3 +100,63 @@ def salvar_settings(
             pass
         raise HTTPException(status_code=500, detail="Falha ao salvar configurações")
     return to_out(s)
+
+
+# ---------- Gestão de Procedimentos / Exames Permitidos (SIGTAP) ----------
+class ExamesPermitidosIn(BaseModel):
+    codigos: list[str] = Field(default_factory=list)
+
+
+@router.get("/settings/exames-permitidos")
+def obter_exames_permitidos(
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_user_ok),
+):
+    from app.models.lab_exames import SigtapProcedimento
+
+    s = get_settings(db)
+    raw = getattr(s, "exames_habilitados_sigtap", "") or ""
+    codigos_habilitados = [c.strip() for c in raw.split(",") if c.strip()]
+
+    # Procedimentos laboratoriais da tabela SIGTAP (Grupo 02, Subgrupo 02 - Diagnóstico Laboratorial Clínico / Sangue)
+    procs = db.exec(
+        select(SigtapProcedimento)
+        .where(SigtapProcedimento.codigo.like("0202%"))
+        .order_by(SigtapProcedimento.descricao)
+    ).all()
+
+    lista_sigtap = [
+        {
+            "id": p.id,
+            "codigo": p.codigo,
+            "descricao": p.descricao,
+            "instrumento": p.instrumento or "BPA-C",
+        }
+        for p in procs
+    ]
+
+    return {
+        "codigos_habilitados": codigos_habilitados,
+        "total_habilitados": len(codigos_habilitados),
+        "procedimentos_sigtap": lista_sigtap,
+    }
+
+
+@router.put("/settings/exames-permitidos")
+def salvar_exames_permitidos(
+    data: ExamesPermitidosIn,
+    db: Session = Depends(get_db),
+    _user: User = Depends(need_perm("cfg_geral", "editar")),
+):
+    s = get_settings(db)
+    limpos = sorted({c.strip() for c in data.codigos if c.strip()})
+    s.exames_habilitados_sigtap = ",".join(limpos)
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return {
+        "ok": True,
+        "total_habilitados": len(limpos),
+        "codigos_habilitados": limpos,
+    }
+

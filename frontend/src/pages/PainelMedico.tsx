@@ -14,7 +14,7 @@ import { rotuloPrioridade } from "../utils/rotulos";
 import ExportarExcel from "../components/ExportarExcel";
 
 const PRIOS = [
-  { value: "urgente", rotulo: "Urgente" },
+  { value: "urgente", rotulo: "Priorizado" },
   { value: "rotina", rotulo: "Eletivo" },
 ];
 
@@ -145,7 +145,11 @@ export default function PainelMedico() {
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead><tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
-              <th className="px-4 py-3">Paciente</th><th className="px-4 py-3">Procedimento / especialidade</th><th className="px-4 py-3">Risco</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Ações</th>
+              <th className="px-4 py-3">Paciente</th>
+              <th className="w-28 px-4 py-3 whitespace-nowrap">Prioridade</th>
+              <th className="px-4 py-3">Procedimento / especialidade</th>
+              <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3 text-right">Ações</th>
             </tr></thead>
             <tbody>
               {lista.map((e) => {
@@ -153,15 +157,14 @@ export default function PainelMedico() {
                 return (
                   <tr key={e.id} className="border-b border-sus-900/5 last:border-0">
                     <td className="px-4 py-3">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="font-semibold">{e.paciente_nome}</span>
-                        <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${prioCor[e.prioridade] ?? "bg-sand"}`}>
-                          {rotuloPrioridade(e.prioridade)}
-                        </span>
-                      </div>
+                      <span className="font-semibold text-sus-950">{e.paciente_nome}</span>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-bold leading-none ${prioCor[e.prioridade] ?? ""}`}>
+                        {rotuloPrioridade(e.prioridade)}
+                      </span>
                     </td>
                     <td className="px-4 py-3">{e.exame}<p className="text-xs text-ink/50">{e.nome_especialidade || e.especialidade || "—"}</p></td>
-                    <td className="px-4 py-3"><span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${prioCor[e.prioridade] ?? ""}`}>{rotuloPrioridade(e.prioridade)}</span></td>
                     <td className="px-4 py-3 text-xs">{e.status}</td>
                     <td className="px-4 py-3"><div className="flex justify-end">
                       {pode ? (

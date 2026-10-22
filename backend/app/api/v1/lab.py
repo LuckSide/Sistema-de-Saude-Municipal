@@ -44,6 +44,24 @@ def _enriquecer(db: Session, obj: LabSolicitacao) -> SolicitacaoOut:
     )
 
 
+def _enriquecer_lote(db: Session, rows: list[LabSolicitacao]) -> list[SolicitacaoOut]:
+    if not rows:
+        return []
+    pac_ids = {o.paciente_id for o in rows if o.paciente_id}
+    proc_ids = {o.sigtap_id for o in rows if o.sigtap_id}
+    pacs = {p.id: p for p in db.exec(select(Paciente).where(Paciente.id.in_(pac_ids))).all()} if pac_ids else {}
+    procs = {p.id: p for p in db.exec(select(SigtapProcedimento).where(SigtapProcedimento.id.in_(proc_ids))).all()} if proc_ids else {}
+    return [
+        SolicitacaoOut(
+            **o.model_dump(),
+            paciente_nome=pacs.get(o.paciente_id).nome if pacs.get(o.paciente_id) else "?",
+            procedimento_codigo=procs.get(o.sigtap_id).codigo if procs.get(o.sigtap_id) else "?",
+            procedimento_descricao=procs.get(o.sigtap_id).descricao if procs.get(o.sigtap_id) else "?",
+        )
+        for o in rows
+    ]
+
+
 # ---------- Resumo ----------
 @router.get("/resumo", response_model=ResumoLabOut)
 def resumo(
@@ -59,17 +77,28 @@ def resumo(
 def listar_sigtap(
     q: str = "",
     instrumento: str | None = Query(default=None, pattern="^(BPA-C|BPA-I|BPA-F)?$"),
+    apenas_laboratoriais: bool = Query(default=False),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
     _=Depends(need_perm("lab_sigtap")),
 ):
     from sqlmodel import func as sm_func
+    from app.models.settings import SystemSettings
+
     base = select(SigtapProcedimento).order_by(SigtapProcedimento.codigo)
     if instrumento:
-        base = select(SigtapProcedimento).where(
-            SigtapProcedimento.instrumento == instrumento
-        ).order_by(SigtapProcedimento.codigo)
+        base = base.where(SigtapProcedimento.instrumento == instrumento)
+
+    if apenas_laboratoriais:
+        cfg = db.get(SystemSettings, 1)
+        raw_habilitados = getattr(cfg, "exames_habilitados_sigtap", "") or ""
+        codigos_permitidos = [c.strip() for c in raw_habilitados.split(",") if c.strip()]
+        if codigos_permitidos:
+            base = base.where(SigtapProcedimento.codigo.in_(codigos_permitidos))
+        else:
+            base = base.where(SigtapProcedimento.codigo.like("0202%"))
+
     rows = list(db.exec(base).all())
     if q.strip():
         # Busca tolerante: remove acentos + espaços p/ "hemogra" achar HEMOGRAMA
@@ -194,7 +223,7 @@ def listar_solicitacoes(
     meta = paginar(total, page, limit)
     rows = db.exec(base.offset(meta["offset"]).limit(limit)).all()
     return {
-        "data": [_enriquecer(db, o) for o in rows],
+        "data": _enriquecer_lote(db, list(rows)),
         "total": total,
         "page": meta["page"],
         "pages": meta["pages"],

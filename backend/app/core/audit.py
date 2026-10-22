@@ -18,8 +18,9 @@ MAX_VALOR = 5000
 SEGREDOS = {
     "password", "senha", "senha_atual", "nova_senha", "confirmar_senha",
     "secret", "client_secret", "token", "access_token", "refresh_token",
-    "pec_senha", "pec_database_url", "rnds_secret", "rnds_key_pem",
-    "database_url", "dsn",
+    "pec_senha", "pec_database_url", "pec_ssh_senha", "pec_ssh_chave_privada",
+    "rnds_secret", "rnds_key_pem", "rnds_cert_pem", "database_url", "dsn",
+    "authorization", "chave_privada", "private_key", "ssh_key", "api_key",
 }
 
 VERBOS = {"POST": "CREATE", "PUT": "UPDATE", "PATCH": "UPDATE", "DELETE": "DELETE"}
@@ -62,16 +63,39 @@ VERBOS_ENTIDADE = {
 }
 
 
+def mascarar_cpf(valor: str) -> str:
+    """Mascara CPF preservando os 3 dígitos iniciais e 2 finais para auditoria (LGPD)."""
+    if not isinstance(valor, str):
+        return valor
+    v_clean = valor.strip()
+    if re.match(r"^\d{3}\.\d{3}\.\d{3}-\d{2}$", v_clean):
+        return f"{v_clean[:3]}.***.***-{v_clean[-2:]}"
+    digitos = re.sub(r"\D", "", v_clean)
+    if len(digitos) == 11:
+        return f"{digitos[:3]}******{digitos[-2:]}"
+    return valor
+
+
 def redigir(obj):
     if isinstance(obj, dict):
-        return {
-            k: ("***" if str(k).lower() in SEGREDOS else redigir(v))
-            for k, v in obj.items()
-        }
+        res = {}
+        for k, v in obj.items():
+            k_lower = str(k).lower()
+            if k_lower in SEGREDOS or any(s in k_lower for s in ("senha", "secret", "password", "token", "chave_privada", "ssh_key")):
+                res[k] = "***"
+            elif ("cpf" in k_lower or "cns" in k_lower) and isinstance(v, str):
+                res[k] = mascarar_cpf(v)
+            else:
+                res[k] = redigir(v)
+        return res
     if isinstance(obj, list):
         return [redigir(v) for v in obj[:50]]
-    if isinstance(obj, str) and len(obj) > MAX_VALOR:
-        return obj[:MAX_VALOR] + "…"
+    if isinstance(obj, str):
+        s_clean = obj.strip()
+        if re.match(r"^\d{3}\.\d{3}\.\d{3}-\d{2}$", s_clean) or (len(re.sub(r"\D", "", s_clean)) == 11 and s_clean.isdigit()):
+            return mascarar_cpf(s_clean)
+        if len(obj) > MAX_VALOR:
+            return obj[:MAX_VALOR] + "…"
     return obj
 
 
@@ -128,7 +152,7 @@ def _snapshot(entidade: str, entity_id: int | None):
 
 
 def _diff(antes: dict | None, depois: dict | None) -> list[dict]:
-    """Só campos efetivamente alterados: [{campo, de, para}]."""
+    """Só campos efetivamente alterados: [{campo, de, para}] com mascaramento de segredos e PII."""
     if not antes or not isinstance(depois, dict):
         return []
     mudancas = []
@@ -139,12 +163,143 @@ def _diff(antes: dict | None, depois: dict | None) -> list[dict]:
         if str(v_antes) != str(v_novo if v_novo is not None else ""):
             mudancas.append({
                 "campo": k,
-                "de": v_antes,
-                "para": v_novo if v_novo is not None else "",
+                "de": redigir({k: v_antes}).get(k, v_antes),
+                "para": redigir({k: v_novo}).get(k, v_novo if v_novo is not None else ""),
             })
         if len(mudancas) >= 60:
             break
     return mudancas
+
+
+def parse_device_from_ua(ua: str) -> str:
+    """Extrai uma identificação concisa e amigável do dispositivo/navegador a partir do User-Agent."""
+    if not ua or not ua.strip():
+        return "Desconhecido"
+
+    ua_lower = ua.lower()
+
+    # 1. Sistema Operacional / Plataforma
+    os_name = "Desconhecido"
+    if "windows" in ua_lower:
+        os_name = "Windows"
+    elif "android" in ua_lower:
+        os_name = "Android"
+    elif "iphone" in ua_lower:
+        os_name = "iPhone"
+    elif "ipad" in ua_lower:
+        os_name = "iPad"
+    elif "macintosh" in ua_lower or "mac os x" in ua_lower:
+        os_name = "macOS"
+    elif "linux" in ua_lower:
+        os_name = "Linux"
+
+    # 2. Navegador
+    browser = "Navegador"
+    if "edg/" in ua_lower or "edge/" in ua_lower:
+        browser = "Edge"
+    elif "opr/" in ua_lower or "opera" in ua_lower:
+        browser = "Opera"
+    elif "chrome" in ua_lower and "chromium" not in ua_lower and "edg" not in ua_lower:
+        browser = "Chrome"
+    elif "firefox" in ua_lower:
+        browser = "Firefox"
+    elif "safari" in ua_lower and "chrome" not in ua_lower:
+        browser = "Safari"
+
+    # 3. Form factor (Tablet verificado antes de Mobile)
+    form = "Desktop"
+    if "ipad" in ua_lower or "tablet" in ua_lower:
+        form = "Tablet"
+    elif any(m in ua_lower for m in ("mobi", "iphone", "android", "ipod")):
+        form = "Mobile"
+
+    if os_name in ("iPhone", "iPad"):
+        return f"{browser} no {os_name} ({form})"
+    if os_name != "Desconhecido":
+        return f"{browser} no {os_name} ({form})"
+    return f"{browser} ({form})"
+
+
+def registrar_log_pesquisa(
+    modulo: str,
+    termo: str,
+    usuario_id: int | None = None,
+    usuario_nome: str = "",
+    user_agent: str = "",
+    total_encontrados: int = 0,
+) -> None:
+    """Registra consultas e pesquisas textuais realizadas por usuários para análise de padrões."""
+    if not termo or not termo.strip():
+        return
+    try:
+        from sqlmodel import Session
+        from app.db.session import engine
+        from app.models.audit import AuditLog
+
+        termo_limpo = termo.strip()
+        # Mascaramento de CPF em logs de busca (LGPD)
+        if re.match(r"^\d{3}\.\d{3}\.\d{3}-\d{2}$", termo_limpo) or (len(re.sub(r"\D", "", termo_limpo)) == 11 and termo_limpo.isdigit()):
+            termo_limpo = mascarar_cpf(termo_limpo)
+        device = parse_device_from_ua(user_agent)
+        detalhes = {
+            "modulo": modulo,
+            "termo": termo_limpo[:120],
+            "total_resultados": total_encontrados,
+            "device": device,
+        }
+        with Session(engine) as db:
+            db.add(AuditLog(
+                user_id=usuario_id,
+                user_name=(usuario_nome or "Usuário")[:120],
+                action="SEARCH",
+                entity=modulo.upper()[:40],
+                entity_id=None,
+                device=device[:150],
+                details=json.dumps(detalhes, ensure_ascii=False)[:MAX_DETAILS],
+                timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
+            ))
+            db.commit()
+    except Exception:
+        pass
+
+
+def registrar_log_exportacao(
+    modulo: str,
+    titulo: str,
+    usuario_id: int | None = None,
+    usuario_nome: str = "",
+    total_linhas: int = 0,
+    filtros: dict | None = None,
+    user_agent: str = "",
+) -> None:
+    """Registra exportações de relatórios em Excel para auditoria estrita."""
+    try:
+        from sqlmodel import Session
+        from app.db.session import engine
+        from app.models.audit import AuditLog
+
+        device = parse_device_from_ua(user_agent)
+        detalhes = {
+            "modulo": modulo,
+            "titulo": titulo,
+            "total_registros": total_linhas,
+            "filtros": filtros or {},
+            "device": device,
+        }
+        with Session(engine) as db:
+            db.add(AuditLog(
+                user_id=usuario_id,
+                user_name=(usuario_nome or "Usuário")[:120],
+                action="EXPORT_EXCEL",
+                entity=modulo.upper()[:40],
+                entity_id=None,
+                device=device[:150],
+                details=json.dumps(detalhes, ensure_ascii=False)[:MAX_DETAILS],
+                timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
+            ))
+            db.commit()
+    except Exception:
+        pass
 
 
 def entidade_acao(path: str, metodo: str) -> tuple[str, str] | tuple[None, None]:
@@ -154,6 +309,10 @@ def entidade_acao(path: str, metodo: str) -> tuple[str, str] | tuple[None, None]
     if segs[0] in ("token", "docs", "openapi.json"):
         return None, None
     if "public" in segs:
+        return None, None
+    # REMOÇÃO DE LOGS DE LOGIN/AUTENTICAÇÃO:
+    # Ignora criação de tokens e sessões puramente informativas para evitar ruído
+    if segs[0] == "auth" or "token" in segs or "login" in segs:
         return None, None
     entidade = None
     for s in segs:
@@ -266,7 +425,8 @@ class AuditMiddleware:
 
         action = f"{entidade}_{acao}"
         entity_id = extrair_id(scope.get("path", ""), resp_body)
-        details: dict = {"status": status}
+        device = parse_device_from_ua(headers.get("user-agent", ""))
+        details: dict = {"status": status, "device": device}
         ctype = headers.get("content-type", "")
         corpo_json = None
         if "multipart" in ctype:
@@ -281,7 +441,7 @@ class AuditMiddleware:
             except Exception:
                 txt = corpo.decode("utf-8", "ignore").strip()
                 if txt:
-                    details["body"] = txt[:MAX_VALOR]
+                    details["body"] = redigir(txt[:MAX_VALOR])
         if metodo := scope.get("method", ""):
             if metodo in ("PUT", "PATCH") and isinstance(corpo_json, dict):
                 details["mudancas"] = _diff(antes, corpo_json)
@@ -315,6 +475,7 @@ class AuditMiddleware:
                 action=action[:60],
                 entity=entidade[:40],
                 entity_id=entity_id,
+                device=device[:150],
                 details=json.dumps(details, ensure_ascii=False)[:MAX_DETAILS],
                 timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
             ))

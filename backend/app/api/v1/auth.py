@@ -14,6 +14,7 @@ router = APIRouter()
 
 
 @router.post("/token/", response_model=TokenOut)
+@router.post("/auth/token", response_model=TokenOut)
 def login(
     form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)
 ):
@@ -41,5 +42,5 @@ def login(
 
 
 @router.get("/me")
-def me(user: User = Depends(get_current_user)):
-    return to_out(user)
+def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return to_out(user, db)

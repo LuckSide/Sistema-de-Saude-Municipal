@@ -26,7 +26,27 @@ def telas_to_list(raw: str) -> list[str]:
     return [t for t in (raw or "").split(",") if t]
 
 
-def to_out(user: User) -> dict:
+def to_out(user: User, db: Session | None = None) -> dict:
+    uid = getattr(user, "unidade_saude_id", None)
+    unidade_nome = None
+    if uid and db:
+        try:
+            from app.models.cadastros_saude import UnidadeSaude
+            u = db.get(UnidadeSaude, uid)
+            if u:
+                unidade_nome = u.nome
+        except Exception:
+            pass
+    lid = getattr(user, "laboratorio_id", None)
+    lab_nome = None
+    if lid and db:
+        try:
+            from app.models.lab_fase6 import Laboratorio
+            l = db.get(Laboratorio, lid)
+            if l:
+                lab_nome = l.nome
+        except Exception:
+            pass
     return {
         "id": user.id,
         "username": user.username,
@@ -35,6 +55,10 @@ def to_out(user: User) -> dict:
         "telas": telas_to_list(user.telas),
         "acoes": acoes_map(user),
         "medico_id": getattr(user, "medico_id", None),
+        "unidade_saude_id": uid,
+        "unidade_saude_nome": unidade_nome,
+        "laboratorio_id": lid,
+        "laboratorio_nome": lab_nome,
         "permite_retroativo": bool(getattr(user, "permite_retroativo", True)),
         "is_superuser": user.is_superuser,
         "is_active": user.is_active,
@@ -58,6 +82,28 @@ def _validar_medico_id(db: Session, medico_id) -> int | None:
     if not db.get(Medico, medico_id):
         raise ValueError("médico vinculado não encontrado")
     return medico_id
+
+
+def _validar_unidade_id(db: Session, unidade_id) -> int | None:
+    if unidade_id is None or unidade_id == "" or unidade_id == 0:
+        return None
+    from app.models.cadastros_saude import UnidadeSaude
+
+    uid = int(unidade_id)
+    if not db.get(UnidadeSaude, uid):
+        raise ValueError("unidade de saúde vinculada não encontrada")
+    return uid
+
+
+def _validar_laboratorio_id(db: Session, lab_id) -> int | None:
+    if lab_id is None or lab_id == "" or lab_id == 0:
+        return None
+    from app.models.lab_fase6 import Laboratorio
+
+    lid = int(lab_id)
+    if not db.get(Laboratorio, lid):
+        raise ValueError("laboratório vinculado não encontrado")
+    return lid
 
 
 def get_by_username(db: Session, username: str) -> User | None:
@@ -100,6 +146,8 @@ def create_user(db: Session, data: UserCreate) -> tuple[User, str | None]:
         telas=telas_to_str(data.telas),
         acoes=json.dumps(validar_acoes(data.acoes or {})),
         medico_id=_validar_medico_id(db, data.medico_id),
+        unidade_saude_id=_validar_unidade_id(db, data.unidade_saude_id),
+        laboratorio_id=_validar_laboratorio_id(db, data.laboratorio_id),
         permite_retroativo=data.permite_retroativo,
         is_superuser=data.is_superuser,
         is_active=data.is_active,
@@ -124,6 +172,10 @@ def update_user(db: Session, user: User, data: UserUpdate) -> User:
         user.telas = telas_to_str(patch.pop("telas"))
     if "medico_id" in patch:
         user.medico_id = _validar_medico_id(db, patch.pop("medico_id"))
+    if "unidade_saude_id" in patch:
+        user.unidade_saude_id = _validar_unidade_id(db, patch.pop("unidade_saude_id"))
+    if "laboratorio_id" in patch:
+        user.laboratorio_id = _validar_laboratorio_id(db, patch.pop("laboratorio_id"))
     if "acoes" in patch and patch["acoes"] is not None:
         try:
             user.acoes = json.dumps(validar_acoes(patch.pop("acoes")))

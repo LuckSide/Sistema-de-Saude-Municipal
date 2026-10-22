@@ -70,7 +70,7 @@ def listar(
     meta = paginar(total, page, limit)
     rows = db.exec(base.offset(meta["offset"]).limit(limit)).all()
     return {
-        "data": [to_out(u) for u in rows],
+        "data": [to_out(u, db) for u in rows],
         "total": total,
         "page": meta["page"],
         "pages": meta["pages"],
@@ -140,7 +140,7 @@ def atualizar(
         if data.is_active is False:
             raise HTTPException(status_code=400, detail="Não pode inativar a si mesmo")
     try:
-        return to_out(update_user(db, user, data))
+        return to_out(update_user(db, user, data), db)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

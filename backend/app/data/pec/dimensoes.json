@@ -1,0 +1,109 @@
+{
+  "periodos": [
+    "2026-T4",
+    "2026-T3",
+    "2026-T2",
+    "2026-T1",
+    "2025-T4"
+  ],
+  "equipes": [
+    {
+      "codigo": "0000245410",
+      "tipo": "eSF",
+      "ubs": "2147076",
+      "nome": "PSF MARIA DA CONCEICAO BARBOSA"
+    },
+    {
+      "codigo": "0000245429",
+      "tipo": "eSF",
+      "ubs": "2147076",
+      "nome": "PSF PARAISO AQUATICO DAS GERAI"
+    },
+    {
+      "codigo": "0000245437",
+      "tipo": "eSF",
+      "ubs": "2147084",
+      "nome": "PSF - CIDADE NOVA"
+    },
+    {
+      "codigo": "0000245445",
+      "tipo": "eSF",
+      "ubs": "2147076",
+      "nome": "NASF 1 GUAPE"
+    },
+    {
+      "codigo": "0000245453",
+      "tipo": "eSF",
+      "ubs": "2147092",
+      "nome": "PSF RECANTO DO LAGO"
+    },
+    {
+      "codigo": "0000245461",
+      "tipo": "eSF",
+      "ubs": "6672167",
+      "nome": "PSF DONA QUITA"
+    },
+    {
+      "codigo": "0001564072",
+      "tipo": "eSF",
+      "ubs": "7653220",
+      "nome": "INE NÃO ENCONTRADO"
+    }
+  ],
+  "ubs": [
+    {
+      "codigo": "Centro de Saude Municipal Guape",
+      "cnes": "2147033",
+      "cadastrados_validos": 0,
+      "equipe_tipo": "eSF"
+    },
+    {
+      "codigo": "Centro Diag Wellington A Vilela",
+      "cnes": "2172909",
+      "cadastrados_validos": 0,
+      "equipe_tipo": "eSF"
+    },
+    {
+      "codigo": "PSF APARECIDA DO SUL",
+      "cnes": "7653220",
+      "cadastrados_validos": 24,
+      "equipe_tipo": "eSF"
+    },
+    {
+      "codigo": "Psf Cidade Nova",
+      "cnes": "2147084",
+      "cadastrados_validos": 6131,
+      "equipe_tipo": "eSF"
+    },
+    {
+      "codigo": "Psf Dona Maria da Conceicao Barbosa Guape",
+      "cnes": "2147009",
+      "cadastrados_validos": 5199,
+      "equipe_tipo": "eSF"
+    },
+    {
+      "codigo": "Psf Dona Quita",
+      "cnes": "6672167",
+      "cadastrados_validos": 3631,
+      "equipe_tipo": "eSF"
+    },
+    {
+      "codigo": "Psf Paraiso Aquatico das Gerais Guape",
+      "cnes": "2147076",
+      "cadastrados_validos": 5841,
+      "equipe_tipo": "eSF"
+    },
+    {
+      "codigo": "Psf Recanto do Lago",
+      "cnes": "2147092",
+      "cadastrados_validos": 5734,
+      "equipe_tipo": "eSF"
+    },
+    {
+      "codigo": "Secretaria Municipal de Saude de Guape",
+      "cnes": "6487882",
+      "cadastrados_validos": 0,
+      "equipe_tipo": "eSF"
+    }
+  ]
+}

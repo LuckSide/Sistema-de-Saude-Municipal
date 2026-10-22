@@ -157,3 +157,39 @@ def valida_telefone(tel: str | None, obrigatorio: bool = False) -> tuple[bool, s
             return False, "Celular deve ter 11 dígitos (DDD + 9 + número)."
         return True, ""
     return False, "Telefone deve ter 10 dígitos (fixo) ou 11 dígitos (celular com DDD)."
+
+
+def valida_cns(cns: str | None) -> tuple[bool, str]:
+    """CNS (Cartão Nacional de Saúde): exatamente 15 dígitos numéricos.
+    Valida comprimento e dígitos verificadores segundo a especificação do Ministério da Saúde.
+    """
+    d = so_digitos(cns)
+    if not d:
+        return True, ""
+    if len(d) != 15:
+        return False, "CNS deve ter exatamente 15 dígitos numéricos."
+    if d[0] not in "12789":
+        return False, "CNS inválido (deve iniciar com 1, 2, 7, 8 ou 9)."
+
+    # Validação oficial SUS do dígito verificador
+    if d[0] in "12":
+        soma = sum(int(d[i]) * (15 - i) for i in range(11))
+        resto = soma % 11
+        dv = 11 - resto
+        if dv == 11:
+            dv = 0
+        if dv == 10:
+            soma += 2
+            resto = soma % 11
+            dv = 11 - resto
+            resultado = d[:11] + "001" + str(dv)
+        else:
+            resultado = d[:11] + "000" + str(dv)
+        if d != resultado:
+            return False, "CNS inválido (dígito verificador não confere)."
+    else:
+        soma = sum(int(d[i]) * (15 - i) for i in range(15))
+        if soma % 11 != 0:
+            return False, "CNS inválido (soma verificadora não confere)."
+    return True, ""
+

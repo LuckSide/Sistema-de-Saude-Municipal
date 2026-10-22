@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import case
 from sqlmodel import Session, select
 
 from app.core.deps import get_current_user, get_db as _get_db
@@ -17,11 +18,48 @@ from app.services.users import gerar_temporaria
 
 router = APIRouter()
 
+def _parse_unidades_ids(val: str | None) -> list[int]:
+    if not val:
+        return []
+    out = []
+    for part in str(val).replace("[", "").replace("]", "").split(","):
+        part = part.strip()
+        if part.isdigit():
+            out.append(int(part))
+    return out
+
+
+def _medico_to_out(
+    m: Medico,
+    usuario_criado: str | None = None,
+    senha_temporaria: str | None = None,
+) -> MedicoOut:
+    d = m.model_dump()
+    d["unidades_ids"] = _parse_unidades_ids(getattr(m, "unidades_ids", None))
+    if usuario_criado:
+        d["usuario_criado"] = usuario_criado
+    if senha_temporaria:
+        d["senha_temporaria"] = senha_temporaria
+    return MedicoOut(**d)
+
+
+def _validar_nao_motorista(data: MedicoIn) -> None:
+    cbo = (data.cbo_codigo or "").strip()
+    cbo_desc = (data.cbo_descricao or "").strip().lower()
+    nome = (data.nome or "").strip().lower()
+    if cbo.startswith("7823") or "motorista" in cbo_desc or "motorista" in nome:
+        raise HTTPException(
+            status_code=400,
+            detail="CBO ou função informada refere-se a Motorista/Transporte. Cadastre motoristas no módulo de Transporte (TFD > Motoristas).",
+        )
+
+
 # ---------- Médicos ----------
 @router.get("/medicos", response_model=list[MedicoOut])
 def listar_medicos(
     q: str = Query(default="", max_length=80),
     somente_ativos: bool | None = Query(default=None),
+    request: Request = None,
     db: Session = Depends(_get_db),
     _ator: User = Depends(get_current_user),
 ):
@@ -29,11 +67,22 @@ def listar_medicos(
     Busca por nome/CRM/CPF/CBO/especialidades. Acessível a qualquer operador logado
     para preenchimento consistente de selects e autocompletes.
     """
-    base = select(Medico).order_by(Medico.nome)
+    filtros_exclusao = [
+        ~Medico.cbo_codigo.like("7823%"),
+        ~Medico.cbo_descricao.ilike("%motorista%"),
+        ~Medico.nome.ilike("%motorista%"),
+    ]
+
+    ordem = [
+        case((Medico.nome == "Médico da Unidade / Responsável Técnico", 0), else_=1),
+        Medico.nome,
+    ]
+
+    base = select(Medico).where(*filtros_exclusao).order_by(*ordem)
     if somente_ativos is True:
-        base = select(Medico).where(Medico.ativo != False).order_by(Medico.nome)  # noqa: E712
+        base = select(Medico).where(Medico.ativo != False, *filtros_exclusao).order_by(*ordem)  # noqa: E712
     elif somente_ativos is False:
-        base = select(Medico).where(Medico.ativo == False).order_by(Medico.nome)  # noqa: E712
+        base = select(Medico).where(Medico.ativo == False, *filtros_exclusao).order_by(*ordem)  # noqa: E712
 
     medicos = list(db.exec(base).all())
     termo = (q or "").strip().lower()
@@ -48,7 +97,36 @@ def listar_medicos(
             or termo in (m.especialidades or "").lower()
             or termo in (m.email or "").lower()
         ]
-    return [MedicoOut(**m.model_dump()) for m in medicos]
+        # Ordenação por Coincidência de Início (Relevância Inteligente)
+        def _chave_med(m):
+            nome_l = (m.nome or "").strip().lower()
+            crm_l = (m.crm or "").strip().lower()
+            comeca = 0 if (nome_l.startswith(termo) or crm_l.startswith(termo)) else 1
+            return (comeca, nome_l)
+        medicos.sort(key=_chave_med)
+
+    # Mantenha o médico genérico ("Médico da Unidade / Responsável Técnico") sempre disponível no topo ou na lista quando ativos forem solicitados
+    if somente_ativos is not False and not termo:
+        idx_rt = next((i for i, m in enumerate(medicos) if m.nome == "Médico da Unidade / Responsável Técnico"), None)
+        if idx_rt is not None and idx_rt > 0:
+            med_rt = medicos.pop(idx_rt)
+            medicos.insert(0, med_rt)
+        elif idx_rt is None:
+            med_rt = db.exec(select(Medico).where(Medico.nome == "Médico da Unidade / Responsável Técnico")).first()
+            if med_rt:
+                medicos.insert(0, med_rt)
+
+    if termo:
+        try:
+            from app.core.audit import registrar_log_pesquisa
+            u_id = _ator.id if _ator else None
+            u_nome = (_ator.nome or _ator.username) if _ator else ""
+            ua = request.headers.get("user-agent", "") if request else ""
+            registrar_log_pesquisa("medicos", termo, u_id, u_nome, ua, len(medicos))
+        except Exception:
+            pass
+
+    return [_medico_to_out(m) for m in medicos]
 
 
 @router.post("/medicos", response_model=MedicoOut, status_code=201)
@@ -60,8 +138,11 @@ def criar_medico(
     """Cadastra novo profissional de saúde e cria automaticamente seu usuário de acesso
     em uma única transação atômica.
     """
+    _validar_nao_motorista(data)
     try:
-        obj = Medico(**data.model_dump())
+        dados_med = data.model_dump()
+        u_ids = dados_med.pop("unidades_ids", [])
+        obj = Medico(**dados_med, unidades_ids=",".join(map(str, u_ids)))
         db.add(obj)
         db.flush()
 
@@ -112,11 +193,13 @@ def criar_medico(
             criar_dashboard_padrao_se_ausente(db, novo_user)
         except Exception:
             pass
-        return MedicoOut(
-            **obj.model_dump(),
+        return _medico_to_out(
+            obj,
             usuario_criado=login_usuario,
             senha_temporaria=senha_temp,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(
@@ -136,9 +219,15 @@ def atualizar_medico(
     if not obj:
         raise HTTPException(404, "Médico não encontrado")
 
+    _validar_nao_motorista(data)
+
     try:
-        for k, v in data.model_dump().items():
+        dados_patch = data.model_dump()
+        u_ids = dados_patch.pop("unidades_ids", None)
+        for k, v in dados_patch.items():
             setattr(obj, k, v)
+        if u_ids is not None:
+            obj.unidades_ids = ",".join(map(str, u_ids))
         db.add(obj)
 
         # Sincroniza usuário vinculado existente ou cria novo se não existir
@@ -190,11 +279,13 @@ def atualizar_medico(
 
         db.commit()
         db.refresh(obj)
-        return MedicoOut(
-            **obj.model_dump(),
+        return _medico_to_out(
+            obj,
             usuario_criado=usuario_criado,
             senha_temporaria=senha_temp,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(

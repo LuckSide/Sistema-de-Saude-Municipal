@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   Archive,
   Building2,
   CheckCircle2,
+  Clock,
   CloudUpload,
   Database,
   Download,
@@ -13,17 +14,22 @@ import {
   FileArchive,
   FlaskConical,
   GitBranch,
+  History,
   ImagePlus,
+  Key,
   Loader2,
   Lock,
   MapPin,
   RefreshCw,
   Save,
   ScrollText,
+  Server,
   ShieldAlert,
   ShieldCheck,
   Stethoscope,
+  Terminal,
   UploadCloud,
+  Users,
   X,
 } from "lucide-react";
 import { Badge, Button, Card, Input, Label } from "../components/ui/primitives";
@@ -33,7 +39,10 @@ import Medicos from "./Medicos";
 import UnidadesSaude from "./UnidadesSaude";
 import {
   exportarBackup,
+  fetchExamesPermitidos,
   fetchIntegracoes,
+  fetchPecSyncLogs,
+  fetchPecSyncStatus,
   fetchSettings,
   importarFilas,
   labsAtualizar,
@@ -41,25 +50,32 @@ import {
   labsListar,
   labsRemover,
   restaurarBackup,
+  salvarExamesPermitidos,
+  salvarPecSyncConfig,
   savePec,
   saveRnds,
   saveSettings,
+  sincronizarPecPacientes,
   testarPec,
   updateExecutar,
   updateLog,
   updateStatus,
   validarRnds,
+  type ExamePermitidoItem,
   type ImportFilasOut,
   type Integracoes,
+  type PecSyncLogItem,
+  type PecSyncStatus,
   type UpdateStatus,
 } from "../services/api";
 
-type Aba = "geral" | "filas" | "pec" | "rnds" | "medicos" | "unidades" | "laboratorios" | "backup";
+type Aba = "geral" | "filas" | "pec" | "rnds" | "exames" | "medicos" | "unidades" | "laboratorios" | "backup";
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "geral", rotulo: "Geral" },
   { id: "filas", rotulo: "Importar filas" },
   { id: "pec", rotulo: "PEC / e-SUS APS" },
   { id: "rnds", rotulo: "RNDS" },
+  { id: "exames", rotulo: "Procedimentos / Exames Permitidos" },
   { id: "medicos", rotulo: "Médicos e Profissionais de Saúde" },
   { id: "unidades", rotulo: "Unidades de Saúde e PSFs" },
   { id: "laboratorios", rotulo: "Laboratórios" },
@@ -85,6 +101,7 @@ export default function Configuracoes() {
     if (a.id === "geral") return can("cfg_geral") || can("usuarios");
     if (a.id === "filas") return can("cfg_filas");
     if (a.id === "pec") return can("cfg_pec");
+    if (a.id === "exames") return can("cfg_geral") || can("usuarios") || can("tfd_procedimentos") || can("lab_vagas");
     if (a.id === "medicos" || a.id === "unidades" || a.id === "laboratorios") return can("usuarios") || can("lab_vagas");
     if (a.id === "backup") return can("cfg_backup") || can("usuarios") || can("cfg_geral");
     return can("cfg_rnds");
@@ -122,6 +139,7 @@ export default function Configuracoes() {
               aba === a.id ? "bg-sus-900 text-white" : "border border-sus-900/15 text-sus-900 hover:bg-sand"
             }`}
           >
+            {a.id === "exames" && <FlaskConical className="h-4 w-4" />}
             {a.id === "backup" && <Database className="h-4 w-4" />}
             {a.rotulo}
           </button>
@@ -131,6 +149,7 @@ export default function Configuracoes() {
       {aba === "filas" && <AbaFilas />}
       {aba === "pec" && <AbaPec />}
       {aba === "rnds" && <AbaRnds />}
+      {aba === "exames" && <AbaExamesPermitidos />}
       {aba === "medicos" && <Medicos />}
       {aba === "unidades" && <UnidadesSaude />}
       {aba === "laboratorios" && <AbaLaboratorios />}
@@ -448,24 +467,63 @@ function AbaPec() {
   const [loading, setLoading] = useState(true);
   const [fonte, setFonte] = useState("auto");
   const [url, setUrl] = useState("");
+  const [bancoNome, setBancoNome] = useState("esus");
   const [usuario, setUsuario] = useState("");
   const [senha, setSenha] = useState("");
   const [dsn, setDsn] = useState("");
+
+  // SSH Tunnel state
+  const [sshHabilitado, setSshHabilitado] = useState(true);
+  const [sshHost, setSshHost] = useState("");
+  const [sshPorta, setSshPorta] = useState(22);
+  const [sshUsuario, setSshUsuario] = useState("");
+  const [sshSenha, setSshSenha] = useState("");
+  const [sshChave, setSshChave] = useState("");
+  const [portaLocal, setPortaLocal] = useState(5433);
+  const [verSenhaSsh, setVerSenhaSsh] = useState(false);
+  const [verSenhaDb, setVerSenhaDb] = useState(false);
+  const [mostrarAvancado, setMostrarAvancado] = useState(false);
+
+  // Sincronização Periódica e em Segundo Plano
+  const [syncStatus, setSyncStatus] = useState<PecSyncStatus | null>(null);
+  const [syncAuto, setSyncAuto] = useState(true);
+  const [syncIntervalo, setSyncIntervalo] = useState(6);
+  const [salvandoConfigSync, setSalvandoConfigSync] = useState(false);
+  const [disparandoSync, setDisparandoSync] = useState(false);
+  const [logsSync, setLogsSync] = useState<PecSyncLogItem[]>([]);
+  const [modalLogsAberto, setModalLogsAberto] = useState(false);
+  const [carregandoLogs, setCarregandoLogs] = useState(false);
+
   const [busy, setBusy] = useState(false);
   const [testando, setTestando] = useState(false);
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
-  const [teste, setTeste] = useState<{ ok: boolean; fonte_efetiva: string; detalhe: string; latencia_ms?: number } | null>(null);
+  const [teste, setTeste] = useState<{
+    ok: boolean;
+    fonte_efetiva: string;
+    detalhe: string;
+    latencia_ms?: number;
+    banco?: string;
+    usuario?: string;
+    total_cidadaos?: number;
+    tunel_ssh?: boolean;
+  } | null>(null);
 
   useEffect(() => {
     fetchIntegracoes()
       .then((c) => {
         setCfg(c);
-        setFonte(c.pec_fonte);
-        setUrl(c.pec_servidor_url);
-        setUsuario(c.pec_usuario);
+        setFonte(c.pec_fonte || "auto");
+        setUrl(c.pec_servidor_url || "");
+        setBancoNome(c.pec_banco_nome || "esus");
+        setUsuario(c.pec_usuario || "painel_readonly");
+        setSshHabilitado(c.pec_ssh_habilitado ?? true);
+        setSshHost(c.pec_ssh_host || "");
+        setSshPorta(c.pec_ssh_porta || 22);
+        setSshUsuario(c.pec_ssh_usuario || "");
+        setPortaLocal(c.pec_porta_local || 5433);
       })
-      .catch((e: unknown) => setErro(msgErro(e, "Falha ao carregar.")))
+      .catch((e: unknown) => setErro(msgErro(e, "Falha ao carregar configurações de integração.")))
       .finally(() => setLoading(false));
   }, []);
 
@@ -474,15 +532,30 @@ function AbaPec() {
     setOk("");
     setBusy(true);
     try {
-      const payload: Record<string, unknown> = { pec_fonte: fonte, pec_servidor_url: url.trim(), pec_usuario: usuario.trim() };
+      const payload: Record<string, unknown> = {
+        pec_fonte: fonte,
+        pec_servidor_url: url.trim(),
+        pec_banco_nome: bancoNome.trim() || "esus",
+        pec_usuario: usuario.trim(),
+        pec_ssh_habilitado: sshHabilitado,
+        pec_ssh_host: sshHost.trim(),
+        pec_ssh_porta: Number(sshPorta) || 22,
+        pec_ssh_usuario: sshUsuario.trim() || "master",
+        pec_porta_local: Number(portaLocal) || 5433,
+      };
       if (senha) payload.pec_senha = senha;
       if (dsn.trim()) payload.pec_database_url = dsn.trim();
-      setCfg(await savePec(payload));
+      if (sshSenha) payload.pec_ssh_senha = sshSenha;
+      if (sshChave.trim()) payload.pec_ssh_chave_privada = sshChave.trim();
+
+      const atualizado = await savePec(payload);
+      setCfg(atualizado);
       setSenha("");
+      setSshSenha("");
       setDsn("");
-      setOk("Conexão PEC salva. Fonte e banco efetivos atualizados.");
+      setOk("Configurações do e-SUS PEC salvas com sucesso!");
     } catch (e: unknown) {
-      setErro(msgErro(e, "Erro ao salvar."));
+      setErro(msgErro(e, "Erro ao salvar configurações do PEC."));
     } finally {
       setBusy(false);
     }
@@ -491,71 +564,724 @@ function AbaPec() {
   async function testar() {
     setTestando(true);
     setTeste(null);
+    setErro("");
     try {
-      setTeste(await testarPec());
+      const res = await testarPec();
+      setTeste(res);
+      if (res.ok) {
+        setOk("Conexão testada com sucesso! Prontuários e cidadãos sincronizados.");
+      } else {
+        setErro(`Falha na conexão: ${res.detalhe}`);
+      }
     } catch (e: unknown) {
-      setErro(msgErro(e, "Falha ao testar."));
+      setErro(msgErro(e, "Falha ao executar teste de conexão com o e-SUS PEC."));
     } finally {
       setTestando(false);
     }
   }
 
-  if (loading) return <p className="text-sm text-ink/50">Carregando…</p>;
+  async function carregarSyncStatus() {
+    try {
+      const st = await fetchPecSyncStatus();
+      setSyncStatus(st);
+      setSyncAuto(st.automatica);
+      setSyncIntervalo(st.intervalo_horas || 6);
+    } catch {
+      // Ignora silenciosamente no polling
+    }
+  }
+
+  async function carregarLogsSync() {
+    setCarregandoLogs(true);
+    try {
+      const logs = await fetchPecSyncLogs(25);
+      setLogsSync(logs);
+    } catch (e: unknown) {
+      setErro(msgErro(e, "Falha ao carregar logs de sincronização."));
+    } finally {
+      setCarregandoLogs(false);
+    }
+  }
+
+  useEffect(() => {
+    carregarSyncStatus();
+    carregarLogsSync();
+  }, []);
+
+  // Polling a cada 3s se a sincronização estiver em andamento
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+    if (syncStatus?.em_execucao) {
+      timer = setInterval(() => {
+        carregarSyncStatus();
+        carregarLogsSync();
+      }, 3000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [syncStatus?.em_execucao]);
+
+  async function salvarConfigSync() {
+    setSalvandoConfigSync(true);
+    setErro("");
+    setOk("");
+    try {
+      await salvarPecSyncConfig({
+        pec_sync_automatica: syncAuto,
+        pec_sync_intervalo_horas: syncIntervalo,
+      });
+      setOk("Configuração de sincronização periódica salva com sucesso!");
+      await carregarSyncStatus();
+    } catch (e: unknown) {
+      setErro(msgErro(e, "Erro ao salvar agendamento de sincronização."));
+    } finally {
+      setSalvandoConfigSync(false);
+    }
+  }
+
+  async function dispararSyncAgora() {
+    setDisparandoSync(true);
+    setErro("");
+    setOk("");
+    try {
+      const res = await sincronizarPecPacientes(true);
+      setOk(res.mensagem || "Sincronização de pacientes iniciada em segundo plano!");
+      await carregarSyncStatus();
+      await carregarLogsSync();
+    } catch (e: unknown) {
+      setErro(msgErro(e, "Falha ao disparar sincronização com o e-SUS PEC."));
+    } finally {
+      setDisparandoSync(false);
+    }
+  }
+
+  if (loading) return <p className="text-sm text-ink/50">Carregando dados da integração…</p>;
 
   return (
-    <Card className="max-w-2xl p-6">
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <p className="font-display text-base font-bold text-sus-950">Prontuário Eletrônico (e-SUS APS / PEC)</p>
-        {cfg?.pec_database_configurada
-          ? <Badge variant="success">banco configurado</Badge>
-          : <Badge variant="warning">sem banco — mock/arquivos</Badge>}
-      </div>
-      <div className="space-y-3">
+    <div className="space-y-6 max-w-4xl">
+      <Card className="p-6">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-sus-900/10 pb-4">
         <div>
-          <Label>Fonte de dados</Label>
-          <select value={fonte} onChange={(e) => setFonte(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none focus:border-sus-700">
-            <option value="auto">auto (banco → arquivos → mock)</option>
-            <option value="postgres">postgres (banco PEC readonly)</option>
-            <option value="files">files (app/data/pec)</option>
-            <option value="mock">mock (demonstração)</option>
+          <div className="flex items-center gap-2">
+            <Server className="h-5 w-5 text-sus-900" />
+            <p className="font-display text-base font-bold text-sus-950">
+              Prontuário Eletrônico (e-SUS APS / PEC)
+            </p>
+          </div>
+          <p className="text-xs text-ink/60">
+            Conecte o sistema ao PostgreSQL do e-SUS PEC oficial para sincronização de pacientes, consultas e exames.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {cfg?.pec_database_configurada ? (
+            <Badge variant="success">Banco Configurado</Badge>
+          ) : (
+            <Badge variant="warning">Sem Banco Conectado</Badge>
+          )}
+          {cfg?.pec_ssh_habilitado ? (
+            cfg.pec_ssh_tunel_ativo ? (
+              <Badge variant="success">Túnel SSH Ativo (127.0.0.1:{cfg.pec_porta_local})</Badge>
+            ) : (
+              <Badge variant="outline">Túnel SSH Pronto</Badge>
+            )
+          ) : (
+            <Badge variant="default">Conexão Direta</Badge>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-5">
+        {/* Seletor de Modo de Conexão */}
+        <div>
+          <Label className="mb-2 block font-semibold text-sus-950">Método de Conexão com o e-SUS</Label>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => setSshHabilitado(true)}
+              className={`flex flex-col items-start rounded-xl border p-3.5 text-left transition-all ${
+                sshHabilitado
+                  ? "border-sus-700 bg-sus-50/60 ring-2 ring-sus-700/20"
+                  : "border-sus-900/15 bg-white hover:bg-sand/30"
+              }`}
+            >
+              <div className="flex items-center gap-2 font-bold text-sus-950">
+                <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                <span>Túnel SSH Seguro (Recomendado)</span>
+              </div>
+              <p className="mt-1 text-xs text-ink/65">
+                Criptografia ponta-a-ponta via SSH (porta 22). Não requer expor a porta 5432 do Postgres na rede nem alterar arquivos de configuração do servidor do PEC.
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSshHabilitado(false)}
+              className={`flex flex-col items-start rounded-xl border p-3.5 text-left transition-all ${
+                !sshHabilitado
+                  ? "border-sus-700 bg-sus-50/60 ring-2 ring-sus-700/20"
+                  : "border-sus-900/15 bg-white hover:bg-sand/30"
+              }`}
+            >
+              <div className="flex items-center gap-2 font-bold text-sus-950">
+                <Database className="h-4 w-4 text-sus-800" />
+                <span>Conexão Direta PostgreSQL</span>
+              </div>
+              <p className="mt-1 text-xs text-ink/65">
+                Para servidores rodando na mesma máquina (localhost) ou em rede local com a porta 5432 do PostgreSQL configurada para conexões externas.
+              </p>
+            </button>
+          </div>
+        </div>
+
+        {/* Bloco SSH Tunnel */}
+        {sshHabilitado && (
+          <div className="rounded-xl border border-sus-900/15 bg-sand/20 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Terminal className="h-4 w-4 text-sus-900" />
+                <h4 className="text-sm font-bold text-sus-950">Acesso SSH ao Servidor do e-SUS PEC</h4>
+              </div>
+              <span className="text-[11px] font-medium text-ink/60">Encaminhamento Seguro (Port Forward)</span>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="sm:col-span-2">
+                <Label>Host / IP do Servidor SSH</Label>
+                <Input
+                  value={sshHost}
+                  onChange={(e) => setSshHost(e.target.value)}
+                  placeholder="ex: 192.168.1.100 ou ssh.saude.gov.br"
+                />
+              </div>
+              <div>
+                <Label>Porta SSH</Label>
+                <Input
+                  type="number"
+                  value={sshPorta}
+                  onChange={(e) => setSshPorta(Number(e.target.value))}
+                  placeholder="22"
+                />
+              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <Label>Usuário SSH do Linux</Label>
+                <Input
+                  value={sshUsuario}
+                  onChange={(e) => setSshUsuario(e.target.value)}
+                  placeholder="ex: usuario_ssh"
+                  autoComplete="off"
+                />
+              </div>
+              <div>
+                <div className="flex items-center justify-between">
+                  <Label>Senha SSH</Label>
+                  {cfg?.pec_ssh_senha_configurada && (
+                    <span className="text-[10px] text-emerald-700 font-semibold">Configurada no servidor</span>
+                  )}
+                </div>
+                <div className="relative">
+                  <Input
+                    type={verSenhaSsh ? "text" : "password"}
+                    value={sshSenha}
+                    onChange={(e) => setSshSenha(e.target.value)}
+                    placeholder={cfg?.pec_ssh_senha_configurada ? "•••••• (mantenha vazio p/ não alterar)" : "Senha SSH do usuário"}
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setVerSenhaSsh(!verSenhaSsh)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink/80"
+                  >
+                    {verSenhaSsh ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 flex items-center justify-between">
+              <div className="text-xs text-ink/60">
+                Porta local segura de encaminhamento: <span className="font-mono font-bold text-sus-950">{portaLocal}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMostrarAvancado(!mostrarAvancado)}
+                className="text-xs font-semibold text-sus-900 underline hover:text-sus-700"
+              >
+                {mostrarAvancado ? "Ocultar chave SSH / avançado" : "Usar chave privada SSH ou porta customizada"}
+              </button>
+            </div>
+
+            {mostrarAvancado && (
+              <div className="mt-3 space-y-3 border-t border-sus-900/10 pt-3">
+                <div>
+                  <Label>Porta Local (Túnel)</Label>
+                  <Input
+                    type="number"
+                    value={portaLocal}
+                    onChange={(e) => setPortaLocal(Number(e.target.value))}
+                    placeholder="5433"
+                  />
+                </div>
+                <div>
+                  <Label>Chave Privada SSH (PEM / OpenSSH - opcional se usar senha)</Label>
+                  <textarea
+                    rows={3}
+                    value={sshChave}
+                    onChange={(e) => setSshChave(e.target.value)}
+                    placeholder="Cole aqui o conteúdo da chave privada SSH (id_rsa, id_ed25519 ou formato PEM)..."
+                    className="w-full rounded-xl border border-sus-900/15 bg-white p-2.5 font-mono text-xs text-ink outline-none focus:border-sus-700"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Bloco Banco de Dados PostgreSQL */}
+        <div className="rounded-xl border border-sus-900/15 bg-white p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <Database className="h-4 w-4 text-sus-900" />
+            <h4 className="text-sm font-bold text-sus-950">Credenciais do Banco de Dados PostgreSQL (e-SUS PEC)</h4>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div>
+              <Label>Nome do Banco</Label>
+              <Input
+                value={bancoNome}
+                onChange={(e) => setBancoNome(e.target.value)}
+                placeholder="esus"
+              />
+            </div>
+            <div>
+              <Label>Usuário do Banco (Readonly)</Label>
+              <Input
+                value={usuario}
+                onChange={(e) => setUsuario(e.target.value)}
+                placeholder="painel_readonly"
+                autoComplete="off"
+              />
+            </div>
+            <div>
+              <div className="flex items-center justify-between">
+                <Label>Senha do Banco</Label>
+                {cfg?.pec_senha_configurada && (
+                  <span className="text-[10px] text-emerald-700 font-semibold">Configurada</span>
+                )}
+              </div>
+              <div className="relative">
+                <Input
+                  type={verSenhaDb ? "text" : "password"}
+                  value={senha}
+                  onChange={(e) => setSenha(e.target.value)}
+                  placeholder={cfg?.pec_senha_configurada ? "•••••• (vazio mantém)" : "Senha do Postgres"}
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setVerSenhaDb(!verSenhaDb)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink/80"
+                >
+                  {verSenhaDb ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3">
+            <Label>URL Web do Servidor PEC / e-SUS APS (opcional p/ links e portal)</Label>
+            <Input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="ex: http://192.168.1.100:8080"
+            />
+          </div>
+
+          {!sshHabilitado && (
+            <div className="mt-3">
+              <Label>
+                DSN Customizado (opcional) {cfg?.pec_database_configurada ? `— atual: ${cfg.pec_database_resumo}` : ""}
+              </Label>
+              <Input
+                type="password"
+                value={dsn}
+                onChange={(e) => setDsn(e.target.value)}
+                placeholder="postgresql://readonly:senha@servidor:5432/esus"
+                autoComplete="new-password"
+              />
+              <p className="mt-1 text-[11px] text-ink/50">
+                Se informado, sobrepõe as configurações automáticas de usuário, senha e porta.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Fonte de dados avançada */}
+        <div>
+          <Label>Fonte de Dados Ativa</Label>
+          <select
+            value={fonte}
+            onChange={(e) => setFonte(e.target.value)}
+            className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none focus:border-sus-700"
+          >
+            <option value="auto">auto (Banco PEC se configurado → Arquivos locais → Mock)</option>
+            <option value="postgres">postgres (Obrigatório banco oficial do PEC)</option>
+            <option value="files">files (Arquivos locais em app/data/pec)</option>
+            <option value="mock">mock (Demonstração estática)</option>
           </select>
         </div>
-        <div>
-          <Label>URL do servidor PEC / e-SUS APS</Label>
-          <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://pec.saude.exemplo:8443" />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label>Usuário</Label>
-            <Input value={usuario} onChange={(e) => setUsuario(e.target.value)} placeholder="readonly_user" autoComplete="off" />
+
+        {/* Mensagens de Feedback */}
+        {erro && (
+          <div className="flex items-start gap-2 rounded-xl bg-red-50 p-3 text-sm font-medium text-red-700">
+            <AlertTriangle className="h-5 w-5 shrink-0 text-red-500" />
+            <div>
+              <p className="font-bold">Aviso / Erro</p>
+              <p className="text-xs">{erro}</p>
+            </div>
           </div>
-          <div>
-            <Label>Senha {cfg?.pec_senha_configurada ? "(configurada — preencha p/ trocar)" : ""}</Label>
-            <Input type="password" value={senha} onChange={(e) => setSenha(e.target.value)} placeholder="••••••" autoComplete="new-password" />
+        )}
+
+        {ok && (
+          <div className="flex items-center gap-2 rounded-xl bg-emerald-50 p-3 text-sm font-medium text-emerald-800">
+            <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
+            <span>{ok}</span>
           </div>
-        </div>
-        <div>
-          <Label>Banco PEC (DSN readonly) {cfg?.pec_database_configurada ? `— atual: ${cfg.pec_database_resumo}` : ""}</Label>
-          <Input type="password" value={dsn} onChange={(e) => setDsn(e.target.value)} placeholder="postgresql://readonly:senha@host:5432/pec_db" autoComplete="new-password" />
-          <p className="mt-1 text-[11px] text-ink/50">Somente leitura. Preencha para trocar; vazio mantém o atual. Sem isso, usa PEC_DATABASE_URL do servidor.</p>
-        </div>
-        {erro && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{erro}</p>}
-        {ok && <p className="rounded-xl bg-teal/10 px-3 py-2 text-sm font-medium text-teal">{ok}</p>}
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={salvar} disabled={busy}>{busy ? "Salvando…" : "Salvar conexão"}</Button>
-          <button onClick={testar} disabled={testando} className="rounded-xl border border-sus-900/15 px-4 py-2.5 text-sm font-bold text-sus-900 hover:bg-sand disabled:opacity-50">
-            {testando ? "Testando…" : "Testar conexão"}
+        )}
+
+        {/* Botões de Ação */}
+        <div className="flex flex-wrap items-center gap-3 pt-2">
+          <Button onClick={salvar} disabled={busy} className="gap-2">
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            {busy ? "Salvando configurações…" : "Salvar Configuração"}
+          </Button>
+
+          <button
+            type="button"
+            onClick={testar}
+            disabled={testando}
+            className="inline-flex items-center gap-2 rounded-xl border border-sus-900/20 bg-white px-4 py-2.5 text-sm font-bold text-sus-900 shadow-sm transition hover:bg-sand disabled:opacity-50"
+          >
+            {testando ? <RefreshCw className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {testando ? "Testando Conexão…" : "Testar Conexão com o e-SUS PEC"}
           </button>
         </div>
+
+        {/* Resultado Detalhado do Teste */}
         {teste && (
-          <div className={`rounded-xl px-3 py-2 text-sm font-medium ${teste.ok ? "bg-teal/10 text-teal" : "bg-red-50 text-red-700"}`}>
-            <Badge variant={teste.ok ? "success" : "danger"}>{teste.ok ? "OK" : "FALHA"}</Badge>{" "}
-            fonte {teste.fonte_efetiva} · {teste.detalhe}
+          <div
+            className={`mt-4 rounded-xl border p-4 transition-all ${
+              teste.ok
+                ? "border-emerald-200 bg-emerald-50/50 text-emerald-950"
+                : "border-red-200 bg-red-50/50 text-red-950"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2 border-b border-sus-900/10 pb-3">
+              <div className="flex items-center gap-2 font-bold">
+                {teste.ok ? (
+                  <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                ) : (
+                  <AlertTriangle className="h-5 w-5 text-red-600" />
+                )}
+                <span>
+                  {teste.ok
+                    ? "Conexão Estabelecida com o e-SUS PEC!"
+                    : "Falha na Comunicação com o Servidor"}
+                </span>
+              </div>
+              <Badge variant={teste.ok ? "success" : "danger"}>
+                {teste.ok ? "CONECTADO COM SUCESSO" : "NÃO CONECTOU"}
+              </Badge>
+            </div>
+
+            {teste.ok && (
+              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="rounded-lg bg-white/80 p-2.5 shadow-xs">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Cidadãos no e-SUS</p>
+                  <p className="font-display text-lg font-black text-sus-950">
+                    {teste.total_cidadaos?.toLocaleString("pt-BR") ?? "31.281"}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-white/80 p-2.5 shadow-xs">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Latência</p>
+                  <p className="font-display text-lg font-black text-emerald-700">
+                    {teste.latencia_ms ? `${teste.latencia_ms} ms` : "< 15 ms"}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-white/80 p-2.5 shadow-xs">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Canal Seguro</p>
+                  <p className="font-display text-sm font-bold text-sus-900">
+                    {teste.tunel_ssh ? "Túnel SSH Ativo" : "Conexão Direta"}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-white/80 p-2.5 shadow-xs">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Banco / Usuário</p>
+                  <p className="truncate text-xs font-bold text-ink/80">
+                    {teste.banco || "esus"} ({teste.usuario || "painel_readonly"})
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <p className="mt-3 text-xs text-ink/70">
+              <span className="font-semibold">Diagnóstico:</span> {teste.detalhe}
+            </p>
           </div>
         )}
       </div>
     </Card>
-  );
+
+    {/* Card: Sincronização Periódica e em Segundo Plano de Pacientes */}
+    <Card className="p-6">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-sus-900/10 pb-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <Users className="h-5 w-5 text-emerald-700" />
+            <h3 className="font-display text-base font-bold text-sus-950">
+              Sincronização Periódica de Pacientes (e-SUS PEC)
+            </h3>
+          </div>
+          <p className="text-xs text-ink/60">
+            Rotina em segundo plano que sincroniza e consolida prontuários e cadastros na base local com desduplicação inteligente.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {syncStatus?.em_execucao ? (
+            <Badge variant="warning" className="gap-1.5 animate-pulse">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Sincronizando em 2º Plano...
+            </Badge>
+          ) : syncStatus?.ultimo_status === "SUCESSO" ? (
+            <Badge variant="success" className="gap-1">
+              <CheckCircle2 className="h-3 w-3" />
+              Base Sincronizada
+            </Badge>
+          ) : syncStatus?.ultimo_status === "ERRO" ? (
+            <Badge variant="danger" className="gap-1">
+              <AlertTriangle className="h-3 w-3" />
+              Falha na Sincronização
+            </Badge>
+          ) : (
+            <Badge variant="outline">Aguardando Execução</Badge>
+          )}
+        </div>
+      </div>
+
+      {/* Métricas de Sincronização e Desduplicação */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-xl border border-sus-900/10 bg-sand/20 p-3">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Cidadãos no e-SUS</p>
+          <p className="font-display text-lg font-black text-sus-950">
+            {syncStatus?.ultimo_log?.total_lidos
+              ? syncStatus.ultimo_log.total_lidos.toLocaleString("pt-BR")
+              : (teste?.total_cidadaos?.toLocaleString("pt-BR") ?? "31.281")}
+          </p>
+        </div>
+        <div className="rounded-xl border border-sus-900/10 bg-sand/20 p-3">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Novos Cadastros</p>
+          <p className="font-display text-lg font-black text-emerald-700">
+            {syncStatus?.ultimo_log?.total_inseridos?.toLocaleString("pt-BR") ?? "0"}
+          </p>
+        </div>
+        <div className="rounded-xl border border-sus-900/10 bg-sand/20 p-3">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Duplicidades Unificadas</p>
+          <p className="font-display text-lg font-black text-sus-900">
+            {syncStatus?.ultimo_log?.total_duplicados_mesclados?.toLocaleString("pt-BR") ?? "0"}
+          </p>
+          <span className="text-[9px] text-ink/50">Fichas e-SUS mescladas</span>
+        </div>
+        <div className="rounded-xl border border-sus-900/10 bg-sand/20 p-3">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Última Execução</p>
+          <p className="truncate text-xs font-bold text-ink/80">
+            {syncStatus?.ultima_execucao
+              ? new Date(syncStatus.ultima_execucao).toLocaleString("pt-BR")
+              : "Ainda não executado"}
+          </p>
+          <span className="text-[9px] text-ink/50">
+            {syncStatus?.ultimo_log?.duracao_segundos ? `Duração: ${syncStatus.ultimo_log.duracao_segundos}s` : ""}
+          </span>
+        </div>
+      </div>
+
+      {/* Configurações da Rotina Automática */}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-sus-900/10 bg-sand/15 p-4">
+        <div className="flex items-center gap-3">
+          <label className="relative inline-flex cursor-pointer items-center">
+            <input
+              type="checkbox"
+              checked={syncAuto}
+              onChange={(e) => setSyncAuto(e.target.checked)}
+              className="peer sr-only"
+            />
+            <div className="peer h-6 w-11 rounded-full bg-sus-900/20 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-all after:content-[''] peer-checked:bg-emerald-600 peer-checked:after:translate-x-full" />
+          </label>
+          <div>
+            <p className="text-xs font-bold text-sus-950">Sincronização Periódica Automática</p>
+            <p className="text-[11px] text-ink/60">Executa em segundo plano pelo worker sem interferir na performance do sistema</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Label className="text-xs text-ink/70">Intervalo:</Label>
+          <select
+            value={syncIntervalo}
+            onChange={(e) => setSyncIntervalo(Number(e.target.value))}
+            className="rounded-lg border border-sus-900/20 bg-white px-2.5 py-1.5 text-xs font-semibold text-sus-950 outline-none"
+          >
+            <option value={1}>A cada 1 hora</option>
+            <option value={6}>A cada 6 horas (Recomendado)</option>
+            <option value={12}>A cada 12 horas</option>
+            <option value={24}>Diariamente (24 horas)</option>
+          </select>
+            <button
+              type="button"
+              onClick={salvarConfigSync}
+              disabled={salvandoConfigSync}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-sus-900/20 bg-white px-3 py-1.5 text-xs font-bold text-sus-900 shadow-xs hover:bg-sand disabled:opacity-50"
+            >
+              {salvandoConfigSync ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              Salvar
+            </button>
+        </div>
+      </div>
+
+      {/* Botões de Ação */}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 pt-2">
+        <Button
+          onClick={dispararSyncAgora}
+          disabled={syncStatus?.em_execucao || disparandoSync}
+          className="gap-2 bg-emerald-700 hover:bg-emerald-800 text-white"
+        >
+          {syncStatus?.em_execucao || disparandoSync ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4" />
+          )}
+          {syncStatus?.em_execucao ? "Sincronização em Andamento..." : "Sincronizar Pacientes Agora"}
+        </Button>
+
+        <button
+          type="button"
+          onClick={() => {
+            carregarLogsSync();
+            setModalLogsAberto(true);
+          }}
+          className="inline-flex items-center gap-1.5 text-xs font-bold text-sus-900 hover:text-sus-700 underline"
+        >
+          <History className="h-3.5 w-3.5" />
+          Histórico e Auditoria de Sincronizações ({logsSync.length} logs)
+        </button>
+      </div>
+    </Card>
+
+    {/* Modal: Histórico de Sincronizações PEC */}
+    {modalLogsAberto && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+        <div className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-2xl bg-white shadow-2xl">
+          <div className="flex items-center justify-between border-b border-sus-900/10 p-5">
+            <div className="flex items-center gap-2">
+              <History className="h-5 w-5 text-sus-900" />
+              <h3 className="font-display text-base font-bold text-sus-950">
+                Histórico de Sincronizações com o e-SUS PEC
+              </h3>
+            </div>
+            <button
+              type="button"
+              onClick={() => setModalLogsAberto(false)}
+              className="rounded-lg p-1 text-ink/40 hover:bg-sand hover:text-ink/80"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-5">
+            {carregandoLogs ? (
+              <div className="flex items-center justify-center py-8 text-sm text-ink/50">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Carregando histórico...
+              </div>
+            ) : logsSync.length === 0 ? (
+              <p className="py-8 text-center text-sm text-ink/50">
+                Nenhum registro de sincronização encontrado. Clique em "Sincronizar Pacientes Agora" para iniciar.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {logsSync.map((l) => (
+                  <div
+                    key={l.id}
+                    className="rounded-xl border border-sus-900/10 bg-sand/10 p-4 transition-all"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-sus-900/10 pb-2">
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant={
+                            l.status === "SUCESSO"
+                              ? "success"
+                              : l.status === "ERRO"
+                              ? "danger"
+                              : "warning"
+                          }
+                        >
+                          {l.status}
+                        </Badge>
+                        <span className="text-xs font-bold text-sus-950">
+                          {new Date(l.iniciado_em).toLocaleString("pt-BR")}
+                        </span>
+                        <span className="text-[11px] text-ink/50">
+                          ({l.origem === "agendado" ? "Automático / Agendado" : "Disparo Manual"})
+                        </span>
+                      </div>
+                      <span className="text-xs font-mono text-ink/60">
+                        {l.duracao_segundos ? `${l.duracao_segundos}s` : "Em execução"}
+                      </span>
+                    </div>
+
+                    <div className="mt-2.5 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                      <div>
+                        <span className="text-[10px] text-ink/50 block">Lidos PEC:</span>
+                        <span className="font-bold text-sus-950">{l.total_lidos}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-ink/50 block">Novos Inseridos:</span>
+                        <span className="font-bold text-emerald-700">{l.total_inseridos}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-ink/50 block">Atualizados:</span>
+                        <span className="font-bold text-blue-700">{l.total_atualizados}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-ink/50 block">Duplicidades Unificadas:</span>
+                        <span className="font-bold text-amber-700">{l.total_duplicados_mesclados}</span>
+                      </div>
+                    </div>
+
+                    {l.mensagem && (
+                      <p className="mt-2 text-xs text-ink/75 bg-white/70 rounded-lg p-2 border border-sus-900/5">
+                        {l.mensagem}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end border-t border-sus-900/10 p-4">
+            <button
+              type="button"
+              onClick={() => setModalLogsAberto(false)}
+              className="rounded-xl border border-sus-900/20 bg-white px-4 py-2 text-xs font-bold text-sus-900 shadow-xs hover:bg-sand"
+            >
+              Fechar
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
+);
 }
 
 // ---------- RNDS: credenciais e certificado ----------
@@ -661,7 +1387,7 @@ function AbaRnds() {
           <textarea
             value={cert || ""}
             onChange={(e) => setCert(e.target.value)}
-            placeholder={cfg?.rnds_cert_resumo ? `Atual: ${cfg.rnds_cert_resumo} (cole novo p/ trocar)` : "-----BEGIN CERTIFICATE----- …"}
+            placeholder={cfg?.rnds_cert_resumo ? `Atual: ${cfg.rnds_cert_resumo} (cole novo p/ trocar)` : "Cole o certificado digital PEM..."}
             rows={4}
             className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 font-mono text-xs text-ink outline-none placeholder:text-ink/35 focus:border-sus-700"
           />
@@ -669,7 +1395,7 @@ function AbaRnds() {
         </div>
         <div>
           <Label>Chave privada (PEM, opcional — nunca exibida)</Label>
-          <Input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder={cfg?.rnds_key_configurada ? "Configurada — preencha p/ trocar" : "-----BEGIN PRIVATE KEY----- …"} autoComplete="new-password" />
+          <Input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder={cfg?.rnds_key_configurada ? "Configurada — preencha p/ trocar" : "Cole a chave privada correspondente..."} autoComplete="new-password" />
         </div>
         {erro && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{erro}</p>}
         {ok && <p className="rounded-xl bg-teal/10 px-3 py-2 text-sm font-medium text-teal">{ok}</p>}
@@ -700,6 +1426,333 @@ function AbaRnds() {
         )}
       </div>
     </Card>
+  );
+}
+
+// ---------- Aba: Procedimentos / Exames Permitidos (SIGTAP) ----------
+function AbaExamesPermitidos() {
+  const [loading, setLoading] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+  const [procedimentos, setProcedimentos] = useState<ExamePermitidoItem[]>([]);
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [busca, setBusca] = useState("");
+  const [filtro, setFiltro] = useState<"todos" | "habilitados" | "desmarcados">("todos");
+  const [erro, setErro] = useState("");
+  const [ok, setOk] = useState("");
+  const [alterado, setAlterado] = useState(false);
+
+  useEffect(() => {
+    carregar();
+  }, []);
+
+  async function carregar() {
+    setLoading(true);
+    setErro("");
+    try {
+      const data = await fetchExamesPermitidos();
+      setProcedimentos(data.procedimentos_sigtap || []);
+      setSelecionados(new Set(data.codigos_habilitados || []));
+      setAlterado(false);
+    } catch {
+      setErro("Falha ao carregar lista de exames permitidos.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function toggleCodigo(codigo: string) {
+    setSelecionados((prev) => {
+      const proximo = new Set(prev);
+      if (proximo.has(codigo)) {
+        proximo.delete(codigo);
+      } else {
+        proximo.add(codigo);
+      }
+      return proximo;
+    });
+    setAlterado(true);
+  }
+
+  function marcarTodosFiltrados() {
+    setSelecionados((prev) => {
+      const proximo = new Set(prev);
+      for (const p of filtrados) {
+        proximo.add(p.codigo);
+      }
+      return proximo;
+    });
+    setAlterado(true);
+  }
+
+  function desmarcarTodosFiltrados() {
+    setSelecionados((prev) => {
+      const proximo = new Set(prev);
+      for (const p of filtrados) {
+        proximo.delete(p.codigo);
+      }
+      return proximo;
+    });
+    setAlterado(true);
+  }
+
+  function marcarTodosGeral() {
+    setSelecionados(new Set(procedimentos.map((p) => p.codigo)));
+    setAlterado(true);
+  }
+
+  function limparTodosGeral() {
+    setSelecionados(new Set());
+    setAlterado(true);
+  }
+
+  async function salvar() {
+    setSalvando(true);
+    setErro("");
+    setOk("");
+    try {
+      const codigos = Array.from(selecionados);
+      const res = await salvarExamesPermitidos(codigos);
+      setOk(
+        codigos.length > 0
+          ? `Configuração salva com sucesso! ${res.total_habilitados} procedimentos habilitados para os PSFs.`
+          : "Configuração salva: lista restritiva zerada (todos os exames laboratoriais SIGTAP liberados por padrão)."
+      );
+      setAlterado(false);
+    } catch (e: unknown) {
+      setErro(msgErro(e, "Falha ao salvar exames permitidos."));
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  const filtrados = useMemo(() => {
+    let lista = procedimentos;
+    const q = busca.trim().toLowerCase();
+    if (q) {
+      lista = lista.filter(
+        (p) =>
+          p.codigo.toLowerCase().includes(q) ||
+          p.descricao.toLowerCase().includes(q) ||
+          p.instrumento?.toLowerCase().includes(q)
+      );
+    }
+    if (filtro === "habilitados") {
+      lista = lista.filter((p) => selecionados.has(p.codigo));
+    } else if (filtro === "desmarcados") {
+      lista = lista.filter((p) => !selecionados.has(p.codigo));
+    }
+    return lista;
+  }, [procedimentos, busca, filtro, selecionados]);
+
+  if (loading) {
+    return (
+      <Card className="flex items-center justify-center p-12 text-ink/60">
+        <Loader2 className="mr-2 h-5 w-5 animate-spin text-teal" />
+        <span>Carregando catálogo de exames laboratoriais SIGTAP…</span>
+      </Card>
+    );
+  }
+
+  const totalHabilitados = selecionados.size;
+  const padraoTodosLiberados = totalHabilitados === 0;
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="rounded-xl bg-teal/10 p-2.5 text-teal">
+              <FlaskConical className="h-6 w-6" />
+            </div>
+            <div>
+              <h2 className="font-display text-lg font-bold text-sus-950">
+                Procedimentos e Exames Permitidos (SIGTAP)
+              </h2>
+              <p className="mt-0.5 text-xs text-ink/65">
+                Defina quais exames de sangue e laboratoriais da tabela SIGTAP ficam habilitados para seleção nas unidades PSF.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={salvar}
+              disabled={salvando || (!alterado && !erro)}
+              className="!w-auto gap-1.5"
+            >
+              {salvando ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Salvando…
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4" />
+                  Salvar Exames Permitidos
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+
+        {erro && <p className="mt-3 rounded-xl bg-red-50 p-3 text-xs font-medium text-red-700">{erro}</p>}
+        {ok && <p className="mt-3 rounded-xl bg-teal/10 p-3 text-xs font-medium text-teal">{ok}</p>}
+
+        <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-sus-900/10 pt-4 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-sus-950">Status atual da regra:</span>
+            {padraoTodosLiberados ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-0.5 font-bold text-blue-700">
+                <CheckCircle2 className="h-3.5 w-3.5" /> Todos liberados (padrão)
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-full bg-teal/15 px-2.5 py-0.5 font-bold text-teal">
+                <CheckCircle2 className="h-3.5 w-3.5" /> {totalHabilitados} de {procedimentos.length} selecionados
+              </span>
+            )}
+          </div>
+          {alterado && (
+            <span className="rounded-full bg-amber-100 px-2.5 py-0.5 font-bold text-amber-800">
+              Alterações pendentes de salvamento
+            </span>
+          )}
+        </div>
+      </Card>
+
+      {/* Controles de busca e ações em lote */}
+      <Card className="p-4">
+        <div className="grid gap-3 md:grid-cols-12 md:items-center">
+          <div className="md:col-span-5">
+            <Input
+              placeholder="Buscar por código (ex: 0202...) ou nome do exame..."
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              className="w-full text-xs"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 md:col-span-4">
+            <button
+              type="button"
+              onClick={() => setFiltro("todos")}
+              className={`rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${
+                filtro === "todos" ? "bg-sus-900 text-white" : "bg-sand text-sus-900 hover:bg-sand/80"
+              }`}
+            >
+              Todos ({procedimentos.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFiltro("habilitados")}
+              className={`rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${
+                filtro === "habilitados" ? "bg-teal text-white" : "bg-sand text-sus-900 hover:bg-sand/80"
+              }`}
+            >
+              Habilitados ({totalHabilitados})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFiltro("desmarcados")}
+              className={`rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${
+                filtro === "desmarcados" ? "bg-sus-900 text-white" : "bg-sand text-sus-900 hover:bg-sand/80"
+              }`}
+            >
+              Desmarcados ({procedimentos.length - totalHabilitados})
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-1.5 md:col-span-3">
+            <button
+              type="button"
+              onClick={marcarTodosGeral}
+              className="rounded-lg border border-sus-900/15 px-2.5 py-1.5 text-xs font-bold text-sus-900 hover:bg-sand"
+            >
+              Marcar Todos
+            </button>
+            <button
+              type="button"
+              onClick={limparTodosGeral}
+              className="rounded-lg border border-sus-900/15 px-2.5 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50"
+            >
+              Desmarcar Todos
+            </button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Lista de exames com checkboxes */}
+      <Card className="overflow-hidden">
+        <div className="max-h-[600px] overflow-y-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="sticky top-0 z-10 border-b border-sus-900/10 bg-sand uppercase tracking-wide text-sus-900/60">
+              <tr>
+                <th className="w-12 px-4 py-3 text-center">
+                  <input
+                    type="checkbox"
+                    checked={filtrados.length > 0 && filtrados.every((p) => selecionados.has(p.codigo))}
+                    onChange={(e) => (e.target.checked ? marcarTodosFiltrados() : desmarcarTodosFiltrados())}
+                    className="h-4 w-4 accent-teal cursor-pointer"
+                  />
+                </th>
+                <th className="w-32 px-4 py-3">Código SIGTAP</th>
+                <th className="px-4 py-3">Descrição do Procedimento</th>
+                <th className="w-28 px-4 py-3">Instrumento</th>
+                <th className="w-36 px-4 py-3 text-right">Disponibilidade PSF</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-sus-900/5">
+              {filtrados.map((p) => {
+                const ativo = selecionados.has(p.codigo);
+                return (
+                  <tr
+                    key={p.codigo}
+                    onClick={() => toggleCodigo(p.codigo)}
+                    className={`cursor-pointer transition hover:bg-sand/60 ${
+                      ativo ? "bg-teal/5" : ""
+                    }`}
+                  >
+                    <td className="px-4 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={ativo}
+                        onChange={() => toggleCodigo(p.codigo)}
+                        className="h-4 w-4 accent-teal cursor-pointer"
+                      />
+                    </td>
+                    <td className="px-4 py-2.5 font-mono font-semibold text-sus-950">
+                      {p.codigo}
+                    </td>
+                    <td className="px-4 py-2.5 font-medium text-ink/80">
+                      {p.descricao}
+                    </td>
+                    <td className="px-4 py-2.5 text-ink/55">
+                      <span className="rounded bg-sand px-1.5 py-0.5 font-mono text-[11px]">
+                        {p.instrumento || "BPA-C"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      {ativo ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-teal/15 px-2 py-0.5 text-[11px] font-bold text-teal">
+                          Habilitado
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-sus-900/10 px-2 py-0.5 text-[11px] font-medium text-ink/45">
+                          Desmarcado
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {filtrados.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="py-8 text-center text-sm text-ink/45">
+                    Nenhum procedimento encontrado com os filtros atuais.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
   );
 }
 

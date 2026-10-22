@@ -107,7 +107,7 @@ export const WIDGETS: WidgetDef[] = [
   },
   {
     id: "painel-aps",
-    titulo: "APS · Previne Brasil",
+    titulo: "Indicadores · APS Previne",
     desc: "Indicadores atingidos e metas no período.",
     icone: Activity,
     tipoGrafico: "progresso",

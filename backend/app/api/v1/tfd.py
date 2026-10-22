@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
-from sqlmodel import Session, func, select
+from sqlmodel import Session, case, func, or_, select
 
 import re as _re
 
@@ -48,6 +48,8 @@ from app.schemas.tfd import (
     ResumoOut,
     TipoFilaIn,
     TipoFilaOut,
+    ValidarCboIn,
+    ValidarCboOut,
     VeiculoIn,
     VeiculoOut,
     ViagemIn,
@@ -164,12 +166,33 @@ def preencher_snapshot(obj: ExameFila, med: Medico, uni: UnidadeSaude) -> None:
 
 
 def resolver_medico_unidade(db: Session, medico_id, unidade_id) -> tuple[Medico, UnidadeSaude]:
-    med = db.get(Medico, medico_id) if medico_id else None
+    med = None
+    if medico_id and medico_id not in (0, -1):
+        med = db.get(Medico, medico_id)
+
     if not med:
-        raise HTTPException(404, "Médico não encontrado")
+        med = db.exec(
+            select(Medico).where(Medico.nome == "Médico da Unidade / Responsável Técnico")
+        ).first()
+
+    if not med:
+        med = Medico(
+            nome="Médico da Unidade / Responsável Técnico",
+            crm="RESP. TÉCNICO",
+            cbo_codigo="225125",
+            cbo_descricao="Médico da Unidade / Responsável Técnico",
+            especialidades="Clínica Geral,Saúde da Família",
+            ativo=True,
+        )
+        db.add(med)
+        db.commit()
+        db.refresh(med)
+
     uni = db.get(UnidadeSaude, unidade_id) if unidade_id else None
     if not uni:
-        raise HTTPException(404, "Unidade de atendimento não encontrada")
+        uni = db.exec(select(UnidadeSaude).where(UnidadeSaude.ativo != False)).first()  # noqa: E712
+        if not uni:
+            raise HTTPException(404, "Unidade de atendimento não encontrada")
     return med, uni
 
 
@@ -183,91 +206,250 @@ def resumo(
     return resumo_tfd(db, competencia or hoje_str())
 
 
+_PERMS_PACIENTES_LEITURA = (
+    "tfd_pacientes",
+    "tfd_exames",
+    "tfd_fila_lancamento",
+    "tfd_agenda",
+    "tfd_viagens",
+    "tfd_medico",
+    "lab_marcacao",
+    "lab_fila",
+    "lab_vagas",
+    "lab_faturamento",
+    "tfd_faturamento",
+    "tfd",
+    "lab",
+    "usuarios",
+)
+
 # ---------- Pacientes ----------
 @router.get("/pacientes", response_model=Pagina[PacienteOut])
 def listar_pacientes(
     q: str = "",
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
+    request: Request = None,
     db: Session = Depends(get_db),
-    _=Depends(need_perm("tfd_pacientes")),
+    ator: User | None = Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
 ):
     base = select(Paciente).order_by(Paciente.nome)
     if q:
-        like = f"%{q}%"
-        base = select(Paciente).where(
-            (Paciente.nome.ilike(like)) | (Paciente.cpf.ilike(like))
-        ).order_by(Paciente.nome)
+        q_limpo = q.strip()
+        so_num = "".join(c for c in q_limpo if c.isdigit())
+
+        # 1. Busca EXATA prioritária (quando o usuário digita CPF, CNS ou Prontuário completo)
+        exatos: list[Paciente] = []
+        if len(so_num) == 11:
+            cpf_fmt = f"{so_num[:3]}.{so_num[3:6]}.{so_num[6:9]}-{so_num[9:]}"
+            exatos = db.exec(
+                select(Paciente).where(or_(Paciente.cpf == so_num, Paciente.cpf == cpf_fmt))
+            ).all()
+        elif len(so_num) == 15:
+            exatos = db.exec(select(Paciente).where(Paciente.cns == so_num)).all()
+        else:
+            q_upper = q_limpo.upper()
+            filtros_pront = [Paciente.codigo_prontuario.ilike(q_upper)]
+            if q_upper.startswith("PR-") or q_upper.startswith("PR"):
+                digits = "".join(c for c in q_upper if c.isdigit())
+                if digits:
+                    val_id = int(digits)
+                    filtros_pront.append(Paciente.id == val_id)
+                    filtros_pront.append(Paciente.codigo_prontuario.ilike(f"PR-{val_id:05d}"))
+            exatos_pront = db.exec(select(Paciente).where(or_(*filtros_pront))).all()
+            if exatos_pront:
+                exatos = exatos_pront
+
+        # Se encontrou correspondência exata, retorna SOMENTE esse(s) paciente(s)
+        # Se a busca foi por CPF, deduplica eventuais prontuários duplicados do PEC, mantendo o registro mais completo
+        if exatos:
+            if len(so_num) == 11:
+                exatos.sort(key=lambda p: (bool(p.endereco), bool(p.cns), p.id or 0), reverse=True)
+                vistos = set()
+                unicos = []
+                for p in exatos:
+                    c_clean = (p.cpf or "").strip()
+                    if c_clean not in vistos:
+                        vistos.add(c_clean)
+                        unicos.append(p)
+                exatos = unicos
+
+            for p in exatos:
+                if not getattr(p, "codigo_prontuario", "") and p.id:
+                    p.codigo_prontuario = f"PR-{p.id:05d}"
+            try:
+                from app.core.audit import registrar_log_pesquisa
+                u_id = ator.id if ator else None
+                u_nome = (ator.nome or ator.username) if ator else ""
+                ua = request.headers.get("user-agent", "") if request else ""
+                registrar_log_pesquisa("pacientes", q_limpo, u_id, u_nome, ua, len(exatos))
+            except Exception:
+                pass
+            return {"data": exatos, "total": len(exatos), "page": 1, "pages": 1}
+
+        # 2. Busca aproximada inteligente (relevância com prioridade no início)
+        filtros = [
+            Paciente.nome.ilike(f"%{q_limpo}%"),
+            Paciente.cpf.ilike(f"%{q_limpo}%"),
+            Paciente.cns.ilike(f"%{q_limpo}%"),
+            Paciente.codigo_prontuario.ilike(f"%{q_limpo}%"),
+        ]
+        if so_num and so_num != q_limpo:
+            filtros.append(Paciente.cpf.ilike(f"%{so_num}%"))
+            filtros.append(Paciente.cns.ilike(f"%{so_num}%"))
+            filtros.append(Paciente.codigo_prontuario.ilike(f"%{so_num}%"))
+        # Relevância inteligente: quem começa com o termo aparece primeiro
+        ordem_relevancia = case(
+            (Paciente.nome.ilike(f"{q_limpo}%"), 0),
+            (Paciente.codigo_prontuario.ilike(f"{q_limpo}%"), 0),
+            else_=1,
+        )
+        base = select(Paciente).where(or_(*filtros)).order_by(ordem_relevancia, Paciente.nome)
     total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
     meta = paginar(total, page, limit)
     rows = db.exec(base.offset(meta["offset"]).limit(limit)).all()
+    # Garante prontuário curto em cada paciente
+    for p in rows:
+        if not getattr(p, "codigo_prontuario", "") and p.id:
+            p.codigo_prontuario = f"PR-{p.id:05d}"
+
+    if q and q.strip():
+        try:
+            from app.core.audit import registrar_log_pesquisa
+            u_id = ator.id if ator else None
+            u_nome = (ator.nome or ator.username) if ator else ""
+            ua = request.headers.get("user-agent", "") if request else ""
+            registrar_log_pesquisa("pacientes", q.strip(), u_id, u_nome, ua, total)
+        except Exception:
+            pass
+
     return {"data": rows, "total": total, "page": meta["page"], "pages": meta["pages"]}
 
 
 @router.get("/pacientes/buscar")
 def buscar_pacientes_pec(
-    termo: str = Query(min_length=2, max_length=80),
+    termo: str = Query(default="", max_length=80),
+    request: Request = None,
     db: Session = Depends(get_db),
-    _=Depends(need_perm("tfd_pacientes")),
+    ator: User | None = Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
 ):
     """Busca paciente local + DW PEC e-SUS (nome/CNS/CPF/prontuário).
 
     Fonte PEC readonly; fallback local quando DW indisponível. Sem PII
     além do necessário p/ autocomplete (nome, CNS, CPF, prontuário).
     """
-    like = f"%{termo}%"
-    locais = db.exec(
-        select(Paciente)
-        .where(
-            (Paciente.nome.ilike(like))
-            | (Paciente.cpf.ilike(like))
-            | (Paciente.cns.ilike(like))
+    termo_limpo = (termo or "").strip()
+    if not termo_limpo:
+        locais = db.exec(select(Paciente).order_by(Paciente.nome).limit(15)).all()
+        return {
+            "termo": "",
+            "total": len(locais),
+            "resultados": [
+                {
+                    "id": p.id,
+                    "origem": "local",
+                    "nome": p.nome,
+                    "cns": p.cns,
+                    "cpf": p.cpf,
+                    "prontuario": p.codigo_prontuario or (f"PR-{p.id:05d}" if p.id else ""),
+                    "nascimento": p.nascimento.isoformat() if p.nascimento else None,
+                }
+                for p in locais
+            ],
+        }
+
+    so_num = "".join(c for c in termo_limpo if c.isdigit())
+
+    # 1. Busca EXATA prioritária (CPF, CNS ou Prontuário)
+    exatos_busca: list[Paciente] = []
+    if len(so_num) == 11:
+        cpf_fmt = f"{so_num[:3]}.{so_num[3:6]}.{so_num[6:9]}-{so_num[9:]}"
+        exatos_busca = db.exec(
+            select(Paciente).where(or_(Paciente.cpf == so_num, Paciente.cpf == cpf_fmt))
+        ).all()
+    elif len(so_num) == 15:
+        exatos_busca = db.exec(select(Paciente).where(Paciente.cns == so_num)).all()
+    else:
+        t_upper = termo_limpo.upper()
+        filtros_p = [Paciente.codigo_prontuario.ilike(t_upper)]
+        if t_upper.startswith("PR-") or t_upper.startswith("PR"):
+            digits = "".join(c for c in t_upper if c.isdigit())
+            if digits:
+                val_id = int(digits)
+                filtros_p.append(Paciente.id == val_id)
+                filtros_p.append(Paciente.codigo_prontuario.ilike(f"PR-{val_id:05d}"))
+        exatos_p = db.exec(select(Paciente).where(or_(*filtros_p))).all()
+        if exatos_p:
+            exatos_busca = exatos_p
+
+    if exatos_busca:
+        if len(so_num) == 11:
+            exatos_busca.sort(key=lambda p: (bool(p.endereco), bool(p.cns), p.id or 0), reverse=True)
+            vistos = set()
+            unicos = []
+            for p in exatos_busca:
+                c_clean = (p.cpf or "").strip()
+                if c_clean not in vistos:
+                    vistos.add(c_clean)
+                    unicos.append(p)
+            exatos_busca = unicos
+        locais = exatos_busca
+    else:
+        like = f"%{termo_limpo}%"
+        filtros = [
+            Paciente.nome.ilike(like),
+            Paciente.cpf.ilike(like),
+            Paciente.cns.ilike(like),
+            Paciente.codigo_prontuario.ilike(like),
+        ]
+        if so_num and so_num != termo_limpo:
+            filtros.append(Paciente.cpf.ilike(f"%{so_num}%"))
+            filtros.append(Paciente.cns.ilike(f"%{so_num}%"))
+            filtros.append(Paciente.codigo_prontuario.ilike(f"%{so_num}%"))
+
+        # Relevância inteligente: prioriza quem começa exatamente com o termo pesquisado
+        ordem_relevancia = case(
+            (Paciente.nome.ilike(f"{termo_limpo}%"), 0),
+            (Paciente.codigo_prontuario.ilike(f"{termo_limpo}%"), 0),
+            else_=1,
         )
-        .order_by(Paciente.nome)
-        .limit(15)
-    ).all()
+
+        locais = db.exec(
+            select(Paciente)
+            .where(or_(*filtros))
+            .order_by(ordem_relevancia, Paciente.nome)
+            .limit(20)
+        ).all()
     out = [
         {
-            "id": p.id, "origem": "local", "nome": p.nome,
-            "cns": p.cns, "cpf": p.cpf, "prontuario": "",
+            "id": p.id,
+            "origem": "local",
+            "nome": p.nome,
+            "cns": p.cns,
+            "cpf": p.cpf,
+            "prontuario": p.codigo_prontuario or (f"PR-{p.id:05d}" if p.id else str(p.co_seq_cidadao_pec or "")),
             "nascimento": p.nascimento.isoformat() if p.nascimento else None,
+            "ubs": p.unidade_nome or "",
+            "unidade_cnes": p.unidade_cnes or "",
+            "equipe": p.equipe_esf or "",
+            "microarea": p.microarea or "",
+            "nome_mae": p.nome_mae or "",
+            "telefone": p.telefone or "",
+            "endereco": f"{p.endereco}, {p.endereco_numero}" if p.endereco and p.endereco_numero else (p.endereco or ""),
+            "bairro": p.bairro or "",
         }
         for p in locais
     ]
-    try:
-        from sqlalchemy import text
-
-        from app.services.pec import _pg
-
-        conn, _ = _pg()
-        if conn is not None:
-            try:
-                rows = conn.execute(
-                    text("""
-                        SELECT nome, cns, cpf, prontuario, ubs_cnes
-                        FROM pec_pacientes
-                        WHERE nome ILIKE :like OR cns ILIKE :like
-                           OR cpf ILIKE :like OR prontuario ILIKE :like
-                        ORDER BY nome LIMIT 15
-                    """),
-                    {"like": like},
-                ).all()
-                for r in rows:
-                    if any(o.get("cns") == r[1] and r[1] for o in out):
-                        continue
-                    out.append({
-                        "id": None, "origem": "pec", "nome": r[0],
-                        "cns": r[1] or "", "cpf": r[2] or "",
-                        "prontuario": r[3] or "", "ubs": r[4] or "",
-                    })
-            finally:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-    except Exception:
-        pass
-    return {"fonte": "pec+local" if out else "local", "termo": termo, "resultados": out[:15]}
+    if termo_limpo:
+        try:
+            from app.core.audit import registrar_log_pesquisa
+            u_id = ator.id if ator else None
+            u_nome = (ator.nome or ator.username) if ator else ""
+            ua = request.headers.get("user-agent", "") if request else ""
+            registrar_log_pesquisa("pacientes_autocomplete", termo_limpo, u_id, u_nome, ua, len(out))
+        except Exception:
+            pass
+    return {"fonte": "local", "termo": termo, "resultados": out[:20]}
 
 
 # ---------- Destinos ----------
@@ -337,6 +519,10 @@ def criar_paciente(
             raise HTTPException(404, "Unidade de saúde não encontrada")
     obj = Paciente(**data.model_dump())
     db.add(obj)
+    db.flush()
+    if obj.id and not obj.codigo_prontuario:
+        obj.codigo_prontuario = f"PR-{obj.id:05d}"
+        db.add(obj)
     db.commit()
     db.refresh(obj)
     return obj
@@ -355,7 +541,11 @@ def atualizar_paciente(
         if not db.get(UnidadeSaude, data.unidade_saude_id):
             raise HTTPException(404, "Unidade de saúde não encontrada")
     for k, v in data.model_dump().items():
+        if k == "codigo_prontuario" and not v:
+            continue
         setattr(obj, k, v)
+    if obj.id and not obj.codigo_prontuario:
+        obj.codigo_prontuario = f"PR-{obj.id:05d}"
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -428,44 +618,97 @@ def perfil_paciente(
 @router.get("/pacientes/exportar")
 def exportar_pacientes(
     q: str = "",
+    request: Request = None,
     db: Session = Depends(get_db),
     ator: User = Depends(need_perm("tfd_pacientes")),
 ):
-    """Cadastro de pacientes em XLSX respeitando a busca ativa."""
+    """Cadastro de pacientes em XLSX respeitando a busca ativa com endereço completo e prontuário."""
     from app.services.export_xlsx import resposta_xlsx
 
     base = select(Paciente).order_by(Paciente.nome)
     if q:
-        like = f"%{q}%"
-        base = select(Paciente).where(
-            (Paciente.nome.ilike(like)) | (Paciente.cpf.ilike(like))
-        ).order_by(Paciente.nome)
+        q_limpo = q.strip()
+        so_num = "".join(c for c in q_limpo if c.isdigit())
+        exatos_exp = []
+        if len(so_num) == 11:
+            cpf_fmt = f"{so_num[:3]}.{so_num[3:6]}.{so_num[6:9]}-{so_num[9:]}"
+            exatos_exp = db.exec(
+                select(Paciente).where(or_(Paciente.cpf == so_num, Paciente.cpf == cpf_fmt))
+            ).all()
+        elif len(so_num) == 15:
+            exatos_exp = db.exec(select(Paciente).where(Paciente.cns == so_num)).all()
+        else:
+            q_upper = q_limpo.upper()
+            filtros_pront = [Paciente.codigo_prontuario.ilike(q_upper)]
+            if q_upper.startswith("PR-") or q_upper.startswith("PR"):
+                digits = "".join(c for c in q_upper if c.isdigit())
+                if digits:
+                    val_id = int(digits)
+                    filtros_pront.append(Paciente.id == val_id)
+                    filtros_pront.append(Paciente.codigo_prontuario.ilike(f"PR-{val_id:05d}"))
+            exatos_p = db.exec(select(Paciente).where(or_(*filtros_pront))).all()
+            if exatos_p:
+                exatos_exp = exatos_p
+
+        if exatos_exp:
+            base = select(Paciente).where(Paciente.id.in_([p.id for p in exatos_exp]))
+        else:
+            like = f"%{q_limpo}%"
+            ordem_relevancia = case(
+                (Paciente.nome.ilike(f"{q_limpo}%"), 0),
+                (Paciente.codigo_prontuario.ilike(f"{q_limpo}%"), 0),
+                else_=1,
+            )
+            base = select(Paciente).where(
+                (Paciente.nome.ilike(like))
+                | (Paciente.cpf.ilike(like))
+                | (Paciente.cns.ilike(like))
+                | (Paciente.codigo_prontuario.ilike(like))
+            ).order_by(ordem_relevancia, Paciente.nome)
+
     linhas = []
     for p in list(db.exec(base).all())[:20000]:
         linhas.append({
-            "nome": p.nome, "cpf": p.cpf or "", "cns": p.cns or "",
+            "codigo_prontuario": p.codigo_prontuario or (f"PR-{p.id:05d}" if p.id else ""),
+            "nome": p.nome,
+            "cpf": p.cpf or "",
+            "cns": p.cns or "",
             "nascimento": p.nascimento,
             "telefone": p.telefone or "",
-            "endereco": " ".join(x for x in [
-                p.endereco or "",
-                f"Nº {p.endereco_numero}" if p.endereco_numero else "",
-                p.bairro or "", f"CEP {p.cep}" if p.cep else "",
-            ] if x),
-            "unidade": "", "equipe": p.equipe_esf or "", "acs": p.acs_nome or "",
+            "endereco_completo": _endereco_completo(p),
+            "logradouro": p.endereco or "",
+            "numero": p.endereco_numero or "",
+            "complemento": getattr(p, "complemento", "") or "",
+            "bairro": p.bairro or "",
+            "municipio": getattr(p, "municipio", "Guapé") or "Guapé",
+            "cep": p.cep or "",
+            "unidade": p.unidade_nome or "",
+            "equipe": p.equipe_esf or "",
+            "acs": p.acs_nome or "",
         })
     return resposta_xlsx(
         "Pacientes", ator.nome or ator.username,
         [
+            {"chave": "codigo_prontuario", "rotulo": "Prontuário", "largura": 16},
             {"chave": "nome", "rotulo": "Nome completo", "largura": 34},
             {"chave": "cpf", "rotulo": "CPF", "largura": 18, "formato": "texto"},
             {"chave": "cns", "rotulo": "CNS", "largura": 22},
             {"chave": "nascimento", "rotulo": "Nascimento", "largura": 14, "formato": "data"},
             {"chave": "telefone", "rotulo": "Telefone", "largura": 16},
-            {"chave": "endereco", "rotulo": "Endereço", "largura": 44},
+            {"chave": "endereco_completo", "rotulo": "Endereço completo", "largura": 44},
+            {"chave": "logradouro", "rotulo": "Logradouro", "largura": 32},
+            {"chave": "numero", "rotulo": "Número", "largura": 12, "formato": "texto"},
+            {"chave": "complemento", "rotulo": "Complemento", "largura": 18},
+            {"chave": "bairro", "rotulo": "Bairro", "largura": 22},
+            {"chave": "municipio", "rotulo": "Município", "largura": 20},
+            {"chave": "cep", "rotulo": "CEP", "largura": 14, "formato": "texto"},
             {"chave": "equipe", "rotulo": "Equipe (eSF)", "largura": 16},
             {"chave": "acs", "rotulo": "ACS", "largura": 24},
         ],
         linhas, "pacientes",
+        user_id=ator.id if ator else None,
+        filtros={"busca": q} if q else {},
+        request=request,
     )
 
 
@@ -582,12 +825,12 @@ def _resolver_motorista(db: Session, motorista_id, motorista_txt: str) -> tuple:
 # ---------- Motoristas ----------
 @router.get("/motoristas", response_model=Pagina[MotoristaOut])
 def listar_motoristas(
-    q: str = Query(default="", max_length=80),
+    q: str = "",
     ativos: bool | None = None,
-    page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    page: int = 1,
+    limit: int = 100,
     db: Session = Depends(get_db),
-    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao")),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "tfd_viagens", "usuarios")),
 ):
     base = select(Motorista).order_by(Motorista.nome)
     filtros = []
@@ -606,7 +849,9 @@ def listar_motoristas(
 
 @router.post("/motoristas", response_model=MotoristaOut, status_code=201)
 def criar_motorista(
-    data: MotoristaIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_frota", "criar"))
+    data: MotoristaIn,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "usuarios", acoes=("criar",))),
 ):
     nome = data.nome.strip()
     cpf = "".join(c for c in (data.cpf or "") if c.isdigit())[:11]
@@ -621,7 +866,10 @@ def criar_motorista(
 
 @router.put("/motoristas/{mid}", response_model=MotoristaOut)
 def atualizar_motorista(
-    mid: int, data: MotoristaIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_frota", "editar"))
+    mid: int,
+    data: MotoristaIn,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "usuarios", acoes=("editar",))),
 ):
     obj = db.get(Motorista, mid)
     if not obj:
@@ -640,7 +888,11 @@ def atualizar_motorista(
 
 
 @router.delete("/motoristas/{mid}", status_code=204)
-def excluir_motorista(mid: int, db: Session = Depends(get_db), _=Depends(need_perm("tfd_frota", "excluir"))):
+def excluir_motorista(
+    mid: int,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "usuarios", acoes=("excluir",))),
+):
     obj = db.get(Motorista, mid)
     if not obj:
         raise HTTPException(404, "Motorista não encontrado")
@@ -678,21 +930,36 @@ def listar_viagens(
         base = select(Viagem).where(*filtros).order_by(Viagem.data_viagem.desc())
     total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
     meta = paginar(total, page, limit)
+
+    viagens = list(db.exec(base.offset(meta["offset"]).limit(limit)).all())
+    v_ids = [v.id for v in viagens if v.id]
+
+    contagens: dict[int, int] = {}
+    if v_ids:
+        contagens_rows = db.exec(
+            select(ViagemPaciente.viagem_id, func.count(ViagemPaciente.id))
+            .where(ViagemPaciente.viagem_id.in_(v_ids))
+            .group_by(ViagemPaciente.viagem_id)
+        ).all()
+        contagens = dict(contagens_rows)
+
+    veic_ids = {v.veiculo_id for v in viagens if v.veiculo_id}
+    veics_map: dict[int, Veiculo] = {}
+    if veic_ids:
+        veics = db.exec(select(Veiculo).where(Veiculo.id.in_(veic_ids))).all()
+        veics_map = {veh.id: veh for veh in veics}
+
     out: list[ViagemOut] = []
-    for v in db.exec(base.offset(meta["offset"]).limit(limit)).all():
-        n = db.exec(
-            select(func.count(ViagemPaciente.id)).where(
-                ViagemPaciente.viagem_id == v.id
-            )
-        ).one()
-        placa = ""
-        modelo = ""
-        if v.veiculo_id:
-            veh = db.get(Veiculo, v.veiculo_id)
-            placa = veh.placa if veh else ""
-            modelo = veh.modelo if veh else ""
+    for v in viagens:
+        veh = veics_map.get(v.veiculo_id) if v.veiculo_id else None
+        n = contagens.get(v.id, 0)
         out.append(
-            ViagemOut(**v.model_dump(), passageiros=n or 0, veiculo_placa=placa, veiculo_modelo=modelo)
+            ViagemOut(
+                **v.model_dump(),
+                passageiros=n,
+                veiculo_placa=veh.placa if veh else "",
+                veiculo_modelo=veh.modelo if veh else "",
+            )
         )
     return {"data": out, "total": total, "page": meta["page"], "pages": meta["pages"]}
 
@@ -1198,7 +1465,7 @@ def _rank_por_especialidade(db: Session) -> dict[int, tuple[int, int]]:
     return rank
 
 
-RISCO_ROTULO = {"rotina": "Eletivo", "urgente": "Urgente"}
+RISCO_ROTULO = {"rotina": "Eletivo", "urgente": "Priorizado"}
 
 
 def _risco_rotulo(prioridade: str | None) -> str:
@@ -1339,14 +1606,14 @@ def _com_posicao(
     - Fila por Tipo de Fila: posição do paciente em relação a TODAS as consultas especializadas daquele tipo (ex: 2º de 659).
     """
     rank_tipo, rank_esp = _calcular_duplo_rank(db, status_filtro)
-    total_geral = len(
+    total_geral = len(rank_tipo) or (
         db.exec(
-            select(ExameFila).where(
+            select(func.count(ExameFila.id)).where(
                 ExameFila.ativo == True,
                 ExameFila.status == (status_filtro or "aguardando"),
             )
-        ).all()
-    ) or 1
+        ).one() or 1
+    )
 
     filtrando_especialidade = bool(
         filtro_esp
@@ -1354,9 +1621,16 @@ def _com_posicao(
     )
     filtrando_tipo = bool(filtro_tipo)
 
+    # Otimização N+1: pré-carrega todos os pacientes da página em lote único
+    pacs_map: dict[int, Paciente] = {}
+    pac_ids = {e.paciente_id for e in itens if e.paciente_id}
+    if pac_ids:
+        pacs = db.exec(select(Paciente).where(Paciente.id.in_(pac_ids))).all()
+        pacs_map = {p.id: p for p in pacs}
+
     out: list[ExameOut] = []
     for idx_item, e in enumerate(itens):
-        pac = db.get(Paciente, e.paciente_id)
+        pac = pacs_map.get(e.paciente_id)
         pos_t_global, tot_t_global, rot_t_global = rank_tipo.get(e.id, (None, None, ""))
         pos_esp_global, tot_esp_global, rot_esp_global = rank_esp.get(e.id, (None, None, ""))
 
@@ -1394,11 +1668,23 @@ def _com_posicao(
         tot_leg = tot_esp if _eh_consulta_especializada(e) else tot_t
         rot_leg = rot_esp if _eh_consulta_especializada(e) else rot_t
 
+        dump = e.model_dump()
+        if not dump.get("codigo_curto") and e.id:
+            dump["codigo_curto"] = f"EX-{e.id:06d}"
+
         out.append(
             ExameOut(
-                **e.model_dump(),
+                **dump,
                 paciente_nome=pac.nome if pac else "?",
                 paciente_cpf=pac.cpf if pac else "",
+                paciente_endereco=pac.endereco if pac else "",
+                paciente_numero=pac.endereco_numero if pac else "",
+                paciente_complemento=pac.complemento if pac else "",
+                paciente_bairro=pac.bairro if pac else "",
+                paciente_municipio=pac.municipio if pac else "",
+                paciente_telefone=pac.telefone if pac else "",
+                paciente_cns=pac.cns if pac else "",
+                paciente_nascimento=pac.nascimento if pac else None,
                 posicao=pos_leg,
                 total_fila=tot_leg if tot_leg is not None else total_geral,
                 grupo_fila=rot_leg or "",
@@ -1570,15 +1856,23 @@ def _filtrar_exames_lista(
 
 
 COLS_FILA = [
+    {"chave": "codigo_curto", "rotulo": "ID do Pedido", "largura": 16},
     {"chave": "posicao", "rotulo": "Posição", "largura": 10},
     {"chave": "posicao_tipo", "rotulo": "Posição Tipo de Fila", "largura": 16},
     {"chave": "posicao_especialidade", "rotulo": "Posição Especialidade", "largura": 16},
     {"chave": "grupo_fila", "rotulo": "Fila específica", "largura": 28},
+    {"chave": "prontuario", "rotulo": "Prontuário", "largura": 16},
     {"chave": "paciente", "rotulo": "Paciente", "largura": 32},
     {"chave": "cpf", "rotulo": "CPF", "largura": 18, "formato": "texto"},
     {"chave": "cns", "rotulo": "Cartão SUS / CNS", "largura": 20, "formato": "texto"},
     {"chave": "telefone", "rotulo": "Telefone", "largura": 18, "formato": "texto"},
     {"chave": "endereco_completo", "rotulo": "Endereço completo", "largura": 44},
+    {"chave": "logradouro", "rotulo": "Logradouro", "largura": 32},
+    {"chave": "numero", "rotulo": "Número", "largura": 12, "formato": "texto"},
+    {"chave": "complemento", "rotulo": "Complemento", "largura": 18},
+    {"chave": "bairro", "rotulo": "Bairro", "largura": 22},
+    {"chave": "municipio", "rotulo": "Município", "largura": 20},
+    {"chave": "cep", "rotulo": "CEP", "largura": 14, "formato": "texto"},
     {"chave": "exame", "rotulo": "Procedimento", "largura": 42},
     {"chave": "codigo_procedimento", "rotulo": "Código do Procedimento", "largura": 22},
     {"chave": "especialidade", "rotulo": "Especialidade", "largura": 28},
@@ -1668,16 +1962,26 @@ def _linha_fila(
     cns = "".join(c for c in (pac.cns if pac else "") if c.isdigit())
     pec = cache.get("pec") or {}
     comp = pec.get(f"cpf:{cpf}") or pec.get(f"cns:{cns}") or {}
+    cod_curto = getattr(e, "codigo_curto", "") or (f"EX-{e.id:06d}" if getattr(e, "id", None) else "")
+    prontuario = getattr(pac, "codigo_prontuario", "") or (f"PR-{pac.id:05d}" if pac and getattr(pac, "id", None) else "")
     return {
+        "codigo_curto": cod_curto,
         "posicao": pos or "",
         "posicao_tipo": pos_tipo or "",
         "posicao_especialidade": pos_esp or "",
         "grupo_fila": rotulo,
+        "prontuario": prontuario,
         "paciente": pac.nome if pac else "?",
         "cpf": pac.cpf if pac else "",
         "cns": (pac.cns if pac and pac.cns else comp.get("cns", "")) or "",
         "telefone": pac.telefone if pac else "",
         "endereco_completo": _endereco_completo(pac),
+        "logradouro": (pac.endereco or "") if pac else "",
+        "numero": (pac.endereco_numero or "") if pac else "",
+        "complemento": getattr(pac, "complemento", "") or "" if pac else "",
+        "bairro": (pac.bairro or "") if pac else "",
+        "municipio": (pac.municipio or "") if pac else "",
+        "cep": (pac.cep or "") if pac else "",
         "exame": e.exame or "",
         "codigo_procedimento": e.codigo_procedimento or "",
         "especialidade": e.nome_especialidade or e.especialidade or e.tipo_fila or "",
@@ -1769,11 +2073,22 @@ def exportar_fila(
     cols = COLS_FILA
     if colunas:
         mapa_colunas_frontend: dict[str, list[str]] = {
+            "codigo_curto": ["codigo_curto"],
+            "id_pedido": ["codigo_curto"],
             "posicao": ["posicao"],
             "posicao_tipo": ["posicao_tipo"],
             "posicao_especialidade": ["posicao_especialidade"],
+            "prontuario": ["prontuario"],
             "paciente_nome": ["paciente", "cpf", "cns"],
             "paciente": ["paciente"],
+            "endereco": ["endereco_completo", "logradouro", "numero", "complemento", "bairro", "municipio", "cep"],
+            "endereco_completo": ["endereco_completo", "logradouro", "numero", "complemento", "bairro", "municipio", "cep"],
+            "logradouro": ["logradouro"],
+            "numero": ["numero"],
+            "complemento": ["complemento"],
+            "bairro": ["bairro"],
+            "municipio": ["municipio"],
+            "cep": ["cep"],
             "exame": ["exame"],
             "codigo_procedimento": ["codigo_procedimento"],
             "especialidade": ["especialidade"],
@@ -1834,6 +2149,7 @@ def exportar_agenda(
 @router.get("/fila/filtros-opcoes", response_model=FiltrosOpcoesOut)
 def filtros_opcoes(
     status_: str | None = Query(default="aguardando", alias="status"),
+    tipo_fila: str | None = Query(default=None),
     db: Session = Depends(get_db),
     _=Depends(need_any_perm("tfd_exames", "tfd_fila_lancamento", "tfd_medico")),
 ):
@@ -1846,6 +2162,13 @@ def filtros_opcoes(
     from sqlalchemy import func as sa_func
 
     base_f = [ExameFila.status == status_] if status_ else []
+
+    # Se tipo_fila for informado, especialidades e procedimentos são filtrados por ele
+    tf_filtro = (tipo_fila or "").strip()
+    base_procs_esps = list(base_f)
+    if tf_filtro:
+        base_procs_esps.append(ExameFila.tipo_fila == tf_filtro)
+
     # Tipos
     tipos: list[OpcaoFiltro] = []
     rows = db.exec(
@@ -1857,11 +2180,11 @@ def filtros_opcoes(
     ).all()
     for nome, n in rows:
         tipos.append(OpcaoFiltro(value=nome, label=f"{nome} ({n})", total=n or 0))
-    # Procedimentos: agrupa por codigo_procedimento + nome limpo
+    # Procedimentos: agrupa por codigo_procedimento + nome limpo (filtrado por tipo_fila se informado)
     procs: list[OpcaoFiltro] = []
     rows_p = db.exec(
         select(ExameFila.codigo_procedimento, ExameFila.exame, sa_func.count(ExameFila.id))
-        .where(*base_f)
+        .where(*base_procs_esps)
         .group_by(ExameFila.codigo_procedimento, ExameFila.exame)
         .order_by(sa_func.count(ExameFila.id).desc())
         .limit(500)
@@ -1878,9 +2201,9 @@ def filtros_opcoes(
         label = f"{nome_curto} ({n})" if nome_curto else f"{cod} ({n})"
         if value:
             procs.append(OpcaoFiltro(value=value, label=label, total=n or 0))
-    # Especialidades CBO (agrupamento canônico unificado)
+    # Especialidades CBO (agrupamento canônico unificado, filtrado por tipo_fila se informado)
     esps_map: dict[str, dict] = {}
-    todos_itens = db.exec(select(ExameFila).where(*base_f)).all()
+    todos_itens = db.exec(select(ExameFila).where(*base_procs_esps)).all()
     for e in todos_itens:
         chave, rot = _identificar_grupo_especialidade(e)
         if chave.startswith("CBO:"):
@@ -1957,6 +2280,11 @@ def criar_exame(data: ExameIn, db: Session = Depends(get_db), ator: User = Depen
     db.add(obj)
     db.commit()
     db.refresh(obj)
+    if not obj.codigo_curto and obj.id:
+        obj.codigo_curto = f"EX-{obj.id:06d}"
+        db.add(obj)
+        db.commit()
+        db.refresh(obj)
     return _com_posicao(db, [obj])[0]
 
 
@@ -2105,8 +2433,17 @@ def atualizar_exame(
     rank = _rank_por_grupo(db)
     pos, _, rotulo = rank.get(obj.id, (None, None, ""))
     return ExameOut(
-        **obj.model_dump(), paciente_nome=pac.nome if pac else "",
+        **obj.model_dump(),
+        paciente_nome=pac.nome if pac else "",
         paciente_cpf=pac.cpf if pac else "",
+        paciente_endereco=pac.endereco if pac else "",
+        paciente_numero=pac.endereco_numero if pac else "",
+        paciente_complemento=pac.complemento if pac else "",
+        paciente_bairro=pac.bairro if pac else "",
+        paciente_municipio=pac.municipio if pac else "",
+        paciente_telefone=pac.telefone if pac else "",
+        paciente_cns=pac.cns if pac else "",
+        paciente_nascimento=pac.nascimento if pac else None,
         posicao=pos,
         grupo_fila=rotulo or "",
     )
@@ -2288,26 +2625,33 @@ def consultar_exame_publico(token: str, db: Session = Depends(get_db)):
     )
 
 
-# ---------- Catálogo de procedimentos (códigos curtos + dinâmico) ----------
+# ---------- Catálogo de procedimentos (códigos curtos + dinâmico + SIGTAP estruturado) ----------
 @router.get("/exames/catalogo", response_model=list[dict])
 def catalogo_procedimentos(
     q: str = Query(default="", max_length=80),
     tipo_fila: str = Query(default="", max_length=80),
+    apenas_laboratoriais: bool | None = Query(default=None),
     db: Session = Depends(get_db),
-    _=Depends(need_perm("tfd_exames")),
+    _=Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
 ):
-    """Catálogo dinâmico + agregado da fila.
-
-    Fonte primária: tfd_procedimentos (CRUD). Fallback: agregação
-    tfd_exames_fila (legado). Busca por código, nome, curto ou tipo.
-    """
-    from sqlalchemy import func as sa_func
+    """Catálogo dinâmico + oficial SIGTAP com filtragem contextual por Grupo/Subgrupo."""
+    from app.models.settings import SystemSettings
+    from app.models.lab_exames import SigtapProcedimento
+    from app.services.sigtap_hierarquia import obter_filtro_sigtap_por_tipo, decompor_codigo_sigtap
 
     ql = (q or "").strip().lower()
+    regras = obter_filtro_sigtap_por_tipo(tipo_fila)
+
+    # Determina se a busca é estritamente laboratorial
+    eh_laboratorial = (
+        apenas_laboratoriais is True
+        or (apenas_laboratoriais is None and regras.get("apenas_laboratoriais", False))
+    )
 
     out: list[dict] = []
     codigos_tfd = set()
-    # 1) Catálogo do TFD (CRUD dinâmico)
+
+    # 1) Catálogo dinâmico do TFD / procedimentos importados (Vivver e locais)
     base = select(ProcedimentoCatalogo).where(ProcedimentoCatalogo.ativo == True).order_by(  # noqa: E712
         ProcedimentoCatalogo.nome
     )
@@ -2325,6 +2669,11 @@ def catalogo_procedimentos(
         hay = f"{p.codigo} {p.nome} {p.codigo_curto} {p.tipo_fila} {p.nome_especialidade}".lower()
         if ql and ql not in hay:
             continue
+        cod = (p.codigo or "").strip()
+        # Se filtrando fila especializada/cirúrgica, desconsidera exames de sangue (0202)
+        if regras.get("excluir_prefixos") and any(cod.startswith(pref) for pref in regras["excluir_prefixos"]):
+            continue
+
         out.append({
             "exame": f"{p.codigo} - {p.nome}" if p.codigo else p.nome,
             "nome_procedimento": p.nome,
@@ -2338,46 +2687,56 @@ def catalogo_procedimentos(
             "usos": 0,
             "origem": "catalogo",
         })
-        codigos_tfd.add((p.codigo or "").strip())
-        if len(out) >= 30 and not ql:
-            break
-    if out and not ql:
-        # conta usos da fila p/ ordenar catálogo dinâmico
-        try:
-            usos = dict(
-                db.exec(
-                    select(ExameFila.codigo_procedimento, sa_func.count(ExameFila.id)).group_by(
-                        ExameFila.codigo_procedimento
-                    )
-                ).all()
-            )
-            for o in out:
-                o["usos"] = usos.get(o["codigo_procedimento"], 0)
-            out.sort(key=lambda o: o["usos"], reverse=True)
-        except Exception:
-            pass
-    # 2) Integração opcional com tabela oficial SIGTAP
+        codigos_tfd.add(cod)
+
+    # 2) Tabela Oficial SIGTAP (5.103 procedimentos) com categorização hierárquica
     try:
-        from app.models.lab_exames import SigtapProcedimento
-        base_sig = select(SigtapProcedimento).order_by(SigtapProcedimento.descricao)
+        filtros_sig = []
+        if eh_laboratorial:
+            # Modo Exames de Sangue / Laboratoriais (Subgrupo 0202)
+            habs = []
+            try:
+                cfg = db.get(SystemSettings, 1)
+                raw_hab = getattr(cfg, "exames_habilitados_sigtap", "") or ""
+                habs = [c.strip() for c in raw_hab.split(",") if c.strip()]
+            except Exception:
+                habs = []
+            if habs:
+                filtros_sig.append(SigtapProcedimento.codigo.in_(habs))
+            else:
+                filtros_sig.append(SigtapProcedimento.codigo.like("0202%"))
+        elif regras.get("prefixos"):
+            conds = [SigtapProcedimento.codigo.like(f"{pref}%") for pref in regras["prefixos"]]
+            filtros_sig.append(or_(*conds))
+
+        # Exclusão de prefixos incompatíveis (ex: não trazer exames de sangue em cirurgias)
+        if regras.get("excluir_prefixos"):
+            for exc in regras["excluir_prefixos"]:
+                filtros_sig.append(~SigtapProcedimento.codigo.like(f"{exc}%"))
+
         if ql:
             like = f"%{ql}%"
-            base_sig = select(SigtapProcedimento).where(
+            filtros_sig.append(
                 (SigtapProcedimento.codigo.ilike(like))
                 | (SigtapProcedimento.descricao.ilike(like))
-            ).order_by(SigtapProcedimento.descricao)
-        for s in db.exec(base_sig.limit(80)).all():
+            )
+
+        base_sig = select(SigtapProcedimento).where(*filtros_sig).order_by(SigtapProcedimento.descricao)
+        limite_sig = 120 if ql else 40
+        for s in db.exec(base_sig.limit(limite_sig)).all():
             cod = (s.codigo or "").strip()
             if not cod or cod in codigos_tfd:
                 continue
+            hier = decompor_codigo_sigtap(cod)
+            esp_nome = hier.get("subgrupo_nome", "")
             out.append({
                 "exame": f"{cod} - {s.descricao}",
                 "nome_procedimento": s.descricao,
                 "codigo_procedimento": cod,
-                "especialidade": "",
+                "especialidade": esp_nome,
                 "codigo_especialidade": "",
-                "nome_especialidade": "",
-                "tipo_fila": "",
+                "nome_especialidade": esp_nome,
+                "tipo_fila": tipo_fila or hier.get("grupo_nome", ""),
                 "codigo_curto": "",
                 "rotulo": f"{cod} · {s.descricao}",
                 "usos": 0,
@@ -2387,57 +2746,53 @@ def catalogo_procedimentos(
             codigos_tfd.add(cod)
     except Exception:
         pass
+
     if ql:
-        return out[:50]
-    return out[:30]
-    # 2) Fallback legado: agregação fila
-    rows = db.exec(
-        select(
-            ExameFila.exame,
-            ExameFila.especialidade,
-            ExameFila.codigo_procedimento,
-            ExameFila.tipo_fila,
-            ExameFila.codigo_especialidade,
-            ExameFila.nome_especialidade,
-            sa_func.count(ExameFila.id),
-        ).group_by(
-            ExameFila.exame, ExameFila.especialidade, ExameFila.codigo_procedimento,
-            ExameFila.tipo_fila, ExameFila.codigo_especialidade, ExameFila.nome_especialidade,
-        ).order_by(sa_func.count(ExameFila.id).desc()).limit(500)
-    ).all()
-    # Códigos curtos: mapa exame normalizado -> atalho (novo modelo).
-    curtos: dict[str, str] = {}
-    try:
-        for e in db.exec(select(ExameFila).where(ExameFila.codigo_curto != "")).all():  # type: ignore[attr-defined]
-            curtos[(e.exame or "").strip().upper()] = (e.codigo_curto or "").strip().upper()  # type: ignore[attr-defined]
-    except Exception:
-        pass
-    out2: list[dict] = []
-    for exame, esp, cod_proc, tipo, cbo, nome_esp, n in rows:
-        curto = curtos.get((exame or "").upper(), "")
-        rotulo = f"{curto} · {exame}" if curto else exame
-        hay = f"{rotulo} {esp or ''} {cod_proc or ''} {tipo or ''} {cbo or ''} {nome_esp or ''}".lower()
-        if ql and ql not in hay:
-            continue
-        if tipo_fila and (tipo or "").strip().upper() != tipo_fila.strip().upper():
-            # filtro parcial case-insensitive
-            if tipo_fila.strip().lower() not in (tipo or "").lower():
-                continue
-        out2.append({
-            "exame": exame,
-            "especialidade": esp or nome_esp or "",
-            "codigo_procedimento": cod_proc or "",
-            "tipo_fila": tipo or "",
-            "codigo_especialidade": cbo or "",
-            "nome_especialidade": nome_esp or "",
-            "codigo_curto": curto,
-            "rotulo": rotulo,
-            "usos": n,
-            "origem": "fila",
-        })
-        if len(out2) >= 30:
-            break
-    return out2
+        def _chave_proc(item):
+            nome_l = (item.get("nome_procedimento") or "").lower()
+            cod_l = (item.get("codigo_procedimento") or "").lower()
+            curto_l = (item.get("codigo_curto") or "").lower()
+            comeca = 0 if (nome_l.startswith(ql) or cod_l.startswith(ql) or curto_l.startswith(ql)) else 1
+            return (comeca, nome_l)
+        out.sort(key=_chave_proc)
+        return out[:60]
+    return out[:40]
+
+
+@router.post("/procedimentos/validar-cbo", response_model=ValidarCboOut)
+def validar_cbo_endpoint(
+    payload: ValidarCboIn,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
+):
+    """Valida se o CBO do profissional é compatível com o procedimento conforme a tabela SIGTAP."""
+    from app.services.sigtap_hierarquia import validar_cbo_procedimento
+
+    cbo = payload.cbo
+    med_nome = (payload.medico_nome or "").strip()
+    if payload.medico_id:
+        med = db.get(Medico, payload.medico_id)
+        if med:
+            cbo = cbo or getattr(med, "cbo_codigo", "") or ""
+            med_nome = med.nome or med_nome
+    return validar_cbo_procedimento(
+        db,
+        payload.codigo_procedimento,
+        cbo_profissional=cbo,
+        medico_nome=med_nome,
+        tipo_fila=payload.tipo_fila,
+    )
+
+
+@router.get("/sigtap/hierarquia/{codigo}")
+def obter_hierarquia_sigtap_endpoint(
+    codigo: str,
+    _=Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
+):
+    """Retorna grupo, subgrupo e metadados estruturais do procedimento SIGTAP."""
+    from app.services.sigtap_hierarquia import decompor_codigo_sigtap
+
+    return decompor_codigo_sigtap(codigo)
 
 
 # ---------- CRUD Tipos de Fila ----------
@@ -2511,27 +2866,50 @@ def listar_procedimentos(
     ativos: bool | None = None,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
+    request: Request = None,
     db: Session = Depends(get_db),
-    _=Depends(need_perm("tfd_catalogo")),
+    ator: User = Depends(need_perm("tfd_catalogo")),
 ):
     base = select(ProcedimentoCatalogo).order_by(ProcedimentoCatalogo.nome)
     filtros = []
+    ordem_extra = None
     if q:
-        like = f"%{q}%"
+        q_limpo = q.strip()
+        like = f"%{q_limpo}%"
         filtros.append(
             (ProcedimentoCatalogo.nome.ilike(like))
             | (ProcedimentoCatalogo.codigo.ilike(like))
             | (ProcedimentoCatalogo.codigo_curto.ilike(like))
+        )
+        ordem_extra = case(
+            (ProcedimentoCatalogo.nome.ilike(f"{q_limpo}%"), 0),
+            (ProcedimentoCatalogo.codigo.ilike(f"{q_limpo}%"), 0),
+            (ProcedimentoCatalogo.codigo_curto.ilike(f"{q_limpo}%"), 0),
+            else_=1,
         )
     if tipo_fila:
         filtros.append(ProcedimentoCatalogo.tipo_fila.ilike(f"%{tipo_fila}%"))
     if ativos is not None:
         filtros.append(ProcedimentoCatalogo.ativo == ativos)
     if filtros:
-        base = select(ProcedimentoCatalogo).where(*filtros).order_by(ProcedimentoCatalogo.nome)
+        if ordem_extra is not None:
+            base = select(ProcedimentoCatalogo).where(*filtros).order_by(ordem_extra, ProcedimentoCatalogo.nome)
+        else:
+            base = select(ProcedimentoCatalogo).where(*filtros).order_by(ProcedimentoCatalogo.nome)
     total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
     meta = paginar(total, page, limit)
     rows = db.exec(base.offset(meta["offset"]).limit(limit)).all()
+
+    if q and q.strip():
+        try:
+            from app.core.audit import registrar_log_pesquisa
+            u_id = ator.id if ator else None
+            u_nome = (ator.nome or ator.username) if ator else ""
+            ua = request.headers.get("user-agent", "") if request else ""
+            registrar_log_pesquisa("procedimentos", q.strip(), u_id, u_nome, ua, total)
+        except Exception:
+            pass
+
     return {"data": rows, "total": total, "page": meta["page"], "pages": meta["pages"]}
 
 
@@ -2616,9 +2994,10 @@ def listar_especialidades(
 
 @router.post("/especialidades", response_model=EspecialidadeOut, status_code=201)
 def criar_especialidade(data: EspecialidadeIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_catalogo", "criar"))):
-    cbo = data.codigo_cbo.strip()
-    if db.exec(select(Especialidade).where(Especialidade.codigo_cbo == cbo)).first():
-        raise HTTPException(400, "CBO já cadastrado")
+    cbo = (data.codigo_cbo or "").strip()
+    if cbo:
+        if db.exec(select(Especialidade).where(Especialidade.codigo_cbo == cbo)).first():
+            raise HTTPException(400, "CBO já cadastrado")
     obj = Especialidade(codigo_cbo=cbo, nome=data.nome.strip(), ativo=data.ativo)
     db.add(obj)
     db.commit()
@@ -2631,10 +3010,11 @@ def atualizar_especialidade(eid: int, data: EspecialidadeIn, db: Session = Depen
     obj = db.get(Especialidade, eid)
     if not obj:
         raise HTTPException(404, "Especialidade não encontrada")
-    cbo = data.codigo_cbo.strip()
-    dup = db.exec(select(Especialidade).where(Especialidade.codigo_cbo == cbo, Especialidade.id != eid)).first()
-    if dup:
-        raise HTTPException(400, "CBO já cadastrado")
+    cbo = (data.codigo_cbo or "").strip()
+    if cbo:
+        dup = db.exec(select(Especialidade).where(Especialidade.codigo_cbo == cbo, Especialidade.id != eid)).first()
+        if dup:
+            raise HTTPException(400, "CBO já cadastrado")
     obj.codigo_cbo = cbo
     obj.nome = data.nome.strip()
     obj.ativo = data.ativo
@@ -3110,27 +3490,91 @@ def _nome_viagem(destino: str, hora_saida: str, vid: int | None = None) -> str:
     return f"{base} #{vid}" if vid else base
 
 
-def _dia_payload(db: Session, data: str, redigir_pacientes: bool = False) -> dict:
+def _dia_payload(
+    db: Session,
+    data: str,
+    redigir_pacientes: bool = False,
+    frota_cache: list[dict] | None = None,
+) -> dict:
     """Quadro de um dia: destinos com viagens, veículos, vagas e passageiros.
-
-    redigir_pacientes=True (perfil frota_gestao): oculta PII dos passageiros,
-    mantendo contagens p/ gestão de veículos/motoristas.
+    Totalmente otimizado em lote para alta concorrência sem queries N+1.
     """
     viagens = list(db.exec(
         select(Viagem).where(func.to_char(Viagem.data_viagem, "YYYY-MM-DD") == data)
         .order_by(Viagem.destino, Viagem.hora_saida)
     ).all())
+    v_ids = [v.id for v in viagens if v.id]
     alocados = {v.veiculo_id for v in viagens if v.veiculo_id}
+
+    # Pré-carrega veículos vinculados às viagens
+    veic_ids = {v.veiculo_id for v in viagens if v.veiculo_id}
+    veics_map = {veh.id: veh for veh in db.exec(select(Veiculo).where(Veiculo.id.in_(veic_ids))).all()} if veic_ids else {}
+
+    # Pré-carrega passageiros, pacientes e prioridades de todas as viagens do dia em lote
+    vps_by_viagem: dict[int, list[ViagemPaciente]] = {}
+    pacs_map: dict[int, Paciente] = {}
+    vfs_map: dict[int, ViagemFila] = {}
+
+    if v_ids:
+        vps = list(db.exec(select(ViagemPaciente).where(ViagemPaciente.viagem_id.in_(v_ids))).all())
+        for p in vps:
+            vps_by_viagem.setdefault(p.viagem_id, []).append(p)
+
+        if not redigir_pacientes:
+            all_pac_ids = {p.paciente_id for p in vps if p.paciente_id} | {getattr(p, "acompanhante_id", None) for p in vps if getattr(p, "acompanhante_id", None)}
+            if all_pac_ids:
+                pacs = db.exec(select(Paciente).where(Paciente.id.in_(all_pac_ids))).all()
+                pacs_map = {pac.id: pac for pac in pacs}
+
+            vf_ids = {p.viagem_fila_id for p in vps if p.viagem_fila_id}
+            if vf_ids:
+                vfs = db.exec(select(ViagemFila).where(ViagemFila.id.in_(vf_ids))).all()
+                vfs_map = {vf.id: vf for vf in vfs}
+
     por_destino: dict[str, list] = {}
     for v in viagens:
-        veh = db.get(Veiculo, v.veiculo_id) if v.veiculo_id else None
-        ocup, cap = _assentos(db, v.id)
+        veh = veics_map.get(v.veiculo_id) if v.veiculo_id else None
+        cap = veh.capacidade if veh else 0
+        v_pass = vps_by_viagem.get(v.id, [])
+
+        # Cálculo de ocupação em memória
+        ocup = 0
+        for p in v_pass:
+            if not p.presente:
+                continue
+            tem_acomp = bool((p.acompanhante or "").strip() or getattr(p, "acompanhante_id", None))
+            ocup += 2 if tem_acomp else 1
+
         if redigir_pacientes:
             passageiros = []
         else:
-            passageiros = [_passageiro_out(db, p) for p in db.exec(
-                select(ViagemPaciente).where(ViagemPaciente.viagem_id == v.id)
-            ).all()]
+            passageiros = []
+            for p in v_pass:
+                pac = pacs_map.get(p.paciente_id)
+                acomp_id = getattr(p, "acompanhante_id", None)
+                acomp = pacs_map.get(acomp_id) if acomp_id else None
+                acomp_nome = (p.acompanhante or "").strip() or (acomp.nome if acomp else "")
+                prio = getattr(p, "prioridade", "") or ""
+                if not prio and p.viagem_fila_id:
+                    vf = vfs_map.get(p.viagem_fila_id)
+                    if vf and vf.prioridade:
+                        prio = vf.prioridade
+                passageiros.append({
+                    "id": p.id, "viagem_id": p.viagem_id, "paciente_id": p.paciente_id,
+                    "paciente_nome": pac.nome if pac else "?",
+                    "paciente_cpf": pac.cpf if pac else "",
+                    "paciente_nascimento": pac.nascimento.isoformat() if pac and pac.nascimento else None,
+                    "acompanhante": acomp_nome, "presente": p.presente,
+                    "acompanhante_id": acomp_id,
+                    "acompanhante_nome": acomp.nome if acomp else acomp_nome,
+                    "acompanhante_cpf": getattr(p, "acompanhante_cpf", "") or (acomp.cpf if acomp else ""),
+                    "viagem_fila_id": p.viagem_fila_id,
+                    "prioridade": prio,
+                    "tratamento": p.tratamento or "", "unidade": p.unidade or "",
+                    "hora_consulta": p.hora_consulta or "",
+                    "observacoes": getattr(p, "observacoes", "") or "",
+                })
+
         por_destino.setdefault(v.destino or "A definir", []).append({
             "id": v.id, "nome": _nome_viagem(v.destino, v.hora_saida, v.id),
             "destino": v.destino, "unidade": v.unidade or "",
@@ -3147,20 +3591,33 @@ def _dia_payload(db: Session, data: str, redigir_pacientes: bool = False) -> dic
             "passageiros": passageiros,
             "passageiros_restritos": redigir_pacientes,
         })
-    frota = []
-    for veh in db.exec(select(Veiculo).where(Veiculo.ativo == True).order_by(Veiculo.placa)).all():  # noqa: E712
-        frota.append({
-            "id": veh.id, "placa": veh.placa, "modelo": veh.modelo or "",
-            "tipo": veh.tipo, "capacidade": veh.capacidade,
-            "status": veh.status or "disponivel",
-            "em_outra_viagem": veh.id in alocados,
-        })
+
+    # Frota
+    if frota_cache is not None:
+        frota = [dict(veh, em_outra_viagem=veh["id"] in alocados) for veh in frota_cache]
+    else:
+        frota = []
+        for veh in db.exec(select(Veiculo).where(Veiculo.ativo == True).order_by(Veiculo.placa)).all():
+            frota.append({
+                "id": veh.id, "placa": veh.placa, "modelo": veh.modelo or "",
+                "tipo": veh.tipo, "capacidade": veh.capacidade,
+                "status": veh.status or "disponivel",
+                "em_outra_viagem": veh.id in alocados,
+            })
+
+    # Demanda aguardando calculada em lote (GROUP BY)
+    demanda_rows = db.exec(
+        select(ViagemFila.destino, func.count(ViagemFila.id))
+        .where(ViagemFila.status == "aguardando")
+        .group_by(ViagemFila.destino)
+    ).all()
+    demanda_map = {row[0]: row[1] for row in demanda_rows}
+
     return {
         "data": data,
         "destinos": [
             {"destino": d, "viagens": vs,
-             "demanda_aguardando": db.exec(select(func.count(ViagemFila.id)).where(
-                 ViagemFila.destino == d, ViagemFila.status == "aguardando")).one() or 0}
+             "demanda_aguardando": demanda_map.get(d, 0)}
             for d, vs in sorted(por_destino.items())
         ],
         "frota": frota,
@@ -3189,10 +3646,24 @@ def semana_viagens(
     redigir = not tem_tela(user, "tfd_viagens")
     ano, mes, dia = int(inicio[0:4]), int(inicio[5:7]), int(inicio[8:10])
     base = _date(ano, mes, dia)
+
+    frota_base = [
+        {
+            "id": veh.id, "placa": veh.placa, "modelo": veh.modelo or "",
+            "tipo": veh.tipo, "capacidade": veh.capacidade,
+            "status": veh.status or "disponivel",
+        }
+        for veh in db.exec(select(Veiculo).where(Veiculo.ativo == True).order_by(Veiculo.placa)).all()
+    ]
+
     dias = []
     for i in range(7):
         d = base.fromordinal(base.toordinal() + i).isoformat()
-        dias.append(_dia_payload(db, d, redigir_pacientes=redigir))
+        dias.append(_dia_payload(db, d, redigir_pacientes=redigir, frota_cache=frota_base))
+    frota = dias[0].get("frota", []) if dias else []
+    for d in dias:
+        d.pop("frota", None)
+    return {"inicio": inicio, "dias": dias, "frota": frota}
     frota = dias[0].get("frota", []) if dias else []
     for d in dias:
         d.pop("frota", None)

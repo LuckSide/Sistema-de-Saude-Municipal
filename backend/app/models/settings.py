@@ -10,3 +10,4 @@ class SystemSettings(SQLModel, table=True):
     subtitulo: str = Field(default="Secretaria Municipal", max_length=120)
     brasao_url: str = Field(default="", max_length=500)
     icone_url: str = Field(default="", max_length=500)
+    exames_habilitados_sigtap: str = Field(default="")

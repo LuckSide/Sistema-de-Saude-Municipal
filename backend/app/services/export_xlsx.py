@@ -115,8 +115,36 @@ def nome_arquivo(base: str) -> str:
     return f"{base}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
 
 
-def resposta_xlsx(titulo: str, usuario_nome: str, colunas: list[dict], linhas: list[dict], arquivo_base: str):
+def resposta_xlsx(
+    titulo: str,
+    usuario_nome: str,
+    colunas: list[dict],
+    linhas: list[dict],
+    arquivo_base: str,
+    user_id: int | None = None,
+    filtros: dict | None = None,
+    user_agent: str = "",
+    request=None,
+):
     from fastapi import Response
+
+    # Registra trilha de auditoria para toda exportação Excel
+    try:
+        from app.core.audit import registrar_log_exportacao
+        ua = user_agent
+        if not ua and request is not None:
+            ua = getattr(request, "headers", {}).get("user-agent", "")
+        registrar_log_exportacao(
+            modulo=arquivo_base,
+            titulo=titulo,
+            usuario_id=user_id,
+            usuario_nome=usuario_nome,
+            total_linhas=len(linhas),
+            filtros=filtros,
+            user_agent=ua,
+        )
+    except Exception:
+        pass
 
     return Response(
         content=gerar_xlsx(titulo, usuario_nome, colunas, linhas),

@@ -58,11 +58,11 @@ export default function MonthPicker({
 
   const [anoAtual, mesAtual] = value.split("-").map(Number);
   const navBtn =
-    "rounded-lg p-2 text-sus-950 transition hover:bg-sand active:scale-95 disabled:cursor-not-allowed disabled:opacity-40";
+    "flex h-8 w-8 items-center justify-center rounded-lg text-sus-950 transition hover:bg-sand active:scale-95 disabled:cursor-not-allowed disabled:opacity-40";
 
   return (
     <div ref={ref} className="relative">
-      <div className="flex items-center justify-between rounded-xl border border-sus-900/15 bg-white px-1.5 py-1.5">
+      <div className="flex h-11 items-center justify-between rounded-xl border border-sus-900/15 bg-white px-1.5">
         <button
           type="button"
           onClick={() => onChange(shiftMonth(value, -1))}
@@ -75,7 +75,7 @@ export default function MonthPicker({
         <button
           type="button"
           onClick={() => setAberto((a) => !a)}
-          className="flex items-center gap-2 rounded-lg px-3 py-1.5 font-display text-sm font-bold text-sus-950 transition hover:bg-sand"
+          className="flex h-8 items-center gap-2 rounded-lg px-2.5 font-display text-sm font-bold text-sus-950 transition hover:bg-sand"
           title="Escolher mês e ano"
           aria-expanded={aberto}
         >

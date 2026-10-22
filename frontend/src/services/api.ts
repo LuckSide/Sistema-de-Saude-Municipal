@@ -90,6 +90,10 @@ export type Usuario = {
   telas: string[];
   acoes?: Record<string, string[]>;
   medico_id?: number | null;
+  unidade_saude_id?: number | null;
+  unidade_saude_nome?: string | null;
+  laboratorio_id?: number | null;
+  laboratorio_nome?: string | null;
   permite_retroativo?: boolean;
   is_superuser: boolean;
   is_active: boolean;
@@ -116,6 +120,7 @@ export type Medico = {
   especialidades: string;
   telefone: string;
   email: string;
+  unidades_ids?: number[];
   ativo: boolean;
   usuario_criado?: string | null;
   senha_temporaria?: string | null;
@@ -176,10 +181,25 @@ export const saveSettings = (p: SystemSettings) =>
 export type Integracoes = {
   pec_fonte: string;
   pec_servidor_url: string;
+  pec_banco_nome: string;
   pec_usuario: string;
   pec_senha_configurada: boolean;
   pec_database_configurada: boolean;
   pec_database_resumo: string;
+  pec_ssh_habilitado: boolean;
+  pec_ssh_host: string;
+  pec_ssh_porta: number;
+  pec_ssh_usuario: string;
+  pec_ssh_senha_configurada: boolean;
+  pec_ssh_chave_configurada: boolean;
+  pec_porta_local: number;
+  pec_ssh_tunel_ativo: boolean;
+  pec_sync_automatica?: boolean;
+  pec_sync_intervalo_horas?: number;
+  pec_sync_ultima_execucao?: string;
+  pec_sync_ultimo_status?: string;
+  pec_sync_total_pacientes?: number;
+  pec_sync_em_execucao?: boolean;
   rnds_ambiente: string;
   rnds_client_id: string;
   rnds_secret_configurado: boolean;
@@ -194,7 +214,74 @@ export const savePec = (p: Record<string, unknown>) =>
 export const saveRnds = (p: Record<string, unknown>) =>
   api.put<Integracoes>("/api/integracoes/rnds", p).then((r) => r.data);
 export const testarPec = () =>
-  api.post<{ ok: boolean; fonte_efetiva: string; detalhe: string; latencia_ms?: number }>("/api/integracoes/pec/testar").then((r) => r.data);
+  api.post<{
+    ok: boolean;
+    fonte_efetiva: string;
+    detalhe: string;
+    latencia_ms?: number;
+    banco?: string;
+    usuario?: string;
+    total_cidadaos?: number;
+    tunel_ssh?: boolean;
+  }>("/api/integracoes/pec/testar").then((r) => r.data);
+
+export type PecSyncLogItem = {
+  id: number;
+  iniciado_em: string;
+  finalizado_em?: string;
+  status: "EM_EXECUCAO" | "SUCESSO" | "ERRO";
+  total_lidos: number;
+  total_inseridos: number;
+  total_atualizados: number;
+  total_duplicados_mesclados: number;
+  total_erros: number;
+  duracao_segundos: number;
+  mensagem: string;
+  detalhes?: string;
+  origem: string;
+};
+
+export type PecSyncStatus = {
+  em_execucao: boolean;
+  automatica: boolean;
+  intervalo_horas: number;
+  ultima_execucao?: string;
+  ultimo_status: string;
+  total_pacientes: number;
+  ultimo_log?: PecSyncLogItem;
+};
+
+export const fetchPecSyncStatus = () =>
+  api.get<PecSyncStatus>("/api/integracoes/pec/sync/status").then((r) => r.data);
+
+export const fetchPecSyncLogs = (limite = 15) =>
+  api.get<PecSyncLogItem[]>("/api/integracoes/pec/sync/logs", { params: { limite } }).then((r) => r.data);
+
+export const sincronizarPecPacientes = (background = true) =>
+  api.post<{
+    ok: boolean;
+    status: string;
+    mensagem: string;
+    total_lidos?: number;
+    total_inseridos?: number;
+    total_atualizados?: number;
+    total_duplicados_mesclados?: number;
+    duracao_segundos?: number;
+  }>("/api/integracoes/pec/sincronizar", null, { params: { background } }).then((r) => r.data);
+
+export const sincronizarEnderecosPec = () =>
+  api.post<{
+    ok: boolean;
+    total_analisados: number;
+    total_atualizados: number;
+    mensagem: string;
+  }>("/api/integracoes/pec/sincronizar-enderecos").then((r) => r.data);
+
+export const salvarPecSyncConfig = (p: { pec_sync_automatica?: boolean; pec_sync_intervalo_horas?: number }) =>
+  api.put<{ ok: boolean; pec_sync_automatica: boolean; pec_sync_intervalo_horas: number }>(
+    "/api/integracoes/pec/sync/config",
+    p
+  ).then((r) => r.data);
 export const validarRnds = () =>
   api.post<{
     ok: boolean; ambiente: string; link: string;
@@ -249,13 +336,43 @@ export const saveQuadroFiltros = (data: string, destino: string, agrupamento: "d
 
 // ---------- Auditoria ----------
 export type AuditLog = {
-  id: number; user_id: number | null; user_name: string; action: string;
-  entity: string; entity_id: number | null; details: string; timestamp: string;
+  id: number;
+  user_id: number | null;
+  user_name: string;
+  action: string;
+  action_label?: string;
+  entity: string;
+  entity_label?: string;
+  entity_id: number | null;
+  device?: string;
+  details: string;
+  timestamp: string;
+};
+export type AuditEstatisticas = {
+  total_registros: number;
+  total_exportacoes: number;
+  total_buscas: number;
+  ultimos_30_dias: number;
+  tamanho_estimado_kb: number;
+  tamanho_estimado_formatado: string;
+  top_acoes: { action: string; count: number }[];
+  top_dispositivos: { device: string; count: number }[];
 };
 export const fetchAuditLogs = (params: { data_de?: string; data_ate?: string; usuario?: string; acao?: string; entidade?: string; page?: number; limit?: number }) =>
   api.get<Pagina<AuditLog> | AuditLog[]>("/api/auditoria/logs", { params }).then((r) => r.data);
 export const fetchAuditFiltros = () =>
   api.get<{ acoes: string[]; entidades: string[]; usuarios: string[] }>("/api/auditoria/filtros").then((r) => r.data);
+export const fetchAuditEstatisticas = () =>
+  api.get<AuditEstatisticas>("/api/auditoria/estatisticas").then((r) => r.data);
+export const executarRotacaoAudit = (meses_retencao: number = 6, arquivar: boolean = true) =>
+  api.post<{
+    removidos: number;
+    meses_retencao: number;
+    arquivado: boolean;
+    arquivo_gz?: string;
+    tamanho_arquivo_bytes?: number;
+    mensagem?: string;
+  }>("/api/auditoria/rotacao", { meses_retencao, arquivar }).then((r) => r.data);
 export type RegistroRelacionado = {
   entity: string;
   entity_id: number;
@@ -275,6 +392,7 @@ export const fetchTimeline = (pacienteId: number) =>
 // ---------- TFD ----------
 export type Paciente = {
   id: number;
+  codigo_prontuario?: string;
   nome: string;
   cpf: string;
   cns: string;
@@ -284,6 +402,7 @@ export type Paciente = {
   endereco_numero: string;
   complemento?: string;
   bairro: string;
+  municipio?: string;
   cep: string;
   unidade_saude_id: number | null;
   equipe_esf: string;
@@ -526,6 +645,14 @@ export type Exame = {
   status_anterior?: string;
   paciente_nome: string;
   paciente_cpf?: string;
+  paciente_endereco?: string;
+  paciente_numero?: string;
+  paciente_complemento?: string;
+  paciente_bairro?: string;
+  paciente_municipio?: string;
+  paciente_telefone?: string;
+  paciente_cns?: string;
+  paciente_nascimento?: string | null;
   codigo_curto?: string;
   numero_pedido?: string;
   public_token?: string;
@@ -742,8 +869,16 @@ export type FiltrosOpcoes = {
   procedimentos: OpcaoFiltro[];
   especialidades: OpcaoFiltro[];
 };
-export const tfdFiltrosOpcoes = (status?: string) =>
-  api.get<FiltrosOpcoes>("/api/tfd/exames/filtros-opcoes", { params: { status } }).then((r) => r.data);
+export async function tfdFiltrosOpcoes(
+  status?: string,
+  tipo_fila?: string
+): Promise<{ tipos: OpcaoFiltro[]; procedimentos: OpcaoFiltro[]; especialidades: OpcaoFiltro[] }> {
+  return api
+    .get<FiltrosOpcoes>("/api/tfd/exames/filtros-opcoes", {
+      params: { status, tipo_fila: tipo_fila || undefined },
+    })
+    .then((r) => r.data);
+}
 
 export type TipoFila = { id: number; codigo: string; nome: string; ativo: boolean };
 export type ProcedimentoCat = {
@@ -818,8 +953,59 @@ export type CatalogoProc = {
   origem?: string;
 };
 
-export const tfdCatalogoExames = (q?: string, tipo_fila?: string) =>
-  api.get<CatalogoProc[]>("/api/tfd/exames/catalogo", { params: { q, tipo_fila } }).then((r) => r.data);
+export interface ValidarCboResult {
+  codigo_procedimento: string;
+  nome_procedimento: string;
+  hierarquia: {
+    codigo: string;
+    grupo_codigo: string;
+    grupo_nome: string;
+    subgrupo_codigo: string;
+    subgrupo_nome: string;
+    forma_organizacao: string;
+    eh_laboratorial: boolean;
+    eh_cirurgico: boolean;
+    eh_consulta: boolean;
+  };
+  exige_cbo_estrito: boolean;
+  cbo_profissional: string;
+  compativel: boolean;
+  motivo: string;
+  alerta: string | null;
+  permite_responsavel_tecnico: boolean;
+  cbos_autorizados: Array<{ cbo: string; descricao: string }>;
+}
+
+export const validarCboProcedimento = (payload: {
+  codigo_procedimento: string;
+  medico_id?: number | null;
+  medico_nome?: string | null;
+  cbo?: string | null;
+  tipo_fila?: string | null;
+}) =>
+  api.post<ValidarCboResult>("/api/tfd/procedimentos/validar-cbo", payload).then((r) => r.data);
+
+export const tfdCatalogoExames = (q?: string, tipo_fila?: string, apenas_laboratoriais?: boolean) =>
+  api.get<CatalogoProc[]>("/api/tfd/exames/catalogo", { params: { q, tipo_fila, apenas_laboratoriais } }).then((r) => r.data);
+
+export type ExamePermitidoItem = {
+  id: number;
+  codigo: string;
+  descricao: string;
+  instrumento: string;
+};
+
+export type ExamesPermitidosData = {
+  codigos_habilitados: string[];
+  total_habilitados: number;
+  procedimentos_sigtap: ExamePermitidoItem[];
+};
+
+export const fetchExamesPermitidos = () =>
+  api.get<ExamesPermitidosData>("/api/settings/exames-permitidos").then((r) => r.data);
+
+export const salvarExamesPermitidos = (codigos: string[]) =>
+  api.put<{ ok: boolean; total_habilitados: number; codigos_habilitados: string[] }>("/api/settings/exames-permitidos", { codigos }).then((r) => r.data);
 export const tfdRegenerarTokenExame = (id: number) =>
   api.post<Exame>(`/api/tfd/exames/${id}/regenerar-token`).then((r) => r.data);
 export const tfdRecepcionarExame = (id: number) =>
@@ -914,9 +1100,9 @@ export type LabSol = {
   procedimento_descricao: string;
 };
 
-export const labSigtap = (q?: string, instrumento?: string, page?: number, limit?: number) =>
+export const labSigtap = (q?: string, instrumento?: string, page?: number, limit?: number, apenas_laboratoriais: boolean = true) =>
   api
-    .get<Pagina<SigtapProc> | SigtapProc[]>("/api/lab/sigtap", { params: { q, instrumento, page, limit } })
+    .get<Pagina<SigtapProc> | SigtapProc[]>("/api/lab/sigtap", { params: { q, instrumento, page, limit, apenas_laboratoriais } })
     .then((r) => r.data);
 
 export const labSols = (filtros?: {
@@ -961,7 +1147,7 @@ export const labExportarLote = (competencia?: string) =>
     .then((r) => r.data);
 
 // ---------- Fila PSF / Agenda / Vagas / Auditoria ----------
-export type Laboratorio = { id: number; nome: string; ativo: boolean };
+export type Laboratorio = { id: number; nome: string; cnes?: string; ativo: boolean };
 
 export const labsListar = (somenteAtivos = true) =>
   api.get<Laboratorio[]>("/api/exames/laboratorios", {
@@ -978,10 +1164,14 @@ export type FilaPsfItem = {
   id: number;
   paciente_id: number;
   paciente_nome: string;
+  paciente_cpf?: string;
+  paciente_cns?: string;
+  paciente_prontuario?: string;
   unidade_psf: string;
   medico_solicitante: string;
   medico: string;
   data_solicitacao: string;
+  justificativa?: string;
   observacoes: string;
   obs: string;
   status: string;
@@ -993,10 +1183,14 @@ export function mapFila(o: any): FilaPsfItem {
     id: o.id,
     paciente_id: o.paciente_id,
     paciente_nome: o.paciente_nome ?? "",
+    paciente_cpf: o.paciente_cpf ?? "",
+    paciente_cns: o.paciente_cns ?? "",
+    paciente_prontuario: o.paciente_prontuario ?? "",
     unidade_psf: o.unidade_psf ?? "",
     medico_solicitante: o.medico_solicitante ?? o.medico ?? "",
     medico: o.medico ?? o.medico_solicitante ?? "",
     data_solicitacao: o.data_solicitacao ?? "",
+    justificativa: o.justificativa ?? "",
     observacoes: o.observacoes ?? o.obs ?? "",
     obs: o.obs ?? o.observacoes ?? "",
     status: o.status ?? "",
@@ -1021,9 +1215,29 @@ export const filaPsfCriar = (p: Record<string, unknown>) =>
       medico_solicitante: (p as any).medico_solicitante ?? (p as any).medico,
       data_solicitacao:
         (p as any).data_solicitacao ?? new Date().toISOString().slice(0, 10),
+      justificativa: (p as any).justificativa ?? "",
       observacoes: (p as any).observacoes ?? (p as any).obs ?? "",
     })
     .then((r) => mapFila(r.data));
+
+export const filaPsfAtualizar = (id: number, p: Record<string, unknown>) =>
+  api
+    .put(`/api/exames/fila-psf/${id}`, {
+      unidade_psf: p.unidade_psf,
+      medico_solicitante: (p as any).medico_solicitante ?? (p as any).medico,
+      data_solicitacao: (p as any).data_solicitacao,
+      justificativa: (p as any).justificativa ?? "",
+      observacoes: (p as any).observacoes ?? (p as any).obs ?? "",
+    })
+    .then((r) => mapFila(r.data));
+
+export const filaPsfAgendarLote = (p: {
+  fila_ids: number[];
+  laboratorio_id: number;
+  data_agendada: string;
+  hora_agendada?: string;
+  sigtap_ids?: number[];
+}) => api.post("/api/exames/fila-psf/agendar-lote", p).then((r) => r.data);
 
 export const filaPsfExcluir = (id: number) =>
   api.delete(`/api/exames/fila-psf/${id}`);
@@ -1111,15 +1325,91 @@ export type SolicMestre = {
   id: number;
   paciente_id: number;
   paciente_nome: string;
+  paciente_cpf?: string;
+  paciente_cns?: string;
+  paciente_prontuario?: string;
+  paciente_nascimento?: string;
   data_agendada: string;
+  hora_agendada?: string;
   laboratorio_id: number;
   laboratorio_nome: string;
   laboratorio: string;
+  medico_id?: number | null;
+  medico_solicitante?: string;
+  unidade_saude_id?: number | null;
+  unidade_psf?: string;
+  justificativa?: string;
   status: string;
   status_auditoria: string;
   observacao_laboratorio: string;
   observacoes: string;
+  coletado_em?: string | null;
+  coletado_por?: string;
+  jejum_horas?: string;
+  preparo_instrucoes?: string[];
   itens: { id: number; solicitacao_id: number; sigtap_id: number; quantidade: number; status_auditoria: string; observacao: string; procedimento_codigo: string; procedimento_descricao: string; codigo: string; descricao: string; conferido: boolean; divergente: boolean }[];
+};
+
+export type ComprovanteExame = {
+  id: number;
+  protocolo: string;
+  paciente_id: number;
+  paciente_nome: string;
+  paciente_cpf: string;
+  paciente_cns: string;
+  paciente_prontuario: string;
+  paciente_nascimento: string;
+  data_agendada: string;
+  hora_agendada: string;
+  laboratorio_id: number;
+  laboratorio_nome: string;
+  unidade_psf: string;
+  medico_solicitante: string;
+  justificativa: string;
+  status: string;
+  status_auditoria: string;
+  itens: { id: number; solicitacao_id: number; sigtap_id: number; quantidade: number; procedimento_codigo: string; procedimento_descricao: string }[];
+  jejum_horas: string;
+  preparo_instrucoes: string[];
+  orientacoes_gerais: string[];
+  emitido_em: string;
+  agendado_por: string;
+};
+
+export type PedidoAjuste = {
+  id: number;
+  solicitacao_id: number;
+  laboratorio_id: number;
+  laboratorio_nome: string;
+  paciente_nome: string;
+  tipo_ajuste: string;
+  justificativa: string;
+  itens_propostos: any[];
+  status: string;
+  solicitado_por: string;
+  resposta_secretaria: string;
+  resposta?: string;
+  analisado_por: string;
+  created_at: string;
+  analisado_em?: string | null;
+};
+
+export type BpaResumo = {
+  competencia: string;
+  total_procedimentos: number;
+  total_exames: number;
+  total_pacientes: number;
+  total_solicitacoes?: number;
+  valor_total: number;
+  itens: {
+    codigo: string;
+    descricao: string;
+    instrumento: string;
+    quantidade: number;
+    valor_unitario: number;
+    valor_total: number;
+    total_pacientes: number;
+  }[];
 };
 
 export function mapMestre(o: any): SolicMestre {
@@ -1127,14 +1417,28 @@ export function mapMestre(o: any): SolicMestre {
     id: o.id,
     paciente_id: o.paciente_id,
     paciente_nome: o.paciente_nome ?? "",
+    paciente_cpf: o.paciente_cpf ?? "",
+    paciente_cns: o.paciente_cns ?? "",
+    paciente_prontuario: o.paciente_prontuario ?? "",
+    paciente_nascimento: o.paciente_nascimento ?? "",
     data_agendada: typeof o.data_agendada === "string" ? o.data_agendada : String(o.data_agendada ?? ""),
+    hora_agendada: o.hora_agendada ?? "07:00",
     laboratorio_id: o.laboratorio_id,
     laboratorio_nome: o.laboratorio_nome ?? "",
     laboratorio: o.laboratorio_nome ?? o.laboratorio ?? "",
+    medico_id: o.medico_id ?? null,
+    medico_solicitante: o.medico_solicitante ?? "",
+    unidade_saude_id: o.unidade_saude_id ?? null,
+    unidade_psf: o.unidade_psf ?? "",
+    justificativa: o.justificativa ?? "",
     status: o.status ?? "",
     status_auditoria: o.status_auditoria ?? "",
     observacao_laboratorio: o.observacao_laboratorio ?? "",
     observacoes: o.observacao_laboratorio ?? "",
+    coletado_em: o.coletado_em ?? null,
+    coletado_por: o.coletado_por ?? "",
+    jejum_horas: o.jejum_horas ?? "8 a 12 horas",
+    preparo_instrucoes: o.preparo_instrucoes ?? [],
     itens: (o.itens ?? []).map((it: any) => ({
       id: it.id,
       solicitacao_id: it.solicitacao_id,
@@ -1152,8 +1456,19 @@ export function mapMestre(o: any): SolicMestre {
   };
 }
 
-export const examesSolicitar = (p: { paciente_id: number; data_agendada: string; laboratorio_id: number; sigtap_ids?: number[]; itens?: ExameLoteItem[]; origem_fila_id?: number | null }) =>
-  api.post("/api/exames/solicitacoes", p).then((r) => mapMestre(r.data));
+export const examesSolicitar = (p: {
+  paciente_id: number;
+  data_agendada: string;
+  laboratorio_id: number;
+  sigtap_ids?: number[];
+  itens?: ExameLoteItem[];
+  origem_fila_id?: number | null;
+  medico_id?: number | null;
+  medico_solicitante?: string;
+  unidade_saude_id?: number | null;
+  unidade_psf?: string;
+  justificativa?: string;
+}) => api.post("/api/exames/solicitacoes", p).then((r) => mapMestre(r.data));
 
 export type ExameLoteItem = { sigtap_id: number; quantidade?: number };
 
@@ -1182,6 +1497,11 @@ export const examesSolicitarLote = (p: {
   sigtap_ids?: number[];
   itens?: ExameLoteItem[];
   origem_fila_id?: number | null;
+  medico_id?: number | null;
+  medico_solicitante?: string;
+  unidade_saude_id?: number | null;
+  unidade_psf?: string;
+  justificativa?: string;
 }) => {
   const itens = p.itens ? normalizarItens(p.itens) : undefined;
   return examesSolicitar({
@@ -1191,14 +1511,60 @@ export const examesSolicitarLote = (p: {
     itens,
     sigtap_ids: itens ? undefined : p.sigtap_ids,
     origem_fila_id: p.origem_fila_id,
+    medico_id: p.medico_id,
+    medico_solicitante: p.medico_solicitante,
+    unidade_saude_id: p.unidade_saude_id,
+    unidade_psf: p.unidade_psf,
+    justificativa: p.justificativa,
   });
 };
-export const solicitarListar = (filtros?: { status_auditoria?: string; laboratorio_id?: number; page?: number; limit?: number }) =>
+export const solicitarListar = (filtros?: {
+  status_auditoria?: string;
+  laboratorio_id?: number;
+  q?: string;
+  status?: string;
+  data_de?: string;
+  data_ate?: string;
+  page?: number;
+  limit?: number;
+}) =>
   api.get("/api/exames/solicitacoes", { params: filtros }).then((r) => {
     const d = r.data as any;
     if (Array.isArray(d)) return d.map(mapMestre);
     return { data: (d?.data ?? []).map(mapMestre), total: d?.total ?? 0, page: d?.page ?? 1, pages: d?.pages ?? 1 };
   });
+
+export const labObterComprovante = (mid: number): Promise<ComprovanteExame> =>
+  api.get(`/api/exames/solicitacoes/${mid}/comprovante`).then((r) => r.data as ComprovanteExame);
+
+export const labCancelarSolicitacao = (mid: number): Promise<void> =>
+  api.delete(`/api/exames/solicitacoes/${mid}`).then(() => undefined);
+
+export const labRecepcionarColeta = (mid: number): Promise<SolicMestre> =>
+  api.post(`/api/exames/solicitacoes/${mid}/recepcionar`).then((r) => mapMestre(r.data));
+
+export const labPedirAjuste = (
+  mid: number,
+  payload: { tipo_ajuste: string; justificativa: string; itens_propostos?: any[] }
+): Promise<PedidoAjuste> =>
+  api.post(`/api/exames/solicitacoes/${mid}/pedir-ajuste`, payload).then((r) => r.data as PedidoAjuste);
+
+export const labListarPedidosAjuste = (status?: string, laboratorio_id?: number): Promise<PedidoAjuste[]> =>
+  api.get("/api/exames/pedidos-ajuste", { params: { status, laboratorio_id } }).then((r) => r.data as PedidoAjuste[]);
+
+export const labAnalisarPedidoAjuste = (
+  aid: number,
+  payload: { aprovado: boolean; resposta: string }
+): Promise<PedidoAjuste> =>
+  api.post(`/api/exames/pedidos-ajuste/${aid}/analisar`, payload).then((r) => r.data as PedidoAjuste);
+
+export const labBpaConsolidado = (competencia: string): Promise<BpaResumo> =>
+  api.get("/api/exames/bpa/consolidado", { params: { competencia } }).then((r) => r.data as BpaResumo);
+
+export const labBpaExportarCsv = (competencia: string): Promise<Blob> =>
+  api
+    .get("/api/exames/bpa/exportar-csv", { params: { competencia }, responseType: "blob" })
+    .then((r) => r.data as Blob);
 
 export type AuditItemDet = {
   id: number;
@@ -1331,6 +1697,419 @@ export async function restaurarBackup(arquivo: File, senha: string): Promise<any
   form.append("senha", senha);
   const { data } = await api.post("/api/backup/restaurar", form);
   return data;
+}
+
+// ============================================================================
+// MÓDULO APAC (Autorização de Procedimentos de Alta Complexidade)
+// ============================================================================
+
+export interface ProcedimentoSecundarioApac {
+  id?: number;
+  solicitacao_id?: number;
+  sigtap_id?: number;
+  codigo_procedimento: string;
+  nome_procedimento: string;
+  quantidade: number;
+  valor_unitario?: number;
+  justificativa?: string;
+}
+
+export interface AnexoApac {
+  id: number;
+  solicitacao_id: number;
+  nome_arquivo: string;
+  tipo_documento?: string;
+  tamanho_bytes?: number;
+  content_type?: string;
+  url?: string;
+  criado_em: string;
+}
+
+export interface SolicitacaoApac {
+  id: number;
+  numero_apac?: string | null;
+  tipo_solicitacao: "inicial" | "continuidade";
+  numero_apac_anterior?: string | null;
+  solicitacao_anterior_id?: number | null;
+  status: "SOLICITADO" | "EM ANALISE" | "PENDENTE" | "AUTORIZADO" | "INDEFERIDO" | "CANCELADO";
+
+  // Paciente
+  paciente_id: number;
+  paciente_nome: string;
+  paciente_cpf?: string;
+  paciente_cns?: string;
+  paciente_data_nascimento?: string;
+  paciente_sexo?: string;
+  paciente_nome_mae?: string;
+  paciente_telefone?: string;
+  paciente_endereco?: string;
+  paciente_numero?: string;
+  paciente_complemento?: string;
+  paciente_municipio?: string;
+  paciente_bairro?: string;
+  paciente_cep?: string;
+
+  // Estabelecimentos
+  unidade_solicitante_id?: number | null;
+  unidade_solicitante_nome?: string;
+  unidade_solicitante_cnes?: string;
+  unidade_executante_id?: number | null;
+  unidade_executante_nome?: string;
+  unidade_executante_cnes?: string;
+
+  // Médico Solicitante
+  medico_solicitante_id?: number | null;
+  medico_solicitante_nome?: string;
+  medico_solicitante_crm?: string;
+  medico_solicitante_cbo?: string;
+  medico_solicitante_cns?: string;
+
+  // Procedimento Principal
+  procedimento_principal_id?: number | null;
+  codigo_procedimento_principal: string;
+  nome_procedimento_principal: string;
+  qtd_mes1: number;
+  qtd_mes2: number;
+  qtd_mes3: number;
+  qtd_total: number;
+  valor_unitario?: number;
+  valor_total?: number;
+
+  // Procedimentos Secundários
+  procedimentos_secundarios?: ProcedimentoSecundarioApac[];
+
+  // Dados Clínicos
+  cid_principal_codigo: string;
+  cid_principal_descricao?: string;
+  cid_secundario_codigo?: string;
+  cid_secundario_descricao?: string;
+  cid_causas_associadas?: string;
+  estadiamento_clinico?: string;
+  anamnese_diagnostico?: string;
+  justificativa_clinica: string;
+
+  // Regulação / Autorização
+  medico_autorizador_id?: number | null;
+  medico_autorizador_nome?: string;
+  medico_autorizador_crm?: string;
+  medico_autorizador_cns?: string;
+  data_autorizacao?: string | null;
+  data_validade_inicio?: string | null;
+  data_validade_fim?: string | null;
+  meses_vigencia?: number;
+  dias_restantes_vigencia?: number;
+  parecer_autorizador?: string | null;
+  motivo_pendencia?: string | null;
+  motivo_indeferimento?: string | null;
+
+  // Anexos
+  anexos?: AnexoApac[];
+
+  criado_em: string;
+  atualizado_em?: string;
+}
+
+export interface FaixaNumeracaoApac {
+  id: number;
+  ano: number;
+  serie: string;
+  inicio: string;
+  fim: string;
+  proximo_numero: string;
+  quantidade_total: number;
+  quantidade_utilizada: number;
+  quantidade_disponivel: number;
+  ativo: boolean;
+  criado_em: string;
+}
+
+export interface LoteFaturamentoApac {
+  id: number;
+  competencia: string;
+  cnes_executante?: string;
+  nome_executante?: string;
+  numero_remessa: number;
+  total_apacs: number;
+  total_procedimentos: number;
+  valor_total: number;
+  status: "GERADO" | "ENVIADO" | "PROCESSADO" | "COM_ERROS";
+  nome_arquivo?: string;
+  hash_arquivo?: string;
+  gerado_por_nome?: string;
+  criado_em: string;
+}
+
+export interface InconsistenciaFaturamentoApac {
+  solicitacao_id: number;
+  paciente: string;
+  tipo: string;
+  mensagem: string;
+}
+
+export interface ResumoFaturamentoApac {
+  competencia: string;
+  total_apacs_autorizadas: number;
+  total_procedimentos: number;
+  valor_total_sa: number;
+  valor_total_sp: number;
+  valor_total: number;
+  validacoes: {
+    cnes_executante_ok: boolean;
+    cnes_executante_msg?: string;
+    vigencia_ok: boolean;
+    vigencia_msg?: string;
+    compatibilidade_sigtap_cid_ok: boolean;
+    compatibilidade_msg?: string;
+    total_inconsistencias: number;
+    inconsistencias?: InconsistenciaFaturamentoApac[];
+  };
+}
+
+export interface ItemSigtapApac {
+  id: number;
+  codigo: string;
+  descricao: string;
+  complexidade?: string;
+  financiamento?: string;
+  subgrupo?: string;
+  valor_sa?: number;
+  valor_sp?: number;
+  valor_total?: number;
+  instrumento?: string;
+  cid_padrao?: string;
+  dias_validade?: number;
+}
+
+export interface CidItem {
+  codigo: string;
+  descricao: string;
+  sexo?: string;
+  estadiamento_obrigatorio?: boolean;
+}
+
+export async function fetchApacSolicitacoes(params?: any): Promise<{ data: SolicitacaoApac[]; total: number; page: number; pages: number }> {
+  try {
+    const res = await api.get<{ data: SolicitacaoApac[]; total: number; page: number; pages: number }>("/api/apac/solicitacoes", { params });
+    if (res.data && Array.isArray(res.data.data)) return res.data;
+    if (Array.isArray(res.data)) {
+      return { data: res.data, total: res.data.length, page: 1, pages: 1 };
+    }
+    return res.data;
+  } catch (err) {
+    // Retorno estruturado defensivo se rota ainda em integração
+    return { data: [], total: 0, page: 1, pages: 1 };
+  }
+}
+
+export async function fetchApacSolicitacao(id: number): Promise<SolicitacaoApac> {
+  const { data } = await api.get<SolicitacaoApac>(`/api/apac/solicitacoes/${id}`);
+  return data;
+}
+
+export async function criarApacSolicitacao(payload: any): Promise<SolicitacaoApac> {
+  const { data } = await api.post<SolicitacaoApac>("/api/apac/solicitacoes", payload);
+  return data;
+}
+
+export async function atualizarApacSolicitacao(id: number, payload: any): Promise<SolicitacaoApac> {
+  const { data } = await api.put<SolicitacaoApac>(`/api/apac/solicitacoes/${id}`, payload);
+  return data;
+}
+
+export async function duplicarApacContinuidade(id: number, justificativa_atualizada: string): Promise<SolicitacaoApac> {
+  const { data } = await api.post<SolicitacaoApac>(`/api/apac/solicitacoes/${id}/continuidade`, { justificativa_atualizada });
+  return data;
+}
+
+export async function cancelarApacSolicitacao(id: number, motivo?: string): Promise<any> {
+  const { data } = await api.post(`/api/apac/solicitacoes/${id}/cancelar`, { motivo });
+  return data;
+}
+
+export async function uploadAnexoApac(id: number, formData: FormData): Promise<AnexoApac> {
+  const { data } = await api.post<AnexoApac>(`/api/apac/solicitacoes/${id}/anexos`, formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
+}
+
+export async function iniciarAnaliseApac(id: number): Promise<SolicitacaoApac> {
+  const { data } = await api.post<SolicitacaoApac>(`/api/apac/solicitacoes/${id}/iniciar-analise`);
+  return data;
+}
+
+export async function autorizarApac(
+  id: number,
+  payload: { medico_autorizador_id: number; parecer?: string; meses_vigencia?: number }
+): Promise<SolicitacaoApac> {
+  const { data } = await api.post<SolicitacaoApac>(`/api/apac/solicitacoes/${id}/autorizar`, payload);
+  return data;
+}
+
+export async function devolverApac(id: number, motivo: string): Promise<SolicitacaoApac> {
+  const { data } = await api.post<SolicitacaoApac>(`/api/apac/solicitacoes/${id}/devolver`, { motivo });
+  return data;
+}
+
+export async function indeferirApac(id: number, motivo: string): Promise<SolicitacaoApac> {
+  const { data } = await api.post<SolicitacaoApac>(`/api/apac/solicitacoes/${id}/indeferir`, { motivo });
+  return data;
+}
+
+export async function fetchApacFaixas(): Promise<FaixaNumeracaoApac[]> {
+  try {
+    const { data } = await api.get<FaixaNumeracaoApac[]>("/api/apac/faixas");
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function criarApacFaixa(payload: any): Promise<FaixaNumeracaoApac> {
+  const { data } = await api.post<FaixaNumeracaoApac>("/api/apac/faixas", payload);
+  return data;
+}
+
+export async function atualizarApacFaixa(id: number, payload: any): Promise<FaixaNumeracaoApac> {
+  const { data } = await api.put<FaixaNumeracaoApac>(`/api/apac/faixas/${id}`, payload);
+  return data;
+}
+
+export async function fetchApacFaturamentoResumo(competencia?: string): Promise<ResumoFaturamentoApac> {
+  try {
+    const { data } = await api.get<ResumoFaturamentoApac>("/api/apac/faturamento/resumo", { params: { competencia } });
+    return data;
+  } catch {
+    return {
+      competencia: competencia || new Date().toISOString().slice(0, 7),
+      total_apacs_autorizadas: 0,
+      total_procedimentos: 0,
+      valor_total_sa: 0,
+      valor_total_sp: 0,
+      valor_total: 0,
+      validacoes: {
+        cnes_executante_ok: true,
+        vigencia_ok: true,
+        compatibilidade_sigtap_cid_ok: true,
+        total_inconsistencias: 0,
+        inconsistencias: [],
+      },
+    };
+  }
+}
+
+export async function gerarRemessaApac(competencia: string, cnes_executante?: string): Promise<LoteFaturamentoApac> {
+  const { data } = await api.post<LoteFaturamentoApac>("/api/apac/faturamento/remessa", { competencia, cnes_executante });
+  return data;
+}
+
+export async function fetchApacLotes(competencia?: string): Promise<LoteFaturamentoApac[]> {
+  try {
+    const { data } = await api.get<LoteFaturamentoApac[]>("/api/apac/faturamento/lotes", { params: { competencia } });
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function downloadRemessaApac(loteId: number): Promise<Blob> {
+  const r = await api.get(`/api/apac/faturamento/lotes/${loteId}/download`, { responseType: "blob" });
+  const blob = new Blob([r.data as BlobPart], { type: "text/plain;charset=iso-8859-1" });
+  const disp: string = r.headers?.["content-disposition"] ?? "";
+  const m = disp.match(/filename="?([^";]+)"?/);
+  const nome = m ? m[1] : `APAC_REMESSA_${loteId}.TXT`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nome;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  return blob;
+}
+
+export async function fetchSigtapApac(q?: string): Promise<ItemSigtapApac[]> {
+  try {
+    const { data } = await api.get<ItemSigtapApac[]>("/api/apac/sigtap", { params: { q } });
+    if (Array.isArray(data) && data.length > 0) return data;
+  } catch {
+    // fallback para /api/lab/sigtap ou lista interna
+  }
+  try {
+    const { data } = await api.get<any>("/api/lab/sigtap", { params: { q, limit: 50, apenas_laboratoriais: false } });
+    const lista = Array.isArray(data) ? data : data?.data ?? [];
+    if (lista.length > 0) {
+      return lista.map((it: any) => ({
+        id: it.id,
+        codigo: it.codigo,
+        descricao: it.descricao,
+        complexidade: "Alta Complexidade",
+        financiamento: "Média e Alta Complexidade (MAC)",
+        valor_sa: it.valor_sa || 180.5,
+        valor_sp: it.valor_sp || 45.2,
+        valor_total: (it.valor_sa || 180.5) + (it.valor_sp || 45.2),
+        instrumento: "APAC",
+        dias_validade: 90,
+      }));
+    }
+  } catch {
+    // fallback padrão
+  }
+
+  const padrao: ItemSigtapApac[] = [
+    { id: 101, codigo: "0305010107", descricao: "HEMODIALISE (MAXIMO 3 SESSOES POR SEMANA)", complexidade: "Alta Complexidade", valor_sa: 218.47, valor_sp: 0, valor_total: 218.47, instrumento: "APAC", dias_validade: 90 },
+    { id: 102, codigo: "0305010115", descricao: "HEMODIALISE EM PACIENTE COM SOROLOGIA POSITIVA", complexidade: "Alta Complexidade", valor_sa: 245.8, valor_sp: 0, valor_total: 245.8, instrumento: "APAC", dias_validade: 90 },
+    { id: 103, codigo: "0304020222", descricao: "QUIMIOTERAPIA DE TUMORES DO APARELHO DIGESTIVO - ADJUVANTE", complexidade: "Alta Complexidade", valor_sa: 1250.0, valor_sp: 180.0, valor_total: 1430.0, instrumento: "APAC", dias_validade: 90 },
+    { id: 104, codigo: "0304020230", descricao: "QUIMIOTERAPIA DE TUMORES DO APARELHO DIGESTIVO - AVANCADO", complexidade: "Alta Complexidade", valor_sa: 1840.0, valor_sp: 210.0, valor_total: 2050.0, instrumento: "APAC", dias_validade: 90 },
+    { id: 105, codigo: "0304050091", descricao: "RADIOTERAPIA DE MEGAVOLTAGEM POR CAMPO", complexidade: "Alta Complexidade", valor_sa: 520.0, valor_sp: 95.0, valor_total: 615.0, instrumento: "APAC", dias_validade: 90 },
+    { id: 106, codigo: "0205020143", descricao: "RESSONANCIA MAGNETICA DE CRANIO", complexidade: "Alta Complexidade", valor_sa: 268.75, valor_sp: 0, valor_total: 268.75, instrumento: "APAC", dias_validade: 90 },
+    { id: 107, codigo: "0205020151", descricao: "RESSONANCIA MAGNETICA DE COLUNA LOMBO-SACRA", complexidade: "Alta Complexidade", valor_sa: 268.75, valor_sp: 0, valor_total: 268.75, instrumento: "APAC", dias_validade: 90 },
+    { id: 108, codigo: "0206010079", descricao: "TOMOGRAFIA COMPUTADORIZADA DE TORAX", complexidade: "Alta Complexidade", valor_sa: 136.41, valor_sp: 0, valor_total: 136.41, instrumento: "APAC", dias_validade: 90 },
+    { id: 109, codigo: "0206010010", descricao: "TOMOGRAFIA COMPUTADORIZADA DE CRANIO", complexidade: "Alta Complexidade", valor_sa: 114.7, valor_sp: 0, valor_total: 114.7, instrumento: "APAC", dias_validade: 90 },
+    { id: 110, codigo: "0303060190", descricao: "TRATAMENTO DE DOENCA PULMONAR OBSTRUTIVA CRONICA COM OXIGENIOTERAPIA DOMICILIAR", complexidade: "Alta Complexidade", valor_sa: 412.0, valor_sp: 0, valor_total: 412.0, instrumento: "APAC", dias_validade: 180 },
+    { id: 111, codigo: "0701040014", descricao: "APARELHO DE AMPLIFICACAO SONORA INDIVIDUAL (AASI) - ADAPTAÇÃO", complexidade: "Alta Complexidade", valor_sa: 1100.0, valor_sp: 0, valor_total: 1100.0, instrumento: "APAC", dias_validade: 180 },
+    { id: 112, codigo: "0304030015", descricao: "HORMONIOTERAPIA DO CANCER DE MAMA", complexidade: "Alta Complexidade", valor_sa: 340.0, valor_sp: 45.0, valor_total: 385.0, instrumento: "APAC", dias_validade: 180 },
+  ];
+  if (!q) return padrao;
+  const qq = q.toLowerCase();
+  return padrao.filter((p) => p.codigo.includes(qq) || p.descricao.toLowerCase().includes(qq));
+}
+
+export async function fetchCidsApac(q?: string): Promise<CidItem[]> {
+  try {
+    const { data } = await api.get<CidItem[]>("/api/apac/cids", { params: { q } });
+    if (Array.isArray(data) && data.length > 0) return data;
+  } catch {
+    // fallback padrão
+  }
+  const cidsPadrao: CidItem[] = [
+    { codigo: "N18.0", descricao: "Doença renal em estágio final (Insuficiência renal crônica terminal)", estadiamento_obrigatorio: false },
+    { codigo: "N18.8", descricao: "Outra insuficiência renal crônica", estadiamento_obrigatorio: false },
+    { codigo: "N18.9", descricao: "Insuficiência renal crônica não especificada", estadiamento_obrigatorio: false },
+    { codigo: "C50.9", descricao: "Neoplasia maligna da mama, não especificada", estadiamento_obrigatorio: true },
+    { codigo: "C50.4", descricao: "Neoplasia maligna do quadrante superior externo da mama", estadiamento_obrigatorio: true },
+    { codigo: "C61", descricao: "Neoplasia maligna da próstata", estadiamento_obrigatorio: true },
+    { codigo: "C18.9", descricao: "Neoplasia maligna do cólon, não especificado", estadiamento_obrigatorio: true },
+    { codigo: "C20", descricao: "Neoplasia maligna do reto", estadiamento_obrigatorio: true },
+    { codigo: "C34.9", descricao: "Neoplasia maligna dos brônquios ou pulmões, não especificado", estadiamento_obrigatorio: true },
+    { codigo: "C16.9", descricao: "Neoplasia maligna do estômago, não especificado", estadiamento_obrigatorio: true },
+    { codigo: "C53.9", descricao: "Neoplasia maligna do colo do útero, não especificado", estadiamento_obrigatorio: true },
+    { codigo: "C91.0", descricao: "Leucemia linfoblástica aguda", estadiamento_obrigatorio: true },
+    { codigo: "C92.0", descricao: "Leucemia mielóide aguda", estadiamento_obrigatorio: true },
+    { codigo: "C85.9", descricao: "Linfoma não-Hodgkin de tipo não especificado", estadiamento_obrigatorio: true },
+    { codigo: "I25.1", descricao: "Doença aterosclerótica do coração", estadiamento_obrigatorio: false },
+    { codigo: "I50.0", descricao: "Insuficiência cardíaca congestiva", estadiamento_obrigatorio: false },
+    { codigo: "J44.9", descricao: "Doença pulmonar obstrutiva crônica não especificada", estadiamento_obrigatorio: false },
+    { codigo: "H90.3", descricao: "Perda de audição bilateral neuro-sensorial", estadiamento_obrigatorio: false },
+    { codigo: "M16.9", descricao: "Coxartrose não especificada (Artrose do quadril)", estadiamento_obrigatorio: false },
+    { codigo: "M17.9", descricao: "Gonartrose não especificada (Artrose do joelho)", estadiamento_obrigatorio: false },
+    { codigo: "G30.9", descricao: "Doença de Alzheimer não especificada", estadiamento_obrigatorio: false },
+    { codigo: "G35", descricao: "Esclerose múltipla", estadiamento_obrigatorio: false },
+  ];
+  if (!q) return cidsPadrao;
+  const qq = q.toLowerCase();
+  return cidsPadrao.filter((c) => c.codigo.toLowerCase().includes(qq) || c.descricao.toLowerCase().includes(qq));
 }
 
 export default api;

@@ -22,6 +22,7 @@ import TfdFaturamento from "./pages/tfd/TfdFaturamento";
 import AlterarSenhaInicial from "./pages/AlterarSenhaInicial";
 import LabLayout from "./pages/lab/LabLayout";
 import LabMarcacao from "./pages/lab/LabMarcacao";
+import RecepcaoLab from "./pages/lab/RecepcaoLab";
 import FilaPsf from "./pages/lab/FilaPsf";
 import VagasAgenda from "./pages/lab/VagasAgenda";
 import AuditLab from "./pages/lab/AuditLab";
@@ -36,6 +37,9 @@ import Configuracoes from "./pages/Configuracoes";
 import PainelMedico from "./pages/PainelMedico";
 import Medicos from "./pages/Medicos";
 import UnidadesSaude from "./pages/UnidadesSaude";
+import ApacSolicitacao from "./pages/apac/ApacSolicitacao";
+import ApacRegulacao from "./pages/apac/ApacRegulacao";
+import ApacFaturamento from "./pages/apac/ApacFaturamento";
 
 function Guard({ tela, children }: { tela: string; children: ReactElement }) {
   const { can, loading } = useAuth();
@@ -169,12 +173,13 @@ export default function App() {
             <Route path="exames" element={<Navigate to="/fila-exames" replace />} />
             <Route path="catalogo" element={<Guard tela="tfd_catalogo"><CatalogoExames /></Guard>} />
             <Route path="destinos" element={<Guard tela="tfd_destinos"><TfdDestinos /></Guard>} />
-            <Route path="frota" element={<Guard tela="tfd_frota"><TfdFrota /></Guard>} />
-            <Route path="motoristas" element={<Guard tela="tfd_frota"><TfdMotoristas /></Guard>} />
+            <Route path="frota" element={<GuardQualquer telas={["tfd_frota", "tfd_frota_gestao", "tfd"]}><TfdFrota /></GuardQualquer>} />
+            <Route path="motoristas" element={<GuardQualquer telas={["tfd_frota", "tfd_frota_gestao", "tfd"]}><TfdMotoristas /></GuardQualquer>} />
             <Route path="faturamento" element={<Guard tela="tfd_faturamento"><TfdFaturamento /></Guard>} />
           </Route>
           <Route path="/lab" element={<LabRoutes />}>
-            <Route index element={<LabGuard tela="lab_marcacao"><LabMarcacao /></LabGuard>} />
+            <Route index element={<LabGuard tela="lab_recepcao" telas={["lab_recepcao", "lab_marcacao", "lab"]}><RecepcaoLab /></LabGuard>} />
+            <Route path="recepcao" element={<LabGuard tela="lab_recepcao" telas={["lab_recepcao", "lab"]}><RecepcaoLab /></LabGuard>} />
             <Route path="marcacao" element={<LabGuard tela="lab_marcacao"><LabMarcacao /></LabGuard>} />
             <Route path="fila" element={<LabGuard tela="lab_fila"><FilaPsf /></LabGuard>} />
             <Route path="agenda" element={<LabGuard tela="lab_agenda" telas={["lab_agenda", "lab_vagas"]}><VagasAgenda /></LabGuard>} />
@@ -190,6 +195,42 @@ export default function App() {
                 <Guard tela="aps">
                   <Shell>
                     <ApsPainel />
+                  </Shell>
+                </Guard>
+              </Protected>
+            }
+          />
+          <Route
+            path="/apac/solicitacoes"
+            element={
+              <Protected>
+                <Guard tela="apac_solicitacao">
+                  <Shell>
+                    <ApacSolicitacao />
+                  </Shell>
+                </Guard>
+              </Protected>
+            }
+          />
+          <Route
+            path="/apac/regulacao"
+            element={
+              <Protected>
+                <Guard tela="apac_regulacao">
+                  <Shell>
+                    <ApacRegulacao />
+                  </Shell>
+                </Guard>
+              </Protected>
+            }
+          />
+          <Route
+            path="/apac/faturamento"
+            element={
+              <Protected>
+                <Guard tela="apac_faturamento">
+                  <Shell>
+                    <ApacFaturamento />
                   </Shell>
                 </Guard>
               </Protected>

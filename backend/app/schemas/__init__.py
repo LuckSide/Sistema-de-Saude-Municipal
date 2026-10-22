@@ -24,6 +24,8 @@ class UserCreate(BaseModel):
     telas: list[str] = Field(default_factory=list)
     acoes: dict[str, list[str]] = Field(default_factory=dict)
     medico_id: int | None = None
+    unidade_saude_id: int | None = None
+    laboratorio_id: int | None = None
     permite_retroativo: bool = True
     is_superuser: bool = False
     is_active: bool = True
@@ -35,6 +37,8 @@ class UserUpdate(BaseModel):
     telas: list[str] | None = None
     acoes: dict[str, list[str]] | None = None
     medico_id: int | None = None
+    unidade_saude_id: int | None = None
+    laboratorio_id: int | None = None
     permite_retroativo: bool | None = None
     is_superuser: bool | None = None
     is_active: bool | None = None
@@ -54,6 +58,10 @@ class UserOut(BaseModel):
     telas: list[str]
     acoes: dict[str, list[str]] = {}
     medico_id: int | None = None
+    unidade_saude_id: int | None = None
+    unidade_saude_nome: str | None = None
+    laboratorio_id: int | None = None
+    laboratorio_nome: str | None = None
     permite_retroativo: bool = True
     is_superuser: bool
     is_active: bool

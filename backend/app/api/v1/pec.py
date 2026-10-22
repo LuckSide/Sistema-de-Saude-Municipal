@@ -7,9 +7,13 @@ from app.services.pec import (
     EQUIPE_RE,
     PERIODO_RE,
     UBS_RE,
+    atualizar_cache_indicadores,
+    dimensoes as resolver_dim,
+    evolucao_indicador,
     resolver_fichas,
     resolver_graficos,
     resolver_painel,
+    ubs_list,
     validar_params,
 )
 
@@ -32,20 +36,19 @@ def painel(
     ubs: str = Query(default=""),
     equipe: str = Query(default=""),
     fonte: str = Query(default=""),
+    db: Session = Depends(get_db),
     _=Depends(need_aps()),
 ):
     _no_store(res)
     if fonte and fonte not in ("postgres", "files", "mock", "auto"):
         raise HTTPException(400, "fonte inválida")
     validar_params(periodo, ubs, equipe)
-    out = resolver_painel(periodo, ubs, equipe)
+    out = resolver_painel(periodo, ubs, equipe, db=db)
     if fonte:
         # força fonte p/ debug sem quebrar whitelist
         out = {**out, "fonte_solicitada": fonte}
     try:
-        from app.services.pec import dimensoes as resolver_dim
-
-        dim = resolver_dim()
+        dim = resolver_dim(db=db)
         out = {**out, "periodos": dim.get("periodos", []), "equipes": dim.get("equipes", [])}
     except Exception:
         pass
@@ -53,60 +56,21 @@ def painel(
 
 
 @router.get("/fichas")
-def fichas(res: Response, _=Depends(need_aps())):
+def fichas(res: Response, db: Session = Depends(get_db), _=Depends(need_aps())):
     _no_store(res)
-    return resolver_fichas()
+    return resolver_fichas(db=db)
 
 
 @router.get("/ubs")
 def ubs(res: Response, db: Session = Depends(get_db), _=Depends(need_aps())):
     _no_store(res)
-    # Agregado por UBS — sem PII.
-    try:
-        from sqlalchemy import text
-
-        import os
-
-        from app.services.pec import _pg
-
-        conn, _ = _pg()
-        if conn is not None:
-            try:
-                rows = conn.execute(
-                    text("SELECT ubs_codigo, COUNT(*) FROM pec_cadastro_individual WHERE valido GROUP BY 1")
-                ).all()
-                return {"fonte": "postgres", "lgpd_ok": True, "ubs": [{"codigo": r[0], "cadastros_validos": int(r[1])} for r in rows]}
-            finally:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-    except Exception:
-        pass
-    return {
-        "fonte": "mock", "lgpd_ok": True,
-        "ubs": [
-            {"codigo": "UBS-CENTRO", "cadastros_validos": 980},
-            {"codigo": "UBS-RURAL", "cadastros_validos": 640},
-        ],
-    }
-
-
-    return {
-        "fonte": "mock", "lgpd_ok": True,
-        "ubs": [
-            {"codigo": "UBS-CENTRO", "cnes": "2211221", "cadastros_validos": 980, "equipe_tipo": "eSF"},
-            {"codigo": "UBS-RURAL", "cnes": "2211332", "cadastros_validos": 640, "equipe_tipo": "eSF"},
-        ],
-    }
+    return ubs_list(db=db)
 
 
 @router.get("/dimensoes")
-def dimensoes(res: Response, _=Depends(need_aps())):
+def dimensoes(res: Response, db: Session = Depends(get_db), _=Depends(need_aps())):
     _no_store(res)
-    from app.services.pec import dimensoes as resolver_dim
-
-    return resolver_dim()
+    return resolver_dim(db=db)
 
 
 @router.get("/indicador/{codigo}")
@@ -115,27 +79,34 @@ def indicador_detalhe(
     res: Response,
     ubs: str = Query(default=""),
     equipe: str = Query(default=""),
+    db: Session = Depends(get_db),
     _=Depends(need_aps()),
 ):
     _no_store(res)
     validar_params("", ubs, equipe)
-    from app.services.pec import evolucao_indicador
-
-    return evolucao_indicador(codigo, ubs, equipe)
+    return evolucao_indicador(codigo, ubs, equipe, db=db)
 
 
 @router.get("/graficos")
-def graficos(res: Response, _=Depends(need_aps())):
+def graficos(res: Response, db: Session = Depends(get_db), _=Depends(need_aps())):
     _no_store(res)
-    out = resolver_graficos()
+    out = resolver_graficos(db=db)
     try:
-        from app.services.pec import dimensoes as resolver_dim
-
-        dim = resolver_dim()
+        dim = resolver_dim(db=db)
         out = {**out, "periodos": dim.get("periodos", []), "equipes": dim.get("equipes", [])}
     except Exception:
         pass
     return out
+
+
+@router.post("/indicadores/atualizar")
+@router.post("/atualizar")
+def atualizar_indicadores_endpoint(
+    db: Session = Depends(get_db),
+    _=Depends(need_aps()),
+):
+    """Sincroniza do e-SUS PEC os 662 registros agregados e atualiza o cache local."""
+    return atualizar_cache_indicadores(db=db)
 
 
 @router.get("/relatorio")

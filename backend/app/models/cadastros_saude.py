@@ -13,6 +13,7 @@ class Medico(SQLModel, table=True):
     especialidades: str = Field(default="", max_length=500)  # csv
     telefone: str = Field(default="", max_length=30)
     email: str = Field(default="", max_length=120)
+    unidades_ids: str = Field(default="", max_length=500)
     ativo: bool = Field(default=True)
 
 

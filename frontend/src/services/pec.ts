@@ -184,6 +184,11 @@ export const pecRelatorio = (periodo = "", ubs = "", equipe = "") =>
     csv: "codigo;num;den;perc;meta",
   });
 
+export async function pecAtualizarIndicadores(): Promise<{ ok: boolean; mensagem?: string; total_indicadores?: number }> {
+  const { data } = await api.post("/api/indicadores/atualizar");
+  return data;
+}
+
 export function fonteBadge(fonte: string, viaApi: boolean): string {
   if (!viaApi || fonte === "mock") return "Modo Mock";
   if (fonte === "postgres") return "Dados via API Postgres · LGPD ok";

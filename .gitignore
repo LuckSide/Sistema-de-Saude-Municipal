@@ -1,34 +1,70 @@
+# ==============================================================================
+# SEGREDOS E CREDENCIAIS (CRÍTICO - NUNCA ENVIAR AO GITHUB)
+# ==============================================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.pkcs12
+*.cer
+*.crt
+*.bak
+*.dump
+*.sql
+
+# Logs
+*.log
+/tmp/atualizacao.log
+
+# ==============================================================================
+# DEPENDÊNCIAS E BUILDS
+# ==============================================================================
 # Python
 __pycache__/
 *.py[cod]
+*$py.class
 *.egg-info/
 .venv/
 venv/
 .pytest_cache/
 
-# Node
+# Node / Frontend
 node_modules/
 dist/
 dist-ssr/
+build/
 coverage/
-
-# Env / segredos locais (não subir)
-.env
-.env.*
-!.env.example
-
-# Docker / dados
-pgdata/
-
-# OS / IDE
-.DS_Store
-.idea/
-.vscode/
-*.log
-
-# Update
-/tmp/atualizacao.log
 tsconfig.tsbuildinfo
 
-# OpenChamber temp artifacts
+# Docker / Volumes de dados persistentes
+pgdata/
+
+# Bancos de dados locais / SQLite de teste
+*.db
+*.sqlite3
+
+# ==============================================================================
+# SISTEMA OPERACIONAL E IDES
+# ==============================================================================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ==============================================================================
+# TESTES E ARTEFATOS TEMPORÁRIOS
+# ==============================================================================
+tests/
+testes/
+backend/tests/
+locust_result_*
 .openchamber/

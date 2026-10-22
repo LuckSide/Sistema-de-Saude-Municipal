@@ -14,6 +14,7 @@ import {
   Coins,
   Cross,
   Database,
+  FileCheck,
   FlaskConical,
   HeartPulse,
   History,
@@ -26,6 +27,7 @@ import {
   PanelLeftOpen,
   ReceiptText,
   Settings,
+  ShieldCheck,
   SlidersHorizontal,
   Stethoscope,
   Truck,
@@ -104,14 +106,25 @@ const MODULOS_NAV: ModuloNav[] = [
   },
   {
     id: "lab",
-    label: "Procedimentos BPA",
+    label: "Exames laboratoriais",
     icon: FlaskConical,
     itens: [
-      { to: "/lab/marcacao", label: "Marcação BPA", icon: ClipboardCheck, tela: "lab_marcacao", ou: ["lab"] },
-      { to: "/lab/fila", label: "Fila PSF", icon: ListOrdered, tela: "lab_fila", ou: ["lab"] },
+      { to: "/lab/recepcao", label: "Recepção e Coleta", icon: FlaskConical, tela: "lab_recepcao", ou: ["lab", "usuarios"] },
+      { to: "/lab/marcacao", label: "Marcação de exames de sangue", icon: ClipboardCheck, tela: "lab_marcacao", ou: ["lab"] },
+      { to: "/lab/fila", label: "Fila de exames", icon: ListOrdered, tela: "lab_fila", ou: ["lab"] },
       { to: "/lab/agenda", label: "Vagas e Agenda", icon: CalendarDays, tela: "lab_agenda", ou: ["lab", "lab_vagas"] },
       { to: "/lab/faturamento", label: "Faturamento BPA", icon: ReceiptText, tela: "lab_faturamento", ou: ["lab"] },
       { to: "/lab/sigtap", label: "SIGTAP BPA", icon: BookOpenText, tela: "lab_sigtap", ou: ["lab"] },
+    ],
+  },
+  {
+    id: "apac",
+    label: "APAC · Alta Complexidade",
+    icon: ShieldCheck,
+    itens: [
+      { to: "/apac/solicitacoes", label: "Laudos e Solicitações", icon: FileCheck, tela: "apac_solicitacao", ou: ["tfd", "usuarios"] },
+      { to: "/apac/regulacao", label: "Regulação e Autorização", icon: Stethoscope, tela: "apac_regulacao", ou: ["usuarios"] },
+      { to: "/apac/faturamento", label: "Faturamento APAC-Mag", icon: ReceiptText, tela: "apac_faturamento", ou: ["tfd", "usuarios"] },
     ],
   },
   {
@@ -283,12 +296,12 @@ export function SidebarConteudo({
             </NavLink>
           )}
 
-          {/* APS / Previne */}
+          {/* Indicadores (APS Previne) */}
           {can("aps") && (
             <NavLink
               to="/aps"
               onClick={onNavegar}
-              title={emColapso ? "APS · Previne" : undefined}
+              title={emColapso ? "Indicadores" : undefined}
               className={cn(
                 "flex items-center rounded-xl transition min-h-[42px]",
                 emColapso
@@ -300,7 +313,7 @@ export function SidebarConteudo({
               )}
             >
               <Activity className="h-[18px] w-[18px] shrink-0" />
-              {!emColapso && <span>APS · Previne</span>}
+              {!emColapso && <span>Indicadores</span>}
             </NavLink>
           )}
 

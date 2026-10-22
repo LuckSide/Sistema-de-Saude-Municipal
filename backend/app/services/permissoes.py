@@ -39,12 +39,16 @@ PAI_DE: dict[str, str] = {
     "lab_audit": "lab",
     "lab_faturamento": "lab",
     "lab_sigtap": "lab",
+    "lab_recepcao": "lab",
     "cfg_geral": "integracoes",
     "cfg_filas": "integracoes",
     "cfg_pec": "integracoes",
     "cfg_rnds": "integracoes",
     "cfg_backup": "integracoes",
     "auditoria": "usuarios",
+    "apac_solicitacao": "tfd",
+    "apac_regulacao": "tfd",
+    "apac_faturamento": "tfd",
 }
 
 PAIS = ("dashboard", "tfd", "lab", "aps", "usuarios", "integracoes")
@@ -53,7 +57,7 @@ TODAS_TELAS = frozenset(list(PAI_DE) + list(PAI_DE.values()) + list(PAIS))
 
 # Telas exclusivas: o pai NÃO implica a filha (ex: perfil Médico e Lançamento Restrito
 # exigem concessão explícita).
-EXCLUSIVAS = frozenset({"tfd_medico", "tfd_fila_lancamento", "tfd_viagens_passadas"})
+EXCLUSIVAS = frozenset({"tfd_medico", "tfd_fila_lancamento", "tfd_viagens_passadas", "apac_regulacao", "lab_recepcao"})
 
 
 def telas_list(user) -> list[str]:

@@ -54,18 +54,28 @@ export default function TfdMotoristas() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
+  const [carregando, setCarregando] = useState(false);
 
   async function carregar(p = 1, busca = q) {
-    const r = await tfdMotoristas({ q: busca.trim() || undefined, page: p, limit: 100 });
-    setLista(pagData<Motorista>(r));
-    const m = pagMeta(r);
-    setTotal(m.total);
-    setPage(m.page);
-    setPages(m.pages);
+    setCarregando(true);
+    setErro("");
+    try {
+      const r = await tfdMotoristas({ q: busca.trim() || undefined, page: p, limit: 100 });
+      setLista(pagData<Motorista>(r));
+      const m = pagMeta(r);
+      setTotal(m.total);
+      setPage(m.page);
+      setPages(m.pages);
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setErro(msg || "Falha ao carregar motoristas.");
+    } finally {
+      setCarregando(false);
+    }
   }
 
   useEffect(() => {
-    carregar(1).catch(() => setErro("Falha ao carregar motoristas."));
+    carregar(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -162,7 +172,17 @@ export default function TfdMotoristas() {
           <Button onClick={() => abrirModal()}><Plus className="h-4 w-4" /> Novo motorista</Button>
         </div>
       </div>
-      {erro && !modal && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
+      {erro && !modal && (
+        <div className="mb-3 flex items-center justify-between rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+          <span>{erro}</span>
+          <button
+            type="button"
+            onClick={() => carregar(page)}
+            className="rounded-lg bg-red-100 px-3 py-1 font-semibold text-red-800 hover:bg-red-200">
+            Tentar novamente
+          </button>
+        </div>
+      )}
       {ok && <p className="mb-3 rounded-xl bg-teal/10 px-3 py-2 text-sm text-teal">{ok}</p>}
 
       <Card className="mb-4 p-4">
@@ -185,7 +205,10 @@ export default function TfdMotoristas() {
               </tr>
             </thead>
             <tbody>
-              {lista.map((m) => (
+              {carregando && (
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-ink/45">Carregando motoristas…</td></tr>
+              )}
+              {!carregando && lista.map((m) => (
                 <tr key={m.id} className="border-b border-sus-900/5 last:border-0">
                   <td className="px-4 py-3 font-semibold">{m.nome}</td>
                   <td className="px-4 py-3 font-mono text-xs">{m.cpf || "—"}</td>
@@ -244,7 +267,9 @@ export default function TfdMotoristas() {
                   </td>
                 </tr>
               ))}
-              {lista.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-ink/45">Nenhum motorista.</td></tr>}
+              {!carregando && lista.length === 0 && (
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-ink/45">Nenhum motorista cadastrado{q ? " para esta busca" : ""}.</td></tr>
+              )}
             </tbody>
           </table>
         </div>

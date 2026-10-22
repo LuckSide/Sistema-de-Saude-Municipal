@@ -19,6 +19,7 @@ class MedicoIn(BaseModel):
     especialidades: str = Field(default="", max_length=500)
     telefone: str = Field(default="", max_length=30)
     email: str = Field(default="", max_length=120)
+    unidades_ids: list[int] = Field(default_factory=list)
     ativo: bool = True
 
     @field_validator("cpf")
@@ -76,6 +77,7 @@ class MedicoOut(BaseModel):
     especialidades: str = ""
     telefone: str = ""
     email: str = ""
+    unidades_ids: list[int] = Field(default_factory=list)
     ativo: bool = True
     usuario_criado: str | None = None
     senha_temporaria: str | None = None

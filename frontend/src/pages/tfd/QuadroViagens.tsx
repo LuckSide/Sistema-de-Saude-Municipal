@@ -79,7 +79,7 @@ const normDest = (s: string) => (s || "").trim().toUpperCase();
 
 const PRIOS = [
   { value: "rotina", rotulo: "Eletivo" },
-  { value: "urgente", rotulo: "Urgente" },
+  { value: "urgente", rotulo: "Priorizado" },
 ];
 
 const vazioFila = {

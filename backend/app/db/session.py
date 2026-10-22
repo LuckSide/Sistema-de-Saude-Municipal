@@ -2,7 +2,20 @@ from sqlmodel import SQLModel, create_engine
 
 from app.core.config import settings
 
-engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
+pool_kwargs = {}
+if "postgresql" in settings.DATABASE_URL:
+    pool_kwargs = {
+        "pool_size": settings.DB_POOL_SIZE,
+        "max_overflow": settings.DB_MAX_OVERFLOW,
+        "pool_timeout": settings.DB_POOL_TIMEOUT,
+        "pool_recycle": settings.DB_POOL_RECYCLE,
+    }
+
+engine = create_engine(
+    settings.DATABASE_URL,
+    pool_pre_ping=True,
+    **pool_kwargs,
+)
 
 
 def init_db() -> None:
@@ -35,10 +48,17 @@ def init_db() -> None:
     )
     from app.models.user import User  # noqa: F401
     from app.models.settings import SystemSettings  # noqa: F401
-    from app.models.integracoes import IntegrationSettings  # noqa: F401
+    from app.models.integracoes import IntegrationSettings, PecSyncLog, PecIndicadorCache  # noqa: F401
     from app.models.dashboard_prefs import UserDashboardPrefs  # noqa: F401
     from app.models.audit import AuditLog  # noqa: F401
     from app.models.cadastros_saude import Medico, UnidadeSaude  # noqa: F401
+    from app.models.apac import (  # noqa: F401
+        AnexoLaudoAPAC,
+        FaixaNumeracaoAPAC,
+        LoteFaturamentoAPAC,
+        ProcedimentoSecundarioAPAC,
+        SolicitacaoAPAC,
+    )
 
     # create_all com checkfirst ainda tem janela de corrida entre workers
     # (2x uvicorn no lifespan) — ignora erro de "já existe" e segue.
@@ -101,9 +121,44 @@ def init_db() -> None:
             cols_ex = ["codigo_curto"]
         if "codigo_curto" not in cols_ex:
             conn.execute(
-                text("ALTER TABLE tfd_exames_fila ADD COLUMN codigo_curto VARCHAR(12) DEFAULT '' NOT NULL")
+                text("ALTER TABLE tfd_exames_fila ADD COLUMN codigo_curto VARCHAR(20) DEFAULT '' NOT NULL")
             )
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tfd_exames_fila_codigo_curto ON tfd_exames_fila (codigo_curto)"))
+        else:
+            try:
+                if conn.dialect.name == "postgresql":
+                    conn.execute(text("ALTER TABLE tfd_exames_fila ALTER COLUMN codigo_curto TYPE VARCHAR(20)"))
+            except Exception:
+                pass
+
+        # Backfill codigo_curto imutável para exames
+        try:
+            if conn.dialect.name == "postgresql":
+                conn.execute(text("UPDATE tfd_exames_fila SET codigo_curto = 'EX-' || LPAD(id::text, 6, '0') WHERE (codigo_curto IS NULL OR codigo_curto = '') AND id IS NOT NULL"))
+            else:
+                conn.execute(text("UPDATE tfd_exames_fila SET codigo_curto = 'EX-' || substr('000000' || id, -6, 6) WHERE (codigo_curto IS NULL OR codigo_curto = '') AND id IS NOT NULL"))
+        except Exception:
+            pass
+
+        # Prontuário curto para Pacientes
+        try:
+            cols_pac = [c["name"] for c in inspect(conn).get_columns("tfd_pacientes")]
+        except Exception:
+            cols_pac = []
+        if "codigo_prontuario" not in cols_pac:
+            try:
+                conn.execute(text("ALTER TABLE tfd_pacientes ADD COLUMN codigo_prontuario VARCHAR(20) DEFAULT '' NOT NULL"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tfd_pacientes_codigo_prontuario ON tfd_pacientes (codigo_prontuario)"))
+            except Exception:
+                pass
+        # Backfill codigo_prontuario imutável para pacientes
+        try:
+            if conn.dialect.name == "postgresql":
+                conn.execute(text("UPDATE tfd_pacientes SET codigo_prontuario = 'PR-' || LPAD(id::text, 5, '0') WHERE (codigo_prontuario IS NULL OR codigo_prontuario = '') AND id IS NOT NULL"))
+            else:
+                conn.execute(text("UPDATE tfd_pacientes SET codigo_prontuario = 'PR-' || substr('00000' || id, -5, 5) WHERE (codigo_prontuario IS NULL OR codigo_prontuario = '') AND id IS NOT NULL"))
+        except Exception:
+            pass
         # Backfill token p/ linhas existentes sem token
         try:
             import secrets
@@ -171,12 +226,37 @@ def init_db() -> None:
             "unidade_saude_id": "INTEGER",
             "equipe_esf": "VARCHAR(80) DEFAULT '' NOT NULL",
             "acs_nome": "VARCHAR(150) DEFAULT '' NOT NULL",
+            "nome_social": "VARCHAR(150) DEFAULT '' NOT NULL",
+            "sexo": "VARCHAR(20) DEFAULT '' NOT NULL",
+            "nome_mae": "VARCHAR(150) DEFAULT '' NOT NULL",
+            "municipio": "VARCHAR(100) DEFAULT 'Guapé' NOT NULL",
+            "ponto_referencia": "VARCHAR(150) DEFAULT '' NOT NULL",
+            "unidade_cnes": "VARCHAR(20) DEFAULT '' NOT NULL",
+            "unidade_nome": "VARCHAR(150) DEFAULT '' NOT NULL",
+            "equipe_ine": "VARCHAR(20) DEFAULT '' NOT NULL",
+            "microarea": "VARCHAR(20) DEFAULT '' NOT NULL",
+            "co_seq_cidadao_pec": "BIGINT",
+            "sincronizado_em": "TIMESTAMP",
+            "updated_at": "TIMESTAMP",
         }.items():
             if col not in cols_pac:
                 try:
                     conn.execute(text(f"ALTER TABLE tfd_pacientes ADD COLUMN {col} {ddl}"))
                 except Exception:
                     pass
+        for idx, col in (
+            ("ix_tfd_pacientes_co_seq_cidadao_pec", "co_seq_cidadao_pec"),
+            ("ix_tfd_pacientes_unidade_cnes", "unidade_cnes"),
+            ("ix_tfd_pacientes_equipe_ine", "equipe_ine"),
+        ):
+            try:
+                conn.execute(text(f"CREATE INDEX IF NOT EXISTS {idx} ON tfd_pacientes ({col})"))
+            except Exception:
+                pass
+        try:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pec_indicadores_cache_lookup ON pec_indicadores_cache (periodo, ubs, equipe, indicador_id)"))
+        except Exception:
+            pass
         # Perfil Médico: vínculo conta <-> cadastro de médico
         try:
             cols_u3 = [c["name"] for c in inspect(conn).get_columns("usuarios")]
@@ -185,6 +265,44 @@ def init_db() -> None:
         if "medico_id" not in cols_u3:
             try:
                 conn.execute(text("ALTER TABLE usuarios ADD COLUMN medico_id INTEGER"))
+            except Exception:
+                pass
+        if "unidade_saude_id" not in cols_u3:
+            try:
+                conn.execute(text("ALTER TABLE usuarios ADD COLUMN unidade_saude_id INTEGER"))
+            except Exception:
+                pass
+        if "laboratorio_id" not in cols_u3:
+            try:
+                conn.execute(text("ALTER TABLE usuarios ADD COLUMN laboratorio_id INTEGER"))
+            except Exception:
+                pass
+        try:
+            cols_fila = [c["name"] for c in inspect(conn).get_columns("lab_fila_psf")]
+        except Exception:
+            cols_fila = []
+        if "justificativa" not in cols_fila:
+            try:
+                conn.execute(text("ALTER TABLE lab_fila_psf ADD COLUMN justificativa VARCHAR(500) DEFAULT '' NOT NULL"))
+            except Exception:
+                pass
+        try:
+            cols_mestre = [c["name"] for c in inspect(conn).get_columns("lab_solic_mestre")]
+        except Exception:
+            cols_mestre = []
+        if "hora_agendada" not in cols_mestre:
+            try:
+                conn.execute(text("ALTER TABLE lab_solic_mestre ADD COLUMN hora_agendada VARCHAR(10) DEFAULT '07:00' NOT NULL"))
+            except Exception:
+                pass
+        if "coletado_em" not in cols_mestre:
+            try:
+                conn.execute(text("ALTER TABLE lab_solic_mestre ADD COLUMN coletado_em TIMESTAMP"))
+            except Exception:
+                pass
+        if "coletado_por" not in cols_mestre:
+            try:
+                conn.execute(text("ALTER TABLE lab_solic_mestre ADD COLUMN coletado_por VARCHAR(120) DEFAULT '' NOT NULL"))
             except Exception:
                 pass
         try:
@@ -229,6 +347,31 @@ def init_db() -> None:
                     conn.execute(text(f"ALTER TABLE unidades_saude ADD COLUMN {col} {ddl}"))
                 except Exception:
                     pass
+
+        # Auditoria: campo device, índices de alta performance e limpeza de ruído
+        try:
+            cols_audit = [c["name"] for c in inspect(conn).get_columns("audit_logs")]
+        except Exception:
+            cols_audit = []
+        if "device" not in cols_audit and cols_audit:
+            try:
+                conn.execute(text("ALTER TABLE audit_logs ADD COLUMN device VARCHAR(150) DEFAULT '' NOT NULL"))
+            except Exception:
+                pass
+        for idx_sql in (
+            "CREATE INDEX IF NOT EXISTS ix_audit_logs_device ON audit_logs (device)",
+            "CREATE INDEX IF NOT EXISTS ix_audit_logs_action_timestamp ON audit_logs (action, timestamp DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_audit_logs_user_timestamp ON audit_logs (user_id, timestamp DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_audit_logs_entity_timestamp ON audit_logs (entity, timestamp DESC)",
+        ):
+            try:
+                conn.execute(text(idx_sql))
+            except Exception:
+                pass
+        try:
+            conn.execute(text("DELETE FROM audit_logs WHERE action = 'AUTH_CREATE'"))
+        except Exception:
+            pass
         # Exame: justificativa de prioridade + snapshot médico/unidade do agendamento
         try:
             cols_ex3 = [c["name"] for c in inspect(conn).get_columns("tfd_exames_fila")]
@@ -381,10 +524,38 @@ def init_db() -> None:
             cols_st = [c["name"] for c in inspect(conn).get_columns("system_settings")]
         except Exception:
             cols_st = []
-        for col in ("brasao_url", "icone_url"):
+        for col in ("brasao_url", "icone_url", "exames_habilitados_sigtap"):
             if col not in cols_st:
                 try:
-                    conn.execute(text(f"ALTER TABLE system_settings ADD COLUMN {col} VARCHAR(500) DEFAULT '' NOT NULL"))
+                    tipo_ddl = "TEXT DEFAULT '' NOT NULL" if col == "exames_habilitados_sigtap" else "VARCHAR(500) DEFAULT '' NOT NULL"
+                    conn.execute(text(f"ALTER TABLE system_settings ADD COLUMN {col} {tipo_ddl}"))
+                except Exception:
+                    pass
+        # Profissionais: Unidades de Saúde vinculadas
+        try:
+            cols_med2 = [c["name"] for c in inspect(conn).get_columns("medicos")]
+        except Exception:
+            cols_med2 = []
+        if "unidades_ids" not in cols_med2:
+            try:
+                conn.execute(text("ALTER TABLE medicos ADD COLUMN unidades_ids VARCHAR(500) DEFAULT '' NOT NULL"))
+            except Exception:
+                pass
+        # SolicitacaoMestre: campos complementares de agendamento e justificativa clínica
+        try:
+            cols_sm = [c["name"] for c in inspect(conn).get_columns("lab_solic_mestre")]
+        except Exception:
+            cols_sm = []
+        for col, ddl in {
+            "medico_id": "INTEGER",
+            "medico_solicitante": "VARCHAR(150) DEFAULT '' NOT NULL",
+            "unidade_saude_id": "INTEGER",
+            "unidade_psf": "VARCHAR(150) DEFAULT '' NOT NULL",
+            "justificativa": "VARCHAR(500) DEFAULT '' NOT NULL",
+        }.items():
+            if col not in cols_sm:
+                try:
+                    conn.execute(text(f"ALTER TABLE lab_solic_mestre ADD COLUMN {col} {ddl}"))
                 except Exception:
                     pass
         # Prioridade binária (Eletivo/Urgente): colapsa legado 'prioritaria' p/ Eletivo
@@ -423,6 +594,44 @@ def init_db() -> None:
             conn.execute(text("UPDATE user_dashboard_preferences SET quadro_filtros = '{}' WHERE quadro_filtros IS NULL OR quadro_filtros = ''"))
         except Exception:
             pass
+        # Item 4: Especialidades CBO condicional: remove constraint unique estrita e cria índice condicional
+        try:
+            conn.execute(text("ALTER TABLE tfd_especialidades DROP CONSTRAINT IF EXISTS tfd_especialidades_codigo_cbo_key"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_tfd_especialidades_cbo "
+                "ON tfd_especialidades (codigo_cbo) "
+                "WHERE codigo_cbo != '' AND codigo_cbo IS NOT NULL"
+            ))
+        except Exception:
+            pass
+        # Integração e-SUS PEC: colunas p/ Túnel SSH e Banco
+        try:
+            cols_int = [c["name"] for c in inspect(conn).get_columns("integration_settings")]
+        except Exception:
+            cols_int = []
+        for col, ddl in {
+            "pec_banco_nome": "VARCHAR(80) DEFAULT 'esus' NOT NULL",
+            "pec_ssh_habilitado": "BOOLEAN DEFAULT FALSE NOT NULL",
+            "pec_ssh_host": "VARCHAR(150) DEFAULT '' NOT NULL",
+            "pec_ssh_porta": "INTEGER DEFAULT 22 NOT NULL",
+            "pec_ssh_usuario": "VARCHAR(120) DEFAULT '' NOT NULL",
+            "pec_ssh_senha": "VARCHAR(255) DEFAULT '' NOT NULL",
+            "pec_ssh_chave_privada": "VARCHAR(8000) DEFAULT '' NOT NULL",
+            "pec_porta_local": "INTEGER DEFAULT 5433 NOT NULL",
+            "pec_sync_automatica": "BOOLEAN DEFAULT TRUE NOT NULL",
+            "pec_sync_intervalo_horas": "INTEGER DEFAULT 6 NOT NULL",
+            "pec_sync_ultima_execucao": "TIMESTAMP",
+            "pec_sync_ultimo_status": "VARCHAR(30) DEFAULT '' NOT NULL",
+            "pec_sync_total_pacientes": "INTEGER DEFAULT 0 NOT NULL",
+        }.items():
+            if col not in cols_int:
+                try:
+                    conn.execute(text(f"ALTER TABLE integration_settings ADD COLUMN {col} {ddl}"))
+                except Exception:
+                    pass
 
     from sqlmodel import Session, select
 
@@ -430,9 +639,19 @@ def init_db() -> None:
         from app.services.lab import seed_sigtap
         from app.services.lab_fase6 import seed_laboratorios
         from app.services.seed_deslocamento import seed_deslocamento
+        from app.services.apac_service import seed_apac
 
         seed_sigtap(db)
         seed_laboratorios(db)
+        try:
+            seed_apac(db)
+        except Exception:
+            pass
+        try:
+            from app.services.sigtap_hierarquia import seed_vivver_procedimentos
+            seed_vivver_procedimentos(db)
+        except Exception:
+            pass
         try:
             seed_deslocamento(db)
         except Exception:
@@ -455,3 +674,88 @@ def init_db() -> None:
                 db.commit()
         except Exception:
             pass
+
+        # Item 1: Registro canônico do Médico da Unidade / Responsável Técnico
+        try:
+            med_rt = db.exec(
+                select(Medico).where(Medico.nome == "Médico da Unidade / Responsável Técnico")
+            ).first()
+            if not med_rt:
+                db.add(
+                    Medico(
+                        nome="Médico da Unidade / Responsável Técnico",
+                        crm="RESP. TÉCNICO",
+                        cbo_codigo="225125",
+                        cbo_descricao="Médico da Unidade / Responsável Técnico",
+                        especialidades="Clínica Geral,Saúde da Família",
+                        ativo=True,
+                    )
+                )
+                db.commit()
+            else:
+                alterou = False
+                if not med_rt.ativo:
+                    med_rt.ativo = True
+                    alterou = True
+                if med_rt.crm != "RESP. TÉCNICO":
+                    med_rt.crm = "RESP. TÉCNICO"
+                    alterou = True
+                if med_rt.cbo_codigo != "225125":
+                    med_rt.cbo_codigo = "225125"
+                    alterou = True
+                if med_rt.cbo_descricao != "Médico da Unidade / Responsável Técnico":
+                    med_rt.cbo_descricao = "Médico da Unidade / Responsável Técnico"
+                    alterou = True
+                if alterou:
+                    db.add(med_rt)
+                    db.commit()
+        except Exception:
+            db.rollback()
+
+        # Item 2: Higienização da base (remoção de motoristas do cadastro de médicos clínicos)
+        try:
+            from sqlalchemy import or_
+            from app.models.tfd import Motorista
+
+            medicos_motoristas = db.exec(
+                select(Medico).where(
+                    or_(
+                        Medico.cbo_codigo.like("7823%"),
+                        Medico.cbo_descricao.ilike("%motorista%"),
+                        Medico.nome.ilike("%motorista%"),
+                    )
+                )
+            ).all()
+
+            for med in medicos_motoristas:
+                cpf_limpo = (med.cpf or "").strip()
+                nome_base = med.nome.replace(" (Motorista do Transporte)", "").strip()
+
+                condicoes = []
+                if cpf_limpo:
+                    condicoes.append(Motorista.cpf == cpf_limpo)
+                if nome_base:
+                    condicoes.append(Motorista.nome.ilike(nome_base))
+
+                motorista_existente = None
+                if condicoes:
+                    motorista_existente = db.exec(select(Motorista).where(or_(*condicoes))).first()
+
+                if not motorista_existente and nome_base:
+                    novo_mot = Motorista(
+                        nome=nome_base,
+                        cpf=cpf_limpo,
+                        telefone=med.telefone or "",
+                        ativo=True,
+                    )
+                    db.add(novo_mot)
+
+                med.ativo = False
+                if "(Motorista" not in med.nome:
+                    med.nome = f"{med.nome} (Motorista do Transporte)"
+                db.add(med)
+
+            if medicos_motoristas:
+                db.commit()
+        except Exception:
+            db.rollback()

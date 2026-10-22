@@ -1,30 +1,95 @@
-from datetime import date
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.services.validacoes import valida_cnh, valida_cnh_validade, valida_cpf, valida_telefone
+from app.services.validacoes import (
+    valida_cnh,
+    valida_cnh_validade,
+    valida_cns,
+    valida_cpf,
+    valida_telefone,
+)
 
 
 # ---------- Pacientes ----------
-class PacienteIn(BaseModel):
+class PacienteBase(BaseModel):
+    codigo_prontuario: str = ""
+    nome: str = Field(default="", max_length=150)
+    nome_social: str = Field(default="", max_length=150)
+    cpf: str = Field(default="")
+    cns: str = Field(default="")
+    nascimento: date | None = None
+    sexo: str = Field(default="", max_length=20)
+    nome_mae: str = Field(default="", max_length=150)
+    telefone: str = Field(default="")
+    endereco: str = Field(default="")
+    endereco_numero: str = Field(default="")
+    complemento: str = Field(default="")
+    bairro: str = Field(default="")
+    municipio: str = Field(default="Guapé", max_length=100)
+    cep: str = Field(default="")
+    ponto_referencia: str = Field(default="", max_length=150)
+    unidade_saude_id: int | None = None
+    unidade_cnes: str = Field(default="", max_length=20)
+    unidade_nome: str = Field(default="", max_length=150)
+    equipe_esf: str = Field(default="")
+    equipe_ine: str = Field(default="", max_length=20)
+    microarea: str = Field(default="", max_length=20)
+    acs_nome: str = Field(default="")
+    observacoes: str = Field(default="")
+
+
+class PacienteIn(PacienteBase):
     nome: str = Field(min_length=2, max_length=150)
     cpf: str = Field(default="", max_length=14)
     cns: str = Field(default="", max_length=20)
-    nascimento: date | None = None
-    telefone: str = Field(default="", max_length=20)
+    telefone: str = Field(default="", max_length=50)
     endereco: str = Field(default="", max_length=255)
     endereco_numero: str = Field(default="", max_length=20)
     complemento: str = Field(default="", max_length=100)
     bairro: str = Field(default="", max_length=100)
     cep: str = Field(default="", max_length=10)
-    unidade_saude_id: int | None = None
     equipe_esf: str = Field(default="", max_length=80)
     acs_nome: str = Field(default="", max_length=150)
     observacoes: str = Field(default="", max_length=500)
 
+    @field_validator("cpf")
+    @classmethod
+    def _cpf_valido(cls, v: str) -> str:
+        s = (v or "").strip()
+        if not s:
+            return ""
+        ok, msg = valida_cpf(s)
+        if not ok:
+            raise ValueError(msg)
+        return s
 
-class PacienteOut(PacienteIn):
+    @field_validator("cns")
+    @classmethod
+    def _cns_valido(cls, v: str) -> str:
+        s = (v or "").strip()
+        if not s:
+            return ""
+        ok, msg = valida_cns(s)
+        if not ok:
+            raise ValueError(msg)
+        return s
+
+    @field_validator("telefone")
+    @classmethod
+    def _telefone_valido(cls, v: str) -> str:
+        s = (v or "").strip()
+        if not s:
+            return ""
+        ok, msg = valida_telefone(s)
+        if not ok:
+            raise ValueError(msg)
+        return s
+
+
+class PacienteOut(PacienteBase):
     id: int
+    sincronizado_em: datetime | None = None
 
 
 class DemandaItemOut(BaseModel):
@@ -86,38 +151,48 @@ class DestinoOut(DestinoIn):
 
 
 # ---------- Motoristas ----------
-class MotoristaIn(BaseModel):
+class MotoristaBase(BaseModel):
+    model_config = {"from_attributes": True}
+
     nome: str = Field(min_length=2, max_length=120)
     cpf: str = Field(default="", max_length=14)
     cnh_numero: str = Field(default="", max_length=20)
-    cnh_categoria: str = Field(default="", max_length=5, pattern="^([A-E]{1,2})?$")
+    cnh_categoria: str = Field(default="", max_length=5)
     cnh_validade: date | None = None
     telefone: str = Field(default="", max_length=20)
     ativo: bool = True
 
+
+class MotoristaIn(MotoristaBase):
+    cnh_categoria: str = Field(default="", max_length=5, pattern="^([A-E]{1,2})?$")
+
     @field_validator("cpf")
     @classmethod
     def _cpf_valido(cls, v: str) -> str:
-        if not (v or "").strip():
-            raise ValueError("CPF é obrigatório.")
-        ok, msg = valida_cpf(v)
+        s = (v or "").strip()
+        if not s:
+            return ""
+        ok, msg = valida_cpf(s)
         if not ok:
             raise ValueError(msg)
-        return v
+        return s
 
     @field_validator("cnh_numero")
     @classmethod
     def _cnh_valida(cls, v: str) -> str:
-        if not (v or "").strip():
-            raise ValueError("CNH é obrigatória.")
-        ok, msg = valida_cnh(v)
+        s = (v or "").strip()
+        if not s:
+            return ""
+        ok, msg = valida_cnh(s)
         if not ok:
             raise ValueError(msg)
-        return v
+        return s
 
     @field_validator("cnh_validade")
     @classmethod
     def _validade_ok(cls, v: date | None) -> date | None:
+        if v is None:
+            return None
         ok, msg = valida_cnh_validade(v)
         if not ok:
             raise ValueError(msg)
@@ -126,13 +201,16 @@ class MotoristaIn(BaseModel):
     @field_validator("telefone")
     @classmethod
     def _tel_valido(cls, v: str) -> str:
-        ok, msg = valida_telefone(v)
+        s = (v or "").strip()
+        if not s:
+            return ""
+        ok, msg = valida_telefone(s)
         if not ok:
             raise ValueError(msg)
-        return v
+        return s
 
 
-class MotoristaOut(MotoristaIn):
+class MotoristaOut(MotoristaBase):
     id: int
 
 
@@ -236,7 +314,7 @@ class ExameBase(BaseModel):
     observacoes: str = Field(default="", max_length=500)
     justificativa: str = Field(default="", max_length=500)
     resultado: str = Field(default="", max_length=2000)
-    codigo_curto: str = Field(default="", max_length=12)  # novo modelo; legado ignora
+    codigo_curto: str = Field(default="", max_length=20)  # ID único e imutável (ex: EX-000123)
     numero_pedido: str = Field(default="", max_length=30)  # identificação operacional
 
 
@@ -252,9 +330,8 @@ class ExameIn(ExameBase):
     @classmethod
     def _valida_justificativa(cls, v: str) -> str:
         s = (v or "").strip()
-        # Se preenchida, deve ter pelo menos 12 caracteres. Se vazia, permite.
-        if s and len(s) < 12:
-            raise ValueError("A justificativa deve ter pelo menos 12 caracteres.")
+        if not s or len(s) < 12:
+            raise ValueError("A justificativa clínica é obrigatória e deve ter pelo menos 12 caracteres.")
         return s
 
 
@@ -294,6 +371,15 @@ class ExameOut(ExameBase):
     posicao_especialidade: int | None = None
     total_especialidade: int | None = None
     grupo_especialidade: str = ""
+    # Dados cadastrais e endereço do paciente
+    paciente_endereco: str = ""
+    paciente_numero: str = ""
+    paciente_complemento: str = ""
+    paciente_bairro: str = ""
+    paciente_municipio: str = ""
+    paciente_telefone: str = ""
+    paciente_cns: str = ""
+    paciente_nascimento: date | None = None
     # Snapshot do agendamento (resolvido no momento da marcação)
     medico_nome: str = ""
     medico_cpf: str = ""
@@ -360,7 +446,7 @@ class ProcedimentoOut(ProcedimentoIn):
 
 
 class EspecialidadeIn(BaseModel):
-    codigo_cbo: str = Field(min_length=1, max_length=10)
+    codigo_cbo: str = Field(default="", max_length=10)
     nome: str = Field(min_length=2, max_length=120)
     ativo: bool = True
 
@@ -408,3 +494,30 @@ class ResumoOut(BaseModel):
     exames_urgentes: int
     valor_competencia: float
     ocupacao_media: float
+
+
+class ValidarCboIn(BaseModel):
+    codigo_procedimento: str
+    medico_id: int | None = None
+    medico_nome: str | None = None
+    cbo: str | None = None
+    tipo_fila: str | None = None
+
+
+class CboAutorizadoItem(BaseModel):
+    cbo: str
+    descricao: str = ""
+
+
+class ValidarCboOut(BaseModel):
+    codigo_procedimento: str
+    nome_procedimento: str = ""
+    hierarquia: dict = {}
+    exige_cbo_estrito: bool = False
+    cbo_profissional: str = ""
+    compativel: bool = True
+    motivo: str = ""
+    alerta: str | None = None
+    permite_responsavel_tecnico: bool = True
+    cbos_autorizados: list[CboAutorizadoItem] = []
+

@@ -25,10 +25,18 @@ class LogOut(BaseModel):
     user_id: int | None
     user_name: str
     action: str
+    action_label: str = ""
     entity: str
+    entity_label: str = ""
     entity_id: int | None
+    device: str = ""
     details: str
     timestamp: datetime
+
+
+class RotacaoLogsIn(BaseModel):
+    meses_retencao: int = Field(default=6, ge=1, le=60)
+    arquivar: bool = Field(default=True)
 
 
 class EventoOut(BaseModel):
@@ -74,11 +82,19 @@ def listar_logs(
         q = q.where(AuditLog.entity == entidade.strip().upper())
     total = db.exec(select(func.count()).select_from(q.subquery())).one() or 0
     meta = paginar(total, page, limit)
+    from app.services.auditoria_txt import rotulo_acao, rotulo_entidade
+
     rows = db.exec(
         q.order_by(AuditLog.timestamp.desc()).offset(meta["offset"]).limit(limit)
     ).all()
+    data_out = []
+    for r in rows:
+        d = LogOut.model_validate(r).model_dump()
+        d["action_label"] = rotulo_acao(r.action)
+        d["entity_label"] = rotulo_entidade(r.entity)
+        data_out.append(d)
     return {
-        "data": [LogOut.model_validate(r).model_dump() for r in rows],
+        "data": data_out,
         "total": meta["total"],
         "page": meta["page"],
         "pages": meta["pages"],
@@ -91,10 +107,46 @@ def filtros_logs(
     user: User = Depends(require_superuser),
 ):
     _ = user
-    acoes = list(db.exec(select(AuditLog.action).distinct().order_by(AuditLog.action).limit(200)).all())
-    entidades = list(db.exec(select(AuditLog.entity).distinct().order_by(AuditLog.entity).limit(200)).all())
+    from app.services.auditoria_txt import rotulo_acao, rotulo_entidade
+
+    acoes_raw = list(db.exec(select(AuditLog.action).distinct().order_by(AuditLog.action).limit(200)).all())
+    entidades_raw = list(db.exec(select(AuditLog.entity).distinct().order_by(AuditLog.entity).limit(200)).all())
     usuarios = list(db.exec(select(AuditLog.user_name).distinct().order_by(AuditLog.user_name).limit(200)).all())
-    return {"acoes": acoes, "entidades": entidades, "usuarios": [u for u in usuarios if u]}
+
+    acoes = [{"valor": a, "rotulo": rotulo_acao(a)} for a in acoes_raw if a]
+    entidades = [{"valor": e, "rotulo": rotulo_entidade(e)} for e in entidades_raw if e]
+    return {
+        "acoes": acoes,
+        "entidades": entidades,
+        "usuarios": [u for u in usuarios if u],
+    }
+
+
+@router.get("/auditoria/estatisticas")
+def estatisticas_auditoria(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_superuser),
+):
+    """Métricas de saúde, volume de logs, consultas e exportações."""
+    _ = user
+    from app.services.log_rotacao import obter_estatisticas_auditoria
+    return obter_estatisticas_auditoria(db)
+
+
+@router.post("/auditoria/rotacao")
+def rotacao_auditoria(
+    payload: RotacaoLogsIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_superuser),
+):
+    """Executa a política de retenção e arquivamento compactado de logs antigos."""
+    _ = user
+    from app.services.log_rotacao import executar_rotacao_logs
+    return executar_rotacao_logs(
+        db,
+        meses_retencao=payload.meses_retencao,
+        arquivar=payload.arquivar,
+    )
 
 
 STATUS_TXT = {
@@ -266,6 +318,7 @@ def _linhas_export(rows) -> list[dict]:
             "usuario": r.user_name or "",
             "acao": f"{rotulo_acao(r.action)} ({r.action})",
             "registro": f"{r.entity}#{r.entity_id or '—'}",
+            "dispositivo": getattr(r, "device", "") or "—",
             "raw": r.details or "",
         }
         mudancas = det.get("mudancas") or []
@@ -295,8 +348,9 @@ def _linhas_export(rows) -> list[dict]:
 _COLS_AUDIT = [
     {"chave": "quando", "rotulo": "Data/hora", "largura": 18},
     {"chave": "usuario", "rotulo": "Usuário", "largura": 26},
-    {"chave": "acao", "rotulo": "Ação", "largura": 30},
+    {"chave": "acao", "rotulo": "Ação", "largura": 32},
     {"chave": "registro", "rotulo": "Registro (ID)", "largura": 18},
+    {"chave": "dispositivo", "rotulo": "Dispositivo / Navegador", "largura": 28},
     {"chave": "campo", "rotulo": "Campo", "largura": 26},
     {"chave": "de", "rotulo": "Valor Anterior", "largura": 26},
     {"chave": "para", "rotulo": "Valor Novo", "largura": 26},

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, CircleAlert, CircleCheck, Download, ShieldCheck, TriangleAlert } from "lucide-react";
-import { Badge, Button, Card, Label } from "../../components/ui/primitives";
+import { Activity, CircleAlert, CircleCheck, Download, RefreshCw, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Badge, Button, Card, Label, cn } from "../../components/ui/primitives";
 import IndicadorDetalhe from "../../components/IndicadorDetalhe";
 import {
   fonteBadge,
+  pecAtualizarIndicadores,
   pecDimensoes,
   pecGraficos,
   pecIndicador,
@@ -55,24 +56,51 @@ export default function ApsPainel() {
   const [bloco, setBloco] = useState("todos");
   const [detalhe, setDetalhe] = useState<PecIndicadorDetalhe | null>(null);
   const [viaApi, setViaApi] = useState(true);
+  const [carregando, setCarregando] = useState(false);
+  const [sincronizando, setSincronizando] = useState(false);
   const [erro, setErro] = useState("");
+  const [sucessoMsg, setSucessoMsg] = useState("");
 
   async function carregar() {
+    setCarregando(true);
     setErro("");
     try {
-      const p = await pecPainel(periodo, ubs, equipe);
+      const [p, g, u, d] = await Promise.all([
+        pecPainel(periodo, ubs, equipe),
+        pecGraficos(),
+        pecUbs(),
+        pecDimensoes(),
+      ]);
       setPainel(p.dados);
-      const g = await pecGraficos();
       setGraf({ ...g.dados, fonte: p.dados.fonte });
-      const u = await pecUbs();
       setUnidades((u.dados as any).ubs ?? []);
-      const d = await pecDimensoes();
       setDim(d.dados);
       setPeriodos(d.dados.periodos?.length ? d.dados.periodos : p.dados.periodos ?? []);
       setEquipes(d.dados.equipes?.length ? d.dados.equipes : p.dados.equipes ?? []);
       setViaApi(p.viaApi && g.viaApi);
     } catch {
-      setErro("Sessão expirada. Faça login.");
+      setErro("Sessão expirada ou falha ao carregar indicadores.");
+    } finally {
+      setCarregando(false);
+    }
+  }
+
+  async function sincronizarPec() {
+    setSincronizando(true);
+    setErro("");
+    setSucessoMsg("");
+    try {
+      const res = await pecAtualizarIndicadores();
+      if (res.ok) {
+        setSucessoMsg(res.mensagem || "Indicadores sincronizados com sucesso a partir do e-SUS PEC!");
+        await carregar();
+      } else {
+        setErro(res.mensagem || "Não foi possível sincronizar com o e-SUS PEC.");
+      }
+    } catch {
+      setErro("Erro de comunicação ao sincronizar dados com o e-SUS PEC.");
+    } finally {
+      setSincronizando(false);
     }
   }
 
@@ -87,7 +115,7 @@ export default function ApsPainel() {
       const blob = new Blob([(r.dados as any).csv ?? ""], { type: "text/csv;charset=utf-8" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = `aps-novo-cofinanciamento-${periodo || "geral"}.csv`;
+      a.download = `indicadores-aps-${periodo || "geral"}.csv`;
       a.click();
     } catch {
       setErro("Falha ao gerar relatório.");
@@ -116,11 +144,16 @@ export default function ApsPainel() {
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <h2 className="flex items-center gap-2 font-display text-lg font-bold text-sus-950">
-          <Activity className="h-5 w-5" /> APS · Novo Cofinanciamento
+          <Activity className="h-5 w-5" /> Indicadores · APS Previne
         </h2>
         <span className="ml-auto"><Badge>{fonteBadge(fonte, viaApi)}</Badge></span>
       </div>
       {erro && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
+      {sucessoMsg && (
+        <p className="mb-3 flex items-center gap-1.5 rounded-xl bg-teal/15 px-3 py-2 text-sm text-teal font-semibold">
+          <CircleCheck className="h-4 w-4" /> {sucessoMsg}
+        </p>
+      )}
 
       {resumo && (
         <Card className="mb-4 flex flex-wrap items-center gap-3 p-4">
@@ -174,10 +207,21 @@ export default function ApsPainel() {
               <option value="emulti">eMulti</option>
             </select>
           </div>
-          <div className="flex items-end gap-2">
-            <Button onClick={carregar}>Filtrar</Button>
+          <div className="flex flex-wrap items-end gap-2">
+            <Button onClick={carregar} disabled={carregando}>
+              {carregando ? "Carregando..." : "Filtrar"}
+            </Button>
             <Button onClick={baixar} className="!bg-teal !text-sus-950">
               <Download className="h-4 w-4" /> CSV
+            </Button>
+            <Button
+              onClick={sincronizarPec}
+              disabled={sincronizando}
+              className="!bg-sus-900 !text-white flex items-center gap-1.5"
+              title="Sincronizar indicadores diretamente do e-SUS PEC para o cache local"
+            >
+              <RefreshCw className={cn("h-4 w-4", sincronizando && "animate-spin")} />
+              {sincronizando ? "Sincronizando..." : "Sincronizar PEC"}
             </Button>
           </div>
         </div>

@@ -24,6 +24,7 @@ function enderecoCompleto(p: PacientePerfil["paciente"]): string {
 const RISCO_COR: Record<string, string> = {
   Eletivo: "bg-sus-900/10 text-sus-900",
   Urgente: "bg-red-100 text-red-700",
+  Priorizado: "bg-red-100 text-red-700",
 };
 
 export default function PerfilPaciente({ pid }: { pid: number }) {
@@ -44,16 +45,22 @@ export default function PerfilPaciente({ pid }: { pid: number }) {
     <div className="space-y-4">
       {/* Cabeçalho do perfil */}
       <section className="rounded-2xl border border-sus-900/10 p-4">
-        <p className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-sus-900/50">
-          <User className="h-3.5 w-3.5" /> Dados pessoais
-        </p>
+        <div className="flex items-center justify-between">
+          <p className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-sus-900/50">
+            <User className="h-3.5 w-3.5" /> Dados pessoais
+          </p>
+          <span className="rounded-md bg-sus-900/10 px-2.5 py-0.5 text-xs font-mono font-bold text-sus-900">
+            Prontuário: {p.codigo_prontuario || `PR-${String(p.id).padStart(5, "0")}`}
+          </span>
+        </div>
         <p className="mt-1 font-display text-lg font-bold text-sus-950">{p.nome}</p>
         <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2.5 text-xs md:grid-cols-3">
           <div><dt className="text-ink/45">Nome completo</dt><dd className="font-semibold">{p.nome}</dd></div>
+          <div><dt className="text-ink/45">Prontuário / ID</dt><dd className="font-semibold font-mono text-sus-900">{p.codigo_prontuario || `PR-${String(p.id).padStart(5, "0")}`}</dd></div>
           <div><dt className="text-ink/45">CPF</dt><dd className="font-semibold">{p.cpf || "—"}</dd></div>
           <div><dt className="text-ink/45">Cartão SUS (CNS)</dt><dd className="font-semibold">{p.cns || "—"}</dd></div>
           <div><dt className="text-ink/45">Data de nascimento</dt><dd className="font-semibold">{fmtNasc(p.nascimento)}</dd></div>
-          <div className="col-span-2 md:col-span-1"><dt className="text-ink/45">Telefone</dt><dd className="font-semibold">{p.telefone || "—"}</dd></div>
+          <div><dt className="text-ink/45">Telefone</dt><dd className="font-semibold">{p.telefone || "—"}</dd></div>
           <div className="col-span-2 md:col-span-3"><dt className="text-ink/45">Endereço</dt><dd className="font-semibold">{enderecoCompleto(p)}</dd></div>
         </dl>
       </section>

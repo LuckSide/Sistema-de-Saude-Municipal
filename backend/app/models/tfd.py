@@ -9,20 +9,39 @@ class Paciente(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     nome: str = Field(max_length=150, index=True)
+    nome_social: str = Field(default="", max_length=150)
     cpf: str = Field(default="", max_length=14, index=True)
     cns: str = Field(default="", max_length=20, index=True)
     nascimento: date | None = Field(default=None, sa_column=Column(Date))
-    telefone: str = Field(default="", max_length=20)
+    sexo: str = Field(default="", max_length=20)
+    nome_mae: str = Field(default="", max_length=150)
+    telefone: str = Field(default="", max_length=50)
     endereco: str = Field(default="", max_length=255)
     endereco_numero: str = Field(default="", max_length=20)
     complemento: str = Field(default="", max_length=100)
     bairro: str = Field(default="", max_length=100)
+    municipio: str = Field(default="Guapé", max_length=100)
     cep: str = Field(default="", max_length=10)
+    ponto_referencia: str = Field(default="", max_length=150)
     unidade_saude_id: int | None = Field(default=None, index=True)
+    unidade_cnes: str = Field(default="", max_length=20, index=True)
+    unidade_nome: str = Field(default="", max_length=150)
     equipe_esf: str = Field(default="", max_length=80)
+    equipe_ine: str = Field(default="", max_length=20, index=True)
+    microarea: str = Field(default="", max_length=20)
     acs_nome: str = Field(default="", max_length=150)
     observacoes: str = Field(default="", max_length=500)
+    co_seq_cidadao_pec: int | None = Field(default=None, index=True)
+    codigo_prontuario: str = Field(default="", max_length=20, index=True)
+    sincronizado_em: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False)),
+    )
     created_at: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=False)),
+    )
+    updated_at: datetime = Field(
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=False)),
     )
@@ -202,7 +221,7 @@ class ExameFila(SQLModel, table=True):
     recepcionado_por: str = Field(default="", max_length=120)
     status_anterior: str = Field(default="", max_length=20)  # p/ estornar recepção
     public_token: str = Field(default="", max_length=64, index=True)
-    codigo_curto: str = Field(default="", max_length=12, index=True)  # novo modelo; legado = ""
+    codigo_curto: str = Field(default="", max_length=20, index=True)  # ID único e imutável (ex: EX-000123)
     numero_pedido: str = Field(default="", max_length=30, index=True)  # identificação operacional
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
@@ -237,7 +256,7 @@ class Especialidade(SQLModel, table=True):
     __tablename__ = "tfd_especialidades"
 
     id: int | None = Field(default=None, primary_key=True)
-    codigo_cbo: str = Field(max_length=10, index=True, unique=True)  # ex: 225320
+    codigo_cbo: str = Field(default="", max_length=10, index=True)  # ex: 225320
     nome: str = Field(max_length=120, index=True)  # ex: Médico em radiologia e diagnóstico por imagem
     ativo: bool = Field(default=True, index=True)
 

@@ -5,12 +5,16 @@ import {
   createUsuario,
   deleteUsuario,
   fetchMedicos,
+  fetchUnidadesSaude,
   fetchUsuarios,
+  labsListar,
   resetSenhaUsuario,
   updateUsuario,
   pagData,
   pagMeta,
+  type Laboratorio,
   type Medico,
+  type UnidadeSaude,
   type Usuario,
 } from "../services/api";
 import { Button, Card, Input, Label } from "../components/ui/primitives";
@@ -39,6 +43,8 @@ type Form = {
   telas: string[];
   acoes: Record<string, Acao[]>;
   medico_id: string;
+  unidade_saude_id: string;
+  laboratorio_id: string;
   permite_retroativo: boolean;
   is_superuser: boolean;
   is_active: boolean;
@@ -51,6 +57,8 @@ const vazio: Form = {
   telas: ["dashboard"],
   acoes: {},
   medico_id: "",
+  unidade_saude_id: "",
+  laboratorio_id: "",
   permite_retroativo: true,
   is_superuser: false,
   is_active: true,
@@ -72,6 +80,8 @@ export default function Usuarios() {
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
   const [medicos, setMedicos] = useState<Medico[]>([]);
+  const [unidades, setUnidades] = useState<UnidadeSaude[]>([]);
+  const [labs, setLabs] = useState<Laboratorio[]>([]);
 
   async function carregar(p = page) {
     try {
@@ -88,6 +98,8 @@ export default function Usuarios() {
   useEffect(() => {
     carregar(1).catch(() => setErro("Falha ao carregar usuários."));
     fetchMedicos().then(setMedicos).catch(() => {});
+    fetchUnidadesSaude().then(setUnidades).catch(() => {});
+    labsListar().then(setLabs).catch(() => {});
   }, []);
 
   async function salvar() {
@@ -111,6 +123,8 @@ export default function Usuarios() {
           telas: form.telas,
           acoes: form.acoes,
           medico_id: form.medico_id ? Number(form.medico_id) : null,
+          unidade_saude_id: form.unidade_saude_id ? Number(form.unidade_saude_id) : null,
+          laboratorio_id: form.laboratorio_id ? Number(form.laboratorio_id) : null,
           permite_retroativo: form.permite_retroativo,
           is_superuser: form.is_superuser,
           is_active: form.is_active,
@@ -118,8 +132,14 @@ export default function Usuarios() {
         setOk("Usuário atualizado.");
         fecharModal();
       } else {
-        const { medico_id, ...resto } = form;
-        const r = await createUsuario({ ...resto, medico_id: medico_id ? Number(medico_id) : null, gerar_temporaria: true });
+        const { medico_id, unidade_saude_id, laboratorio_id, ...resto } = form;
+        const r = await createUsuario({
+          ...resto,
+          medico_id: medico_id ? Number(medico_id) : null,
+          unidade_saude_id: unidade_saude_id ? Number(unidade_saude_id) : null,
+          laboratorio_id: laboratorio_id ? Number(laboratorio_id) : null,
+          gerar_temporaria: true,
+        });
         const senha = (r as unknown as { senha_temporaria?: string }).senha_temporaria ?? "";
         setTemporaria({ user: form.username.trim(), senha });
         setOk(`Conta ${form.username.trim()} criada com senha temporária.`);
@@ -149,6 +169,8 @@ export default function Usuarios() {
         telas: u.telas,
         acoes: sanitizarAcoes(u.acoes),
         medico_id: u.medico_id ? String(u.medico_id) : "",
+        unidade_saude_id: u.unidade_saude_id ? String(u.unidade_saude_id) : "",
+        laboratorio_id: u.laboratorio_id ? String(u.laboratorio_id) : "",
         permite_retroativo: u.permite_retroativo !== false,
         is_superuser: u.is_superuser,
         is_active: u.is_active,
@@ -274,6 +296,16 @@ export default function Usuarios() {
                 <td className="px-4 py-3">
                   <p className="font-semibold text-sus-950">{u.username}</p>
                   <p className="text-xs text-ink/50">{u.nome || "—"}</p>
+                  {(u.unidade_saude_nome || unidades.find((x) => x.id === u.unidade_saude_id)?.nome) && (
+                    <span className="mt-0.5 inline-block rounded-md bg-teal/10 px-1.5 py-0.5 text-[10px] font-semibold text-teal">
+                      🏥 {u.unidade_saude_nome || unidades.find((x) => x.id === u.unidade_saude_id)?.nome}
+                    </span>
+                  )}
+                  {(u.laboratorio_nome || labs.find((x) => x.id === u.laboratorio_id)?.nome) && (
+                    <span className="mt-0.5 ml-1 inline-block rounded-md bg-purple-50 px-1.5 py-0.5 text-[10px] font-semibold text-purple-700 border border-purple-200">
+                      🧪 {u.laboratorio_nome || labs.find((x) => x.id === u.laboratorio_id)?.nome}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3">{u.area}</td>
                 <td className="px-4 py-3 text-xs text-ink/60">
@@ -372,6 +404,24 @@ export default function Usuarios() {
                 </select>
               </div>
               <div>
+                <Label>Unidade de Saúde / PSF do Usuário</Label>
+                <select
+                  value={form.unidade_saude_id}
+                  onChange={(e) => setForm({ ...form, unidade_saude_id: e.target.value })}
+                  className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-sus-700"
+                >
+                  <option value="">Nenhuma / Secretaria Central</option>
+                  {unidades.filter((u) => u.ativo).map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.nome}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-ink/50">
+                  Unidade padrão atribuída a este operador para preenchimento automático em formulários de exames e filas.
+                </p>
+              </div>
+              <div>
                 <Label>Médico vinculado (perfil Médico)</Label>
                 <select
                   value={form.medico_id}
@@ -385,6 +435,24 @@ export default function Usuarios() {
                 </select>
                 <p className="mt-1 text-xs text-ink/50">
                   Combine com a tela <b>Painel Médico</b> nas permissões. Só o médico vinculado edita prioridade/justificativa dos próprios encaminhamentos.
+                </p>
+              </div>
+              <div>
+                <Label>Laboratório Conveniado Vinculado</Label>
+                <select
+                  value={form.laboratorio_id}
+                  onChange={(e) => setForm({ ...form, laboratorio_id: e.target.value })}
+                  className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-sus-700"
+                >
+                  <option value="">Nenhum / Não vinculado a laboratório</option>
+                  {labs.filter((l) => l.ativo).map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.nome} {l.cnes ? `(CNES: ${l.cnes})` : ""}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-ink/50">
+                  Atribui o usuário a um laboratório conveniado específico, restringindo o acesso exclusivamente aos pedidos e coletas desta unidade.
                 </p>
               </div>
               <div>

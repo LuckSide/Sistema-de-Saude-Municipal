@@ -1,0 +1,33 @@
+{
+  "inconsistentes": [],
+  "funil": [
+    {
+      "etapa": "Cidadãos Cadastrados no e-SUS",
+      "total": 31281
+    },
+    {
+      "etapa": "Visitas ACS/Domiciliar",
+      "total": 60602
+    },
+    {
+      "etapa": "Atend. individual",
+      "total": 32453
+    },
+    {
+      "etapa": "Procedimentos",
+      "total": 9935
+    },
+    {
+      "etapa": "Vacinas aplicadas",
+      "total": 7159
+    },
+    {
+      "etapa": "Odonto",
+      "total": 2965
+    },
+    {
+      "etapa": "Ativ. coletiva",
+      "total": 1015
+    }
+  ]
+}

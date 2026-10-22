@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { Ambulance, Cross, ShieldCheck } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
+import { fetchMe } from "../services/api";
 import { useCidadeDinamica, nomeCidade } from "../hooks/useCidade";
 import { Button, Input, Label } from "../components/ui/primitives";
 
@@ -22,7 +23,6 @@ export default function Login() {
     try {
       await login(username.trim(), password);
       // user do context atualiza async; confere via API p/ redirecionar certo
-      const { fetchMe } = await import("../services/api");
       const me = await fetchMe().catch(() => user);
       nav(me?.must_change_password ? "/alterar-senha-inicial" : "/", { replace: true });
     } catch {

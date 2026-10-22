@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft,
-  ArrowRight,
   CalendarDays,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   ClipboardList,
   FileText,
   RotateCcw,
@@ -23,6 +23,7 @@ import {
   pagData,
   pagMeta,
   tfdAtendimentoStatus,
+  tfdAtualizarExame,
   tfdEstornarRecepcaoExame,
   tfdExames,
   tfdRecepcionarExame,
@@ -101,11 +102,14 @@ export default function Agendamentos() {
   const [agindo, setAgindo] = useState(false);
   const [erroModal, setErroModal] = useState("");
 
+  const diRef = (new Date(`${dia}T12:00:00`).getDay() + 6) % 7;
+  const segunda = somaDias(dia, -diRef);
+  const semanaPills = useMemo(() => Array.from({ length: 7 }, (_, i) => somaDias(segunda, i)), [segunda]);
+
   const diasVisiveis = useMemo(() => {
     if (visao === "dia") return [dia];
     if (visao === "semana") {
-      const ini = inicioSemana(dia);
-      return Array.from({ length: 7 }, (_, i) => somaDias(ini, i));
+      return semanaPills;
     }
     // mês: grade completa do mês da referência
     const [y, m] = dia.slice(0, 7).split("-").map(Number);
@@ -115,13 +119,13 @@ export default function Agendamentos() {
     const ini = somaDias(`${y}-${String(m).padStart(2, "0")}-01`, -desloc);
     const totalCells = Math.ceil((desloc + nDias) / 7) * 7;
     return Array.from({ length: totalCells }, (_, i) => somaDias(ini, i));
-  }, [dia, visao]);
+  }, [dia, visao, semanaPills]);
 
   const carregar = useCallback(async () => {
     setErro("");
     try {
-      const de = diasVisiveis[0];
-      const ate = diasVisiveis[diasVisiveis.length - 1];
+      const de = visao === "mes" ? diasVisiveis[0] : semanaPills[0];
+      const ate = visao === "mes" ? diasVisiveis[diasVisiveis.length - 1] : semanaPills[6];
       const r = await tfdExames({
         data_de: "1900-01-01",
         data_ate: "2100-12-31",
@@ -147,7 +151,7 @@ export default function Agendamentos() {
     } catch {
       setErro("Falha ao carregar agendamentos.");
     }
-  }, [diasVisiveis, fStatus, fTipo, fUnidade, fMedico]);
+  }, [diasVisiveis, semanaPills, visao, fStatus, fTipo, fUnidade, fMedico]);
 
   useEffect(() => {
     carregar().catch(() => setErro("Falha ao carregar agendamentos."));
@@ -234,7 +238,6 @@ export default function Agendamentos() {
           titulo: `Agendamento de ${alvo.paciente_nome} cancelado.`,
           descricao: "Desfazer restaura o status anterior em 5s.",
           onUndo: async () => {
-            const { tfdAtualizarExame } = await import("../../services/api");
             await tfdAtualizarExame(alvo.id, {
               paciente_id: alvo.paciente_id,
               exame: alvo.exame,
@@ -275,80 +278,187 @@ export default function Agendamentos() {
     return [...s].sort();
   }, [lista]);
 
+  const totalVisivel = useMemo(() => {
+    return diasVisiveis.reduce((acc, d) => acc + (porDia.get(d)?.length ?? 0), 0);
+  }, [diasVisiveis, porDia]);
+
+  const periodoRotulo = useMemo(() => {
+    if (visao === "dia") return fmtDia(dia);
+    if (visao === "semana") return `${fmtDia(semanaPills[0])} a ${fmtDia(semanaPills[6])}`;
+    return `${fmtDia(diasVisiveis[0])} a ${fmtDia(diasVisiveis[diasVisiveis.length - 1])}`;
+  }, [visao, dia, semanaPills, diasVisiveis]);
+
   return (
     <div>
-      <div className="mb-1 flex flex-wrap items-center gap-2">
-        <h2 className="flex items-center gap-2 font-display text-lg font-bold text-sus-950">
-          <CalendarDays className="h-5 w-5 text-sus-900" /> Agendamentos
-        </h2>
-        <span className="rounded-full bg-teal/10 px-2.5 py-0.5 text-xs font-semibold text-teal">
-          {total} atendimento(s) no período
-        </span>
-        <ExportarExcel
-          url="/api/tfd/agenda/exportar"
-          arquivo="agendamentos"
-          params={{ dia }}
-        />
+      {/* Topo: Título, contadores e Exportação */}
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="flex items-center gap-2 font-display text-lg font-bold text-sus-950">
+              <CalendarDays className="h-5 w-5 text-sus-900" /> Agendamentos
+            </h2>
+            <span className="rounded-full bg-teal/10 px-2.5 py-0.5 text-xs font-semibold text-teal">
+              {periodoRotulo} · {totalVisivel} atendimento(s)
+            </span>
+          </div>
+          <p className="mt-0.5 text-xs text-ink/55">
+            Calendário de procedimentos agendados · clique num agendamento p/ recepcionar, registrar resultado, faltou ou cancelar.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <ExportarExcel
+            url="/api/tfd/agenda/exportar"
+            arquivo="agendamentos"
+            params={{ dia }}
+          />
+        </div>
       </div>
-      <p className="mb-4 mt-1 text-sm text-ink/55">
-        Calendário de procedimentos agendados · clique num agendamento p/ recepcionar, registrar resultado, faltou ou cancelar.
-      </p>
+
       {erro && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
       {ok && <p className="mb-3 rounded-xl bg-teal/10 px-3 py-2 text-sm text-teal">{ok}</p>}
 
-      <Card className="mb-3 p-3">
-        <div className="flex flex-wrap items-center gap-2">
+      {/* Barra Unificada de Navegação e Filtros */}
+      <Card className="mb-4 p-3.5 space-y-3">
+        {/* Linha 1: Modos e Controles de Navegação */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          {/* Seletor Mês / Semana / Dia */}
           <div className="inline-flex items-center gap-1 rounded-xl border border-sus-900/10 bg-sand/50 p-1" title="Modo de visualização">
             {(["mes", "semana", "dia"] as const).map((m) => (
               <button
                 key={m}
+                type="button"
                 onClick={() => setVisao(m)}
                 aria-pressed={visao === m}
-                className={`min-h-[44px] rounded-lg px-4 py-1.5 text-xs font-bold transition ${visao === m ? "bg-sus-900 text-white" : "text-sus-900 hover:bg-white"}`}
+                className={`min-h-[38px] rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
+                  visao === m ? "bg-sus-900 text-white shadow-sm" : "text-sus-900 hover:bg-white"
+                }`}
               >
                 {m === "mes" ? "Mês" : m === "semana" ? "Semana" : "Dia"}
               </button>
             ))}
           </div>
-          <button onClick={() => setDia(somaDias(dia, visao === "mes" ? -30 : visao === "semana" ? -7 : -1))} aria-label="Período anterior" className="grid min-h-[44px] min-w-[44px] place-items-center rounded-xl bg-sus-900/10 text-sus-900 hover:bg-sus-900/15"><ChevronLeft className="h-4 w-4" /></button>
-          <Input type="date" value={dia} onChange={(e) => e.target.value && setDia(e.target.value)} className="!w-auto" />
-          <button onClick={() => setDia(somaDias(dia, visao === "mes" ? 30 : visao === "semana" ? 7 : 1))} aria-label="Próximo período" className="grid min-h-[44px] min-w-[44px] place-items-center rounded-xl bg-sus-900/10 text-sus-900 hover:bg-sus-900/15"><ChevronRight className="h-4 w-4" /></button>
-          <button onClick={() => setDia(hojeISO())} className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-teal px-3 py-2 text-xs font-bold text-white hover:brightness-110">
-            <CalendarDays className="h-4 w-4" /> Hoje
-          </button>
+
+          {/* Navegação de Datas */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setDia(somaDias(dia, -(visao === "semana" ? 7 : visao === "mes" ? 30 : 1)))}
+              aria-label="Período anterior"
+              title="Período anterior"
+              className="grid min-h-[38px] min-w-[38px] place-items-center rounded-xl border border-sus-900/10 bg-white text-sus-900 shadow-sm transition hover:bg-sand"
+            >
+              <ChevronsLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setDia(somaDias(dia, -1))}
+              aria-label="Dia anterior"
+              title="Dia anterior (-1 dia)"
+              className="grid min-h-[38px] min-w-[38px] place-items-center rounded-xl border border-sus-900/10 bg-white text-sus-900 shadow-sm transition hover:bg-sand"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+
+            <Input
+              type="date"
+              value={dia}
+              onChange={(e) => e.target.value && setDia(e.target.value)}
+              className="!w-auto !min-h-[38px] text-xs font-medium"
+            />
+
+            <button
+              type="button"
+              onClick={() => setDia(somaDias(dia, 1))}
+              aria-label="Próximo dia"
+              title="Próximo dia (+1 dia)"
+              className="grid min-h-[38px] min-w-[38px] place-items-center rounded-xl border border-sus-900/10 bg-white text-sus-900 shadow-sm transition hover:bg-sand"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setDia(somaDias(dia, (visao === "semana" ? 7 : visao === "mes" ? 30 : 1)))}
+              aria-label="Próximo período"
+              title="Próximo período"
+              className="grid min-h-[38px] min-w-[38px] place-items-center rounded-xl border border-sus-900/10 bg-white text-sus-900 shadow-sm transition hover:bg-sand"
+            >
+              <ChevronsRight className="h-4 w-4" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setDia(hojeISO())}
+              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl bg-teal px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:brightness-110"
+            >
+              <CalendarDays className="h-3.5 w-3.5" /> Hoje
+            </button>
+          </div>
         </div>
-        <div className="mt-3 grid gap-2 md:grid-cols-4">
+
+        {/* Linha 2: Filtros Coesos */}
+        <div className="grid grid-cols-1 gap-2.5 pt-2 border-t border-sus-900/10 sm:grid-cols-2 lg:grid-cols-4">
           <div>
-            <Label>Tipo de procedimento</Label>
-            <select value={fTipo} onChange={(e) => setFTipo(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
-              <option value="">Todos</option>
-              {tiposUnicos.map((t) => <option key={t} value={t}>{t}</option>)}
+            <Label className="text-[11px] font-bold text-ink/70">Tipo de procedimento</Label>
+            <select
+              value={fTipo}
+              onChange={(e) => setFTipo(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-xs font-medium outline-none transition focus:border-teal"
+            >
+              <option value="">Todos os tipos</option>
+              {tiposUnicos.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
             </select>
           </div>
+
           <div>
-            <Label>Status</Label>
-            <select value={fStatus} onChange={(e) => setFStatus(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
-              <option value="">Todos</option>
-              {STATUS_AGENDA.map((s) => <option key={s} value={s}>{ROTULO_STATUS[s]}</option>)}
+            <Label className="text-[11px] font-bold text-ink/70">Status</Label>
+            <select
+              value={fStatus}
+              onChange={(e) => setFStatus(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-xs font-medium outline-none transition focus:border-teal"
+            >
+              <option value="">Todos os status</option>
+              {STATUS_AGENDA.map((s) => (
+                <option key={s} value={s}>{ROTULO_STATUS[s]}</option>
+              ))}
             </select>
           </div>
+
           <div>
-            <Label>Unidade</Label>
-            <select value={fUnidade} onChange={(e) => setFUnidade(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
-              <option value="">Todas</option>
-              {unidades.filter((u) => u.ativo).map((u) => <option key={u.id} value={String(u.id)}>{u.nome}</option>)}
+            <Label className="text-[11px] font-bold text-ink/70">Unidade</Label>
+            <select
+              value={fUnidade}
+              onChange={(e) => setFUnidade(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-xs font-medium outline-none transition focus:border-teal"
+            >
+              <option value="">Todas as unidades</option>
+              {unidades.filter((u) => u.ativo).map((u) => (
+                <option key={u.id} value={String(u.id)}>{u.nome}</option>
+              ))}
             </select>
           </div>
+
           <div>
-            <Label>Profissional</Label>
-            <select value={fMedico} onChange={(e) => setFMedico(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
-              <option value="">Todos</option>
-              {medicos.filter((m) => m.ativo).map((m) => <option key={m.id} value={String(m.id)}>{m.nome}{m.crm ? ` · ${m.crm}` : ""}</option>)}
+            <Label className="text-[11px] font-bold text-ink/70">Profissional</Label>
+            <select
+              value={fMedico}
+              onChange={(e) => setFMedico(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-xs font-medium outline-none transition focus:border-teal"
+            >
+              <option value="">Todos os profissionais</option>
+              {medicos.filter((m) => m.ativo).map((m) => (
+                <option key={m.id} value={String(m.id)}>
+                  {m.nome}{m.crm ? ` · ${m.crm}` : ""}
+                </option>
+              ))}
             </select>
           </div>
         </div>
       </Card>
 
+      {/* Visão em Mês */}
       {visao === "mes" && (
         <section className="overflow-x-auto pb-2">
           <div className="mb-1.5 grid grid-cols-7 gap-1.5">
@@ -361,18 +471,55 @@ export default function Agendamentos() {
               const itens = porDia.get(d) ?? [];
               const ehHoje = d === hojeISO();
               const foraMes = d.slice(0, 7) !== dia.slice(0, 7);
+              const selecionado = d === dia;
               return (
-                <div key={d} className={`min-h-[96px] rounded-xl border p-1.5 ${ehHoje ? "border-teal bg-teal/5" : "border-sus-900/10 bg-white"} ${foraMes ? "opacity-50" : ""}`}>
-                  <p className={`text-center font-display text-xs font-extrabold ${ehHoje ? "text-teal" : "text-sus-950"}`}>{d.slice(8, 10)}</p>
-                  <div className="mt-1 space-y-1">
-                    {itens.slice(0, 4).map((e) => (
-                      <button key={e.id} onClick={() => abrirAcao(e)} className="block w-full truncate rounded-md bg-sand/70 px-1.5 py-1 text-left text-[10px] font-semibold hover:bg-teal/15" title={`${e.paciente_nome} · ${e.exame} · ${e.hora_agendada || "s/ hora"} · ${ROTULO_STATUS[e.status] ?? e.status}`}>
+                <div
+                  key={d}
+                  onClick={() => { setDia(d); }}
+                  className={`min-h-[100px] rounded-xl border p-2 transition cursor-pointer ${
+                    selecionado
+                      ? "border-sus-900 ring-2 ring-sus-900/20 bg-sus-900/[0.02]"
+                      : ehHoje
+                        ? "border-teal bg-teal/5"
+                        : "border-sus-900/10 bg-white hover:border-sus-900/25"
+                  } ${foraMes ? "opacity-40" : ""}`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={`font-display text-xs font-extrabold ${ehHoje ? "text-teal" : "text-sus-950"}`}>
+                      {d.slice(8, 10)}
+                    </span>
+                    {itens.length > 0 && (
+                      <span className="rounded-full bg-sus-900/10 px-1.5 py-0.2 text-[9px] font-bold text-sus-900">
+                        {itens.length}
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    {itens.slice(0, 3).map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          abrirAcao(e);
+                        }}
+                        className="block w-full truncate rounded-md bg-sand/70 px-1.5 py-0.5 text-left text-[10px] font-semibold hover:bg-teal/15 transition"
+                        title={`${e.paciente_nome} · ${e.exame} · ${e.hora_agendada || "s/ hora"} · ${ROTULO_STATUS[e.status] ?? e.status}`}
+                      >
                         {e.hora_agendada ? `${e.hora_agendada} ` : ""}{e.paciente_nome}
                       </button>
                     ))}
-                    {itens.length > 4 && (
-                      <button onClick={() => { setDia(d); setVisao("dia"); }} className="block w-full rounded-md px-1.5 py-1 text-left text-[10px] font-bold text-teal hover:bg-teal/10">
-                        +{itens.length - 4} ver dia
+                    {itens.length > 3 && (
+                      <button
+                        type="button"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          setDia(d);
+                          setVisao("dia");
+                        }}
+                        className="block w-full rounded-md px-1 py-0.5 text-left text-[10px] font-bold text-teal hover:bg-teal/10"
+                      >
+                        +{itens.length - 3} ver dia
                       </button>
                     )}
                   </div>
@@ -383,38 +530,133 @@ export default function Agendamentos() {
         </section>
       )}
 
+      {/* Visão em Semana / Dia — Layout Padronizado da Frota/Viagens */}
       {visao !== "mes" && (
-        <section className={`grid gap-2 ${visao === "semana" ? "md:grid-cols-7" : "grid-cols-1"}`}>
+        <section
+          className={`grid gap-2.5 ${
+            visao === "semana"
+              ? "grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7"
+              : "grid-cols-1 max-w-2xl mx-auto"
+          }`}
+        >
           {diasVisiveis.map((d) => {
             const itens = porDia.get(d) ?? [];
             const di = (new Date(`${d}T12:00:00`).getDay() + 6) % 7;
             const ehHoje = d === hojeISO();
+            const selecionado = d === dia;
             return (
-              <div key={d} className={`rounded-2xl border p-2 ${ehHoje ? "border-teal bg-teal/5" : "border-sus-900/10 bg-white"}`}>
-                <p className="mb-2 text-center">
-                  <span className="block text-[10px] font-bold uppercase text-ink/50">{NOMES_DIA[di]}</span>
-                  <span className="font-display text-sm font-extrabold text-sus-950">{d.slice(8, 10)}/{d.slice(5, 7)}</span>
-                  <span className="ml-1 rounded-full bg-sus-900/10 px-1.5 py-0.5 text-[10px] font-bold">{itens.length}</span>
-                </p>
-                <div className="space-y-1.5">
-                  {itens.map((e) => (
-                    <button
-                      key={e.id}
-                      onClick={() => abrirAcao(e)}
-                      className="block w-full rounded-lg border border-sus-900/10 bg-sand/50 p-2 text-left hover:border-teal/50"
+              <div
+                key={d}
+                onClick={() => {
+                  if (visao === "semana" && d !== dia) {
+                    setDia(d);
+                  }
+                }}
+                className={`flex flex-col rounded-2xl border p-2.5 transition cursor-pointer ${
+                  selecionado && visao === "semana"
+                    ? "border-sus-900 ring-2 ring-sus-900/20 bg-sus-900/[0.02] shadow-sm"
+                    : ehHoje
+                      ? "border-teal/60 bg-teal/5 hover:border-teal"
+                      : "border-sus-900/10 bg-white hover:border-sus-900/25"
+                }`}
+              >
+                {/* Topo do dia com data e badge no padrão de frota/viagens */}
+                <div className="mb-2.5 flex items-center justify-between gap-1.5 border-b border-sus-900/10 pb-1.5">
+                  <div className="min-w-0">
+                    <span
+                      className={`block text-[10px] font-bold uppercase tracking-wider leading-none ${
+                        selecionado ? "text-sus-900 font-extrabold" : ehHoje ? "text-teal-700" : "text-ink/60"
+                      }`}
                     >
-                      <p className="flex items-center gap-1 text-[11px] font-bold text-sus-950">
-                        <span className="text-ink/55">{e.hora_agendada || "--:--"}</span>
-                        <span className="min-w-0 flex-1 truncate">{e.paciente_nome}</span>
-                      </p>
-                      <p className="truncate text-[10px] text-ink/55">{e.exame}</p>
-                      <p className="mt-1 flex items-center gap-1">
-                        <span className={`rounded-full px-1.5 py-px text-[9px] font-bold ${COR_STATUS[e.status] ?? "bg-sus-900/10"}`}>{ROTULO_STATUS[e.status] ?? e.status}</span>
-                        <span className="truncate text-[9px] text-ink/45">{e.unidade_nome || e.destino || "—"}</span>
-                      </p>
-                    </button>
-                  ))}
-                  {itens.length === 0 && <p className="py-3 text-center text-[11px] text-ink/40">Sem atendimentos</p>}
+                      {NOMES_DIA[di]}
+                    </span>
+                    <span className="font-display text-sm font-extrabold text-sus-950 leading-tight">
+                      {d.slice(8, 10)}/{d.slice(5, 7)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {ehHoje && (
+                      <span className="rounded-full bg-teal/15 px-1.5 py-0.5 text-[9px] font-bold text-teal uppercase">
+                        Hoje
+                      </span>
+                    )}
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
+                        selecionado
+                          ? "bg-sus-900 text-white"
+                          : itens.length > 0
+                            ? ehHoje
+                              ? "bg-teal text-white"
+                              : "bg-sus-900/10 text-sus-900"
+                            : "bg-sand text-ink/40"
+                      }`}
+                      title={`${itens.length} agendamento(s)`}
+                    >
+                      {itens.length}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Lista de Atendimentos */}
+                <div className="flex-1 space-y-2">
+                  {itens.map((e) => {
+                    const isPriorizado = e.prioridade && e.prioridade !== "rotina";
+                    return (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          abrirAcao(e);
+                        }}
+                        className="group block w-full rounded-xl border border-sus-900/10 bg-sand/40 p-2 text-left transition hover:border-teal hover:bg-white hover:shadow-sm"
+                      >
+                        <div className="flex items-start justify-between gap-1">
+                          <p className="flex items-center gap-1.5 min-w-0 text-[11px] font-bold text-sus-950">
+                            <span className="shrink-0 text-ink/60 font-mono text-[10px]">
+                              {e.hora_agendada || "--:--"}
+                            </span>
+                            <span className="truncate font-semibold group-hover:text-teal transition">
+                              {e.paciente_nome}
+                            </span>
+                          </p>
+                          <span className="shrink-0 rounded bg-sus-900/10 px-1 py-0.5 text-[9px] font-mono font-bold text-sus-900" title="ID Imutável">
+                            {e.codigo_curto || `EX-${String(e.id).padStart(6, "0")}`}
+                          </span>
+                        </div>
+
+                        <p className="mt-0.5 truncate text-[10px] text-ink/60 font-medium" title={e.exame}>
+                          {e.exame}
+                        </p>
+
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                          <span
+                            className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold leading-none ${
+                              COR_STATUS[e.status] ?? "bg-sus-900/10 text-sus-900"
+                            }`}
+                          >
+                            {ROTULO_STATUS[e.status] ?? e.status}
+                          </span>
+
+                          {isPriorizado && (
+                            <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-bold text-red-700 border border-red-200 leading-none">
+                              Priorizado
+                            </span>
+                          )}
+
+                          <span className="truncate text-[9px] text-ink/45 max-w-[120px]">
+                            {e.unidade_nome || e.destino || "—"}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+
+                  {itens.length === 0 && (
+                    <div className="grid place-items-center py-6 text-center">
+                      <span className="text-[11px] font-medium text-ink/35">Sem atendimentos</span>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -430,7 +672,12 @@ export default function Agendamentos() {
               <button onClick={() => setSel(null)} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar"><X className="h-4 w-4" /></button>
             </div>
             <div className="rounded-2xl bg-sand/60 p-4 text-sm">
-              <p className="font-bold text-sus-950">{sel.paciente_nome}</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-bold text-sus-950">{sel.paciente_nome}</p>
+                <span className="rounded bg-sus-900/10 px-2 py-0.5 text-xs font-mono font-bold text-sus-900" title="ID Imutável do Agendamento">
+                  {sel.codigo_curto || `EX-${String(sel.id).padStart(6, "0")}`}
+                </span>
+              </div>
               <p className="text-ink/70">{sel.exame}</p>
               <p className="mt-1 text-xs text-ink/55">
                 {sel.hora_agendada ? `${sel.hora_agendada} · ` : ""}{sel.unidade_nome || sel.destino || "—"} · {sel.medico_nome || "—"}
@@ -487,11 +734,19 @@ export default function Agendamentos() {
         </div>
       )}
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button onClick={() => setDia(somaDias(dia, -1))} className="inline-flex min-h-[44px] items-center gap-1 rounded-xl bg-sus-900/10 px-3 py-2 text-xs font-bold text-sus-900 hover:bg-sus-900/15"><ArrowLeft className="h-4 w-4" /> Dia anterior</button>
-        <button onClick={() => setDia(somaDias(dia, 1))} className="inline-flex min-h-[44px] items-center gap-1 rounded-xl bg-sus-900/10 px-3 py-2 text-xs font-bold text-sus-900 hover:bg-sus-900/15">Próximo dia <ArrowRight className="h-4 w-4" /></button>
-        <span className="inline-flex items-center gap-1 text-xs text-ink/45"><Search className="h-3.5 w-3.5" /> Dica: use os filtros p/ tipo, status, unidade e profissional.</span>
-        <span className="inline-flex items-center gap-1 text-xs text-ink/45"><ClipboardList className="h-3.5 w-3.5" /> Marcação continua na Agenda do TFD.</span>
+      {/* Rodapé Informativo */}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-sus-900/10 pt-3 text-xs text-ink/50">
+        <div className="flex flex-wrap items-center gap-4">
+          <span className="inline-flex items-center gap-1.5">
+            <Search className="h-3.5 w-3.5 text-ink/40" /> Use os filtros acima para refinar por tipo, status, unidade e profissional.
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <ClipboardList className="h-3.5 w-3.5 text-ink/40" /> Nova marcação direta da fila na Agenda do TFD.
+          </span>
+        </div>
+        <span className="font-medium text-[11px]">
+          {totalVisivel} atendimento(s) no período
+        </span>
       </div>
     </div>
   );

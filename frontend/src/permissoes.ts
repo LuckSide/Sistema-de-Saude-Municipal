@@ -7,6 +7,7 @@ import {
   ChartColumn,
   ClipboardList,
   Database,
+  FileCheck,
   FlaskConical,
   LayoutDashboard,
   ListOrdered,
@@ -75,12 +76,13 @@ export const MODULOS: NoPermissao[] = [
   },
   {
     codigo: "lab",
-    rotulo: "Procedimentos / BPA",
+    rotulo: "Exames laboratoriais",
     icone: FlaskConical,
     rota: "/lab",
     filhos: [
-      { codigo: "lab_marcacao", rotulo: "Marcação", icone: ClipboardList, rota: "/lab/marcacao" },
-      { codigo: "lab_fila", rotulo: "Fila do PSF", icone: ListOrdered, rota: "/lab/fila" },
+      { codigo: "lab_recepcao", rotulo: "Laboratório · Recepção e Coleta", icone: FlaskConical, rota: "/lab/recepcao" },
+      { codigo: "lab_marcacao", rotulo: "Marcação de exames de sangue", icone: ClipboardList, rota: "/lab/marcacao" },
+      { codigo: "lab_fila", rotulo: "Fila de exames", icone: ListOrdered, rota: "/lab/fila" },
       { codigo: "lab_agenda", rotulo: "Vagas e agenda", icone: CalendarDays, rota: "/lab/agenda" },
       { codigo: "lab_vagas", rotulo: "Vagas", icone: Ticket, rota: "/lab/vagas" },
       { codigo: "lab_audit", rotulo: "Auditoria", icone: ShieldCheck, rota: "/lab/auditoria" },
@@ -89,8 +91,19 @@ export const MODULOS: NoPermissao[] = [
     ],
   },
   {
+    codigo: "apac",
+    rotulo: "APAC · Alta Complexidade",
+    icone: ShieldCheck,
+    rota: "/apac/solicitacoes",
+    filhos: [
+      { codigo: "apac_solicitacao", rotulo: "Laudos e Solicitações de APAC", icone: FileCheck, rota: "/apac/solicitacoes" },
+      { codigo: "apac_regulacao", rotulo: "Regulação e Autorização de APAC", icone: Stethoscope, rota: "/apac/regulacao" },
+      { codigo: "apac_faturamento", rotulo: "Faturamento APAC (SIA/SUS)", icone: ReceiptText, rota: "/apac/faturamento" },
+    ],
+  },
+  {
     codigo: "aps",
-    rotulo: "APS · Previne",
+    rotulo: "Indicadores · APS Previne",
     icone: Activity,
     rota: "/aps",
   },
@@ -130,7 +143,7 @@ export function todosCodigos(): string[] {
 
 /** Pai implica filhas (payloads antigos com só o pai continuam valendo),
  * exceto telas exclusivas (ex: tfd_medico exige concessão explícita). */
-export const EXCLUSIVAS = new Set(["tfd_medico", "tfd_fila_lancamento", "tfd_viagens_passadas"]);
+export const EXCLUSIVAS = new Set(["tfd_medico", "tfd_fila_lancamento", "tfd_viagens_passadas", "apac_regulacao", "lab_recepcao"]);
 export function concedida(telas: string[], codigo: string): boolean {
   if (telas.includes(codigo)) return true;
   if (EXCLUSIVAS.has(codigo)) return false;

@@ -135,8 +135,8 @@ export default function CatalogoExames() {
         else await tfdCriarProcedimento(payload);
         setOk(editId ? "Procedimento atualizado." : "Procedimento cadastrado.");
       } else {
-        const cbo = formEsp.codigo_cbo.replace(/\D/g, "").slice(0, 6);
-        if (!cbo || formEsp.nome.trim().length < 2) throw new Error("CBO e nome da especialidade são obrigatórios.");
+        const cbo = formEsp.codigo_cbo ? formEsp.codigo_cbo.replace(/\D/g, "").slice(0, 6) : "";
+        if (formEsp.nome.trim().length < 2) throw new Error("O nome da especialidade é obrigatório.");
         const payload = { codigo_cbo: cbo, nome: formEsp.nome.trim(), ativo: formEsp.ativo };
         if (editId) await tfdAtualizarEspecialidade(editId, payload);
         else await tfdCriarEspecialidade(payload);
@@ -171,7 +171,7 @@ export default function CatalogoExames() {
 
   const titulo =
     aba === "tipos" ? "Tipos de fila" :
-    aba === "procedimentos" ? "Procedimentos" : "Especialidades (CBO)";
+    aba === "procedimentos" ? "Procedimentos" : "Especialidades";
 
   return (
     <div>
@@ -191,7 +191,7 @@ export default function CatalogoExames() {
             [
               { id: "tipos", label: "Tipos de fila" },
               { id: "procedimentos", label: "Procedimentos" },
-              { id: "especialidades", label: "Especialidades (CBO)" },
+              { id: "especialidades", label: "Especialidades" },
             ] as { id: Aba; label: string }[]
           ).map((t) => (
             <button
@@ -308,7 +308,15 @@ export default function CatalogoExames() {
             <tbody>
               {esps.map((t) => (
                 <tr key={t.id} className="border-b border-sus-900/5 last:border-0">
-                  <td className="px-4 py-3 font-mono text-xs font-bold">{t.codigo_cbo}</td>
+                  <td className="px-4 py-3 font-mono text-xs">
+                    {t.codigo_cbo ? (
+                      <span className="font-bold">{t.codigo_cbo}</span>
+                    ) : (
+                      <span className="rounded bg-sus-900/10 px-1.5 py-0.5 font-sans text-[11px] font-normal text-ink/50">
+                        Geral / Sem CBO
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 font-semibold">{t.nome}</td>
                   <td className="px-4 py-3">
                     <Badge variant={t.ativo ? "success" : "outline"}>
@@ -360,7 +368,7 @@ export default function CatalogoExames() {
               )}
               {aba === "especialidades" && (
                 <div className="grid gap-3 md:grid-cols-3">
-                  <div><Label>CBO *</Label><Input value={formEsp.codigo_cbo} onChange={(e) => setFormEsp({ ...formEsp, codigo_cbo: e.target.value.replace(/\D/g, "").slice(0, 6) })} placeholder="Ex: 225320" inputMode="numeric" /></div>
+                  <div><Label>Código CBO (opcional)</Label><Input value={formEsp.codigo_cbo} onChange={(e) => setFormEsp({ ...formEsp, codigo_cbo: e.target.value.replace(/\D/g, "").slice(0, 6) })} placeholder="Ex: 225320 (opcional)" inputMode="numeric" /></div>
                   <div className="md:col-span-2"><Label>Nome especialidade *</Label><Input value={formEsp.nome} onChange={(e) => setFormEsp({ ...formEsp, nome: e.target.value })} placeholder="Ex: Médico em radiologia e diagnóstico por imagem" /></div>
                   <label className="flex cursor-pointer items-center gap-2 text-sm"><input type="checkbox" checked={formEsp.ativo} onChange={(e) => setFormEsp({ ...formEsp, ativo: e.target.checked })} className="rounded border-sus-900/30" /> Ativo</label>
                 </div>

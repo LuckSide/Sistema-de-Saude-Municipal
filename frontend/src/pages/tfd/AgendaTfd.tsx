@@ -1,7 +1,18 @@
-import { useEffect, useState } from "react";
-import { CalendarDays, Plus, Search, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Plus,
+  Search,
+  X,
+} from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
 import {
+  fetchMedicos,
+  fetchUnidadesSaude,
   tfdAtualizarExame,
   tfdExames,
   pagData,
@@ -17,9 +28,17 @@ function hojeISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function somaDias(iso: string, n: number): string {
+  const d = new Date(`${iso}T12:00:00`);
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 function fmtDia(iso: string): string {
   return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso.split("-").reverse().join("/") : iso;
 }
+
+const NOMES_DIA = ["SEG", "TER", "QUA", "QUI", "SEX", "SÁB", "DOM"];
 
 export default function AgendaTfd() {
   const { retroativoBloqueado } = useAuth();
@@ -32,6 +51,42 @@ export default function AgendaTfd() {
   const [pages, setPages] = useState(1);
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
+  const [versaoContagens, setVersaoContagens] = useState(0);
+
+  const diRef = (new Date(`${dia}T12:00:00`).getDay() + 6) % 7;
+  const segunda = somaDias(dia, -diRef);
+  const semanaPills = useMemo(() => Array.from({ length: 7 }, (_, i) => somaDias(segunda, i)), [segunda]);
+  const [contagensSemana, setContagensSemana] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    let cancelado = false;
+    tfdExames({
+      data_de: "1900-01-01",
+      data_ate: "2100-12-31",
+      status: statusFiltro || undefined,
+      page: 1,
+      limit: 500,
+    })
+      .then((r) => {
+        if (cancelado) return;
+        const itens = pagData<Exame>(r);
+        const counts: Record<string, number> = {};
+        for (const d of semanaPills) {
+          counts[d] = 0;
+        }
+        for (const e of itens) {
+          const d = (e.data_agendada || "").slice(0, 10);
+          if (d && counts[d] !== undefined) {
+            counts[d] = (counts[d] || 0) + 1;
+          }
+        }
+        setContagensSemana(counts);
+      })
+      .catch(() => {});
+    return () => {
+      cancelado = true;
+    };
+  }, [semanaPills, statusFiltro, versaoContagens]);
 
   // Marcação direta da fila
   const [marcando, setMarcando] = useState(false);
@@ -67,10 +122,8 @@ export default function AgendaTfd() {
   }, [dia, statusFiltro]);
 
   useEffect(() => {
-    import("../../services/api").then((m) => {
-      m.fetchMedicos().then((r) => setMedicos(r.filter((x) => x.ativo))).catch(() => {});
-      m.fetchUnidadesSaude().then((r) => setUnidades(r.filter((x) => x.ativo))).catch(() => {});
-    });
+    fetchMedicos().then((r) => setMedicos(r.filter((x) => x.ativo))).catch(() => {});
+    fetchUnidadesSaude().then((r) => setUnidades(r.filter((x) => x.ativo))).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -143,6 +196,7 @@ export default function AgendaTfd() {
       setMarcando(false);
       setAlvo(null);
       setDia(dataMarca);
+      setVersaoContagens((v) => v + 1);
       await carregar(1, dataMarca, statusFiltro);
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Erro ao marcar.";
@@ -168,30 +222,177 @@ export default function AgendaTfd() {
       {erro && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
       {ok && <p className="mb-3 rounded-xl bg-teal/10 px-3 py-2 text-sm text-teal">{ok}</p>}
 
-      <Card className="mb-4 p-4">
+      <Card className="mb-3 p-4">
         <div className="flex flex-wrap items-end gap-2">
-          <div>
-            <Label>Dia</Label>
-            <Input type="date" value={dia} onChange={(e) => { if (e.target.value) { setDia(e.target.value); setPage(1); } }} />
+          <div className="flex items-end gap-1">
+            <button
+              type="button"
+              onClick={() => { setDia(somaDias(dia, -7)); setPage(1); }}
+              aria-label="Semana anterior"
+              title="Semana anterior (-7 dias)"
+              className="grid min-h-[44px] min-w-[44px] place-items-center rounded-xl bg-sus-900/10 text-sus-900 hover:bg-sus-900/15"
+            >
+              <ChevronsLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => { setDia(somaDias(dia, -1)); setPage(1); }}
+              aria-label="Dia anterior"
+              title="Dia anterior (-1 dia)"
+              className="grid min-h-[44px] min-w-[44px] place-items-center rounded-xl bg-sus-900/10 text-sus-900 hover:bg-sus-900/15"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <div>
+              <Label>Dia</Label>
+              <Input
+                type="date"
+                value={dia}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    setDia(e.target.value);
+                    setPage(1);
+                  }
+                }}
+                className="!w-auto"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => { setDia(somaDias(dia, 1)); setPage(1); }}
+              aria-label="Próximo dia"
+              title="Próximo dia (+1 dia)"
+              className="grid min-h-[44px] min-w-[44px] place-items-center rounded-xl bg-sus-900/10 text-sus-900 hover:bg-sus-900/15"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => { setDia(somaDias(dia, 7)); setPage(1); }}
+              aria-label="Próxima semana"
+              title="Próxima semana (+7 dias)"
+              className="grid min-h-[44px] min-w-[44px] place-items-center rounded-xl bg-sus-900/10 text-sus-900 hover:bg-sus-900/15"
+            >
+              <ChevronsRight className="h-4 w-4" />
+            </button>
           </div>
+
           <div>
             <Label>Status</Label>
-            <select value={statusFiltro} onChange={(e) => setStatusFiltro(e.target.value)} className="rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+            <select
+              value={statusFiltro}
+              onChange={(e) => setStatusFiltro(e.target.value)}
+              className="rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm"
+            >
               <option value="agendado">Marcados</option>
               <option value="">Todos</option>
               <option value="aguardando">Aguardando</option>
               <option value="realizado">Realizados</option>
             </select>
           </div>
+
           <button
             type="button"
             onClick={() => { setDia(hojeISO()); setPage(1); }}
-            className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-sus-900/10 px-4 py-2 text-sm font-bold text-sus-900 hover:bg-sus-900/15"
+            className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-teal px-4 py-2 text-sm font-bold text-white hover:brightness-110"
           >
             <CalendarDays className="h-4 w-4" /> Hoje
           </button>
         </div>
       </Card>
+
+      {/* Navegador Semanal por Dias (Segunda a Domingo) */}
+      <div className="mb-4 flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => {
+            setDia(somaDias(dia, -7));
+            setPage(1);
+          }}
+          aria-label="Semana anterior"
+          title="Semana anterior (-7 dias)"
+          className="grid min-h-[50px] min-w-[42px] place-items-center rounded-xl border border-sus-900/10 bg-white text-sus-900 shadow-sm transition hover:bg-sand hover:text-sus-950 shrink-0"
+        >
+          <ChevronsLeft className="h-4 w-4" />
+        </button>
+
+        <div
+          className="flex flex-1 gap-1.5 overflow-x-auto pb-1"
+          role="tablist"
+          aria-label="Dias da semana"
+        >
+          {semanaPills.map((d) => {
+            const di = (new Date(`${d}T12:00:00`).getDay() + 6) % 7;
+            const ativo = d === dia;
+            const ehHoje = d === hojeISO();
+            const qtd = d === dia ? total : (contagensSemana[d] ?? 0);
+            return (
+              <button
+                key={d}
+                type="button"
+                role="tab"
+                aria-selected={ativo}
+                onClick={() => {
+                  setDia(d);
+                  setPage(1);
+                }}
+                className={`flex min-h-[50px] min-w-[70px] sm:min-w-[84px] flex-1 flex-col items-center justify-center rounded-xl px-2 py-1.5 text-xs font-bold transition ${
+                  ativo
+                    ? "bg-sus-900 text-white shadow-sm"
+                    : ehHoje
+                      ? "border border-teal/50 bg-teal/5 text-teal-950 hover:bg-teal/10"
+                      : "border border-sus-900/10 bg-white text-sus-900 hover:border-sus-900/25 hover:bg-sand/50"
+                } ${ehHoje && ativo ? "ring-2 ring-teal ring-offset-1" : ""}`}
+              >
+                <div className="flex items-center gap-1">
+                  <span
+                    className={`text-[10px] font-bold uppercase tracking-wider ${
+                      ativo ? "text-white/75" : ehHoje ? "text-teal-700" : "text-ink/50"
+                    }`}
+                  >
+                    {NOMES_DIA[di]}
+                  </span>
+                  {ehHoje && (
+                    <span
+                      className={`inline-block h-1.5 w-1.5 rounded-full ${
+                        ativo ? "bg-teal-300" : "bg-teal"
+                      }`}
+                      title="Hoje"
+                    />
+                  )}
+                </div>
+                <span className="font-display text-xs">
+                  {d.slice(8, 10)}/{d.slice(5, 7)}
+                </span>
+                <span
+                  className={`mt-0.5 rounded-full px-1.5 py-0.2 text-[9px] font-extrabold ${
+                    ativo
+                      ? "bg-white/20 text-white"
+                      : qtd > 0
+                        ? "bg-sus-900/10 text-sus-900"
+                        : "bg-sand text-ink/40"
+                  }`}
+                >
+                  {qtd}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            setDia(somaDias(dia, 7));
+            setPage(1);
+          }}
+          aria-label="Próxima semana"
+          title="Próxima semana (+7 dias)"
+          className="grid min-h-[50px] min-w-[42px] place-items-center rounded-xl border border-sus-900/10 bg-white text-sus-900 shadow-sm transition hover:bg-sand hover:text-sus-950 shrink-0"
+        >
+          <ChevronsRight className="h-4 w-4" />
+        </button>
+      </div>
 
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
@@ -201,8 +402,16 @@ export default function AgendaTfd() {
             </tr></thead>
             <tbody>
               {lista.map((e) => (
-                <tr key={e.id} className="border-b border-sus-900/5 last:border-0">
-                  <td className="px-4 py-3 font-semibold">{e.paciente_nome}<p className="text-xs font-normal text-ink/50">{e.paciente_cpf || "—"}</p></td>
+                <tr key={e.id} className="border-b border-sus-900/5 last:border-0 hover:bg-sand/30">
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-sus-950">{e.paciente_nome}</span>
+                      <span className="rounded bg-sus-900/10 px-1.5 py-0.5 text-[10px] font-mono font-bold text-sus-900" title="ID Imutável do Agendamento">
+                        {e.codigo_curto || `EX-${String(e.id).padStart(6, "0")}`}
+                      </span>
+                    </div>
+                    <p className="text-xs font-normal text-ink/50">{e.paciente_cpf || "—"}</p>
+                  </td>
                   <td className="px-4 py-3">{e.nome_especialidade || e.especialidade || e.tipo_fila || "—"}<p className="text-xs text-ink/50">{e.exame}</p></td>
                   <td className="px-4 py-3 text-xs">
                     <p className="font-semibold">{e.unidade_nome || e.destino || "—"}</p>

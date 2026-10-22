@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ArrowUpCircle, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
 import {
   updateExecutar,
+  updateStatus,
   type UpdateStatus,
 } from "../services/api";
 import { Button } from "../components/ui/primitives";
@@ -17,11 +18,9 @@ export default function UpdateBanner() {
     let vivo = true;
     // Só consulta se login sinalizou update — evita rate-limit a cada acesso.
     if (sessionStorage.getItem("guape:update") !== "1") return;
-    import("../services/api").then(({ updateStatus }) =>
-      updateStatus(false)
-        .then((s) => vivo && setSt(s))
-        .catch(() => {})
-    );
+    updateStatus(false)
+      .then((s) => vivo && setSt(s))
+      .catch(() => {});
     return () => {
       vivo = false;
     };

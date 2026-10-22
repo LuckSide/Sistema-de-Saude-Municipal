@@ -1,51 +1,115 @@
 """Rótulos em linguagem natural p/ trilha de auditoria (tela + exportação)."""
 
 ACTION_LABELS = {
-    "EXAM_CREATE": "Criação de pedido",
-    "EXAM_UPDATE": "Atualização de Exame",
-    "EXAM_DELETE": "Remoção de Exame",
-    "EXAM_REMOVE": "Remoção da Fila de Espera",
-    "EXAM_TOKEN": "Regeneração de link",
+    # Exportações e Pesquisas
+    "EXPORT_EXCEL": "Exportação de relatório (Excel)",
+    "SEARCH": "Pesquisa / Consulta de dados",
+    "AUDIT_ROTATION": "Rotação e arquivamento de logs",
+    # Autenticação e Usuários
+    "AUTH_CREATE": "Login / Autenticação de sessão",
+    "USER_CREATE": "Criação de usuário / permissão",
+    "USER_UPDATE": "Atualização de usuário",
+    "USER_DELETE": "Exclusão de conta de usuário",
+    "USER_PASSWORD": "Alteração de senha",
+    # Pacientes
     "PATIENT_CREATE": "Cadastro de paciente",
-    "PATIENT_UPDATE": "Atualização de paciente",
-    "PATIENT_DELETE": "Remoção de paciente",
-    "TRIP_CREATE": "Criação de viagem",
+    "PATIENT_UPDATE": "Atualização de cadastro",
+    "PATIENT_DELETE": "Exclusão de paciente",
+    # Exames e Fila de Espera
+    "EXAM_CREATE": "Inclusão na fila de exames",
+    "EXAM_UPDATE": "Atualização de exame/agendamento",
+    "EXAM_DELETE": "Cancelamento de exame",
+    "EXAM_REMOVE": "Remoção da fila de espera",
+    "EXAM_TOKEN": "Regeneração de link do exame",
+    # Transporte e Viagens
+    "TRIP_CREATE": "Agendamento de viagem",
     "TRIP_UPDATE": "Atualização de viagem",
-    "TRIP_DELETE": "Remoção de viagem",
-    "PASSENGER_CREATE": "Inclusão de passageiro",
-    "PASSENGER_DELETE": "Remoção de passageiro",
+    "TRIP_DELETE": "Cancelamento de viagem",
+    "PASSENGER_CREATE": "Alocação de passageiro",
+    "PASSENGER_DELETE": "Desalocação de passageiro",
     "DESTINATION_CREATE": "Cadastro de destino",
     "DESTINATION_UPDATE": "Atualização de destino",
     "DESTINATION_DELETE": "Remoção de destino",
     "VEHICLE_CREATE": "Cadastro de veículo",
     "VEHICLE_UPDATE": "Atualização de veículo",
-    "VEHICLE_DELETE": "Remoção de veículo",
-    "USER_CREATE": "Criação de conta",
-    "USER_UPDATE": "Atualização de conta",
-    "USER_DELETE": "Remoção de conta",
-    "USER_PASSWORD": "Troca de senha",
-    "DOCTOR_CREATE": "Cadastro de médico",
-    "DOCTOR_UPDATE": "Atualização de médico",
-    "DOCTOR_DELETE": "Inativação de médico",
-    "UNIT_CREATE": "Cadastro de unidade",
-    "UNIT_UPDATE": "Atualização de unidade",
-    "UNIT_DELETE": "Inativação de unidade",
+    "VEHICLE_DELETE": "Inativação de veículo",
     "TRIPQUEUE_CREATE": "Entrada na fila de viagem",
     "TRIPQUEUE_UPDATE": "Atualização da fila de viagem",
     "TRIPQUEUE_DELETE": "Remoção da fila de viagem",
+    # Médicos e Unidades
+    "DOCTOR_CREATE": "Cadastro de médico",
+    "DOCTOR_UPDATE": "Atualização de médico",
+    "DOCTOR_DELETE": "Inativação de médico",
+    "MEDICOS_CREATE": "Cadastro de médico",
+    "MEDICOS_UPDATE": "Atualização de médico",
+    "UNIT_CREATE": "Cadastro de unidade de saúde",
+    "UNIT_UPDATE": "Atualização de unidade de saúde",
+    "UNIT_DELETE": "Inativação de unidade de saúde",
+    "UNIDADES_SAUDE_CREATE": "Cadastro de unidade de saúde",
+    "UNIDADES_SAUDE_UPDATE": "Atualização de unidade de saúde",
+    # Catálogo e SIGTAP
     "CATALOG_CREATE": "Cadastro em catálogo",
     "CATALOG_UPDATE": "Atualização de catálogo",
     "CATALOG_DELETE": "Remoção de catálogo",
+    "SIGTAP_CREATE": "Importação SIGTAP",
+    "SIGTAP_UPDATE": "Atualização SIGTAP",
+    # Faturamento e Laboratório
     "BILLING_CREATE": "Lançamento de fatura",
     "BILLING_UPDATE": "Atualização de fatura",
     "BILLING_DELETE": "Remoção de fatura",
-    "REQUEST_CREATE": "Solicitação lab",
-    "REQUEST_UPDATE": "Atualização lab",
-    "REQUEST_DELETE": "Remoção lab",
+    "REQUEST_CREATE": "Solicitação laboratorial",
+    "REQUEST_UPDATE": "Atualização laboratorial",
+    "REQUEST_DELETE": "Remoção de solicitação lab",
+    "SLOT_CREATE": "Abertura de vaga em agenda",
+    "SLOT_UPDATE": "Alteração de vaga em agenda",
+    "SLOT_DELETE": "Remoção de vaga em agenda",
+    # APAC
+    "APAC_CREATE": "Solicitação de APAC",
+    "APAC_UPDATE": "Atualização de APAC",
+    "APAC_AUTHORIZE": "Autorização de APAC",
+    "APAC_REJECT": "Indeferimento de APAC",
+    "APAC_RETURN": "Devolução de APAC",
+    "APAC_LOT": "Geração de remessa APAC-Mag",
+    # Configurações e Backup
     "SETTINGS_UPDATE": "Atualização de configurações",
+    "INTEGRATION_CREATE": "Configuração de integração",
     "INTEGRATION_UPDATE": "Atualização de integração",
-    "INTEGRATION_IMPORT": "Importação de filas",
+    "INTEGRATION_IMPORT": "Sincronização / Importação de dados",
     "SYSTEM_UPDATE": "Atualização do sistema",
+    "BACKUP_EXPORT": "Geração de backup criptografado",
+    "BACKUP_RESTORE": "Restauração de dados do sistema",
+    "DASHBOARD_UPDATE": "Preferências do painel",
+}
+
+ENTITY_LABELS = {
+    "PATIENT": "Paciente",
+    "USER": "Usuário do sistema",
+    "EXAM": "Fila de exames",
+    "TRIP": "Viagem / Transporte",
+    "PASSENGER": "Passageiro",
+    "DESTINATION": "Destino",
+    "VEHICLE": "Veículo / Frota",
+    "DOCTOR": "Médico / Profissional",
+    "MEDICOS": "Médico / Profissional",
+    "UNIT": "Unidade de Saúde (PSF)",
+    "UNIDADES_SAUDE": "Unidade de Saúde (PSF)",
+    "TRIPQUEUE": "Fila de Viagem",
+    "CATALOG": "Catálogo de Procedimentos",
+    "SIGTAP": "Tabela SIGTAP",
+    "BILLING": "Faturamento TFD",
+    "REQUEST": "Solicitação Laboratorial",
+    "QUEUE": "Fila do PSF",
+    "SLOT": "Vaga na Agenda",
+    "LAB": "Laboratório",
+    "APAC": "APAC Alta Complexidade",
+    "SETTINGS": "Configurações",
+    "INTEGRATION": "Integração / e-SUS PEC",
+    "SYSTEM": "Sistema",
+    "DASHBOARD": "Painel Principal",
+    "AUDIT": "Auditoria",
+    "PACIENTES": "Pacientes",
+    "EXAMES": "Fila de Exames",
+    "VIAGENS": "Viagens",
 }
 
 FIELD_LABELS = {
@@ -121,7 +185,7 @@ FIELD_LABELS = {
 
 VALOR_LABELS = {
     "rotina": "Eletivo",
-    "urgente": "Urgente",
+    "urgente": "Priorizado",
     "aguardando": "Aguardando",
     "agendado": "Agendado",
     "realizado": "Realizado",
@@ -132,6 +196,10 @@ VALOR_LABELS = {
 
 def rotulo_acao(action: str) -> str:
     return ACTION_LABELS.get((action or "").upper(), (action or "").replace("_", " ").title())
+
+
+def rotulo_entidade(entity: str) -> str:
+    return ENTITY_LABELS.get((entity or "").upper(), (entity or "").replace("_", " ").title())
 
 
 def rotulo_campo(campo: str) -> str:

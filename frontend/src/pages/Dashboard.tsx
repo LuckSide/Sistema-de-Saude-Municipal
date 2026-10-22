@@ -53,8 +53,8 @@ const CARDS_PADRAO = [
   { refs: ["dash_indicadores"], titulo: "Indicadores e Agenda", desc: "Evolução das filas e volume.", icon: ChartColumn, to: "/indicadores" },
   { refs: ["tfd"], titulo: "TFD · Operações", desc: "Viagens, pacientes e frota.", icon: Ambulance, to: "/tfd" },
   { refs: ["tfd_exames"], titulo: "Fila de Espera", desc: "Regulação e procedimentos.", icon: ListOrdered, to: "/fila-exames" },
-  { refs: ["lab"], titulo: "Exames / BPA", desc: "Solicitações e vagas.", icon: FlaskConical, to: "/lab" },
-  { refs: ["aps"], titulo: "APS · Previne Brasil", desc: "Indicadores de repasse.", icon: Activity, to: "/aps" },
+  { refs: ["lab"], titulo: "Exames laboratoriais", desc: "Marcação de exames de sangue e fila.", icon: FlaskConical, to: "/lab" },
+  { refs: ["aps"], titulo: "Indicadores", desc: "Indicadores e metas de repasse (APS Previne).", icon: Activity, to: "/aps" },
   { refs: ["usuarios"], titulo: "Contas e Acessos", desc: "Gestão de usuários.", icon: Users, to: "/usuarios" },
   { refs: ["usuarios", "integracoes"], seed: "integracoes", titulo: "Configurações", desc: "Parâmetros do município.", icon: Settings2, to: "/configuracoes" },
 ];

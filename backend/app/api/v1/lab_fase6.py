@@ -1,19 +1,33 @@
+import json
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, func, select
 
 from app.core.deps import get_current_user_senha_ok as get_current_user, get_db
-from app.models.lab_fase6 import FilaPsf, Laboratorio, SolicitacaoMestre, VagaLab
+from app.models.lab_fase6 import (
+    FilaPsf,
+    Laboratorio,
+    LabPedidoAjuste,
+    SolicitacaoMestre,
+    VagaLab,
+)
 from app.models.tfd import Paciente
 from app.core.pagination import Pagina, paginar
 from app.schemas.lab_fase6 import (
     AuditoriaIn,
+    BpaResumoOut,
+    ComprovanteExameOut,
+    FilaPsfAgendarLoteIn,
     FilaPsfIn,
     FilaPsfOut,
     FilaPsfStatusIn,
+    FilaPsfUpdateIn,
     LaboratorioIn,
     LaboratorioOut,
+    PedidoAjusteIn,
+    PedidoAjusteOut,
+    RespostaAjusteIn,
     SolicMestreIn,
     SolicMestreOut,
     VagaIn,
@@ -22,9 +36,16 @@ from app.schemas.lab_fase6 import (
     VagaOut,
 )
 from app.services.lab_fase6 import (
+    agendar_lote_fila,
+    analisar_pedido_ajuste,
     auditar_mestre,
+    consolidar_bpa_laboratorial,
     criar_solicitacao_mestre,
     enriquecer_mestre,
+    enriquecer_mestre_lote,
+    gerar_comprovante_agendamento,
+    pedir_ajuste_laboratorio,
+    recepcionar_coleta,
 )
 
 router = APIRouter()
@@ -390,6 +411,56 @@ def atualizar_status_fila(
     return FilaPsfOut(**obj.model_dump(), paciente_nome=pac.nome if pac else "?")
 
 
+@router.put("/exames/fila-psf/{fid}", response_model=FilaPsfOut)
+def atualizar_fila(
+    fid: int,
+    data: FilaPsfUpdateIn,
+    db: Session = Depends(get_db),
+    _=Depends(need_perm("lab_fila", "editar")),
+):
+    obj = db.get(FilaPsf, fid)
+    if not obj:
+        raise HTTPException(404, "Fila não encontrada")
+    if data.unidade_psf is not None:
+        obj.unidade_psf = data.unidade_psf.strip()
+    if data.medico_solicitante is not None:
+        obj.medico_solicitante = data.medico_solicitante.strip()
+    if data.data_solicitacao is not None:
+        obj.data_solicitacao = data.data_solicitacao
+    if data.justificativa is not None:
+        obj.justificativa = data.justificativa.strip()
+    if data.observacoes is not None:
+        obj.observacoes = data.observacoes.strip()
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    pac = db.get(Paciente, obj.paciente_id)
+    return FilaPsfOut(**obj.model_dump(), paciente_nome=pac.nome if pac else "?")
+
+
+@router.post("/exames/fila-psf/agendar-lote", response_model=dict)
+def agendar_fila_lote(
+    data: FilaPsfAgendarLoteIn,
+    db: Session = Depends(get_db),
+    user=Depends(need_any_perm("lab_marcacao", "lab_agenda", acoes=("criar",))),
+):
+    """Marcação mensal em lote dos exames da fila para as vagas dos laboratórios conveniados."""
+    solicitacoes = agendar_lote_fila(
+        db,
+        fila_ids=data.fila_ids,
+        laboratorio_id=data.laboratorio_id,
+        data_agendada=data.data_agendada,
+        hora_agendada=data.hora_agendada,
+        sigtap_ids=data.sigtap_ids,
+        agendado_por=user.username,
+    )
+    return {
+        "ok": True,
+        "total_agendados": len(solicitacoes),
+        "solicitacoes_ids": [s.id for s in solicitacoes],
+    }
+
+
 @router.delete("/exames/fila-psf/{fid}", status_code=204)
 def excluir_fila(
     fid: int, db: Session = Depends(get_db), _=Depends(need_perm("lab_fila", "excluir"))
@@ -408,28 +479,61 @@ def excluir_fila(
 def listar_mestre(
     status_auditoria: str | None = None,
     laboratorio_id: int | None = None,
+    q: str | None = None,
+    status: str | None = None,
+    data_de: date | None = None,
+    data_ate: date | None = None,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    _=Depends(need_any_perm("lab_marcacao", "lab_agenda")),
+    user=Depends(need_any_perm("lab_marcacao", "lab_agenda", "lab_recepcao")),
 ):
     filtros = []
+    # Perfil Laboratório: restringe aos exames do seu próprio laboratório
+    lab_id_efetivo = laboratorio_id
+    if getattr(user, "laboratorio_id", None) and not user.is_superuser:
+        lab_id_efetivo = user.laboratorio_id
+
     if status_auditoria:
         filtros.append(SolicitacaoMestre.status_auditoria == status_auditoria)
-    if laboratorio_id:
-        filtros.append(SolicitacaoMestre.laboratorio_id == laboratorio_id)
+    if lab_id_efetivo:
+        filtros.append(SolicitacaoMestre.laboratorio_id == lab_id_efetivo)
+    if status:
+        filtros.append(SolicitacaoMestre.status == status)
+    if data_de:
+        filtros.append(SolicitacaoMestre.data_agendada >= data_de)
+    if data_ate:
+        filtros.append(SolicitacaoMestre.data_agendada <= data_ate)
+    if q and q.strip():
+        q_clean = q.strip()
+        pacs_matching = list(
+            db.exec(
+                select(Paciente.id).where(
+                    Paciente.nome.ilike(f"%{q_clean}%")
+                    | Paciente.cpf.ilike(f"%{q_clean}%")
+                    | Paciente.prontuario.ilike(f"%{q_clean}%")
+                )
+            ).all()
+        )
+        from sqlalchemy import or_
+        condicoes = []
+        if pacs_matching:
+            condicoes.append(SolicitacaoMestre.paciente_id.in_(pacs_matching))
+        if q_clean.isdigit():
+            condicoes.append(SolicitacaoMestre.id == int(q_clean))
+        if condicoes:
+            filtros.append(or_(*condicoes))
+        else:
+            filtros.append(SolicitacaoMestre.id == -1)
+
     base = select(SolicitacaoMestre).order_by(SolicitacaoMestre.data_agendada.desc())
     if filtros:
-        base = (
-            select(SolicitacaoMestre)
-            .where(*filtros)
-            .order_by(SolicitacaoMestre.data_agendada.desc())
-        )
+        base = select(SolicitacaoMestre).where(*filtros).order_by(SolicitacaoMestre.data_agendada.desc())
     total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
     meta = paginar(total, page, limit)
-    rows = db.exec(base.offset(meta["offset"]).limit(limit)).all()
+    rows = list(db.exec(base.offset(meta["offset"]).limit(limit)).all())
     return {
-        "data": [enriquecer_mestre(db, m) for m in rows],
+        "data": enriquecer_mestre_lote(db, rows),
         "total": total,
         "page": meta["page"],
         "pages": meta["pages"],
@@ -450,46 +554,281 @@ def criar_mestre(
         db,
         paciente_id=data.paciente_id,
         data_agendada=data.data_agendada,
+        hora_agendada=data.hora_agendada,
         laboratorio_id=data.laboratorio_id,
         sigtap_ids=None,
         origem_fila_id=data.origem_fila_id,
         agendado_por=user.username,
         itens=totais,
+        medico_id=data.medico_id,
+        medico_solicitante=data.medico_solicitante,
+        unidade_saude_id=data.unidade_saude_id,
+        unidade_psf=data.unidade_psf,
+        justificativa=data.justificativa,
     )
     return enriquecer_mestre(db, m)
 
 
 @router.get("/exames/solicitacoes/{mid}", response_model=SolicMestreOut)
 def obter_mestre(
-    mid: int, db: Session = Depends(get_db), _=Depends(need_any_perm("lab_marcacao", "lab_agenda"))
+    mid: int,
+    db: Session = Depends(get_db),
+    user=Depends(need_any_perm("lab_marcacao", "lab_agenda", "lab_recepcao")),
 ):
     m = db.get(SolicitacaoMestre, mid)
     if not m:
         raise HTTPException(404, "Solicitação não encontrada")
+    if getattr(user, "laboratorio_id", None) and not user.is_superuser:
+        if m.laboratorio_id != user.laboratorio_id:
+            raise HTTPException(403, "Acesso não autorizado para exames de outro laboratório")
     return enriquecer_mestre(db, m)
+
+
+@router.delete("/exames/solicitacoes/{mid}", status_code=204)
+def cancelar_solicitacao(
+    mid: int,
+    db: Session = Depends(get_db),
+    user=Depends(need_any_perm("lab_marcacao", "usuarios")),
+):
+    m = db.get(SolicitacaoMestre, mid)
+    if not m:
+        raise HTTPException(404, "Solicitação não encontrada")
+    if m.status != "cancelado":
+        vaga = db.exec(
+            select(VagaLab).where(
+                VagaLab.laboratorio_id == m.laboratorio_id,
+                VagaLab.data == m.data_agendada,
+            )
+        ).first()
+        if vaga and vaga.ocupadas > 0:
+            vaga.ocupadas -= 1
+            db.add(vaga)
+        m.status = "cancelado"
+        db.add(m)
+        db.commit()
+    return None
+
+
+@router.get("/exames/solicitacoes/{mid}/comprovante", response_model=ComprovanteExameOut)
+def emitir_comprovante(
+    mid: int,
+    db: Session = Depends(get_db),
+    user=Depends(need_any_perm("lab_marcacao", "lab_agenda", "lab_recepcao", "lab_fila")),
+):
+    """Emite o comprovante oficial de agendamento com horários e orientações de preparo."""
+    m = db.get(SolicitacaoMestre, mid)
+    if not m:
+        raise HTTPException(404, "Solicitação não encontrada")
+    if getattr(user, "laboratorio_id", None) and not user.is_superuser:
+        if m.laboratorio_id != user.laboratorio_id:
+            raise HTTPException(403, "Acesso não autorizado para exames de outro laboratório")
+    return gerar_comprovante_agendamento(db, mid)
+
+
+@router.post("/exames/solicitacoes/{mid}/recepcionar", response_model=SolicMestreOut)
+def marcar_recepcao(
+    mid: int,
+    db: Session = Depends(get_db),
+    user=Depends(need_any_perm("lab_recepcao", "lab_audit", "lab_marcacao")),
+):
+    """Laboratório valida a chegada do paciente e marca como Recepcionado / Coletado."""
+    m = db.get(SolicitacaoMestre, mid)
+    if not m:
+        raise HTTPException(404, "Solicitação não encontrada")
+    if getattr(user, "laboratorio_id", None) and not user.is_superuser:
+        if m.laboratorio_id != user.laboratorio_id:
+            raise HTTPException(403, "Acesso não autorizado para exames de outro laboratório")
+    m = recepcionar_coleta(db, mid, user.nome or user.username)
+    return enriquecer_mestre(db, m)
+
+
+@router.post("/exames/solicitacoes/{mid}/pedir-ajuste", response_model=PedidoAjusteOut)
+def solicitar_ajuste(
+    mid: int,
+    data: PedidoAjusteIn,
+    db: Session = Depends(get_db),
+    user=Depends(need_any_perm("lab_recepcao", "lab_audit", "lab_marcacao")),
+):
+    """Laboratório submete pedido de modificação/ajuste para aprovação da Secretaria."""
+    m = db.get(SolicitacaoMestre, mid)
+    if not m:
+        raise HTTPException(404, "Solicitação não encontrada")
+    lab_id = m.laboratorio_id
+    if getattr(user, "laboratorio_id", None) and not user.is_superuser:
+        if m.laboratorio_id != user.laboratorio_id:
+            raise HTTPException(403, "Acesso não autorizado para exames de outro laboratório")
+        lab_id = user.laboratorio_id
+    ajuste = pedir_ajuste_laboratorio(
+        db,
+        mestre_id=mid,
+        laboratorio_id=lab_id,
+        tipo_ajuste=data.tipo_ajuste,
+        justificativa=data.justificativa,
+        itens_propostos=data.itens_propostos,
+        solicitado_por=user.nome or user.username,
+    )
+    lab = db.get(Laboratorio, ajuste.laboratorio_id)
+    pac = db.get(Paciente, m.paciente_id)
+    return PedidoAjusteOut(
+        id=ajuste.id,
+        solicitacao_id=ajuste.solicitacao_id,
+        laboratorio_id=ajuste.laboratorio_id,
+        laboratorio_nome=lab.nome if lab else "?",
+        paciente_nome=pac.nome if pac else "?",
+        tipo_ajuste=ajuste.tipo_ajuste,
+        justificativa=ajuste.justificativa,
+        itens_propostos=json.loads(ajuste.itens_propostos or "[]"),
+        status=ajuste.status,
+        solicitado_por=ajuste.solicitado_por,
+        resposta_secretaria=ajuste.resposta_secretaria,
+        analisado_por=ajuste.analisado_por,
+        created_at=ajuste.created_at,
+        analisado_em=ajuste.analisado_em,
+    )
+
+
+@router.get("/exames/pedidos-ajuste", response_model=list[PedidoAjusteOut])
+def listar_pedidos_ajuste(
+    status: str | None = None,
+    laboratorio_id: int | None = None,
+    db: Session = Depends(get_db),
+    user=Depends(need_any_perm("lab_audit", "lab_marcacao", "lab_recepcao")),
+):
+    """Lista pedidos de ajuste submetidos por laboratórios conveniados."""
+    filtros = []
+    if getattr(user, "laboratorio_id", None) and not user.is_superuser:
+        filtros.append(LabPedidoAjuste.laboratorio_id == user.laboratorio_id)
+    elif laboratorio_id:
+        filtros.append(LabPedidoAjuste.laboratorio_id == laboratorio_id)
+
+    if status:
+        filtros.append(LabPedidoAjuste.status == status)
+
+    query = select(LabPedidoAjuste).order_by(LabPedidoAjuste.created_at.desc())
+    if filtros:
+        query = query.where(*filtros)
+
+    rows = list(db.exec(query).all())
+    labs = {l.id: l.nome for l in db.exec(select(Laboratorio)).all()}
+    out = []
+    for a in rows:
+        m = db.get(SolicitacaoMestre, a.solicitacao_id)
+        pac = db.get(Paciente, m.paciente_id) if m else None
+        out.append(
+            PedidoAjusteOut(
+                id=a.id,
+                solicitacao_id=a.solicitacao_id,
+                laboratorio_id=a.laboratorio_id,
+                laboratorio_nome=labs.get(a.laboratorio_id, "?"),
+                paciente_nome=pac.nome if pac else "?",
+                tipo_ajuste=a.tipo_ajuste,
+                justificativa=a.justificativa,
+                itens_propostos=json.loads(a.itens_propostos or "[]"),
+                status=a.status,
+                solicitado_por=a.solicitado_por,
+                resposta_secretaria=a.resposta_secretaria,
+                analisado_por=a.analisado_por,
+                created_at=a.created_at,
+                analisado_em=a.analisado_em,
+            )
+        )
+    return out
+
+
+@router.post("/exames/pedidos-ajuste/{aid}/analisar", response_model=PedidoAjusteOut)
+def responder_ajuste(
+    aid: int,
+    data: RespostaAjusteIn,
+    db: Session = Depends(get_db),
+    user=Depends(need_perm("lab_audit", "editar")),
+):
+    """Secretaria analisa, autoriza ou rejeita o pedido de ajuste do laboratório."""
+    ajuste = analisar_pedido_ajuste(
+        db,
+        ajuste_id=aid,
+        aprovado=data.aprovado,
+        resposta=data.resposta,
+        user_nome=user.nome or user.username,
+    )
+    m = db.get(SolicitacaoMestre, ajuste.solicitacao_id)
+    pac = db.get(Paciente, m.paciente_id) if m else None
+    lab = db.get(Laboratorio, ajuste.laboratorio_id)
+    return PedidoAjusteOut(
+        id=ajuste.id,
+        solicitacao_id=ajuste.solicitacao_id,
+        laboratorio_id=ajuste.laboratorio_id,
+        laboratorio_nome=lab.nome if lab else "?",
+        paciente_nome=pac.nome if pac else "?",
+        tipo_ajuste=ajuste.tipo_ajuste,
+        justificativa=ajuste.justificativa,
+        itens_propostos=json.loads(ajuste.itens_propostos or "[]"),
+        status=ajuste.status,
+        solicitado_por=ajuste.solicitado_por,
+        resposta_secretaria=ajuste.resposta_secretaria,
+        analisado_por=ajuste.analisado_por,
+        created_at=ajuste.created_at,
+        analisado_em=ajuste.analisado_em,
+    )
+
+
+@router.get("/exames/bpa/consolidado", response_model=BpaResumoOut)
+def obter_bpa_consolidado(
+    competencia: str = Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
+    db: Session = Depends(get_db),
+    _=Depends(need_perm("lab_faturamento")),
+):
+    """Consolida produção de exames coletados/realizados para o faturamento BPA."""
+    return consolidar_bpa_laboratorial(db, competencia)
+
+
+@router.get("/exames/bpa/exportar-csv")
+def exportar_bpa_csv(
+    competencia: str = Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
+    db: Session = Depends(get_db),
+    _=Depends(need_perm("lab_faturamento")),
+):
+    from fastapi.responses import Response
+
+    resumo = consolidar_bpa_laboratorial(db, competencia)
+    linhas = ["codigo,procedimento,quantidade,valor_unitario,valor_total,instrumento"]
+    for it in resumo["itens"]:
+        linhas.append(f"{it['codigo']},\"{it['descricao']}\",{it['quantidade']},{it['valor_unitario']:.2f},{it['valor_total']:.2f},{it['instrumento']}")
+    csv_str = "\n".join(linhas) + "\n"
+    return Response(
+        content=csv_str,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=bpa_consolidado_{competencia}.csv"},
+    )
 
 
 # ---------- Auditoria ----------
 @router.get("/exames/auditoria", response_model=Pagina[SolicMestreOut])
 def listar_auditoria(
     status_auditoria: str | None = None,
+    laboratorio_id: int | None = None,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    _=Depends(need_perm("lab_audit")),
+    user=Depends(need_any_perm("lab_audit", "lab_recepcao")),
 ):
-    base = select(SolicitacaoMestre).order_by(SolicitacaoMestre.data_agendada.desc())
+    filtros = []
+    lab_id_efetivo = laboratorio_id
+    if getattr(user, "laboratorio_id", None) and not user.is_superuser:
+        lab_id_efetivo = user.laboratorio_id
+
     if status_auditoria:
-        base = (
-            select(SolicitacaoMestre)
-            .where(SolicitacaoMestre.status_auditoria == status_auditoria)
-            .order_by(SolicitacaoMestre.data_agendada.desc())
-        )
+        filtros.append(SolicitacaoMestre.status_auditoria == status_auditoria)
+    if lab_id_efetivo:
+        filtros.append(SolicitacaoMestre.laboratorio_id == lab_id_efetivo)
+
+    base = select(SolicitacaoMestre).order_by(SolicitacaoMestre.data_agendada.desc())
+    if filtros:
+        base = select(SolicitacaoMestre).where(*filtros).order_by(SolicitacaoMestre.data_agendada.desc())
     total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
     meta = paginar(total, page, limit)
-    rows = db.exec(base.offset(meta["offset"]).limit(limit)).all()
+    rows = list(db.exec(base.offset(meta["offset"]).limit(limit)).all())
     return {
-        "data": [enriquecer_mestre(db, m) for m in rows],
+        "data": enriquecer_mestre_lote(db, rows),
         "total": total,
         "page": meta["page"],
         "pages": meta["pages"],

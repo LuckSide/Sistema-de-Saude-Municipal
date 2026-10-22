@@ -24,8 +24,12 @@ export function Combobox({
   onChange,
   options,
   placeholder = "Selecionar…",
-  emptyText = "Nenhum procedimento encontrado",
+  emptyText = "Nenhum resultado encontrado",
   searchPlaceholder = "Buscar código ou nome…",
+  showAll = true,
+  allLabel = "Todos",
+  className,
+  disabled = false,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -33,6 +37,10 @@ export function Combobox({
   placeholder?: string;
   emptyText?: string;
   searchPlaceholder?: string;
+  showAll?: boolean;
+  allLabel?: string;
+  className?: string;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -86,16 +94,16 @@ export function Combobox({
   const textoInput = open ? query : selecionado?.label ?? "";
 
   return (
-    <div ref={ref} className="combo relative">
+    <div ref={ref} className={cn("combo relative", className)}>
       <input
         ref={inputRef}
         role="combobox"
         aria-expanded={open}
         aria-autocomplete="list"
         autoComplete="off"
+        disabled={disabled}
         value={textoInput}
         placeholder={selecionado ? selecionado.label : placeholder}
-        // placeholder visível só sem seleção; com seleção exibe rótulo via value.
         onClick={abrir}
         onFocus={abrir}
         onChange={(e) => {
@@ -110,8 +118,9 @@ export function Combobox({
           }
         }}
         className={cn(
-          "combo-input w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition",
-          "placeholder:text-ink/35 focus:border-sus-700 focus:ring-2 focus:ring-sus-700/20"
+          "combo-input w-full h-11 rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition",
+          "placeholder:text-ink/35 focus:border-sus-700 focus:ring-2 focus:ring-sus-700/20",
+          disabled && "cursor-not-allowed bg-sand/30 opacity-60"
         )}
       />
       {/* Compat: searchPlaceholder como title p/ leitores; filtro é no próprio input. */}
@@ -120,17 +129,19 @@ export function Combobox({
       {open && (
         <div className="combo-panel ativo absolute left-0 top-full z-50 mt-1 w-full overflow-hidden rounded-xl border border-sus-900/15 bg-white shadow-xl">
           <ul className="combo-list max-h-56 overflow-y-auto py-1">
-            <li>
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => escolher("")}
-                className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-sand"
-              >
-                <span className="font-medium text-sus-900">Todos</span>
-                {!selecionado && <Check className="h-4 w-4 shrink-0 text-teal" />}
-              </button>
-            </li>
+            {showAll && (
+              <li>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => escolher("")}
+                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-sand"
+                >
+                  <span className="font-medium text-sus-900">{allLabel}</span>
+                  {!selecionado && <Check className="h-4 w-4 shrink-0 text-teal" />}
+                </button>
+              </li>
+            )}
             {filtradas.map((o) => (
               <li key={o.value}>
                 <button

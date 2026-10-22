@@ -168,14 +168,23 @@ export default function TfdExames() {
       <Card className="overflow-hidden">
         <table className="w-full text-left text-sm">
           <thead><tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
-            <th className="px-4 py-3">Paciente</th><th className="px-4 py-3">Exame</th><th className="px-4 py-3">Prioridade</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Ações</th>
+            <th className="px-4 py-3">Paciente</th><th className="w-28 px-4 py-3 whitespace-nowrap">Prioridade</th><th className="px-4 py-3">Exame</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Ações</th>
           </tr></thead>
           <tbody>
             {lista.map((e) => (
               <tr key={e.id} className="border-b border-sus-900/5 last:border-0">
-                <td className="px-4 py-3 font-semibold">{e.paciente_nome}<p className="text-xs font-normal text-ink/50">pedido {e.data_pedido.split("-").reverse().join("/")} {e.destino ? `· ${e.destino}` : ""}</p></td>
+                <td className="px-4 py-3 font-semibold">
+                  {e.paciente_nome}
+                  {(e.paciente_endereco || e.paciente_bairro) && (
+                    <p className="text-xs font-normal text-ink/65 truncate max-w-[280px]" title={`${e.paciente_endereco || ""}${e.paciente_numero ? `, nº ${e.paciente_numero}` : ""}${e.paciente_bairro ? ` · ${e.paciente_bairro}` : ""}`}>
+                      📍 {e.paciente_endereco ? `${e.paciente_endereco}${e.paciente_numero ? `, ${e.paciente_numero}` : ""}` : ""}
+                      {e.paciente_bairro ? `${e.paciente_endereco ? " · " : ""}${e.paciente_bairro}` : ""}
+                    </p>
+                  )}
+                  <p className="text-xs font-normal text-ink/50">pedido {e.data_pedido.split("-").reverse().join("/")} {e.destino ? `· ${e.destino}` : ""}</p>
+                </td>
+                <td className="px-4 py-3 whitespace-nowrap"><span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${prioCor[e.prioridade] ?? ""}`}>{PRIO_ROTULO[e.prioridade] ?? e.prioridade}</span></td>
                 <td className="px-4 py-3">{e.exame}<p className="text-xs text-ink/50">{e.especialidade || "—"}</p></td>
-                <td className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${prioCor[e.prioridade] ?? ""}`}>{PRIO_ROTULO[e.prioridade] ?? e.prioridade}</span></td>
                 <td className="px-4 py-3 text-xs">{e.status}{e.data_agendada ? ` · ${e.data_agendada.split("-").reverse().join("/")}` : ""}</td>
                 <td className="px-4 py-3"><div className="flex justify-end gap-1">
                   <button onClick={() => abrirModal(e.id)} className="rounded-lg p-2 text-sus-800 hover:bg-sus-100"><Pencil className="h-4 w-4" /></button>
