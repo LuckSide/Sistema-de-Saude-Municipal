@@ -43,7 +43,10 @@ pgdata/
 
 # Bancos de dados locais / SQLite de teste
 *.db
+*.sqlite
 *.sqlite3
+*.tar.gz
+*.zip
 
 # ==============================================================================
 # SISTEMA OPERACIONAL E IDES
