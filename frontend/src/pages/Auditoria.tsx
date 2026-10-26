@@ -10,7 +10,6 @@ import {
   FileSpreadsheet,
   HardDrive,
   Monitor,
-  RotateCcw,
   ScrollText,
   Search,
   ShieldAlert,
@@ -182,6 +181,16 @@ function rotuloCampo(c: string): string {
 function fmtValor(v: unknown): string {
   if (v === null || v === undefined || v === "") return "—";
   if (typeof v === "boolean") return v ? "Sim" : "Não";
+  if (typeof v === "object") {
+    const obj = v as Record<string, unknown>;
+    if ("rotulo" in obj && obj.rotulo != null) return String(obj.rotulo);
+    if ("valor" in obj && obj.valor != null) return String(obj.valor);
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return String(v);
+    }
+  }
   const s = String(v).trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(s.slice(0, 10)) && s.length <= 10) {
     return `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}`;
@@ -237,6 +246,8 @@ function parseDetalhe(raw: string): { mudancas: Mudanca[]; corpo: Record<string,
   }
 }
 
+type FiltroOpcao = string | { valor: string; rotulo: string };
+
 export default function Auditoria() {
   const [lista, setLista] = useState<AuditLog[]>([]);
   const [de, setDe] = useState("");
@@ -244,7 +255,7 @@ export default function Auditoria() {
   const [usuario, setUsuario] = useState("");
   const [acao, setAcao] = useState("");
   const [entidade, setEntidade] = useState("");
-  const [filtros, setFiltros] = useState<{ acoes: string[]; entidades: string[]; usuarios: string[] }>({ acoes: [], entidades: [], usuarios: [] });
+  const [filtros, setFiltros] = useState<{ acoes: FiltroOpcao[]; entidades: FiltroOpcao[]; usuarios: (string | { valor?: string })[] }>({ acoes: [], entidades: [], usuarios: [] });
   const [erro, setErro] = useState("");
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -442,25 +453,36 @@ export default function Auditoria() {
             <Label>Usuário</Label>
             <Input value={usuario} onChange={(e) => setUsuario(e.target.value)} placeholder="Nome ou usuário" list="audit-usuarios" />
             <datalist id="audit-usuarios">
-              {filtros.usuarios.map((u) => <option key={u} value={u} />)}
+              {filtros.usuarios.map((u, idx) => {
+                const val = typeof u === "string" ? u : (u?.valor ?? String(u));
+                return <option key={val || idx} value={val} />;
+              })}
             </datalist>
           </div>
           <div>
             <Label>Ação</Label>
             <select value={acao} onChange={(e) => setAcao(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-sus-700">
               <option value="">Todas as Ações</option>
-              {filtros.acoes.map((a) => (
-                <option key={a} value={a}>{ACAO_LABEL[a] || a}</option>
-              ))}
+              {filtros.acoes.map((item, idx) => {
+                const val = typeof item === "string" ? item : (item?.valor ?? "");
+                const rot = typeof item === "string" ? (ACAO_LABEL[item] || item) : (item?.rotulo || ACAO_LABEL[val] || val);
+                return (
+                  <option key={val || idx} value={val}>{rot}</option>
+                );
+              })}
             </select>
           </div>
           <div>
             <Label>Módulo / Entidade</Label>
             <select value={entidade} onChange={(e) => setEntidade(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-sus-700">
               <option value="">Todos os Módulos</option>
-              {filtros.entidades.map((e) => (
-                <option key={e} value={e}>{ENTIDADE_LABEL[e] || e}</option>
-              ))}
+              {filtros.entidades.map((item, idx) => {
+                const val = typeof item === "string" ? item : (item?.valor ?? "");
+                const rot = typeof item === "string" ? (ENTIDADE_LABEL[item] || item) : (item?.rotulo || ENTIDADE_LABEL[val] || val);
+                return (
+                  <option key={val || idx} value={val}>{rot}</option>
+                );
+              })}
             </select>
           </div>
           <div className="flex items-end">

@@ -15,7 +15,6 @@ import {
   vagasLoteMes,
   mapVaga,
   pagData,
-  pagMeta,
   type FilaPsfItem,
   type Laboratorio,
   type Paciente,

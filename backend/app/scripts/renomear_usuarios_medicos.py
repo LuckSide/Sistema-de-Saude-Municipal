@@ -84,7 +84,7 @@ def executar_renomeacao():
             seq += 1
             
         db.commit()
-        print(f"\nSucesso!")
+        print("\nSucesso!")
         print(f"Total com CPF renomeados: {renomeados_cpf}")
         print(f"Total sem CPF renomeados: {renomeados_sem_cpf}")
 

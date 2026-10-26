@@ -1058,9 +1058,6 @@ export default function QuadroViagens() {
     return [...mapa.values()].sort((a, b) => a.destino.localeCompare(b.destino));
   }
 
-  // Alvos touch maiores no mobile (44px).
-  const toque = ehMobile ? "min-h-[44px] min-w-[44px] !px-3" : "";
-
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2">

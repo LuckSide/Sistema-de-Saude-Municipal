@@ -1,42 +1,24 @@
 import {
   Activity,
-  AlertTriangle,
   Ambulance,
-  ArrowUpRight,
   BarChart3,
-  BookOpenText,
-  Building2,
   CalendarDays,
-  Car,
   ChartColumn,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  ClipboardCheck,
-  ClipboardList,
-  Clock,
-  Coins,
   Database,
-  Eye,
   FlaskConical,
   History,
-  LayoutDashboard,
   LayoutGrid,
   ListOrdered,
-  MapPin,
   Pencil,
   Plus,
-  ReceiptText,
   RotateCcw,
   Search,
   Settings2,
-  ShieldCheck,
   Sparkles,
-  Stethoscope,
-  Truck,
-  UserCheck,
   Users,
-  Wrench,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -92,7 +74,6 @@ export default function Dashboard() {
   const [editando, setEditando] = useState(false);
   const [galeria, setGaleria] = useState<null | "atalho" | "widget">(null);
   const [buscaGaleria, setBuscaGaleria] = useState("");
-  const [previewWidgetId, setPreviewWidgetId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"ok" | "salvando" | "erro">("ok");
   const timer = useRef<number | null>(null);
   const saveSeq = useRef(0);
@@ -169,7 +150,6 @@ export default function Dashboard() {
   function adicionar(tipo: "atalho" | "widget", ref: string) {
     alterar([...(items ?? []), { id: uid(ref), tipo, ref }]);
     setGaleria(null);
-    setPreviewWidgetId(null);
   }
 
   function usarPadraoComoBase() {
@@ -219,7 +199,6 @@ export default function Dashboard() {
     }
     setEditando(false);
     setGaleria(null);
-    setPreviewWidgetId(null);
   }
 
   const refsUsados = new Set((items ?? []).map((i) => `${i.tipo}:${i.ref}`));
@@ -509,7 +488,6 @@ export default function Dashboard() {
           className="fixed inset-0 z-50 grid place-items-center bg-sus-950/60 backdrop-blur-sm p-4"
           onClick={() => {
             setGaleria(null);
-            setPreviewWidgetId(null);
           }}
         >
           <div
@@ -529,7 +507,6 @@ export default function Dashboard() {
               <button
                 onClick={() => {
                   setGaleria(null);
-                  setPreviewWidgetId(null);
                 }}
                 className="rounded-lg p-2 text-ink/50 hover:bg-sand"
                 aria-label="Fechar"
@@ -544,7 +521,6 @@ export default function Dashboard() {
                 <button
                   onClick={() => {
                     setGaleria("atalho");
-                    setPreviewWidgetId(null);
                   }}
                   className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
                     galeria === "atalho"
@@ -557,7 +533,6 @@ export default function Dashboard() {
                 <button
                   onClick={() => {
                     setGaleria("widget");
-                    setPreviewWidgetId(null);
                   }}
                   className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
                     galeria === "widget"
@@ -711,7 +686,6 @@ export default function Dashboard() {
               <button
                 onClick={() => {
                   setGaleria(null);
-                  setPreviewWidgetId(null);
                 }}
                 className="font-bold text-sus-900 hover:underline"
               >

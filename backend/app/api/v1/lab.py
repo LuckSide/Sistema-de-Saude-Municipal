@@ -83,7 +83,6 @@ def listar_sigtap(
     db: Session = Depends(get_db),
     _=Depends(need_perm("lab_sigtap")),
 ):
-    from sqlmodel import func as sm_func
     from app.models.settings import SystemSettings
 
     base = select(SigtapProcedimento).order_by(SigtapProcedimento.codigo)

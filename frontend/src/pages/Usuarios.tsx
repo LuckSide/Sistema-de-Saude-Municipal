@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
 import { Copy, KeyRound, Pencil, Plus, Trash2, X } from "lucide-react";
 import {
   createUsuario,
@@ -66,7 +65,6 @@ const vazio: Form = {
 
 export default function Usuarios() {
   const [lista, setLista] = useState<Usuario[]>([]);
-  const [sp] = useSearchParams();
   const [form, setForm] = useState<Form>(vazio);
   const [editId, setEditId] = useState<number | null>(null);
   const [modal, setModal] = useState(false);

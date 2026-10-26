@@ -386,6 +386,11 @@ def criar_fila(
     db.commit()
     db.refresh(obj)
     pac = db.get(Paciente, obj.paciente_id)
+    try:
+        from app.services.whatsapp import notificar_paciente_evento
+        notificar_paciente_evento(db, "entrada_fila", obj, pac)
+    except Exception:
+        pass
     return FilaPsfOut(**obj.model_dump(), paciente_nome=pac.nome if pac else "?")
 
 
@@ -408,6 +413,11 @@ def atualizar_status_fila(
     db.commit()
     db.refresh(obj)
     pac = db.get(Paciente, obj.paciente_id)
+    try:
+        from app.services.whatsapp import notificar_paciente_evento
+        notificar_paciente_evento(db, "entrada_fila", obj, pac)
+    except Exception:
+        pass
     return FilaPsfOut(**obj.model_dump(), paciente_nome=pac.nome if pac else "?")
 
 
@@ -435,6 +445,11 @@ def atualizar_fila(
     db.commit()
     db.refresh(obj)
     pac = db.get(Paciente, obj.paciente_id)
+    try:
+        from app.services.whatsapp import notificar_paciente_evento
+        notificar_paciente_evento(db, "entrada_fila", obj, pac)
+    except Exception:
+        pass
     return FilaPsfOut(**obj.model_dump(), paciente_nome=pac.nome if pac else "?")
 
 
@@ -454,6 +469,12 @@ def agendar_fila_lote(
         sigtap_ids=data.sigtap_ids,
         agendado_por=user.username,
     )
+    try:
+        from app.services.whatsapp import notificar_paciente_evento
+        for s in solicitacoes:
+            notificar_paciente_evento(db, "agendamento", s)
+    except Exception:
+        pass
     return {
         "ok": True,
         "total_agendados": len(solicitacoes),
@@ -505,22 +526,32 @@ def listar_mestre(
     if data_ate:
         filtros.append(SolicitacaoMestre.data_agendada <= data_ate)
     if q and q.strip():
+        import re
+        from sqlalchemy import or_
         q_clean = q.strip()
+        so_num = re.sub(r"\D", "", q_clean)
+        condicoes_pac = [
+            Paciente.nome.ilike(f"%{q_clean}%"),
+            Paciente.cpf.ilike(f"%{q_clean}%"),
+            Paciente.codigo_prontuario.ilike(f"%{q_clean}%"),
+            Paciente.cns.ilike(f"%{q_clean}%"),
+        ]
+        if so_num and len(so_num) <= 8 and so_num.isdigit():
+            val_id = int(so_num)
+            condicoes_pac.append(Paciente.id == val_id)
+            condicoes_pac.append(Paciente.codigo_prontuario == f"PR-{val_id:05d}")
+
         pacs_matching = list(
             db.exec(
-                select(Paciente.id).where(
-                    Paciente.nome.ilike(f"%{q_clean}%")
-                    | Paciente.cpf.ilike(f"%{q_clean}%")
-                    | Paciente.prontuario.ilike(f"%{q_clean}%")
-                )
+                select(Paciente.id).where(or_(*condicoes_pac))
             ).all()
         )
-        from sqlalchemy import or_
         condicoes = []
         if pacs_matching:
             condicoes.append(SolicitacaoMestre.paciente_id.in_(pacs_matching))
         if q_clean.isdigit():
             condicoes.append(SolicitacaoMestre.id == int(q_clean))
+            condicoes.append(SolicitacaoMestre.paciente_id == int(q_clean))
         if condicoes:
             filtros.append(or_(*condicoes))
         else:
@@ -871,17 +902,29 @@ def solicitar_autorizacao(
 def exportar_fila_psf(
     status_: str | None = Query(default=None, alias="status"),
     unidade: str = "",
+    ids: str | None = Query(default=None),
     db: Session = Depends(get_db),
     ator=Depends(need_any_perm("lab_fila", "lab_agenda")),
 ):
-    """Fila do PSF em XLSX respeitando os filtros ativos."""
+    """Fila do PSF em XLSX respeitando os filtros ativos e seleção de registros."""
     from app.services.export_xlsx import resposta_xlsx
+    from app.core.audit import registrar_log_exportacao
 
+    ids_set: set[int] = set()
     filtros = []
-    if status_:
-        filtros.append(FilaPsf.status == status_)
-    if unidade:
-        filtros.append(FilaPsf.unidade_psf.ilike(f"%{unidade}%"))
+    st_val = status_ if isinstance(status_, str) else None
+    unid_val = unidade if isinstance(unidade, str) else ""
+    ids_str = ids if isinstance(ids, str) else None
+
+    if st_val:
+        filtros.append(FilaPsf.status == st_val)
+    if unid_val:
+        filtros.append(FilaPsf.unidade_psf.ilike(f"%{unid_val}%"))
+    if ids_str and ids_str.strip():
+        ids_set = {int(x.strip()) for x in ids_str.split(",") if x.strip().isdigit()}
+        if ids_set:
+            filtros.append(FilaPsf.id.in_(ids_set))
+
     base = select(FilaPsf).order_by(FilaPsf.data_solicitacao.desc())
     if filtros:
         base = select(FilaPsf).where(*filtros).order_by(FilaPsf.data_solicitacao.desc())
@@ -896,8 +939,24 @@ def exportar_fila_psf(
             "status": o.status,
             "obs": o.observacoes or "",
         })
+
+    titulo_relatorio = "Fila do PSF" if not ids_set else f"Fila do PSF — {len(linhas)} selecionado(s)"
+
+    registrar_log_exportacao(
+        modulo="lab_fila",
+        titulo=titulo_relatorio,
+        usuario_id=ator.id,
+        usuario_nome=getattr(ator, "nome", "") or getattr(ator, "username", ""),
+        total_linhas=len(linhas),
+        filtros={
+            "status": status_,
+            "unidade": unidade,
+            "ids_selecionados": list(ids_set) if ids_set else None,
+        },
+    )
+
     return resposta_xlsx(
-        "Fila do PSF", getattr(ator, "nome", "") or getattr(ator, "username", ""),
+        titulo_relatorio, getattr(ator, "nome", "") or getattr(ator, "username", ""),
         [
             {"chave": "paciente", "rotulo": "Paciente", "largura": 32},
             {"chave": "unidade", "rotulo": "Unidade PSF", "largura": 24},

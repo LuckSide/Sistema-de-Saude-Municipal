@@ -28,7 +28,6 @@ from app.schemas.apac import (
     GerarRemessaIn,
     IndeferimentoIn,
     LoteFaturamentoOut,
-    ProcedimentoSecundarioIn,
     ProcedimentoSecundarioOut,
     ResumoFaturamentoOut,
     SolicitacaoAPACCreate,
@@ -37,12 +36,10 @@ from app.schemas.apac import (
     SolicitacaoAPACUpdate,
 )
 from app.services.apac_service import (
-    alocar_proximo_numero_apac,
     autorizar_apac,
     calcular_flags_vencimento,
     duplicar_para_continuidade,
     gerar_arquivo_apac_mag,
-    limpar_digitos,
     registrar_evento_tramitacao,
 )
 from app.services.permissoes import need_any_perm, need_perm

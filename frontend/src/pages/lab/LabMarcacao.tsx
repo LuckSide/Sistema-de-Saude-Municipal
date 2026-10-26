@@ -6,7 +6,6 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock,
-  FileText,
   FlaskConical,
   Minus,
   Plus,
@@ -27,7 +26,6 @@ import {
   tfdPacientes,
   vagasGrade,
   pagData,
-  pagMeta,
   solicitarListar,
   mapMestre,
   labCancelarSolicitacao,
@@ -77,7 +75,6 @@ export default function LabMarcacao() {
   // Busca Inteligente de Pedidos Agendados
   const [termoBusca, setTermoBusca] = useState("");
   const [buscando, setBuscando] = useState(false);
-  const [jaPesquisou, setJaPesquisou] = useState(false);
   const [pedidosEncontrados, setPedidosEncontrados] = useState<SolicMestre[]>([]);
   const [comprovanteModalId, setComprovanteModalId] = useState<number | null>(null);
 
@@ -85,12 +82,10 @@ export default function LabMarcacao() {
     const q = termoBusca.trim();
     if (!q) {
       setPedidosEncontrados([]);
-      setJaPesquisou(false);
       setBuscando(false);
       return;
     }
     setBuscando(true);
-    setJaPesquisou(true);
     const t = setTimeout(() => {
       solicitarListar({ q, limit: 50 })
         .then((r) => {

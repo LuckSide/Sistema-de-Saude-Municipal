@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app.core.deps import get_current_user_senha_ok as get_user_ok, get_db, require_superuser
+from app.core.deps import get_db, require_superuser
 from app.core.pagination import paginar
 from app.models.audit import AuditLog
 from app.models.tfd import ExameFila, Paciente, Viagem, ViagemPaciente
@@ -305,8 +305,6 @@ def _filtros_logs(db, data_de, data_ate, usuario, acao, entidade):
 
 def _linhas_export(rows) -> list[dict]:
     """Uma linha por mudança + Raw Payload na íntegra em todas."""
-    import json as _json
-
     from app.services.auditoria_txt import fmt_valor, parse_details, rotulo_acao, rotulo_campo
 
     linhas = []

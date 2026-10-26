@@ -5,8 +5,6 @@ import {
   Archive,
   Building2,
   CheckCircle2,
-  Clock,
-  CloudUpload,
   Database,
   Download,
   Eye,
@@ -16,17 +14,16 @@ import {
   GitBranch,
   History,
   ImagePlus,
-  Key,
   Loader2,
   Lock,
-  MapPin,
+  MessageCircle,
   RefreshCw,
   Save,
   ScrollText,
+  Send,
   Server,
   ShieldAlert,
   ShieldCheck,
-  Stethoscope,
   Terminal,
   UploadCloud,
   Users,
@@ -61,20 +58,27 @@ import {
   updateLog,
   updateStatus,
   validarRnds,
+  whatsappLogs,
+  whatsappObterConfig,
+  whatsappSalvarConfig,
+  whatsappTestar,
   type ExamePermitidoItem,
   type ImportFilasOut,
   type Integracoes,
   type PecSyncLogItem,
   type PecSyncStatus,
   type UpdateStatus,
+  type WhatsAppConfig,
+  type WhatsAppLogItem,
 } from "../services/api";
 
-type Aba = "geral" | "filas" | "pec" | "rnds" | "exames" | "medicos" | "unidades" | "laboratorios" | "backup";
+type Aba = "geral" | "filas" | "pec" | "rnds" | "whatsapp" | "exames" | "medicos" | "unidades" | "laboratorios" | "backup";
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "geral", rotulo: "Geral" },
   { id: "filas", rotulo: "Importar filas" },
   { id: "pec", rotulo: "PEC / e-SUS APS" },
   { id: "rnds", rotulo: "RNDS" },
+  { id: "whatsapp", rotulo: "WhatsApp / Notificações" },
   { id: "exames", rotulo: "Procedimentos / Exames Permitidos" },
   { id: "medicos", rotulo: "Médicos e Profissionais de Saúde" },
   { id: "unidades", rotulo: "Unidades de Saúde e PSFs" },
@@ -101,6 +105,7 @@ export default function Configuracoes() {
     if (a.id === "geral") return can("cfg_geral") || can("usuarios");
     if (a.id === "filas") return can("cfg_filas");
     if (a.id === "pec") return can("cfg_pec");
+    if (a.id === "whatsapp") return can("cfg_geral") || can("usuarios") || can("cfg_pec");
     if (a.id === "exames") return can("cfg_geral") || can("usuarios") || can("tfd_procedimentos") || can("lab_vagas");
     if (a.id === "medicos" || a.id === "unidades" || a.id === "laboratorios") return can("usuarios") || can("lab_vagas");
     if (a.id === "backup") return can("cfg_backup") || can("usuarios") || can("cfg_geral");
@@ -139,6 +144,7 @@ export default function Configuracoes() {
               aba === a.id ? "bg-sus-900 text-white" : "border border-sus-900/15 text-sus-900 hover:bg-sand"
             }`}
           >
+            {a.id === "whatsapp" && <MessageCircle className="h-4 w-4" />}
             {a.id === "exames" && <FlaskConical className="h-4 w-4" />}
             {a.id === "backup" && <Database className="h-4 w-4" />}
             {a.rotulo}
@@ -149,6 +155,7 @@ export default function Configuracoes() {
       {aba === "filas" && <AbaFilas />}
       {aba === "pec" && <AbaPec />}
       {aba === "rnds" && <AbaRnds />}
+      {aba === "whatsapp" && <AbaWhatsApp />}
       {aba === "exames" && <AbaExamesPermitidos />}
       {aba === "medicos" && <Medicos />}
       {aba === "unidades" && <UnidadesSaude />}
@@ -1426,6 +1433,450 @@ function AbaRnds() {
         )}
       </div>
     </Card>
+  );
+}
+
+// ---------- Aba: WhatsApp / Notificações aos Pacientes ----------
+function AbaWhatsApp() {
+  const [config, setConfig] = useState<WhatsAppConfig>({
+    whatsapp_habilitado: false,
+    whatsapp_provedor: "api_oficial",
+    whatsapp_api_url: "",
+    whatsapp_token_configurado: false,
+    whatsapp_api_token: "",
+    whatsapp_instancia_id: "",
+    whatsapp_notificar_entrada_fila: true,
+    whatsapp_notificar_agendamento: true,
+    whatsapp_ddd_padrao: "35",
+  });
+  const [carregando, setCarregando] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+  const [sucesso, setSucesso] = useState("");
+  const [verToken, setVerToken] = useState(false);
+
+  // Teste de disparo
+  const [telefoneTeste, setTelefoneTeste] = useState("");
+  const [testando, setTestando] = useState(false);
+  const [resultadoTeste, setResultadoTeste] = useState<{ sucesso: boolean; status: string; erro?: string } | null>(null);
+
+  // Logs de envio
+  const [logs, setLogs] = useState<WhatsAppLogItem[]>([]);
+  const [carregandoLogs, setCarregandoLogs] = useState(false);
+
+  useEffect(() => {
+    carregar();
+  }, []);
+
+  async function carregar() {
+    setCarregando(true);
+    setErro("");
+    try {
+      const c = await whatsappObterConfig();
+      setConfig(c);
+      await carregarLogs();
+    } catch (e: any) {
+      setErro(msgErro(e, "Falha ao carregar configurações do WhatsApp."));
+    } finally {
+      setCarregando(false);
+    }
+  }
+
+  async function carregarLogs() {
+    setCarregandoLogs(true);
+    try {
+      const data = await whatsappLogs(25);
+      setLogs(data);
+    } catch {
+      // silencioso
+    } finally {
+      setCarregandoLogs(false);
+    }
+  }
+
+  async function salvar(e: React.FormEvent) {
+    e.preventDefault();
+    setSalvando(true);
+    setErro("");
+    setSucesso("");
+    try {
+      const res = await whatsappSalvarConfig(config);
+      setConfig(res);
+      setSucesso("Configurações do WhatsApp salvas com sucesso!");
+      setTimeout(() => setSucesso(""), 4000);
+    } catch (e: any) {
+      setErro(msgErro(e, "Erro ao salvar configurações do WhatsApp."));
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  async function testarEnvio(e: React.FormEvent) {
+    e.preventDefault();
+    if (!telefoneTeste.trim()) return;
+    setTestando(true);
+    setResultadoTeste(null);
+    try {
+      const res = await whatsappTestar(telefoneTeste);
+      setResultadoTeste(res);
+      await carregarLogs();
+    } catch (e: any) {
+      setResultadoTeste({
+        sucesso: false,
+        status: "erro",
+        erro: msgErro(e, "Erro ao tentar enviar mensagem de teste."),
+      });
+    } finally {
+      setTestando(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <Card className="max-w-3xl p-6">
+        <div className="flex items-center gap-2 border-b border-sus-900/10 pb-4 mb-5">
+          <MessageCircle className="h-5 w-5 text-teal" />
+          <div>
+            <h2 className="font-display text-base font-bold text-sus-950">
+              Notificações via WhatsApp aos Pacientes
+            </h2>
+            <p className="text-xs text-ink/60">
+              Disparo automático de mensagens para entrada na fila e confirmação de agendamentos com orientações clínicas de preparo.
+            </p>
+          </div>
+        </div>
+
+        {carregando ? (
+          <div className="flex items-center justify-center py-10 text-xs text-ink/60">
+            <Loader2 className="h-5 w-5 animate-spin mr-2 text-teal" /> Carregando configurações…
+          </div>
+        ) : (
+          <form onSubmit={salvar} className="space-y-5">
+            {/* Habilitar / Desabilitar */}
+            <div className="rounded-xl border border-sus-900/10 bg-sand/30 p-4">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.whatsapp_habilitado}
+                  onChange={(e) => setConfig({ ...config, whatsapp_habilitado: e.target.checked })}
+                  className="h-4 w-4 rounded accent-teal cursor-pointer"
+                />
+                <div>
+                  <span className="font-bold text-xs text-sus-950 block">
+                    Ativar integração e disparos automáticos via WhatsApp
+                  </span>
+                  <span className="text-[11px] text-ink/60">
+                    Quando desativado, os operadores ainda podem usar o botão de "Copiar Mensagem" ou "Abrir no WhatsApp" manualmente.
+                  </span>
+                </div>
+              </label>
+            </div>
+
+            {/* Provedor */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label className="text-xs font-bold text-sus-950">
+                  Provedor de Conexão WhatsApp <span className="text-red-500">*</span>
+                </Label>
+                <select
+                  value={config.whatsapp_provedor}
+                  onChange={(e) => setConfig({ ...config, whatsapp_provedor: e.target.value })}
+                  className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-xs font-semibold text-sus-950 outline-none focus:border-teal"
+                >
+                  <option value="api_oficial">Meta Cloud API (Oficial / WhatsApp Business)</option>
+                  <option value="z_api">Z-API (Instância Conectada por QR Code)</option>
+                  <option value="evolution">Evolution API (Open-source / Auto-hospedado)</option>
+                  <option value="webhook_generico">Webhook REST Genérico (POST JSON)</option>
+                </select>
+                <p className="mt-1 text-[11px] text-ink/50">
+                  Selecione o gateway ou provedor contratado pelo município.
+                </p>
+              </div>
+
+              <div>
+                <Label className="text-xs font-bold text-sus-950">
+                  DDD Padrão do Município
+                </Label>
+                <Input
+                  value={config.whatsapp_ddd_padrao}
+                  onChange={(e) => setConfig({ ...config, whatsapp_ddd_padrao: e.target.value })}
+                  placeholder="35"
+                  maxLength={2}
+                  className="mt-1 text-xs"
+                />
+                <p className="mt-1 text-[11px] text-ink/50">
+                  Usado automaticamente quando o telefone do paciente é cadastrado sem DDD.
+                </p>
+              </div>
+            </div>
+
+            {/* URL e Instância */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label className="text-xs font-bold text-sus-950">
+                  URL da API / Endpoint
+                </Label>
+                <Input
+                  value={config.whatsapp_api_url}
+                  onChange={(e) => setConfig({ ...config, whatsapp_api_url: e.target.value })}
+                  placeholder="https://api.z-api.io/instances/SUA_INSTANCIA/token/SEU_TOKEN"
+                  className="mt-1 text-xs font-mono"
+                />
+                <p className="mt-1 text-[11px] text-ink/50">
+                  URL completa do endpoint de envio de mensagem de texto.
+                </p>
+              </div>
+
+              <div>
+                <Label className="text-xs font-bold text-sus-950">
+                  Instância ID / Phone Number ID (opcional)
+                </Label>
+                <Input
+                  value={config.whatsapp_instancia_id}
+                  onChange={(e) => setConfig({ ...config, whatsapp_instancia_id: e.target.value })}
+                  placeholder="Ex: 3A59B28D... ou 104928374928"
+                  className="mt-1 text-xs font-mono"
+                />
+                <p className="mt-1 text-[11px] text-ink/50">
+                  ID da instância ou número remetente no provedor.
+                </p>
+              </div>
+            </div>
+
+            {/* Token com toggle */}
+            <div>
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-bold text-sus-950">
+                  Token de Autenticação / Bearer Token / API Key
+                </Label>
+                <button
+                  type="button"
+                  onClick={() => setVerToken(!verToken)}
+                  className="text-[11px] text-teal font-semibold hover:underline"
+                >
+                  {verToken ? "Ocultar token" : "Exibir token"}
+                </button>
+              </div>
+              <Input
+                type={verToken ? "text" : "password"}
+                value={config.whatsapp_api_token}
+                onChange={(e) => setConfig({ ...config, whatsapp_api_token: e.target.value })}
+                placeholder="Token de acesso Bearer ou Client-Token"
+                className="mt-1 text-xs font-mono"
+              />
+              <p className="mt-1 text-[11px] text-ink/50">
+                Armazenado com segurança no servidor e nunca exposto publicamente no repositório.
+              </p>
+            </div>
+
+            {/* Gatilhos de Notificação Automática */}
+            <div className="rounded-xl border border-sus-900/10 p-4 space-y-3">
+              <p className="text-xs font-bold text-sus-950">
+                Gatilhos de Notificação Automática
+              </p>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-sus-900">
+                  <input
+                    type="checkbox"
+                    checked={config.whatsapp_notificar_entrada_fila}
+                    onChange={(e) =>
+                      setConfig({ ...config, whatsapp_notificar_entrada_fila: e.target.checked })
+                    }
+                    className="accent-teal h-4 w-4"
+                  />
+                  <span>1. Entrada na Fila de Exames / Solicitações</span>
+                </label>
+                <p className="text-[11px] text-ink/60 pl-6">
+                  Envia mensagem com o código do pedido, procedimento solicitado e orientações assim que o pedido for lançado pelo PSF ou Central.
+                </p>
+
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-sus-900 pt-1">
+                  <input
+                    type="checkbox"
+                    checked={config.whatsapp_notificar_agendamento}
+                    onChange={(e) =>
+                      setConfig({ ...config, whatsapp_notificar_agendamento: e.target.checked })
+                    }
+                    className="accent-teal h-4 w-4"
+                  />
+                  <span>2. Agendamento Confirmado / Marcação em Lote</span>
+                </label>
+                <p className="text-[11px] text-ink/60 pl-6">
+                  Envia confirmação com data, horário, local/laboratório conveniado e o preparo clínico necessário (jejum de 8 a 12h ou orientações específicas).
+                </p>
+              </div>
+            </div>
+
+            {erro && (
+              <div className="rounded-xl bg-red-50 border border-red-200 p-3 text-xs font-semibold text-red-800">
+                {erro}
+              </div>
+            )}
+
+            {sucesso && (
+              <div className="rounded-xl bg-teal/10 border border-teal/20 p-3 text-xs font-semibold text-teal">
+                ✓ {sucesso}
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2">
+              <Button type="submit" disabled={salvando} className="bg-teal text-white text-xs font-bold px-6">
+                <Save className="h-4 w-4 mr-1.5" />
+                {salvando ? "Salvando…" : "Salvar Configurações do WhatsApp"}
+              </Button>
+            </div>
+          </form>
+        )}
+      </Card>
+
+      {/* Teste de Disparo */}
+      <Card className="max-w-3xl p-6">
+        <div className="flex items-center gap-2 border-b border-sus-900/10 pb-4 mb-4">
+          <Send className="h-5 w-5 text-teal" />
+          <div>
+            <h3 className="font-display text-sm font-bold text-sus-950">
+              Testar Conectividade e Disparo de Mensagem
+            </h3>
+            <p className="text-xs text-ink/60">
+              Envie uma mensagem de teste para o seu próprio WhatsApp para verificar se as credenciais e a URL da API estão funcionando.
+            </p>
+          </div>
+        </div>
+
+        <form onSubmit={testarEnvio} className="space-y-3">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex-1">
+              <Label className="text-xs font-bold text-sus-950">Número de WhatsApp para Teste</Label>
+              <Input
+                value={telefoneTeste}
+                onChange={(e) => setTelefoneTeste(e.target.value)}
+                placeholder="Ex: (35) 99999-9999 ou 35999999999"
+                className="mt-1 text-xs"
+                required
+              />
+            </div>
+            <div className="flex items-end">
+              <Button
+                type="submit"
+                disabled={testando || !telefoneTeste.trim()}
+                className="bg-sus-900 hover:bg-sus-950 text-white text-xs font-bold h-10 w-full sm:w-auto px-5"
+              >
+                {testando ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> Enviando teste…
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-4 w-4 mr-1.5" /> Enviar Mensagem de Teste
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+
+          {resultadoTeste && (
+            <div
+              className={`rounded-xl border p-3.5 text-xs font-medium ${
+                resultadoTeste.sucesso
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+                  : "bg-red-50 border-red-200 text-red-900"
+              }`}
+            >
+              <div className="flex items-center gap-2 font-bold mb-1">
+                {resultadoTeste.sucesso ? (
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                ) : (
+                  <AlertTriangle className="h-4 w-4 text-red-600" />
+                )}
+                <span>{resultadoTeste.sucesso ? "Envio bem-sucedido!" : "Falha no envio"}</span>
+              </div>
+              <p>{resultadoTeste.erro || "Mensagem de teste disparada com sucesso."}</p>
+            </div>
+          )}
+        </form>
+      </Card>
+
+      {/* Histórico / Logs */}
+      <Card className="max-w-3xl p-6">
+        <div className="flex items-center justify-between border-b border-sus-900/10 pb-4 mb-4">
+          <div className="flex items-center gap-2">
+            <History className="h-5 w-5 text-teal" />
+            <div>
+              <h3 className="font-display text-sm font-bold text-sus-950">
+                Histórico Recente de Notificações
+              </h3>
+              <p className="text-xs text-ink/60">
+                Últimos registros de disparos efetuados pelo sistema com status de entrega e erros.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={carregarLogs}
+            disabled={carregandoLogs}
+            className="flex items-center gap-1.5 rounded-lg border border-sus-900/15 px-3 py-1.5 text-xs font-bold text-sus-900 hover:bg-sand transition"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${carregandoLogs ? "animate-spin" : ""}`} />
+            Atualizar
+          </button>
+        </div>
+
+        {logs.length === 0 ? (
+          <p className="text-center py-6 text-xs text-ink/50">
+            Nenhuma notificação registrada ainda.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="border-b border-sus-900/10 text-[10px] uppercase font-bold text-ink/50">
+                <tr>
+                  <th className="py-2 px-2">Data/Hora</th>
+                  <th className="py-2 px-2">Evento</th>
+                  <th className="py-2 px-2">Telefone</th>
+                  <th className="py-2 px-2">Status</th>
+                  <th className="py-2 px-2">Detalhes</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-sus-900/5">
+                {logs.map((log) => (
+                  <tr key={log.id} className="hover:bg-sand/30">
+                    <td className="py-2.5 px-2 text-ink/70 whitespace-nowrap">
+                      {new Date(log.criado_em).toLocaleString("pt-BR")}
+                    </td>
+                    <td className="py-2.5 px-2 font-semibold text-sus-950 capitalize">
+                      {log.tipo_evento?.replace("_", " ") || "Notificação"}
+                    </td>
+                    <td className="py-2.5 px-2 font-mono text-ink/80">
+                      {log.telefone_destinatario}
+                    </td>
+                    <td className="py-2.5 px-2 whitespace-nowrap">
+                      <span
+                        className={`inline-block rounded px-2 py-0.5 text-[10px] font-bold ${
+                          log.status === "enviado"
+                            ? "bg-emerald-100 text-emerald-800"
+                            : log.status === "erro"
+                            ? "bg-red-100 text-red-800"
+                            : "bg-amber-100 text-amber-800"
+                        }`}
+                      >
+                        {log.status?.toUpperCase()}
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-2 text-[11px] text-ink/60 truncate max-w-xs" title={log.erro || log.mensagem}>
+                      {log.erro ? (
+                        <span className="text-red-600 font-semibold">{log.erro}</span>
+                      ) : (
+                        log.mensagem || "—"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
   );
 }
 

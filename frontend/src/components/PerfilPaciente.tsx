@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { CalendarDays, ListOrdered, MapPin, User } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { CalendarDays, ExternalLink, ListOrdered, MapPin, User } from "lucide-react";
 import { tfdPerfilPaciente, type PacientePerfil } from "../services/api";
 import ExportarExcel from "./ExportarExcel";
 
@@ -28,6 +29,7 @@ const RISCO_COR: Record<string, string> = {
 };
 
 export default function PerfilPaciente({ pid }: { pid: number }) {
+  const navigate = useNavigate();
   const [perfil, setPerfil] = useState<PacientePerfil | null>(null);
   const [erro, setErro] = useState("");
 
@@ -128,11 +130,17 @@ export default function PerfilPaciente({ pid }: { pid: number }) {
                           <th className="px-3 py-2">Classificação de risco</th>
                           <th className="px-3 py-2">Posição na fila</th>
                           <th className="px-3 py-2">Status</th>
+                          <th className="px-3 py-2 text-right">Ação</th>
                         </tr>
                       </thead>
                       <tbody>
                         {itens.map((d) => (
-                          <tr key={d.id} className="border-b border-sus-900/5 last:border-0 hover:bg-sand/30">
+                          <tr
+                            key={d.id}
+                            onClick={() => navigate(`/fila-exames?registro=${d.id}&q=${d.id}`)}
+                            className="group cursor-pointer border-b border-sus-900/5 transition-colors last:border-0 hover:bg-teal/10"
+                            title="Clique para visualizar e gerenciar esta solicitação na Fila de Exames"
+                          >
                             <td className="px-3 py-2 font-semibold">
                               {d.data_pedido ? d.data_pedido.split("-").reverse().join("/") : (d.data_inclusao || "—")}
                             </td>
@@ -156,6 +164,20 @@ export default function PerfilPaciente({ pid }: { pid: number }) {
                                   {d.data_agendada.slice(0, 10).split("-").reverse().join("/")}{d.hora_agendada ? ` · ${d.hora_agendada}` : ""}
                                 </span>
                               )}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate(`/fila-exames?registro=${d.id}&q=${d.id}`);
+                                }}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-sus-900/15 bg-white px-2.5 py-1 text-[11px] font-bold text-sus-900 shadow-2xs transition-colors hover:bg-sus-900 hover:text-white"
+                                title="Abrir solicitação na fila"
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                                <span>Ver na fila</span>
+                              </button>
                             </td>
                           </tr>
                         ))}

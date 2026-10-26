@@ -31,12 +31,12 @@ import LabSigtap from "./pages/lab/LabSigtap";
 import AcompanharExame from "./pages/AcompanharExame";
 import Auditoria from "./pages/Auditoria";
 import FilaExames from "./pages/tfd/FilaExames";
+import NovaSolicitacao from "./pages/tfd/NovaSolicitacao";
+import RelatorioAgendados from "./pages/tfd/RelatorioAgendados";
 import Indicadores from "./pages/Indicadores";
 import ApsPainel from "./pages/aps/ApsPainel";
 import Configuracoes from "./pages/Configuracoes";
 import PainelMedico from "./pages/PainelMedico";
-import Medicos from "./pages/Medicos";
-import UnidadesSaude from "./pages/UnidadesSaude";
 import ApacSolicitacao from "./pages/apac/ApacSolicitacao";
 import ApacRegulacao from "./pages/apac/ApacRegulacao";
 import ApacFaturamento from "./pages/apac/ApacFaturamento";
@@ -80,7 +80,7 @@ function LabGuard({ tela, telas, children }: { tela: string; telas?: string[]; c
 function TfdRoutes() {
   return (
     <Protected>
-      <GuardQualquer telas={["tfd", "tfd_resumo", "tfd_viagens", "tfd_pacientes", "tfd_exames", "tfd_agenda", "tfd_catalogo", "tfd_destinos", "tfd_frota", "tfd_frota_gestao", "tfd_faturamento"]}>
+      <GuardQualquer telas={["tfd", "tfd_resumo", "tfd_viagens", "tfd_pacientes", "tfd_exames", "tfd_fila_lancamento", "tfd_agenda", "tfd_catalogo", "tfd_destinos", "tfd_frota", "tfd_frota_gestao", "tfd_faturamento"]}>
         <Shell>
           <TfdLayout />
         </Shell>
@@ -120,6 +120,8 @@ export default function App() {
               </GuardQualquer>
             </Protected>
           } />
+          <Route path="/solicitacoes/nova" element={<Navigate to="/tfd/solicitacoes/nova" replace />} />
+          <Route path="/solicitacoes" element={<Navigate to="/fila-exames" replace />} />
           <Route path="/painel-medico" element={
             <Protected>
               <Guard tela="tfd_medico">
@@ -165,6 +167,8 @@ export default function App() {
           />
           <Route path="/tfd" element={<TfdRoutes />}>
             <Route index element={<Guard tela="tfd_resumo"><TfdResumo /></Guard>} />
+            <Route path="solicitacoes/nova" element={<GuardQualquer telas={["tfd_exames", "tfd_fila_lancamento", "tfd"]}><NovaSolicitacao /></GuardQualquer>} />
+            <Route path="relatorio-agendados" element={<GuardQualquer telas={["tfd_agenda", "tfd_exames", "tfd", "usuarios"]}><RelatorioAgendados /></GuardQualquer>} />
             <Route path="viagens" element={<Guard tela="tfd_viagens"><TfdViagens /></Guard>} />
             <Route path="quadro" element={<GuardQualquer telas={["tfd_viagens", "tfd_frota_gestao"]}><QuadroViagens /></GuardQualquer>} />
             <Route path="pacientes" element={<Guard tela="tfd_pacientes"><TfdPacientes /></Guard>} />

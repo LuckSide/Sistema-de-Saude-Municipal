@@ -2,8 +2,8 @@ import re
 import threading
 import time
 import unicodedata
-from datetime import date, datetime
-from typing import Any, Optional
+from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import text
 from sqlmodel import Session, select
@@ -66,6 +66,26 @@ def comparar_nomes_mae(mae1: Optional[str], mae2: Optional[str]) -> bool:
     p1 = n1.split()[0]
     p2 = n2.split()[0]
     return p1 == p2
+
+
+def calcular_completude_endereco(logr: str, num: str, comp: str, bairro: str, cep: str) -> int:
+    """Calcula score de completude e qualidade do endereço para priorização contra duplicatas."""
+    score = 0
+    l_clean = (logr or "").strip().upper()
+    if l_clean and len(l_clean) > 3 and not any(x in l_clean for x in ("SEM NOME", "NAO INFORMADO", "NÃO INFORMADO", "IGNORADO", "SN", "S/N")):
+        score += 4
+    n_clean = (num or "").strip().upper()
+    if n_clean and n_clean not in ("S/N", "SN", "0", "SEM NUMERO", "SEM NÚMERO", "NAO INFORMADO", "NÃO INFORMADO"):
+        score += 3
+    b_clean = (bairro or "").strip().upper()
+    if b_clean and len(b_clean) > 2 and not any(x in b_clean for x in ("NAO INFORMADO", "NÃO INFORMADO", "IGNORADO")):
+        score += 2
+    c_clean = "".join(c for c in (cep or "") if c.isdigit())
+    if len(c_clean) == 8:
+        score += 2
+    if comp and comp.strip():
+        score += 1
+    return score
 
 
 def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog:
@@ -327,24 +347,49 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
                                 if not p.telefone and tel_limpo:
                                     p.telefone = tel_limpo
 
-                                # Atualiza endereço se preenchido
+                                # Atualiza endereço priorizando o registro mais completo e atualizado (Item 5)
                                 logr_p = str(row_map.get("ds_logradouro") or "").strip()
+                                num_p = str(row_map.get("nu_numero") or "").strip()
+                                comp_p = str(row_map.get("ds_complemento") or "").strip()
                                 bairro_p = str(row_map.get("no_bairro") or "").strip()
-                                if logr_p or bairro_p:
+                                cep_p = str(row_map.get("ds_cep") or "").strip()
+                                muni_p = str(row_map.get("no_municipio") or "").strip()
+                                pt_ref_p = str(row_map.get("ds_ponto_referencia") or "").strip()
+
+                                score_novo = calcular_completude_endereco(logr_p, num_p, comp_p, bairro_p, cep_p)
+                                score_atual = calcular_completude_endereco(p.endereco or "", p.endereco_numero or "", p.complemento or "", p.bairro or "", p.cep or "")
+
+                                if score_novo >= score_atual and (logr_p or bairro_p):
                                     if logr_p:
-                                        p.endereco = str(logr_p)[:255]
-                                    if str(row_map.get("nu_numero") or "").strip():
-                                        p.endereco_numero = str(row_map.get("nu_numero")).strip()[:20]
-                                    if str(row_map.get("ds_complemento") or "").strip():
-                                        p.complemento = str(row_map.get("ds_complemento")).strip()[:100]
+                                        p.endereco = logr_p[:255]
+                                    if num_p:
+                                        p.endereco_numero = num_p[:20]
+                                    if comp_p:
+                                        p.complemento = comp_p[:100]
                                     if bairro_p:
-                                        p.bairro = str(bairro_p)[:100]
-                                    if str(row_map.get("ds_cep") or "").strip():
-                                        p.cep = str(row_map.get("ds_cep")).strip()[:10]
-                                    if str(row_map.get("no_municipio") or "").strip():
-                                        p.municipio = str(row_map.get("no_municipio")).strip()[:100]
-                                    if str(row_map.get("ds_ponto_referencia") or "").strip():
-                                        p.ponto_referencia = str(row_map.get("ds_ponto_referencia")).strip()[:150]
+                                        p.bairro = bairro_p[:100]
+                                    if cep_p:
+                                        p.cep = cep_p[:10]
+                                    if muni_p:
+                                        p.municipio = muni_p[:100]
+                                    if pt_ref_p:
+                                        p.ponto_referencia = pt_ref_p[:150]
+                                else:
+                                    # Preserva endereço atual mais completo e preenche apenas campos faltantes
+                                    if not p.endereco and logr_p:
+                                        p.endereco = logr_p[:255]
+                                    if not p.endereco_numero and num_p:
+                                        p.endereco_numero = num_p[:20]
+                                    if not p.complemento and comp_p:
+                                        p.complemento = comp_p[:100]
+                                    if not p.bairro and bairro_p:
+                                        p.bairro = bairro_p[:100]
+                                    if not p.cep and cep_p:
+                                        p.cep = cep_p[:10]
+                                    if not p.municipio and muni_p:
+                                        p.municipio = muni_p[:100]
+                                    if not p.ponto_referencia and pt_ref_p:
+                                        p.ponto_referencia = pt_ref_p[:150]
 
                                 # Atualiza território / APS
                                 if cnes_raw:

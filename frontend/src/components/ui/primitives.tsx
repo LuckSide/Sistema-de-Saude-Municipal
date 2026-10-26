@@ -6,15 +6,29 @@ export function cn(...inputs: (string | undefined | false)[]) {
   return twMerge(clsx(inputs));
 }
 
+export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: "default" | "outline" | "ghost" | "danger" | "secondary";
+}
+
 export function Button({
   className,
+  variant = "default",
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement>) {
+}: ButtonProps) {
+  const variantStyles = {
+    default: "bg-sus-900 text-white hover:bg-sus-800",
+    outline: "border border-sus-900/20 bg-white text-sus-900 hover:bg-sus-50",
+    ghost: "bg-transparent text-sus-900 hover:bg-sus-100/60",
+    danger: "bg-rose-600 text-white hover:bg-rose-700",
+    secondary: "bg-sus-100 text-sus-900 hover:bg-sus-200",
+  }[variant] || "bg-sus-900 text-white hover:bg-sus-800";
+
   return (
     <button
       {...props}
       className={cn(
-        "inline-flex h-11 min-h-[44px] items-center justify-center gap-2 rounded-xl bg-sus-900 px-4 py-2.5 font-display text-sm font-semibold text-white transition hover:bg-sus-800 active:scale-[.99] disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex h-11 min-h-[44px] items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-display text-sm font-semibold transition active:scale-[.99] disabled:cursor-not-allowed disabled:opacity-50",
+        variantStyles,
         className
       )}
     />

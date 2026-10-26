@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Building2, Calendar, CheckCircle2, Copy, Download, Eye, MapPin, Pencil, Plus, Printer, QrCode, RefreshCw, Search, Stethoscope, Trash2, X } from "lucide-react";
 import {
@@ -9,6 +9,7 @@ import {
   tfdCatalogoExames,
   tfdConsultarExamePublico,
   tfdCriarExame,
+  tfdExameDetalhe,
   tfdExames,
   tfdExcluirExame,
   tfdFiltrosOpcoes,
@@ -39,6 +40,7 @@ import { Combobox, type ComboOption } from "../../components/ui/combobox";
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
 import PerfilPaciente from "../../components/PerfilPaciente";
+import BotaoWhatsApp from "../../components/BotaoWhatsApp";
 import { PRIO_ROTULO } from "../../utils/rotulos";
 
 const STATUS = ["aguardando", "agendado", "realizado", "cancelado"];
@@ -165,6 +167,7 @@ export default function FilaExames() {
   const [opProcs, setOpProcs] = useState<OpcaoFiltro[]>([]);
   const [opEsps, setOpEsps] = useState<OpcaoFiltro[]>([]);
   const [dest, setDest] = useState("");
+  const [filtroUnidadeId, setFiltroUnidadeId] = useState("");
   const [de, setDe] = useState("");
   const [ate, setAte] = useState("");
   const [modal, setModal] = useState(false);
@@ -220,27 +223,32 @@ export default function FilaExames() {
   const [modoVisualizacao, setModoVisualizacao] = useState<"tipo" | "especialidade" | "ambas">("ambas");
   // Modal de seleção de colunas para exportação
   const [exportModal, setExportModal] = useState(false);
+  const [exportarApenasSel, setExportarApenasSel] = useState(false);
   const COLUNAS_EXPORTACAO = [
-    { id: "codigo_curto", label: "ID do Pedido (Imutável)", padrao: true },
-    { id: "posicao", label: "Posição na fila (Geral/Legado)", padrao: true },
-    { id: "posicao_tipo", label: "Posição por Tipo de Fila", padrao: true },
-    { id: "posicao_especialidade", label: "Posição por Especialidade", padrao: true },
-    { id: "prontuario", label: "Prontuário do Paciente", padrao: true },
-    { id: "paciente_nome", label: "Paciente (Nome, CPF e CNS)", padrao: true },
-    { id: "endereco_completo", label: "Endereço Completo", padrao: true },
-    { id: "logradouro", label: "Logradouro / Rua", padrao: false },
-    { id: "numero", label: "Número do Endereço", padrao: false },
-    { id: "bairro", label: "Bairro", padrao: false },
+    { id: "codigo_curto", label: "ID do Pedido", padrao: true },
+    { id: "posicao", label: "Posição", padrao: true },
+    { id: "posicao_tipo", label: "Posição Geral da Fila SUS", padrao: true },
+    { id: "posicao_especialidade", label: "Posição Especialidade", padrao: true },
+    { id: "prioridade", label: "Prioridade / Classificação de risco", padrao: true },
+    { id: "status", label: "Status", padrao: true },
+    { id: "data_pedido", label: "Data do Envio para Fila", padrao: true },
+    { id: "exame", label: "Procedimento", padrao: true },
+    { id: "especialidade", label: "Especialidade", padrao: true },
+    { id: "prontuario", label: "Prontuário", padrao: true },
+    { id: "paciente", label: "Paciente", padrao: true },
+    { id: "cpf", label: "CPF", padrao: true },
+    { id: "cns", label: "Cartão SUS / CNS", padrao: true },
+    { id: "logradouro", label: "Logradouro", padrao: true },
+    { id: "numero", label: "Número", padrao: true },
+    { id: "bairro", label: "Bairro", padrao: true },
+    { id: "complemento", label: "Complemento", padrao: false },
     { id: "municipio", label: "Município", padrao: false },
     { id: "cep", label: "CEP", padrao: false },
-    { id: "exame", label: "Procedimento", padrao: true },
-    { id: "codigo_procedimento", label: "Código do Procedimento", padrao: true },
-    { id: "especialidade", label: "Especialidade", padrao: true },
-    { id: "prioridade", label: "Prioridade", padrao: true },
-    { id: "status", label: "Status", padrao: true },
-    { id: "data_pedido", label: "Data do Pedido", padrao: true },
+    { id: "telefone", label: "Telefone", padrao: false },
+    { id: "endereco_completo", label: "Endereço Completo", padrao: false },
+    { id: "codigo_procedimento", label: "Código do Procedimento", padrao: false },
+    { id: "tipo_fila", label: "Fila específica", padrao: false },
     { id: "data_agendada", label: "Data Agendada", padrao: false },
-    { id: "tipo_fila", label: "Tipo de Fila", padrao: false },
     { id: "destino", label: "Destino/Unidade", padrao: false },
     { id: "observacoes", label: "Observações", padrao: false },
     { id: "numero_pedido", label: "Nº do Pedido", padrao: false },
@@ -447,6 +455,7 @@ export default function FilaExames() {
       procedimento: procAtual.trim() || undefined,
       codigo_especialidade: espAtual.trim() || undefined,
       destino: dest.trim() || undefined,
+      unidade_id: filtroUnidadeId ? Number(filtroUnidadeId) : undefined,
       data_de: de || undefined,
       data_ate: ate || undefined,
       ordenacao: ordAtual,
@@ -518,18 +527,22 @@ export default function FilaExames() {
   }, []);
 
   useEffect(() => {
-    const rid = Number(sp.get("registro"));
+    const rid = Number(sp.get("registro") || sp.get("id"));
+    const sq = sp.get("q");
+    if (sq && !q) {
+      setQ(sq);
+      setFiltro("");
+    }
     if (!rid || detalhe) return;
     const found = lista.find((x) => x.id === rid);
-    if (found) setDetalhe(found);
-  }, [sp, lista, detalhe]);
-
-  useEffect(() => {
-    const rid = Number(sp.get("registro"));
-    if (!rid || detalhe) return;
-    const found = lista.find((x) => x.id === rid);
-    if (found) setDetalhe(found);
-  }, [sp, lista, detalhe]);
+    if (found) {
+      setDetalhe(found);
+    } else {
+      tfdExameDetalhe(rid).then((item) => {
+        if (item) setDetalhe(item);
+      }).catch(() => {});
+    }
+  }, [sp, lista, detalhe, q]);
 
   useEffect(() => {
     const t = setTimeout(() => setBuscaDebounce(buscaPac), 250);
@@ -983,7 +996,13 @@ export default function FilaExames() {
             {total} no filtro · {badgeTotal} na fila
           </span>
         </div>
-        <Button onClick={() => abrirModal()}><Plus className="h-4 w-4" /> Novo pedido</Button>
+        <div className="flex items-center gap-2">
+          <Link to="/tfd/solicitacoes/nova">
+            <Button className="bg-teal text-white hover:brightness-110 text-xs shadow-xs font-bold flex items-center gap-1.5">
+              <Plus className="h-4 w-4" /> Nova Solicitação
+            </Button>
+          </Link>
+        </div>
       </div>
       {erro && !modal && !comprovante && (
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-red-50 px-4 py-2.5 text-sm text-red-700 print:hidden">
@@ -1115,9 +1134,24 @@ export default function FilaExames() {
 
             {filtrosAvancados && (
               <div className="grid gap-3 rounded-2xl bg-sand/50 p-3 sm:grid-cols-2 md:grid-cols-4">
-                <div className="sm:col-span-2">
-                  <Label>Unidade / destino</Label>
-                  <Input placeholder="Ex: ESF Centro" value={dest} onChange={(e) => setDest(e.target.value)} />
+                <div>
+                  <Label>Unidade de Saúde (PSF)</Label>
+                  <select
+                    value={filtroUnidadeId}
+                    onChange={(e) => setFiltroUnidadeId(e.target.value)}
+                    className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-xs font-medium text-sus-950 outline-none transition focus:border-teal"
+                  >
+                    <option value="">Todas as unidades</option>
+                    {unidades.map((u) => (
+                      <option key={u.id} value={String(u.id)}>
+                        {u.nome}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <Label>Destino</Label>
+                  <Input placeholder="Ex: Hospital ou Município" value={dest} onChange={(e) => setDest(e.target.value)} />
                 </div>
                 <div>
                   <Label>De</Label>
@@ -1188,14 +1222,17 @@ export default function FilaExames() {
                 </Button>
                 <button
                   type="button"
-                  onClick={() => { setQ(""); setPrio(""); setTipoFila(""); setProc(""); setEspCbo(""); setDest(""); setDe(""); setAte(""); setFiltro("aguardando"); setSoMeus(false); setFiltrosAvancados(false); setPage(1); carregar(1, { tipo: "", proc: "", esp: "" }).catch(() => {}); }}
+                  onClick={() => { setQ(""); setPrio(""); setTipoFila(""); setProc(""); setEspCbo(""); setDest(""); setFiltroUnidadeId(""); setDe(""); setAte(""); setFiltro("aguardando"); setSoMeus(false); setFiltrosAvancados(false); setPage(1); carregar(1, { tipo: "", proc: "", esp: "" }).catch(() => {}); }}
                   className="rounded-xl px-3 py-2 text-xs font-semibold text-ink/70 hover:bg-sus-900/5 transition"
                 >
                   Limpar
                 </button>
                 <button
                   type="button"
-                  onClick={() => setExportModal(true)}
+                  onClick={() => {
+                    setExportarApenasSel(sel.length > 0);
+                    setExportModal(true);
+                  }}
                   className="inline-flex min-h-[38px] items-center gap-1.5 rounded-xl border border-sus-900/15 bg-white px-3.5 py-1.5 text-xs font-bold text-sus-900 hover:bg-sus-900/5 transition shadow-xs"
                   title="Selecionar colunas e exportar a fila para arquivo Excel"
                 >
@@ -1212,6 +1249,17 @@ export default function FilaExames() {
             <span className="font-semibold">{sel.length} selecionado(s)</span>
             <button onClick={() => setSel([])} className="rounded-lg px-2 py-1 text-xs text-white/70 hover:bg-white/10 hover:text-white">Limpar</button>
             <div className="ml-auto flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setExportarApenasSel(true);
+                  setExportModal(true);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-white/20 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/30 transition shadow-xs"
+                title="Exportar apenas os pacientes selecionados para planilha Excel"
+              >
+                <Download className="h-3.5 w-3.5" /> Exportar selecionados ({sel.length})
+              </button>
               <button onClick={() => abrirLote("agendar")} className="rounded-xl bg-teal px-3 py-1.5 text-xs font-bold text-white hover:brightness-110">Agendar em lote</button>
               <button onClick={() => abrirLote("status")} className="rounded-xl bg-white/15 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/25">Alterar status em lote</button>
               <button onClick={() => abrirLote("editar")} className="rounded-xl bg-white/15 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/25">Modificar em conjunto</button>
@@ -1339,7 +1387,8 @@ export default function FilaExames() {
                   </td>
                 )}
                 <td className="px-4 py-3 text-xs">{e.status}{e.data_agendada ? ` · ${fmtData(e.data_agendada)}` : ""}</td>
-                <td className="px-4 py-3"><div className="flex justify-end gap-1">
+                <td className="px-4 py-3"><div className="flex items-center justify-end gap-1">
+                  <BotaoWhatsApp exameId={e.id} exame={e} variante="compacto" />
                   <button onClick={() => setDetalhe(e)} className="rounded-lg p-2 text-sus-900 hover:bg-sand" title="Detalhes"><Eye className="h-4 w-4" /></button>
                   {e.public_token && (
                     <button onClick={() => setComprovante(e)} className="rounded-lg p-2 text-teal hover:bg-teal/10" title="Comprovante / QR"><QrCode className="h-4 w-4" /></button>
@@ -2350,6 +2399,7 @@ export default function FilaExames() {
               </div>
               </div>
               <div className="space-y-4">
+              <BotaoWhatsApp exameId={detalhe.id} exame={detalhe} variante="card" />
               <div className="rounded-2xl border border-sus-900/10 p-4">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-sus-900/50">Rastreio público</p>
                 {detalhe.public_token ? (
@@ -2401,12 +2451,42 @@ export default function FilaExames() {
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <p className="font-display text-base font-bold text-sus-950">Exportar Fila para Excel (.xlsx)</p>
-                  <p className="text-xs text-ink/60">Selecione as colunas desejadas ({colunasExport.length} de {COLUNAS_EXPORTACAO.length} selecionadas)</p>
+                  <p className="text-xs text-ink/60">
+                    {sel.length > 0 && exportarApenasSel
+                      ? `Exportando apenas os ${sel.length} paciente(s) selecionado(s)`
+                      : "Exportando todos os registros do filtro ativo"}
+                    {" · "}
+                    {colunasExport.length} de {COLUNAS_EXPORTACAO.length} colunas selecionadas
+                  </p>
                 </div>
                 <button onClick={() => setExportModal(false)} className="rounded-lg p-2 text-ink/50 hover:bg-sand transition" aria-label="Fechar">
                   <X className="h-4 w-4" />
                 </button>
               </div>
+
+              {sel.length > 0 && (
+                <div className="mb-3 flex items-center justify-between rounded-xl border border-teal/30 bg-teal/5 px-3.5 py-2 text-xs text-sus-950">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-teal shrink-0" />
+                    <span>
+                      {exportarApenasSel ? (
+                        <>Exportando <strong>apenas os {sel.length} paciente(s) selecionado(s)</strong> na tabela.</>
+                      ) : (
+                        <>Exportando <strong>todos os registros do filtro ativo</strong> (ignorando a seleção).</>
+                      )}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setExportarApenasSel(!exportarApenasSel)}
+                    className="font-bold text-teal hover:underline ml-2 whitespace-nowrap"
+                  >
+                    {exportarApenasSel
+                      ? "Alternar para: Exportar todos do filtro"
+                      : `Alternar para: Exportar apenas selecionados (${sel.length})`}
+                  </button>
+                </div>
+              )}
 
               {/* Botões de Ação Permanentes no Topo */}
               <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -2435,7 +2515,7 @@ export default function FilaExames() {
                 <div className="ml-auto">
                   <ExportarExcel
                     url="/api/tfd/exames/exportar"
-                    arquivo="fila_procedimentos"
+                    arquivo={sel.length > 0 && exportarApenasSel ? `fila_selecionados_${sel.length}` : "fila_procedimentos"}
                     params={{
                       status: filtro || undefined,
                       q: q.trim() || undefined,
@@ -2444,13 +2524,15 @@ export default function FilaExames() {
                       procedimento: proc.trim() || undefined,
                       codigo_especialidade: espCbo.trim() || undefined,
                       destino: dest.trim() || undefined,
+                      unidade_id: filtroUnidadeId ? Number(filtroUnidadeId) : undefined,
                       data_de: de || undefined,
                       data_ate: ate || undefined,
                       meus: soMeus || undefined,
                       ordenacao: ordem,
                       colunas: colunasExport.join(","),
+                      ids: (sel.length > 0 && exportarApenasSel) ? sel.join(",") : undefined,
                     }}
-                    rotulo="Baixar / Exportar Excel"
+                    rotulo={sel.length > 0 && exportarApenasSel ? `Exportar ${sel.length} selecionado(s)` : "Baixar / Exportar Excel"}
                     className="inline-flex min-h-[38px] items-center gap-2 rounded-xl bg-teal px-4 py-2 text-xs font-bold text-white shadow-sm hover:brightness-110 transition disabled:opacity-50"
                   />
                 </div>

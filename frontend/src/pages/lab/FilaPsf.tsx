@@ -9,7 +9,6 @@ import {
   Plus,
   Stethoscope,
   Trash2,
-  User,
   X,
 } from "lucide-react";
 import {
@@ -310,7 +309,12 @@ export default function FilaPsf() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 ml-auto">
-          <ExportarExcel url="/api/exames/fila-psf/exportar" arquivo="fila_exames" />
+          <ExportarExcel
+            url="/api/exames/fila-psf/exportar"
+            arquivo={selecionados.size > 0 ? `fila_exames_selecionados_${selecionados.size}` : "fila_exames"}
+            rotulo={selecionados.size > 0 ? `Exportar selecionados (${selecionados.size})` : "Exportar Excel"}
+            params={selecionados.size > 0 ? { ids: Array.from(selecionados).join(",") } : undefined}
+          />
 
           {/* Botão de Agendamento em Lote */}
           <Button

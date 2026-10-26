@@ -7,24 +7,19 @@ import {
   Copy,
   Trash2,
   FileText,
-  Upload,
   AlertCircle,
   CheckCircle2,
-  XCircle,
   Clock,
   Filter,
   User,
   Hospital,
   Stethoscope,
-  ChevronRight,
-  ExternalLink,
   Paperclip,
   X,
   RefreshCw,
 } from "lucide-react";
 import {
   fetchApacSolicitacoes,
-  fetchApacSolicitacao,
   criarApacSolicitacao,
   atualizarApacSolicitacao,
   duplicarApacContinuidade,
@@ -48,11 +43,9 @@ import {
 import { Button, Card, Input, Label, Badge } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
-import { useAuth } from "../../hooks/useAuth";
 import LaudoApacPrint from "./LaudoApacPrint";
 
 export default function ApacSolicitacao() {
-  const { user } = useAuth();
 
   // Estados da Listagem
   const [solicitacoes, setSolicitacoes] = useState<SolicitacaoApac[]>([]);
@@ -87,7 +80,6 @@ export default function ApacSolicitacao() {
   const [buscaPaciente, setBuscaPaciente] = useState("");
   const [pacientesSugestoes, setPacientesSugestoes] = useState<Paciente[]>([]);
   const [buscandoPacientes, setBuscandoPacientes] = useState(false);
-  const [pacienteSelecionado, setPacienteSelecionado] = useState<Paciente | null>(null);
 
   // Campos do formulário
   const [pacienteId, setPacienteId] = useState<number>(0);
@@ -108,7 +100,6 @@ export default function ApacSolicitacao() {
   const [unidadeExecutanteId, setUnidadeExecutanteId] = useState<number | "">("");
 
   // Procedimento Principal
-  const [filtroSigtap, setFiltroSigtap] = useState("");
   const [sigtapSelecionado, setSigtapSelecionado] = useState<ItemSigtapApac | null>(null);
   const [qtdMes1, setQtdMes1] = useState<number>(1);
   const [qtdMes2, setQtdMes2] = useState<number>(1);
@@ -119,9 +110,7 @@ export default function ApacSolicitacao() {
   const [filtroSecundario, setFiltroSecundario] = useState("");
 
   // Dados Clínicos
-  const [filtroCidPrincipal, setFiltroCidPrincipal] = useState("");
   const [cidPrincipal, setCidPrincipal] = useState<CidItem | null>(null);
-  const [filtroCidSecundario, setFiltroCidSecundario] = useState("");
   const [cidSecundario, setCidSecundario] = useState<CidItem | null>(null);
   const [estadiamento, setEstadiamento] = useState("");
   const [anamnese, setAnamnese] = useState("");
@@ -204,7 +193,6 @@ export default function ApacSolicitacao() {
 
   // Selecionar paciente e auto-preencher
   const selecionarPaciente = (pac: Paciente) => {
-    setPacienteSelecionado(pac);
     setPacienteId(pac.id);
     setPacienteNome(pac.nome);
     setPacienteCpf(pac.cpf || "");
@@ -263,7 +251,6 @@ export default function ApacSolicitacao() {
   // Reset do formulário
   const limparFormulario = () => {
     setEditandoId(null);
-    setPacienteSelecionado(null);
     setPacienteId(0);
     setPacienteNome("");
     setPacienteCpf("");

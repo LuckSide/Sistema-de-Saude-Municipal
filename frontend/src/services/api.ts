@@ -257,6 +257,65 @@ export const fetchPecSyncStatus = () =>
 export const fetchPecSyncLogs = (limite = 15) =>
   api.get<PecSyncLogItem[]>("/api/integracoes/pec/sync/logs", { params: { limite } }).then((r) => r.data);
 
+export type WhatsAppPreview = {
+  exame_id?: number;
+  paciente_id?: number;
+  paciente_nome: string;
+  telefone_original: string;
+  telefone_formatado: string;
+  telefone_whatsapp: string | null;
+  tipo_evento: string;
+  mensagem: string;
+  link_whatsapp: string;
+  whatsapp_configurado: boolean;
+  whatsapp_habilitado: boolean;
+};
+
+export type WhatsAppConfig = {
+  whatsapp_habilitado: boolean;
+  whatsapp_provedor: string;
+  whatsapp_api_url: string;
+  whatsapp_token_configurado: boolean;
+  whatsapp_api_token?: string;
+  whatsapp_instancia_id: string;
+  whatsapp_notificar_entrada_fila: boolean;
+  whatsapp_notificar_agendamento: boolean;
+  whatsapp_ddd_padrao: string;
+};
+
+export type WhatsAppLogItem = {
+  id: number;
+  criado_em: string;
+  exame_id?: number;
+  paciente_id?: number;
+  tipo_evento: string;
+  telefone_destinatario: string;
+  paciente_nome: string;
+  mensagem: string;
+  status: string;
+  sucesso: boolean;
+  resposta_gateway?: string;
+  erro?: string;
+};
+
+export const whatsappPreview = (exameId: number, tipo: string = "auto") =>
+  api.get<WhatsAppPreview>("/api/whatsapp/preview", { params: { exame_id: exameId, tipo } }).then((r) => r.data);
+
+export const whatsappEnviar = (payload: { exame_id: number; tipo?: string; telefone_customizado?: string; mensagem_customizada?: string }) =>
+  api.post<{ sucesso: boolean; telefone?: string; status: string; erro?: string; mensagem?: string }>("/api/whatsapp/enviar", payload).then((r) => r.data);
+
+export const whatsappObterConfig = () =>
+  api.get<WhatsAppConfig>("/api/whatsapp/configuracao").then((r) => r.data);
+
+export const whatsappSalvarConfig = (p: Partial<WhatsAppConfig> & { whatsapp_api_token?: string }) =>
+  api.put<WhatsAppConfig>("/api/whatsapp/configuracao", p).then((r) => r.data);
+
+export const whatsappTestar = (telefone: string, mensagem?: string) =>
+  api.post<{ sucesso: boolean; erro?: string; status: string }>("/api/whatsapp/testar", { telefone, mensagem }).then((r) => r.data);
+
+export const whatsappLogs = (limit = 30) =>
+  api.get<WhatsAppLogItem[]>("/api/whatsapp/logs", { params: { limit } }).then((r) => r.data);
+
 export const sincronizarPecPacientes = (background = true) =>
   api.post<{
     ok: boolean;
@@ -360,8 +419,10 @@ export type AuditEstatisticas = {
 };
 export const fetchAuditLogs = (params: { data_de?: string; data_ate?: string; usuario?: string; acao?: string; entidade?: string; page?: number; limit?: number }) =>
   api.get<Pagina<AuditLog> | AuditLog[]>("/api/auditoria/logs", { params }).then((r) => r.data);
+export type FiltroItemAuditoria = string | { valor: string; rotulo: string };
+
 export const fetchAuditFiltros = () =>
-  api.get<{ acoes: string[]; entidades: string[]; usuarios: string[] }>("/api/auditoria/filtros").then((r) => r.data);
+  api.get<{ acoes: FiltroItemAuditoria[]; entidades: FiltroItemAuditoria[]; usuarios: string[] }>("/api/auditoria/filtros").then((r) => r.data);
 export const fetchAuditEstatisticas = () =>
   api.get<AuditEstatisticas>("/api/auditoria/estatisticas").then((r) => r.data);
 export const executarRotacaoAudit = (meses_retencao: number = 6, arquivar: boolean = true) =>
@@ -722,6 +783,8 @@ export const tfdResumo = (competencia?: string) =>
 
 export const tfdPacientes = (q?: string, page?: number, limit?: number) =>
   api.get<Pagina<Paciente> | Paciente[]>("/api/tfd/pacientes", { params: { q, page, limit } }).then((r) => r.data);
+export const tfdPaciente = (id: number) =>
+  api.get<Paciente>(`/api/tfd/pacientes/${id}`).then((r) => r.data);
 export const tfdCriarPaciente = (p: Record<string, unknown>) =>
   api.post<Paciente>("/api/tfd/pacientes", p).then((r) => r.data);
 export const tfdAtualizarPaciente = (id: number, p: Record<string, unknown>) =>
@@ -854,9 +917,14 @@ export type FilaExamesParams = {
   procedimento?: string;
   codigo_especialidade?: string;
   destino?: string;
+  unidade_id?: number;
+  unidade?: string;
   data_de?: string;
   data_ate?: string;
   agendada_em?: string;
+  agendada_de?: string;
+  agendada_ate?: string;
+  apenas_agendados?: boolean;
   ordenacao?: string;
   meus?: boolean;
   page?: number;
@@ -916,6 +984,8 @@ export const tfdExames = (statusOrParams?: string | FilaExamesParams) => {
     typeof statusOrParams === "string" ? { status: statusOrParams || undefined } : statusOrParams;
   return api.get<Pagina<Exame> | Exame[]>("/api/tfd/exames", { params }).then((r) => r.data);
 };
+export const tfdExameDetalhe = (id: number) =>
+  api.get<Exame>(`/api/tfd/exames/${id}`).then((r) => r.data);
 export const tfdCriarExame = (p: Record<string, unknown>) =>
   api.post<Exame>("/api/tfd/exames", p).then((r) => r.data);
 export const tfdAtualizarExame = (id: number, p: Record<string, unknown>) =>
@@ -1014,6 +1084,68 @@ export const tfdEstornarRecepcaoExame = (id: number) =>
   api.post<Exame>(`/api/tfd/exames/${id}/estornar-recepcao`).then((r) => r.data);
 export const tfdAtendimentoStatus = (id: number, status: "faltou" | "realizado" | "cancelado", resultado?: string) =>
   api.post<Exame>(`/api/tfd/exames/${id}/atendimento-status`, { status, resultado: resultado ?? "" }).then((r) => r.data);
+export const tfdRecepcionarLote = (ids: number[]) =>
+  api.post<{ ok: boolean; atualizados: number; total: number }>("/api/tfd/exames/recepcionar-lote", { ids }).then((r) => r.data);
+export const tfdAtendimentoStatusLote = (ids: number[], status: "faltou" | "realizado" | "cancelado", resultado?: string) =>
+  api.post<{ ok: boolean; atualizados: number; total: number }>("/api/tfd/exames/atendimento-status-lote", { ids, status, resultado: resultado ?? "" }).then((r) => r.data);
+
+export interface MetricasAgendados {
+  total: number;
+  agendados: number;
+  recepcionados: number;
+  realizados: number;
+  faltaram: number;
+  cancelados: number;
+  taxa_comparecimento: number;
+  taxa_absenteismo: number;
+}
+
+export interface ItemAgendadoRelatorio {
+  id: number;
+  codigo_curto: string;
+  paciente_id: number;
+  paciente_nome: string;
+  paciente_cpf: string;
+  paciente_cns: string;
+  paciente_telefone: string;
+  data_pedido: string;
+  data_agendada: string;
+  hora_agendada: string;
+  exame: string;
+  tipo_fila: string;
+  especialidade: string;
+  unidade_saude_id?: number | null;
+  unidade_nome: string;
+  medico_id?: number | null;
+  medico_nome: string;
+  status: string;
+  prioridade: string;
+  resultado: string;
+  recepcionado_em?: string | null;
+  recepcionado_por?: string;
+}
+
+export interface RelatorioAgendadosRes {
+  metricas: MetricasAgendados;
+  itens: ItemAgendadoRelatorio[];
+  total: number;
+  page: number;
+  pages: number;
+}
+
+export const tfdRelatorioAgendados = (params?: {
+  data_de?: string;
+  data_ate?: string;
+  unidade_id?: number;
+  medico_id?: number;
+  status?: string;
+  tipo_fila?: string;
+  segmentacao?: string;
+  escopo?: string;
+  q?: string;
+  page?: number;
+  limit?: number;
+}) => api.get<RelatorioAgendadosRes>("/api/tfd/relatorios/agendados", { params }).then((r) => r.data);
 export const tfdConsultarExamePublico = (token: string) =>
   api.get<ExamePublico>(`/api/tfd/public/exames/${token}`).then((r) => r.data);
 

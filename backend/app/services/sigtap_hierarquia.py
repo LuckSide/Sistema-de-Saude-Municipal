@@ -13,7 +13,6 @@ com CBOs (tb_procedimento_cbo / sigtap_cbos).
 
 from sqlmodel import Session, select
 from app.models.lab_exames import SigtapProcedimento, SigtapCbo
-from app.models.cadastros_saude import Medico
 
 
 GRUPOS_SIGTAP: dict[str, str] = {

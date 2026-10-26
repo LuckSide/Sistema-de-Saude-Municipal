@@ -1,6 +1,7 @@
+from datetime import date, datetime
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel
-from sqlmodel import Session, case, func, or_, select
+from pydantic import BaseModel, Field
+from sqlmodel import Session, and_, case, func, or_, select
 
 import re as _re
 
@@ -233,78 +234,86 @@ def listar_pacientes(
     db: Session = Depends(get_db),
     ator: User | None = Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
 ):
-    base = select(Paciente).order_by(Paciente.nome)
-    if q:
-        q_limpo = q.strip()
-        so_num = "".join(c for c in q_limpo if c.isdigit())
+    q_limpo = (q or "").strip()
+    if not q_limpo:
+        # Busca Sob Demanda (Item 2): não exibe nenhum resultado automático ao abrir sem pesquisa
+        return {"data": [], "total": 0, "page": 1, "pages": 1}
 
-        # 1. Busca EXATA prioritária (quando o usuário digita CPF, CNS ou Prontuário completo)
-        exatos: list[Paciente] = []
+    so_num = "".join(c for c in q_limpo if c.isdigit())
+
+    # 1. Busca EXATA prioritária (quando o usuário digita CPF, CNS ou Prontuário/ID numérico)
+    exatos: list[Paciente] = []
+    if len(so_num) == 11:
+        cpf_fmt = f"{so_num[:3]}.{so_num[3:6]}.{so_num[6:9]}-{so_num[9:]}"
+        exatos = db.exec(
+            select(Paciente).where(or_(Paciente.cpf == so_num, Paciente.cpf == cpf_fmt))
+        ).all()
+    elif len(so_num) == 15:
+        exatos = db.exec(select(Paciente).where(Paciente.cns == so_num)).all()
+    else:
+        q_upper = q_limpo.upper()
+        filtros_pront = [Paciente.codigo_prontuario.ilike(q_upper)]
+        digits = "".join(c for c in q_upper if c.isdigit())
+        if digits:
+            val_id = int(digits)
+            filtros_pront.append(Paciente.id == val_id)
+            filtros_pront.append(Paciente.codigo_prontuario.ilike(f"PR-{val_id:05d}"))
+            filtros_pront.append(Paciente.codigo_prontuario.ilike(f"%{val_id}%"))
+            filtros_pront.append(Paciente.codigo_prontuario == str(val_id))
+        exatos_pront = db.exec(select(Paciente).where(or_(*filtros_pront))).all()
+        if exatos_pront:
+            exatos = exatos_pront
+
+    # Se encontrou correspondência exata, retorna SOMENTE esse(s) paciente(s)
+    # Se a busca foi por CPF, deduplica eventuais prontuários duplicados do PEC, mantendo o registro mais completo
+    if exatos:
         if len(so_num) == 11:
-            cpf_fmt = f"{so_num[:3]}.{so_num[3:6]}.{so_num[6:9]}-{so_num[9:]}"
-            exatos = db.exec(
-                select(Paciente).where(or_(Paciente.cpf == so_num, Paciente.cpf == cpf_fmt))
-            ).all()
-        elif len(so_num) == 15:
-            exatos = db.exec(select(Paciente).where(Paciente.cns == so_num)).all()
-        else:
-            q_upper = q_limpo.upper()
-            filtros_pront = [Paciente.codigo_prontuario.ilike(q_upper)]
-            if q_upper.startswith("PR-") or q_upper.startswith("PR"):
-                digits = "".join(c for c in q_upper if c.isdigit())
-                if digits:
-                    val_id = int(digits)
-                    filtros_pront.append(Paciente.id == val_id)
-                    filtros_pront.append(Paciente.codigo_prontuario.ilike(f"PR-{val_id:05d}"))
-            exatos_pront = db.exec(select(Paciente).where(or_(*filtros_pront))).all()
-            if exatos_pront:
-                exatos = exatos_pront
-
-        # Se encontrou correspondência exata, retorna SOMENTE esse(s) paciente(s)
-        # Se a busca foi por CPF, deduplica eventuais prontuários duplicados do PEC, mantendo o registro mais completo
-        if exatos:
-            if len(so_num) == 11:
-                exatos.sort(key=lambda p: (bool(p.endereco), bool(p.cns), p.id or 0), reverse=True)
-                vistos = set()
-                unicos = []
-                for p in exatos:
-                    c_clean = (p.cpf or "").strip()
-                    if c_clean not in vistos:
-                        vistos.add(c_clean)
-                        unicos.append(p)
-                exatos = unicos
-
+            exatos.sort(key=lambda p: (bool(p.endereco), bool(p.cns), p.id or 0), reverse=True)
+            vistos = set()
+            unicos = []
             for p in exatos:
-                if not getattr(p, "codigo_prontuario", "") and p.id:
-                    p.codigo_prontuario = f"PR-{p.id:05d}"
-            try:
-                from app.core.audit import registrar_log_pesquisa
-                u_id = ator.id if ator else None
-                u_nome = (ator.nome or ator.username) if ator else ""
-                ua = request.headers.get("user-agent", "") if request else ""
-                registrar_log_pesquisa("pacientes", q_limpo, u_id, u_nome, ua, len(exatos))
-            except Exception:
-                pass
-            return {"data": exatos, "total": len(exatos), "page": 1, "pages": 1}
+                c_clean = (p.cpf or "").strip()
+                if c_clean not in vistos:
+                    vistos.add(c_clean)
+                    unicos.append(p)
+            exatos = unicos
 
-        # 2. Busca aproximada inteligente (relevância com prioridade no início)
-        filtros = [
-            Paciente.nome.ilike(f"%{q_limpo}%"),
-            Paciente.cpf.ilike(f"%{q_limpo}%"),
-            Paciente.cns.ilike(f"%{q_limpo}%"),
-            Paciente.codigo_prontuario.ilike(f"%{q_limpo}%"),
-        ]
-        if so_num and so_num != q_limpo:
-            filtros.append(Paciente.cpf.ilike(f"%{so_num}%"))
-            filtros.append(Paciente.cns.ilike(f"%{so_num}%"))
-            filtros.append(Paciente.codigo_prontuario.ilike(f"%{so_num}%"))
-        # Relevância inteligente: quem começa com o termo aparece primeiro
-        ordem_relevancia = case(
-            (Paciente.nome.ilike(f"{q_limpo}%"), 0),
-            (Paciente.codigo_prontuario.ilike(f"{q_limpo}%"), 0),
-            else_=1,
-        )
-        base = select(Paciente).where(or_(*filtros)).order_by(ordem_relevancia, Paciente.nome)
+        for p in exatos:
+            if not getattr(p, "codigo_prontuario", "") and p.id:
+                p.codigo_prontuario = f"PR-{p.id:05d}"
+        try:
+            from app.core.audit import registrar_log_pesquisa
+            u_id = ator.id if ator else None
+            u_nome = (ator.nome or ator.username) if ator else ""
+            ua = request.headers.get("user-agent", "") if request else ""
+            registrar_log_pesquisa("pacientes", q_limpo, u_id, u_nome, ua, len(exatos))
+        except Exception:
+            pass
+        return {"data": exatos, "total": len(exatos), "page": 1, "pages": 1}
+
+    # 2. Busca aproximada inteligente (relevância com prioridade no início)
+    filtros = [
+        Paciente.nome.ilike(f"%{q_limpo}%"),
+        Paciente.cpf.ilike(f"%{q_limpo}%"),
+        Paciente.cns.ilike(f"%{q_limpo}%"),
+        Paciente.codigo_prontuario.ilike(f"%{q_limpo}%"),
+    ]
+    digits = "".join(c for c in q_limpo if c.isdigit())
+    if digits:
+        val_id = int(digits)
+        filtros.append(Paciente.id == val_id)
+        filtros.append(Paciente.codigo_prontuario.ilike(f"%{digits}%"))
+    if so_num and so_num != q_limpo:
+        filtros.append(Paciente.cpf.ilike(f"%{so_num}%"))
+        filtros.append(Paciente.cns.ilike(f"%{so_num}%"))
+        filtros.append(Paciente.codigo_prontuario.ilike(f"%{so_num}%"))
+    # Relevância inteligente: quem começa com o termo aparece primeiro
+    ordem_relevancia = case(
+        (Paciente.nome.ilike(f"{q_limpo}%"), 0),
+        (Paciente.codigo_prontuario.ilike(f"{q_limpo}%"), 0),
+        else_=1,
+    )
+    base = select(Paciente).where(or_(*filtros)).order_by(ordem_relevancia, Paciente.nome)
     total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
     meta = paginar(total, page, limit)
     rows = db.exec(base.offset(meta["offset"]).limit(limit)).all()
@@ -313,15 +322,14 @@ def listar_pacientes(
         if not getattr(p, "codigo_prontuario", "") and p.id:
             p.codigo_prontuario = f"PR-{p.id:05d}"
 
-    if q and q.strip():
-        try:
-            from app.core.audit import registrar_log_pesquisa
-            u_id = ator.id if ator else None
-            u_nome = (ator.nome or ator.username) if ator else ""
-            ua = request.headers.get("user-agent", "") if request else ""
-            registrar_log_pesquisa("pacientes", q.strip(), u_id, u_nome, ua, total)
-        except Exception:
-            pass
+    try:
+        from app.core.audit import registrar_log_pesquisa
+        u_id = ator.id if ator else None
+        u_nome = (ator.nome or ator.username) if ator else ""
+        ua = request.headers.get("user-agent", "") if request else ""
+        registrar_log_pesquisa("pacientes", q.strip(), u_id, u_nome, ua, total)
+    except Exception:
+        pass
 
     return {"data": rows, "total": total, "page": meta["page"], "pages": meta["pages"]}
 
@@ -340,27 +348,12 @@ def buscar_pacientes_pec(
     """
     termo_limpo = (termo or "").strip()
     if not termo_limpo:
-        locais = db.exec(select(Paciente).order_by(Paciente.nome).limit(15)).all()
-        return {
-            "termo": "",
-            "total": len(locais),
-            "resultados": [
-                {
-                    "id": p.id,
-                    "origem": "local",
-                    "nome": p.nome,
-                    "cns": p.cns,
-                    "cpf": p.cpf,
-                    "prontuario": p.codigo_prontuario or (f"PR-{p.id:05d}" if p.id else ""),
-                    "nascimento": p.nascimento.isoformat() if p.nascimento else None,
-                }
-                for p in locais
-            ],
-        }
+        # Busca Sob Demanda: não exibe pacientes automáticos ao abrir o campo
+        return {"termo": "", "total": 0, "resultados": []}
 
     so_num = "".join(c for c in termo_limpo if c.isdigit())
 
-    # 1. Busca EXATA prioritária (CPF, CNS ou Prontuário)
+    # 1. Busca EXATA prioritária (CPF, CNS ou Prontuário/ID numérico)
     exatos_busca: list[Paciente] = []
     if len(so_num) == 11:
         cpf_fmt = f"{so_num[:3]}.{so_num[3:6]}.{so_num[6:9]}-{so_num[9:]}"
@@ -372,12 +365,13 @@ def buscar_pacientes_pec(
     else:
         t_upper = termo_limpo.upper()
         filtros_p = [Paciente.codigo_prontuario.ilike(t_upper)]
-        if t_upper.startswith("PR-") or t_upper.startswith("PR"):
-            digits = "".join(c for c in t_upper if c.isdigit())
-            if digits:
-                val_id = int(digits)
-                filtros_p.append(Paciente.id == val_id)
-                filtros_p.append(Paciente.codigo_prontuario.ilike(f"PR-{val_id:05d}"))
+        digits = "".join(c for c in t_upper if c.isdigit())
+        if digits:
+            val_id = int(digits)
+            filtros_p.append(Paciente.id == val_id)
+            filtros_p.append(Paciente.codigo_prontuario.ilike(f"PR-{val_id:05d}"))
+            filtros_p.append(Paciente.codigo_prontuario.ilike(f"%{val_id}%"))
+            filtros_p.append(Paciente.codigo_prontuario == str(val_id))
         exatos_p = db.exec(select(Paciente).where(or_(*filtros_p))).all()
         if exatos_p:
             exatos_busca = exatos_p
@@ -525,6 +519,21 @@ def criar_paciente(
         db.add(obj)
     db.commit()
     db.refresh(obj)
+    return obj
+
+
+@router.get("/pacientes/{pid}", response_model=PacienteOut)
+def obter_paciente(
+    pid: int,
+    db: Session = Depends(get_db),
+    ator: User | None = Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
+):
+    """Busca dados cadastrais de um paciente por ID."""
+    obj = db.get(Paciente, pid)
+    if not obj:
+        raise HTTPException(404, "Paciente não encontrado")
+    if not getattr(obj, "codigo_prontuario", "") and obj.id:
+        obj.codigo_prontuario = f"PR-{obj.id:05d}"
     return obj
 
 
@@ -715,6 +724,7 @@ def exportar_pacientes(
 @router.get("/pacientes/{pid}/demanda/exportar")
 def exportar_demanda(
     pid: int,
+    request: Request = None,
     db: Session = Depends(get_db),
     ator: User = Depends(need_perm("tfd_pacientes")),
 ):
@@ -735,7 +745,7 @@ def exportar_demanda(
         "status": d.status_rotulo,
     } for d in demandas_ordenadas]
     return resposta_xlsx(
-        f"Demanda reprimida — {p.nome}",
+        f"Demanda reprimida — {perfil.paciente.nome}",
         ator.nome or ator.username,
         [
             {"chave": "inclusao", "rotulo": "Data de inclusão", "largura": 18},
@@ -745,7 +755,11 @@ def exportar_demanda(
             {"chave": "posicao", "rotulo": "Posição na fila", "largura": 16},
             {"chave": "status", "rotulo": "Status", "largura": 24},
         ],
-        linhas, "demanda_reprimida",
+        linhas,
+        "demanda_reprimida",
+        user_id=ator.id if ator else None,
+        filtros={"paciente_id": pid},
+        request=request,
     )
 
 
@@ -1711,34 +1725,60 @@ def listar_exames(
     procedimento: str = Query(default="", max_length=150),
     codigo_especialidade: str = Query(default="", max_length=10),
     destino: str = Query(default="", max_length=120),
+    unidade_id: int | None = Query(default=None),
+    unidade: str = Query(default="", max_length=150),
     data_de: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     data_ate: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     agendada_em: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    agendada_de: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    agendada_ate: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    apenas_agendados: bool = Query(default=False),
     meus: bool = Query(default=False),
     ordenacao: str = Query(default="prioridade", pattern="^(prioridade|cronologica)$"),
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=1000),
     db: Session = Depends(get_db),
-    ator: User = Depends(need_any_perm("tfd_exames", "tfd_medico", "tfd_fila_lancamento")),
+    ator: User = Depends(need_any_perm("tfd_exames", "tfd_medico", "tfd_fila_lancamento", "tfd_agenda", "tfd")),
 ):
+    p_meus = meus if isinstance(meus, bool) else False
+    p_page = page if isinstance(page, int) and page > 0 else 1
+    p_limit = limit if isinstance(limit, int) and limit > 0 else 100
+    p_ordenacao = ordenacao if isinstance(ordenacao, str) and ordenacao in ("prioridade", "cronologica") else "prioridade"
+    p_status = status_ if isinstance(status_, str) else None
+    p_q = q if isinstance(q, str) else ""
+    p_esp = especialidade if isinstance(especialidade, str) else ""
+    p_tf = tipo_fila if isinstance(tipo_fila, str) else ""
+    p_proc = procedimento if isinstance(procedimento, str) else ""
+    p_cbo = codigo_especialidade if isinstance(codigo_especialidade, str) else ""
+    p_dest = destino if isinstance(destino, str) else ""
+    p_uid = unidade_id if isinstance(unidade_id, int) else None
+    p_unome = unidade if isinstance(unidade, str) else ""
+    p_de = data_de if isinstance(data_de, str) else None
+    p_ate = data_ate if isinstance(data_ate, str) else None
+    p_ag = agendada_em if isinstance(agendada_em, str) else None
+    p_ag_de = agendada_de if isinstance(agendada_de, str) else None
+    p_ag_ate = agendada_ate if isinstance(agendada_ate, str) else None
+    p_apenas_ag = apenas_agendados if isinstance(apenas_agendados, bool) else False
+
     itens = _filtrar_exames_lista(
-        db, ator, status_, q, prioridade, especialidade, tipo_fila,
-        procedimento, codigo_especialidade, destino, data_de, data_ate,
-        agendada_em, meus,
+        db, ator, p_status, p_q, prioridade, p_esp, p_tf,
+        p_proc, p_cbo, p_dest, p_de, p_ate,
+        p_ag, p_meus, p_uid, p_unome,
+        p_ag_de, p_ag_ate, p_apenas_ag,
     )
     total = len(itens)
-    meta = paginar(total, page, limit)
+    meta = paginar(total, p_page, p_limit)
     offset = meta["offset"]
-    pagina = _ordenar_fila(itens, ordenacao)[offset:offset + limit]
+    pagina = _ordenar_fila(itens, p_ordenacao)[offset:offset + p_limit]
     return {
         "data": _com_posicao(
             db,
             pagina,
-            status_filtro=status_,
-            filtro_tipo=tipo_fila,
-            filtro_esp=codigo_especialidade or especialidade,
-            filtro_proc=procedimento,
-            filtro_q=q,
+            status_filtro=p_status,
+            filtro_tipo=p_tf,
+            filtro_esp=p_cbo or p_esp,
+            filtro_proc=p_proc,
+            filtro_q=p_q,
             offset_base=offset,
             total_filtrado=total,
         ),
@@ -1763,22 +1803,47 @@ def _filtrar_exames_lista(
     data_ate: str | None = None,
     agendada_em: str | None = None,
     meus: bool = False,
+    unidade_id: int | None = None,
+    unidade: str = "",
+    agendada_de: str | None = None,
+    agendada_ate: str | None = None,
+    apenas_agendados: bool = False,
 ) -> list:
     """Filtros da fila compartilhados entre listagem e exportação XLSX."""
     filtros = [ExameFila.ativo == True]  # noqa: E712
-    if agendada_em:
+    if isinstance(agendada_em, str) and agendada_em:
         filtros.append(func.to_char(ExameFila.data_agendada, "YYYY-MM-DD") == agendada_em)
-    if meus:
+    if isinstance(agendada_de, str) and agendada_de:
+        try:
+            filtros.append(ExameFila.data_agendada >= date.fromisoformat(agendada_de))
+        except Exception:
+            pass
+    if isinstance(agendada_ate, str) and agendada_ate:
+        try:
+            filtros.append(ExameFila.data_agendada <= date.fromisoformat(agendada_ate))
+        except Exception:
+            pass
+    if apenas_agendados is True:
+        filtros.append(ExameFila.data_agendada.isnot(None))
+    if meus is True:
         # Painel Médico: só solicitações em que o médico está envolvido.
         med = medico_do_usuario(db, ator)
         if not med:
             return []
         filtros.append(ExameFila.medico_id == med.id)
-    if status_:
+    if isinstance(status_, str) and status_:
         filtros.append(ExameFila.status == status_)
-    if prioridade:
+    if isinstance(prioridade, str) and prioridade:
         filtros.append(ExameFila.prioridade == prioridade)
-    if especialidade:
+    if isinstance(unidade_id, int):
+        filtros.append(ExameFila.unidade_saude_id == unidade_id)
+    elif isinstance(unidade, str) and unidade.strip():
+        u_str = unidade.strip()
+        filtros.append(
+            (ExameFila.unidade_nome.ilike(f"%{u_str}%"))
+            | (ExameFila.unidade_cnes == u_str)
+        )
+    if isinstance(especialidade, str) and especialidade.strip():
         # Compat: busca em especialidade legada + CBO + nome especialidade novo modelo + exame
         like_esp = f"%{especialidade.strip()}%"
         filtros.append(
@@ -1787,7 +1852,7 @@ def _filtrar_exames_lista(
             | (ExameFila.nome_especialidade.ilike(like_esp))
             | (ExameFila.exame.ilike(like_esp))
         )
-    if tipo_fila:
+    if isinstance(tipo_fila, str) and tipo_fila.strip():
         tf_strip = tipo_fila.strip()
         if tf_strip.upper() in ("EXAME", "PROCEDIMENTO", "EXAMES", "PROCEDIMENTOS"):
             filtros.append(
@@ -1796,7 +1861,7 @@ def _filtrar_exames_lista(
             )
         else:
             filtros.append(ExameFila.tipo_fila.ilike(f"%{tf_strip}%"))
-    if procedimento:
+    if isinstance(procedimento, str) and procedimento.strip():
         # Busca por nome exato do procedimento OU código procedimento OU texto exame
         p_strip = procedimento.strip()
         if p_strip.upper() in ("EXAME", "PROCEDIMENTO", "EXAMES", "PROCEDIMENTOS"):
@@ -1810,7 +1875,7 @@ def _filtrar_exames_lista(
                 (ExameFila.exame.ilike(f"%{p_strip}%"))
                 | (ExameFila.codigo_procedimento.ilike(f"%{p_strip}%"))
             )
-    if codigo_especialidade:
+    if isinstance(codigo_especialidade, str) and codigo_especialidade.strip():
         cbo_strip = codigo_especialidade.strip()
         nome_cbo = CBO_PARA_NOME_CANONICO.get(cbo_strip, "")
         if nome_cbo:
@@ -1824,25 +1889,42 @@ def _filtrar_exames_lista(
             )
         else:
             filtros.append(ExameFila.codigo_especialidade == cbo_strip)
-    if destino:
+    if isinstance(destino, str) and destino.strip():
         filtros.append(ExameFila.destino.ilike(f"%{destino}%"))
-    if data_de:
+    if isinstance(data_de, str) and data_de:
         filtros.append(func.to_char(ExameFila.data_pedido, "YYYY-MM-DD") >= data_de)
-    if data_ate:
+    if isinstance(data_ate, str) and data_ate:
         filtros.append(func.to_char(ExameFila.data_pedido, "YYYY-MM-DD") <= data_ate)
-    base = (
-        select(ExameFila)
-        .where(*filtros)
-        .order_by(ExameFila.data_pedido.desc())
-    )
+    if apenas_agendados or agendada_de or agendada_ate or agendada_em:
+        base = (
+            select(ExameFila)
+            .where(*filtros)
+            .order_by(ExameFila.data_agendada.asc(), ExameFila.hora_agendada.asc())
+        )
+    else:
+        base = (
+            select(ExameFila)
+            .where(*filtros)
+            .order_by(ExameFila.data_pedido.desc())
+        )
     itens = list(db.exec(base).all())
-    if q:
+    if isinstance(q, str) and q.strip():
         ql = q.strip().lower()
         palavras = [p for p in ql.split() if p]
         com_nome = []
         for e in itens:
             pac = db.get(Paciente, e.paciente_id)
+            pront = (pac.codigo_prontuario or "") if pac else ""
+            pront_num = "".join(c for c in pront if c.isdigit())
             hay = " ".join([
+                str(e.id),
+                f"EX-{e.id:06d}",
+                str(e.id).zfill(6),
+                e.codigo_curto or "",
+                str(e.paciente_id),
+                pront,
+                pront_num,
+                f"PR-{e.paciente_id:05d}",
                 e.exame or "", e.especialidade or "", e.tipo_fila or "",
                 e.codigo_procedimento or "", e.codigo_especialidade or "",
                 e.nome_especialidade or "", e.destino or "",
@@ -1858,27 +1940,27 @@ def _filtrar_exames_lista(
 COLS_FILA = [
     {"chave": "codigo_curto", "rotulo": "ID do Pedido", "largura": 16},
     {"chave": "posicao", "rotulo": "Posição", "largura": 10},
-    {"chave": "posicao_tipo", "rotulo": "Posição Tipo de Fila", "largura": 16},
-    {"chave": "posicao_especialidade", "rotulo": "Posição Especialidade", "largura": 16},
-    {"chave": "grupo_fila", "rotulo": "Fila específica", "largura": 28},
+    {"chave": "posicao_tipo", "rotulo": "Posição Geral da Fila SUS", "largura": 24},
+    {"chave": "posicao_especialidade", "rotulo": "Posição Especialidade", "largura": 22},
+    {"chave": "risco", "rotulo": "Prioridade / Classificação de risco", "largura": 26},
+    {"chave": "status", "rotulo": "Status", "largura": 20},
+    {"chave": "data_pedido", "rotulo": "Data do Envio para Fila", "largura": 20, "formato": "data"},
+    {"chave": "exame", "rotulo": "Procedimento", "largura": 48},
+    {"chave": "especialidade", "rotulo": "Especialidade", "largura": 28},
     {"chave": "prontuario", "rotulo": "Prontuário", "largura": 16},
-    {"chave": "paciente", "rotulo": "Paciente", "largura": 32},
+    {"chave": "paciente", "rotulo": "Paciente", "largura": 34},
     {"chave": "cpf", "rotulo": "CPF", "largura": 18, "formato": "texto"},
     {"chave": "cns", "rotulo": "Cartão SUS / CNS", "largura": 20, "formato": "texto"},
-    {"chave": "telefone", "rotulo": "Telefone", "largura": 18, "formato": "texto"},
-    {"chave": "endereco_completo", "rotulo": "Endereço completo", "largura": 44},
     {"chave": "logradouro", "rotulo": "Logradouro", "largura": 32},
     {"chave": "numero", "rotulo": "Número", "largura": 12, "formato": "texto"},
+    {"chave": "bairro", "rotulo": "Bairro", "largura": 24},
     {"chave": "complemento", "rotulo": "Complemento", "largura": 18},
-    {"chave": "bairro", "rotulo": "Bairro", "largura": 22},
     {"chave": "municipio", "rotulo": "Município", "largura": 20},
     {"chave": "cep", "rotulo": "CEP", "largura": 14, "formato": "texto"},
-    {"chave": "exame", "rotulo": "Procedimento", "largura": 42},
+    {"chave": "telefone", "rotulo": "Telefone", "largura": 18, "formato": "texto"},
+    {"chave": "endereco_completo", "rotulo": "Endereço completo", "largura": 44},
     {"chave": "codigo_procedimento", "rotulo": "Código do Procedimento", "largura": 22},
-    {"chave": "especialidade", "rotulo": "Especialidade", "largura": 28},
-    {"chave": "risco", "rotulo": "Prioridade / Classificação de risco", "largura": 18},
-    {"chave": "status", "rotulo": "Status", "largura": 14},
-    {"chave": "data_pedido", "rotulo": "Data do pedido", "largura": 14, "formato": "data"},
+    {"chave": "grupo_fila", "rotulo": "Fila específica", "largura": 28},
     {"chave": "data_agendada", "rotulo": "Data agendada", "largura": 14, "formato": "data"},
     {"chave": "hora", "rotulo": "Hora", "largura": 10},
     {"chave": "medico", "rotulo": "Médico", "largura": 28},
@@ -1964,30 +2046,38 @@ def _linha_fila(
     comp = pec.get(f"cpf:{cpf}") or pec.get(f"cns:{cns}") or {}
     cod_curto = getattr(e, "codigo_curto", "") or (f"EX-{e.id:06d}" if getattr(e, "id", None) else "")
     prontuario = getattr(pac, "codigo_prontuario", "") or (f"PR-{pac.id:05d}" if pac and getattr(pac, "id", None) else "")
+
+    nome_exame = (e.exame or "").strip()
+    cod_proc = (e.codigo_procedimento or "").strip()
+    if cod_proc and cod_proc not in nome_exame:
+        procedimento_str = f"{cod_proc} - {nome_exame}"
+    else:
+        procedimento_str = nome_exame
+
     return {
         "codigo_curto": cod_curto,
         "posicao": pos or "",
         "posicao_tipo": pos_tipo or "",
         "posicao_especialidade": pos_esp or "",
-        "grupo_fila": rotulo,
+        "risco": _risco_rotulo(e.prioridade),
+        "status": _status_rotulo(e),
+        "data_pedido": e.data_pedido,
+        "exame": procedimento_str,
+        "especialidade": e.nome_especialidade or e.especialidade or e.tipo_fila or "",
         "prontuario": prontuario,
         "paciente": pac.nome if pac else "?",
         "cpf": pac.cpf if pac else "",
         "cns": (pac.cns if pac and pac.cns else comp.get("cns", "")) or "",
-        "telefone": pac.telefone if pac else "",
-        "endereco_completo": _endereco_completo(pac),
         "logradouro": (pac.endereco or "") if pac else "",
         "numero": (pac.endereco_numero or "") if pac else "",
-        "complemento": getattr(pac, "complemento", "") or "" if pac else "",
         "bairro": (pac.bairro or "") if pac else "",
+        "complemento": getattr(pac, "complemento", "") or "" if pac else "",
         "municipio": (pac.municipio or "") if pac else "",
         "cep": (pac.cep or "") if pac else "",
-        "exame": e.exame or "",
-        "codigo_procedimento": e.codigo_procedimento or "",
-        "especialidade": e.nome_especialidade or e.especialidade or e.tipo_fila or "",
-        "risco": _risco_rotulo(e.prioridade),
-        "status": _status_rotulo(e),
-        "data_pedido": e.data_pedido,
+        "telefone": pac.telefone if pac else "",
+        "endereco_completo": _endereco_completo(pac),
+        "codigo_procedimento": cod_proc,
+        "grupo_fila": rotulo,
         "data_agendada": e.data_agendada,
         "hora": e.hora_agendada or "",
         "medico": e.medico_nome or "",
@@ -2008,32 +2098,67 @@ def exportar_fila(
     procedimento: str = Query(default="", max_length=150),
     codigo_especialidade: str = Query(default="", max_length=10),
     destino: str = Query(default="", max_length=120),
+    unidade_id: int | None = Query(default=None),
+    unidade: str = Query(default="", max_length=150),
     data_de: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     data_ate: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     agendada_em: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     meus: bool = Query(default=False),
     ordenacao: str = Query(default="prioridade", pattern="^(prioridade|cronologica)$"),
     colunas: str | None = Query(default=None),
+    ids: str | None = Query(default=None),
     db: Session = Depends(get_db),
     ator: User = Depends(need_any_perm("tfd_exames", "tfd_medico", "tfd_fila_lancamento")),
 ):
     """Exporta a fila de espera em XLSX respeitando os filtros ativos e seleção de colunas."""
     from app.services.export_xlsx import resposta_xlsx
+    from app.core.audit import registrar_log_exportacao
+
+    ids_set: set[int] = set()
+    ids_str = ids if isinstance(ids, str) else None
+    if ids_str and ids_str.strip():
+        ids_set = {int(x.strip()) for x in ids_str.split(",") if x.strip().isdigit()}
+
+    st_val = status_ if isinstance(status_, str) else None
+    q_val = q if isinstance(q, str) else ""
+    prio_val = prioridade if isinstance(prioridade, str) else None
+    esp_val = especialidade if isinstance(especialidade, str) else ""
+    tipo_val = tipo_fila if isinstance(tipo_fila, str) else ""
+    proc_val = procedimento if isinstance(procedimento, str) else ""
+    cod_esp_val = codigo_especialidade if isinstance(codigo_especialidade, str) else ""
+    dest_val = destino if isinstance(destino, str) else ""
+    unid_id_val = unidade_id if isinstance(unidade_id, int) else None
+    unid_val = unidade if isinstance(unidade, str) else ""
+    de_val = data_de if isinstance(data_de, str) else None
+    ate_val = data_ate if isinstance(data_ate, str) else None
+    ag_val = agendada_em if isinstance(agendada_em, str) else None
+    meus_val = meus if isinstance(meus, bool) else False
+    ordem_val = ordenacao if isinstance(ordenacao, str) else "prioridade"
+    cols_val = colunas if isinstance(colunas, str) else None
 
     itens = _filtrar_exames_lista(
-        db, ator, status_, q, prioridade, especialidade, tipo_fila,
-        procedimento, codigo_especialidade, destino, data_de, data_ate,
-        agendada_em, meus,
+        db, ator, st_val, q_val, prio_val, esp_val, tipo_val,
+        proc_val, cod_esp_val, dest_val, de_val, ate_val,
+        ag_val, meus_val, unid_id_val, unid_val,
     )
-    itens = _ordenar_fila(itens, ordenacao)
+    if ids_set:
+        itens_filtrados = [it for it in itens if it.id in ids_set]
+        itens_presentes = {it.id for it in itens_filtrados}
+        faltantes = ids_set - itens_presentes
+        if faltantes:
+            extras = list(db.exec(select(ExameFila).where(ExameFila.id.in_(faltantes), ExameFila.ativo == True)).all())
+            itens_filtrados.extend(extras)
+        itens = itens_filtrados
+
+    itens = _ordenar_fila(itens, ordem_val)
     filtrando_especialidade = bool(
-        especialidade
-        or codigo_especialidade
-        or procedimento
-        or (q and any(p in q.upper() for p, _, _ in MAPA_ESPECIALIDADES_CANONICAS))
+        esp_val
+        or cod_esp_val
+        or proc_val
+        or (q_val and any(p in q_val.upper() for p, _, _ in MAPA_ESPECIALIDADES_CANONICAS))
     )
-    filtrando_tipo = bool(tipo_fila)
-    rank_tipo, rank_esp = _calcular_duplo_rank(db, status_filtro=status_)
+    filtrando_tipo = bool(tipo_val)
+    rank_tipo, rank_esp = _calcular_duplo_rank(db, status_filtro=st_val)
     cache: dict = {}
     for e in itens:
         if e.paciente_id not in cache:
@@ -2071,40 +2196,44 @@ def exportar_fila(
 
     # Filtragem de colunas caso informadas pelo seletor de exportação
     cols = COLS_FILA
-    if colunas:
+    if cols_val:
         mapa_colunas_frontend: dict[str, list[str]] = {
             "codigo_curto": ["codigo_curto"],
             "id_pedido": ["codigo_curto"],
             "posicao": ["posicao"],
             "posicao_tipo": ["posicao_tipo"],
+            "posicao_geral": ["posicao_tipo"],
             "posicao_especialidade": ["posicao_especialidade"],
-            "prontuario": ["prontuario"],
-            "paciente_nome": ["paciente", "cpf", "cns"],
-            "paciente": ["paciente"],
-            "endereco": ["endereco_completo", "logradouro", "numero", "complemento", "bairro", "municipio", "cep"],
-            "endereco_completo": ["endereco_completo", "logradouro", "numero", "complemento", "bairro", "municipio", "cep"],
-            "logradouro": ["logradouro"],
-            "numero": ["numero"],
-            "complemento": ["complemento"],
-            "bairro": ["bairro"],
-            "municipio": ["municipio"],
-            "cep": ["cep"],
-            "exame": ["exame"],
-            "codigo_procedimento": ["codigo_procedimento"],
-            "especialidade": ["especialidade"],
             "prioridade": ["risco"],
             "risco": ["risco"],
             "status": ["status"],
             "data_pedido": ["data_pedido"],
-            "data_agendada": ["data_agendada", "hora"],
+            "exame": ["exame"],
+            "especialidade": ["especialidade"],
+            "prontuario": ["prontuario"],
+            "paciente": ["paciente"],
+            "paciente_nome": ["paciente", "cpf", "cns"],
+            "cpf": ["cpf"],
+            "cns": ["cns"],
+            "logradouro": ["logradouro"],
+            "numero": ["numero"],
+            "bairro": ["bairro"],
+            "complemento": ["complemento"],
+            "municipio": ["municipio"],
+            "cep": ["cep"],
+            "telefone": ["telefone"],
+            "endereco": ["endereco_completo", "logradouro", "numero", "complemento", "bairro", "municipio", "cep"],
+            "endereco_completo": ["endereco_completo"],
+            "codigo_procedimento": ["codigo_procedimento"],
             "tipo_fila": ["grupo_fila"],
+            "data_agendada": ["data_agendada", "hora"],
             "destino": ["unidade"],
             "observacoes": ["observacoes"],
             "numero_pedido": ["numero_pedido"],
             "justificativa": ["justificativa"],
         }
         chaves_selecionadas = set()
-        for c in colunas.split(","):
+        for c in cols_val.split(","):
             c_trim = c.strip()
             if not c_trim:
                 continue
@@ -2116,8 +2245,29 @@ def exportar_fila(
         if filtradas:
             cols = filtradas
 
+    titulo_relatorio = "Fila de espera — procedimentos" if not ids_set else f"Fila de espera — {len(linhas)} paciente(s) selecionado(s)"
+
+    registrar_log_exportacao(
+        modulo="tfd_fila",
+        titulo=titulo_relatorio,
+        usuario_id=ator.id,
+        usuario_nome=ator.nome or ator.username,
+        total_linhas=len(linhas),
+        filtros={
+            "status": st_val,
+            "q": q_val,
+            "prioridade": prio_val,
+            "tipo_fila": tipo_val,
+            "procedimento": proc_val,
+            "codigo_especialidade": cod_esp_val,
+            "destino": dest_val,
+            "ids_selecionados": list(ids_set) if ids_set else None,
+            "colunas": cols_val,
+        },
+    )
+
     return resposta_xlsx(
-        "Fila de espera — procedimentos",
+        titulo_relatorio,
         ator.nome or ator.username,
         cols, linhas, "fila_procedimentos",
     )
@@ -2192,9 +2342,6 @@ def filtros_opcoes(
     for cod, exame, n in rows_p:
         nome_limpo = (exame or "").strip()
         # exame legado = "COD - NOME"; exibe NOME (COD)
-        m = None
-        import re as _re
-
         m = _re.match(r"^[0-9.\-]{4,}\s*-\s*(.+)$", nome_limpo)
         nome_curto = (m.group(1) if m else nome_limpo).strip() or nome_limpo
         value = nome_curto or (cod or "")
@@ -2235,6 +2382,23 @@ def _garantir_token(obj: ExameFila) -> str:
     return obj.public_token
 
 
+def eh_tfd_central(ator: User) -> bool:
+    """Verifica se o usuário possui perfil central do TFD.
+    Usuários centrais (ou superusuários) podem lançar pedidos para qualquer unidade
+    e escolher livremente a data de lançamento.
+    Usuários lotados em PSF só podem lançar para o dia atual e vinculados à sua própria unidade.
+    """
+    if ator.is_superuser:
+        return True
+    from app.services.permissoes import tem_tela
+    tem_tfd_geral = tem_tela(ator, "tfd") and not tem_tela(ator, "tfd_fila_lancamento")
+    if tem_tfd_geral and not (ator.unidade_saude_id and tem_tela(ator, "tfd_fila_lancamento")):
+        return True
+    if tem_tela(ator, "tfd_resumo") and not ator.unidade_saude_id:
+        return True
+    return False
+
+
 @router.post("/exames", response_model=ExameOut, status_code=201)
 def criar_exame(data: ExameIn, db: Session = Depends(get_db), ator: User = Depends(need_any_perm("tfd_exames", "tfd_fila_lancamento", acoes=("criar",)))):
     if not db.get(Paciente, data.paciente_id):
@@ -2243,6 +2407,21 @@ def criar_exame(data: ExameIn, db: Session = Depends(get_db), ator: User = Depen
     exige_sem_retroativo(ator, data.data_agendada, data.data_agendada is not None)
     payload = data.model_dump()
 
+    # Regra 2: Restrições de Lançamento por Perfil (PSF vs. TFD)
+    is_central = eh_tfd_central(ator)
+    hoje = date.today()
+
+    if not is_central:
+        # Usuário PSF: data de pedido deve ser estritamente o dia atual
+        if data.data_pedido != hoje:
+            raise HTTPException(403, "Usuários do PSF só podem lançar solicitações para o dia atual.")
+
+        # Usuário PSF: unidade solicitante deve ser estritamente a sua própria unidade
+        if ator.unidade_saude_id:
+            if payload.get("unidade_saude_id") and payload.get("unidade_saude_id") != ator.unidade_saude_id:
+                raise HTTPException(403, "Usuários do PSF só podem lançar pedidos vinculados à sua própria unidade.")
+            payload["unidade_saude_id"] = ator.unidade_saude_id
+
     # Perfil de Lançamento Restrito: apenas adiciona à fila, sem marcar urgente e sem agendar direto
     from app.services.permissoes import tem_tela
     if not ator.is_superuser and tem_tela(ator, "tfd_fila_lancamento") and not tem_tela(ator, "tfd_exames") and not tem_tela(ator, "tfd_medico"):
@@ -2250,6 +2429,27 @@ def criar_exame(data: ExameIn, db: Session = Depends(get_db), ator: User = Depen
             raise HTTPException(403, "Perfil de lançamento restrito não pode definir prioridade urgente.")
         if payload.get("data_agendada"):
             raise HTTPException(403, "Perfil de lançamento restrito não pode realizar agendamento direto.")
+
+    # Snapshot de unidade de saúde de origem (se informada ou vinculada)
+    if payload.get("unidade_saude_id") and not payload.get("data_agendada"):
+        uni_origem = db.get(UnidadeSaude, payload["unidade_saude_id"])
+        if uni_origem:
+            payload["unidade_nome"] = uni_origem.nome or ""
+            payload["unidade_cnes"] = uni_origem.cnes or ""
+            payload["unidade_endereco"] = uni_origem.endereco or ""
+            payload["unidade_numero"] = getattr(uni_origem, "numero", "") or ""
+            payload["unidade_bairro"] = uni_origem.bairro or ""
+            payload["unidade_municipio"] = getattr(uni_origem, "municipio", "") or ""
+            payload["unidade_cep"] = getattr(uni_origem, "cep", "") or ""
+
+    # Snapshot de médico requisitante (se informado)
+    if payload.get("medico_id") and not payload.get("data_agendada"):
+        med_origem = db.get(Medico, payload["medico_id"])
+        if med_origem:
+            payload["medico_nome"] = med_origem.nome or ""
+            payload["medico_cpf"] = med_origem.cpf or ""
+            payload["medico_cbo_codigo"] = getattr(med_origem, "cbo_codigo", "") or ""
+            payload["medico_cbo_descricao"] = getattr(med_origem, "cbo_descricao", "") or ""
 
     if payload.get("codigo_curto"):
         payload["codigo_curto"] = str(payload["codigo_curto"]).strip().upper()
@@ -2285,6 +2485,15 @@ def criar_exame(data: ExameIn, db: Session = Depends(get_db), ator: User = Depen
         db.add(obj)
         db.commit()
         db.refresh(obj)
+
+    # Disparo automático via WhatsApp (Entrada na Fila / Agendamento)
+    try:
+        from app.services.whatsapp import notificar_paciente_evento
+        evento_whats = "agendamento" if obj.data_agendada else "entrada_fila"
+        notificar_paciente_evento(db, evento_whats, obj)
+    except Exception:
+        pass
+
     return _com_posicao(db, [obj])[0]
 
 
@@ -2356,7 +2565,31 @@ def atualizar_exames_lote(
         db.add(obj)
         n += 1
     db.commit()
+    if agendando:
+        try:
+            from app.services.whatsapp import notificar_paciente_evento
+            for i in ids:
+                ob = objs.get(i)
+                if ob and ob.data_agendada:
+                    notificar_paciente_evento(db, "agendamento", ob)
+        except Exception:
+            pass
     return ExameLoteOut(atualizados=n, nao_encontrados=faltando)
+
+
+@router.get("/exames/{eid}", response_model=ExameOut)
+def obter_exame(
+    eid: int,
+    db: Session = Depends(get_db),
+    ator: User = Depends(get_current_user),
+):
+    """Consulta detalhada de uma solicitação/exame específico por ID."""
+    if not (bool(getattr(ator, "is_superuser", False)) or tem_tela(ator, "tfd_exames") or tem_tela(ator, "tfd") or tem_tela(ator, "tfd_medico") or tem_tela(ator, "lab_recepcao")):
+        raise HTTPException(403, "Sem acesso à fila de solicitações")
+    obj = db.get(ExameFila, eid)
+    if not obj or not obj.ativo:
+        raise HTTPException(404, "Exame não encontrado")
+    return _com_posicao(db, [obj])[0]
 
 
 @router.put("/exames/{eid}/prioridade", response_model=ExameOut)
@@ -2430,6 +2663,14 @@ def atualizar_exame(
     db.commit()
     db.refresh(obj)
     pac = db.get(Paciente, obj.paciente_id)
+
+    if novo_agendamento and obj.data_agendada:
+        try:
+            from app.services.whatsapp import notificar_paciente_evento
+            notificar_paciente_evento(db, "agendamento", obj, pac)
+        except Exception:
+            pass
+
     rank = _rank_por_grupo(db)
     pos, _, rotulo = rank.get(obj.id, (None, None, ""))
     return ExameOut(
@@ -2525,6 +2766,304 @@ def definir_status_atendimento(
     db.commit()
     db.refresh(obj)
     return _com_posicao(db, [obj])[0]
+
+
+class ExameIdsIn(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=500)
+
+
+class AtendimentoStatusLoteIn(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=500)
+    status: str
+    resultado: str = ""
+
+
+@router.post("/exames/recepcionar-lote")
+def recepcionar_exames_lote(
+    data: ExameIdsIn,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_perm("tfd_agenda", "editar")),
+):
+    """Recepção em lote: marca múltiplos exames/consultas agendados como recepcionados."""
+    from datetime import datetime
+
+    ids = sorted(set(data.ids))
+    objs = list(db.exec(select(ExameFila).where(ExameFila.id.in_(ids), ExameFila.ativo == True)).all())
+    atualizados = 0
+    agora = datetime.now()
+    nome_ator = (ator.nome or ator.username or "")[:120]
+    for obj in objs:
+        if (obj.status or "") in ("agendado", "aguardando"):
+            obj.status_anterior = obj.status or ""
+            obj.status = "recepcionado"
+            obj.recepcionado_em = agora
+            obj.recepcionado_por = nome_ator
+            db.add(obj)
+            atualizados += 1
+    db.commit()
+    return {"ok": True, "atualizados": atualizados, "total": len(ids)}
+
+
+@router.post("/exames/atendimento-status-lote")
+def definir_status_atendimento_lote(
+    data: AtendimentoStatusLoteIn,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_perm("tfd_agenda", "editar")),
+):
+    """Define desfecho do atendimento em lote (realizado, faltou, cancelado)."""
+    alvo = (data.status or "").strip().lower()
+    if alvo not in ("realizado", "faltou", "cancelado"):
+        raise HTTPException(400, "Status inválido (use realizado, faltou ou cancelado).")
+    ids = sorted(set(data.ids))
+    objs = list(db.exec(select(ExameFila).where(ExameFila.id.in_(ids), ExameFila.ativo == True)).all())
+    atualizados = 0
+    for obj in objs:
+        if (obj.status or "") in ("agendado", "recepcionado"):
+            obj.status = alvo
+            if alvo == "realizado" and data.resultado:
+                obj.resultado = data.resultado[:2000]
+            db.add(obj)
+            atualizados += 1
+    db.commit()
+    return {"ok": True, "atualizados": atualizados, "total": len(ids)}
+
+
+@router.get("/relatorios/agendados")
+def obter_relatorio_agendados(
+    data_de: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    data_ate: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    unidade_id: int | None = Query(default=None),
+    medico_id: int | None = Query(default=None),
+    status_: str | None = Query(default=None, alias="status"),
+    tipo_fila: str = Query(default="", max_length=80),
+    segmentacao: str = Query(default="", max_length=50),
+    escopo: str = Query(default="agendados", max_length=50),
+    q: str = Query(default="", max_length=80),
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("tfd_agenda", "tfd_exames", "tfd")),
+):
+    """Relatório detalhado de agendamentos e solicitações com métricas de resultados, absenteísmo e segmentação."""
+    esc = (escopo or "").lower() if isinstance(escopo, str) else "agendados"
+    if esc == "fila":
+        # Apenas solicitações em espera na fila
+        filtros = [ExameFila.ativo == True, ExameFila.status.in_(["aguardando", "pendente_conferencia", "regulado"])]
+        if isinstance(data_de, str) and data_de:
+            try:
+                filtros.append(ExameFila.data_pedido >= date.fromisoformat(data_de))
+            except Exception:
+                pass
+        if isinstance(data_ate, str) and data_ate:
+            try:
+                filtros.append(ExameFila.data_pedido <= date.fromisoformat(data_ate))
+            except Exception:
+                pass
+    elif esc == "todos":
+        # Todos: Fila e Agendamentos no período
+        filtros = [ExameFila.ativo == True]
+        if isinstance(data_de, str) and data_de:
+            try:
+                d_obj = date.fromisoformat(data_de)
+                filtros.append(or_(ExameFila.data_agendada >= d_obj, ExameFila.data_pedido >= d_obj))
+            except Exception:
+                pass
+        if isinstance(data_ate, str) and data_ate:
+            try:
+                d_obj = date.fromisoformat(data_ate)
+                filtros.append(or_(ExameFila.data_agendada <= d_obj, ExameFila.data_pedido <= d_obj))
+            except Exception:
+                pass
+    else:
+        # Padrão: Agendados
+        filtros = [ExameFila.ativo == True, ExameFila.data_agendada is not None]
+        if isinstance(data_de, str) and data_de:
+            try:
+                filtros.append(ExameFila.data_agendada >= date.fromisoformat(data_de))
+            except Exception:
+                pass
+        if isinstance(data_ate, str) and data_ate:
+            try:
+                filtros.append(ExameFila.data_agendada <= date.fromisoformat(data_ate))
+            except Exception:
+                pass
+
+    if isinstance(unidade_id, int):
+        filtros.append(ExameFila.unidade_saude_id == unidade_id)
+    if isinstance(medico_id, int):
+        filtros.append(ExameFila.medico_id == medico_id)
+    if isinstance(status_, str) and status_:
+        filtros.append(ExameFila.status == status_)
+    if isinstance(tipo_fila, str) and tipo_fila.strip():
+        filtros.append(ExameFila.tipo_fila.ilike(f"%{tipo_fila.strip()}%"))
+
+    # Segmentação: Consultas Especializadas vs. Exames Especializados (Item 6)
+    seg = (segmentacao or "").lower() if isinstance(segmentacao, str) else ""
+    if seg in ("consultas", "consulta"):
+        filtros.append(
+            or_(
+                ExameFila.tipo_fila.ilike("%CONSULTA%"),
+                ExameFila.exame.ilike("%CONSULTA%"),
+                ExameFila.especialidade != "",
+            )
+        )
+    elif seg in ("exames", "exame"):
+        filtros.append(
+            and_(
+                ~ExameFila.tipo_fila.ilike("%CONSULTA%"),
+                ~ExameFila.exame.ilike("%CONSULTA%"),
+            )
+        )
+
+    stmt = select(ExameFila).where(*filtros).order_by(
+        case((ExameFila.data_agendada != None, ExameFila.data_agendada), else_=ExameFila.data_pedido).desc(),
+        ExameFila.hora_agendada.asc(),
+    )
+    todos = list(db.exec(stmt).all())
+
+    if isinstance(q, str) and q.strip():
+        termo = q.strip().lower()
+        filtrados = []
+        for e in todos:
+            pac = db.get(Paciente, e.paciente_id)
+            if pac and (termo in (pac.nome or "").lower() or termo in (pac.cpf or "").lower() or termo in (pac.cns or "").lower()):
+                filtrados.append(e)
+            elif termo in (e.paciente_nome or "").lower() or termo in (e.exame or "").lower():
+                filtrados.append(e)
+        todos = filtrados
+
+    total = len(todos)
+    agendados = sum(1 for e in todos if e.status == "agendado")
+    recepcionados = sum(1 for e in todos if e.status == "recepcionado")
+    realizados = sum(1 for e in todos if e.status == "realizado")
+    faltaram = sum(1 for e in todos if e.status == "faltou")
+    cancelados = sum(1 for e in todos if e.status == "cancelado")
+
+    taxa_comparecimento = round(((recepcionados + realizados) / total) * 100, 1) if total > 0 else 0.0
+    taxa_absenteismo = round((faltaram / total) * 100, 1) if total > 0 else 0.0
+
+    limite = limit if isinstance(limit, int) and limit > 0 else 100
+    pagina = page if isinstance(page, int) and page > 0 else 1
+
+    offset = (pagina - 1) * limite
+    itens_pagina = todos[offset:offset + limite]
+
+    pac_cache: dict[int, Paciente | None] = {}
+    itens_out = []
+    for e in itens_pagina:
+        if e.paciente_id not in pac_cache:
+            pac_cache[e.paciente_id] = db.get(Paciente, e.paciente_id)
+        pac = pac_cache[e.paciente_id]
+        itens_out.append({
+            "id": e.id,
+            "codigo_curto": e.codigo_curto or f"EX-{e.id:06d}",
+            "paciente_id": e.paciente_id,
+            "paciente_nome": pac.nome if pac else e.paciente_nome,
+            "paciente_cpf": pac.cpf if pac else "",
+            "paciente_cns": pac.cns if pac else "",
+            "paciente_telefone": pac.telefone if pac else "",
+            "data_pedido": str(e.data_pedido or ""),
+            "data_agendada": str(e.data_agendada or ""),
+            "hora_agendada": e.hora_agendada or "",
+            "exame": e.exame or "",
+            "tipo_fila": e.tipo_fila or "",
+            "especialidade": e.especialidade or e.nome_especialidade or "",
+            "unidade_saude_id": e.unidade_saude_id,
+            "unidade_nome": e.unidade_nome or "",
+            "medico_id": e.medico_id,
+            "medico_nome": e.medico_nome or "",
+            "status": e.status or "agendado",
+            "prioridade": e.prioridade or "rotina",
+            "resultado": e.resultado or "",
+            "recepcionado_em": e.recepcionado_em.strftime("%d/%m/%Y %H:%M") if e.recepcionado_em else None,
+            "recepcionado_por": e.recepcionado_por or "",
+        })
+
+    pages = max(1, (total + limite - 1) // limite)
+    return {
+        "metricas": {
+            "total": total,
+            "agendados": agendados,
+            "recepcionados": recepcionados,
+            "realizados": realizados,
+            "faltaram": faltaram,
+            "faltas": faltaram,
+            "cancelados": cancelados,
+            "taxa_comparecimento": taxa_comparecimento,
+            "comparecimento_pct": taxa_comparecimento,
+            "taxa_absenteismo": taxa_absenteismo,
+            "absenteismo_pct": taxa_absenteismo,
+        },
+        "itens": itens_out,
+        "total": total,
+        "page": page,
+        "pages": pages,
+    }
+
+
+@router.get("/relatorios/agendados/exportar")
+def exportar_relatorio_agendados(
+    data_de: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    data_ate: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    unidade_id: int | None = Query(default=None),
+    medico_id: int | None = Query(default=None),
+    status_: str | None = Query(default=None, alias="status"),
+    tipo_fila: str = Query(default="", max_length=80),
+    segmentacao: str = Query(default="", max_length=50),
+    escopo: str = Query(default="agendados", max_length=50),
+    q: str = Query(default="", max_length=80),
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("tfd_agenda", "tfd_exames", "tfd")),
+):
+    """Exporta o relatório gerencial de agendados para planilha Excel (.xlsx)."""
+    from app.services.export_xlsx import resposta_xlsx
+    from app.core.audit import registrar_log_exportacao
+
+    dados = obter_relatorio_agendados(
+        data_de=data_de, data_ate=data_ate, unidade_id=unidade_id,
+        medico_id=medico_id, status_=status_, tipo_fila=tipo_fila,
+        segmentacao=segmentacao, escopo=escopo,
+        q=q, page=1, limit=10000, db=db, ator=ator
+    )
+    itens = dados["itens"]
+
+    cols = [
+        {"chave": "codigo_curto", "titulo": "ID Pedido", "largura": 12},
+        {"chave": "data_agendada", "titulo": "Data Agendada", "largura": 14},
+        {"chave": "hora_agendada", "titulo": "Horário", "largura": 10},
+        {"chave": "paciente_nome", "titulo": "Paciente", "largura": 32},
+        {"chave": "paciente_cpf", "titulo": "CPF", "largura": 15},
+        {"chave": "paciente_cns", "titulo": "Cartão SUS", "largura": 18},
+        {"chave": "paciente_telefone", "titulo": "Telefone", "largura": 16},
+        {"chave": "exame", "titulo": "Procedimento / Exame", "largura": 30},
+        {"chave": "tipo_fila", "titulo": "Tipo de Serviço", "largura": 22},
+        {"chave": "especialidade", "titulo": "Especialidade", "largura": 22},
+        {"chave": "unidade_nome", "titulo": "Unidade / PSF", "largura": 24},
+        {"chave": "medico_nome", "titulo": "Médico(a)", "largura": 24},
+        {"chave": "status", "titulo": "Status", "largura": 14},
+        {"chave": "prioridade", "titulo": "Prioridade", "largura": 12},
+        {"chave": "resultado", "titulo": "Resultado / Desfecho", "largura": 35},
+        {"chave": "recepcionado_em", "titulo": "Recepcionado Em", "largura": 18},
+        {"chave": "recepcionado_por", "titulo": "Recepcionado Por", "largura": 20},
+    ]
+
+    titulo = f"Relatório de Agendados ({data_de or 'Geral'} a {data_ate or 'Geral'})"
+    registrar_log_exportacao(
+        modulo="tfd_relatorio_agendados",
+        titulo=titulo,
+        usuario_id=ator.id,
+        usuario_nome=ator.nome or ator.username,
+        total_linhas=len(itens),
+        filtros={"data_de": data_de, "data_ate": data_ate, "status": status_, "unidade_id": unidade_id},
+    )
+
+    return resposta_xlsx(
+        titulo,
+        ator.nome or ator.username,
+        cols,
+        itens,
+        "relatorio_agendados",
+    )
 
 
 @router.delete("/exames/{eid}", status_code=status.HTTP_204_NO_CONTENT)
@@ -3847,9 +4386,6 @@ def disponibilidade_frota(
     Intervalo efetivo: saída → retorno; retorno vazio/anterior => +9h.
     `ignorar_id` exclui a própria viagem na edição/troca.
     """
-    from datetime import date as _date
-
-    ano, mes, dia = int(data[0:4]), int(data[5:7]), int(data[8:10])
     janela = _janela(saida, retorno)
     viagens = list(db.exec(select(Viagem).where(
         func.to_char(Viagem.data_viagem, "YYYY-MM-DD") == data)).all())

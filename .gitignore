@@ -63,8 +63,8 @@ pgdata/
 # ==============================================================================
 # TESTES E ARTEFATOS TEMPORÁRIOS
 # ==============================================================================
-tests/
 testes/
-backend/tests/
 locust_result_*
 .openchamber/
+.coverage
+htmlcov/

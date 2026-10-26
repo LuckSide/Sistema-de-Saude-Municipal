@@ -5,8 +5,6 @@ import {
   FileSearch,
   Send,
   X,
-  Clock,
-  Layers,
   Check,
   Ban,
   MessageSquare,

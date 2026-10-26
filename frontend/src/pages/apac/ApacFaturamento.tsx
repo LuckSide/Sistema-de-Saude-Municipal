@@ -8,7 +8,6 @@ import {
   AlertTriangle,
   Download,
   FileText,
-  FileSpreadsheet,
   RefreshCw,
   Layers,
   DollarSign,
@@ -44,7 +43,6 @@ export default function ApacFaturamento() {
   const [unidades, setUnidades] = useState<UnidadeSaude[]>([]);
   const [resumo, setResumo] = useState<ResumoFaturamentoApac | null>(null);
   const [lotes, setLotes] = useState<LoteFaturamentoApac[]>([]);
-  const [loading, setLoading] = useState(false);
   const [gerando, setGerando] = useState(false);
   const [baixandoLoteId, setBaixandoLoteId] = useState<number | null>(null);
   const [msgSucesso, setMsgSucesso] = useState("");
@@ -52,7 +50,6 @@ export default function ApacFaturamento() {
 
   // Carregar dados da competência
   const carregarDados = async (comp = competencia) => {
-    setLoading(true);
     try {
       const [resResumo, resLotes] = await Promise.all([
         fetchApacFaturamentoResumo(comp),
@@ -83,8 +80,6 @@ export default function ApacFaturamento() {
       }
     } catch {
       setMsgErro("Erro ao carregar dados do faturamento.");
-    } finally {
-      setLoading(false);
     }
   };
 

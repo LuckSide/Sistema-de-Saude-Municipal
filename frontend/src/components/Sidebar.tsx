@@ -25,6 +25,7 @@ import {
   MapPin,
   PanelLeftClose,
   PanelLeftOpen,
+  PlusCircle,
   ReceiptText,
   Settings,
   ShieldCheck,
@@ -83,13 +84,14 @@ const MODULOS_NAV: ModuloNav[] = [
   },
   {
     id: "fila",
-    label: "Fila e Agendamentos",
+    label: "Solicitações",
     icon: ListOrdered,
     itens: [
+      { to: "/tfd/solicitacoes/nova", label: "Nova Solicitação", icon: PlusCircle, tela: "tfd_exames", ou: ["tfd_fila_lancamento", "tfd"] },
       { to: "/fila-exames", label: "Fila de Espera", icon: ListOrdered, tela: "tfd_exames", ou: ["tfd_fila_lancamento", "tfd_medico", "tfd"] },
+      { to: "/tfd/agendamentos", label: "Agenda e Recepção", icon: CalendarDays, tela: "tfd_agenda", ou: ["tfd"] },
+      { to: "/tfd/relatorio-agendados", label: "Relatório de Agendados", icon: BarChart3, tela: "tfd_agenda", ou: ["tfd", "usuarios"] },
       { to: "/painel-medico", label: "Regulação Médica", icon: Stethoscope, tela: "tfd_medico" },
-      { to: "/tfd/agenda", label: "Agenda Exames", icon: CalendarDays, tela: "tfd_agenda", ou: ["tfd"] },
-      { to: "/tfd/agendamentos", label: "Recepção / Check-in", icon: ClipboardCheck, tela: "tfd_agenda", ou: ["tfd"] },
     ],
   },
   {

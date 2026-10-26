@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Pencil, Plus, Trash2, UserPlus, X, Calendar, Search } from "lucide-react";
+import { Pencil, Plus, Trash2, UserPlus, X, Search } from "lucide-react";
 import {
   tfdAddPassageiro,
   tfdAtualizarViagem,

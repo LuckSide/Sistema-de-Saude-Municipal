@@ -173,7 +173,7 @@ export default function TfdPacientes() {
             <Search className="h-5 w-5" />
           </div>
           <Input
-            placeholder="Buscar por Nome, CPF, CNS ou Prontuário (ex: PR-00042)…"
+            placeholder="Buscar por Nome, CPF, CNS ou Prontuário (digite apenas o número ou nome)…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             className="h-12 pl-11 pr-10 text-base shadow-sm focus:ring-2 focus:ring-sus-900/20"
@@ -195,10 +195,13 @@ export default function TfdPacientes() {
           <span className="font-medium text-sus-900/70">Buscar por:</span>
           <button
             type="button"
-            onClick={() => setQ("PR-")}
+            onClick={() => {
+              const num = prompt("Digite o número do prontuário:");
+              if (num) setQ(num.trim());
+            }}
             className="rounded-full bg-sus-900/5 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-sus-900 hover:bg-sus-900/10 transition-colors"
           >
-            Prontuário (PR-...)
+            Nº Prontuário (ex: 42)
           </button>
           <span className="text-ink/30">•</span>
           <span className="rounded-full bg-sand px-2 py-0.5 text-[11px]">CPF (11 dígitos)</span>

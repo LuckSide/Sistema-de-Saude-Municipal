@@ -4,12 +4,9 @@ import {
   Calendar,
   CheckCircle2,
   Clock,
-  FileText,
-  Filter,
   FlaskConical,
   Printer,
   Search,
-  User,
   X,
 } from "lucide-react";
 import {
@@ -22,6 +19,7 @@ import {
 } from "../../services/api";
 import { Button, Card, Input, Label } from "../../components/ui/primitives";
 import ComprovanteExameModal from "../../components/ComprovanteExameModal";
+import BotaoWhatsApp from "../../components/BotaoWhatsApp";
 import { useAuth } from "../../hooks/useAuth";
 
 function hojeISO() {
@@ -54,11 +52,12 @@ export default function RecepcaoLab() {
     setCarregando(true);
     setErro("");
     try {
+      const qVal = termoBusca.trim();
       const res = await solicitarListar({
-        q: termoBusca.trim() || undefined,
+        q: qVal || undefined,
         status: filtroStatus !== "todos" ? filtroStatus : undefined,
-        data_de: dataFiltro || undefined,
-        data_ate: dataFiltro || undefined,
+        data_de: qVal ? undefined : (dataFiltro || undefined),
+        data_ate: qVal ? undefined : (dataFiltro || undefined),
         limit: 100,
       });
       const arr = pagData<any>(res);
@@ -353,14 +352,26 @@ export default function RecepcaoLab() {
 
                 {/* Ações da Recepção */}
                 <div className="flex flex-wrap items-center justify-between pt-3 border-t border-sus-900/10 gap-2">
-                  <Button
-                    type="button"
-                    onClick={() => setComprovanteId(item.id)}
-                    className="border border-sus-900/15 bg-white text-ink hover:bg-sand !h-9 text-xs"
-                    title="Visualizar ou imprimir comprovante"
-                  >
-                    <Printer className="h-3.5 w-3.5 text-teal" /> Comprovante
-                  </Button>
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      type="button"
+                      onClick={() => setComprovanteId(item.id)}
+                      className="border border-sus-900/15 bg-white text-ink hover:bg-sand !h-9 text-xs"
+                      title="Visualizar ou imprimir comprovante"
+                    >
+                      <Printer className="h-3.5 w-3.5 text-teal" /> Comprovante
+                    </Button>
+                    <BotaoWhatsApp
+                      exameId={item.id}
+                      exame={{
+                        ...item,
+                        exame: (item.itens || []).map((x: any) => x.descricao || x.procedimento_descricao).join(", ") || "Exames Laboratoriais",
+                        destino: item.laboratorio_nome,
+                      }}
+                      tipo="agendamento"
+                      variante="compacto"
+                    />
+                  </div>
 
                   {!isColetado && (
                     <div className="flex items-center gap-2">

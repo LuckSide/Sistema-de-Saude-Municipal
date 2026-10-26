@@ -173,7 +173,6 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                         comp = {"0": "NA", "1": "AB", "2": "MC", "3": "AC"}.get(comp, "NA")
                     sexo = line[261].strip().upper()[:10]
                     qtd_max = int((line[262:266] or "0").strip() or "0")
-                    dias = int((line[266:270] or "0").strip() or "0")
                     pontos = int((line[270:274] or "0").strip() or "0")
                     idade_min = int((line[274:278] or "0").strip() or "0")
                     idade_max = int((line[278:282] or "0").strip() or "0")

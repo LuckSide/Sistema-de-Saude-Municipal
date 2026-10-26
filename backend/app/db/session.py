@@ -658,8 +658,6 @@ def init_db() -> None:
             pass
         # Seed settings padrão
         try:
-            from app.models.settings import SystemSettings
-
             if not db.get(SystemSettings, 1):
                 db.add(SystemSettings(id=1, cidade="Guapé", uf="MG", subtitulo="Secretaria Municipal"))
                 db.commit()
@@ -667,8 +665,6 @@ def init_db() -> None:
             pass
         # Seed integrações (linha única id=1; segredos vazios)
         try:
-            from app.models.integracoes import IntegrationSettings
-
             if not db.get(IntegrationSettings, 1):
                 db.add(IntegrationSettings(id=1))
                 db.commit()
@@ -715,7 +711,6 @@ def init_db() -> None:
         # Item 2: Higienização da base (remoção de motoristas do cadastro de médicos clínicos)
         try:
             from sqlalchemy import or_
-            from app.models.tfd import Motorista
 
             medicos_motoristas = db.exec(
                 select(Medico).where(

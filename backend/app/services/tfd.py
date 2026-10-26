@@ -5,7 +5,6 @@ from sqlmodel import Session, func, select
 from app.models.tfd import (
     ExameFila,
     Faturamento,
-    Paciente,
     Veiculo,
     Viagem,
     ViagemPaciente,
@@ -13,7 +12,6 @@ from app.models.tfd import (
 
 
 def resumo_tfd(db: Session, competencia: str) -> dict:
-    ano, mes = competencia.split("-")
     viagens = db.exec(
         select(func.count(Viagem.id)).where(
             func.to_char(Viagem.data_viagem, "YYYY-MM") == competencia

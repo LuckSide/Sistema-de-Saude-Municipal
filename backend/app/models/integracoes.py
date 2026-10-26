@@ -50,6 +50,16 @@ class IntegrationSettings(SQLModel, table=True):
     rnds_cert_pem: str = Field(default="", max_length=8000)
     rnds_key_pem: str = Field(default="", max_length=8000)
 
+    # --- WhatsApp / Mensageria de Pacientes ---
+    whatsapp_habilitado: bool = Field(default=False)
+    whatsapp_provedor: str = Field(default="api_oficial", max_length=50)  # api_oficial | z_api | evolution | webhook_generico
+    whatsapp_api_url: str = Field(default="", max_length=500)
+    whatsapp_api_token: str = Field(default="", max_length=500)
+    whatsapp_instancia_id: str = Field(default="", max_length=150)
+    whatsapp_notificar_entrada_fila: bool = Field(default=True)
+    whatsapp_notificar_agendamento: bool = Field(default=True)
+    whatsapp_ddd_padrao: str = Field(default="35", max_length=5)
+
 
 class PecSyncLog(SQLModel, table=True):
     """Registro de auditoria/log das sincronizações de cadastros com o e-SUS PEC."""
@@ -98,5 +108,28 @@ class PecIndicadorCache(SQLModel, table=True):
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=False)),
     )
+
+
+class WhatsAppLog(SQLModel, table=True):
+    """Auditoria de mensagens e notificações via WhatsApp enviadas aos pacientes."""
+
+    __tablename__ = "whatsapp_logs"
+
+    id: int | None = Field(default=None, primary_key=True)
+    criado_em: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=False), index=True),
+    )
+    exame_id: int | None = Field(default=None, index=True)
+    paciente_id: int | None = Field(default=None, index=True)
+    tipo_evento: str = Field(default="geral", max_length=30, index=True)  # entrada_fila | agendamento | teste | manual
+    telefone_destinatario: str = Field(default="", max_length=30)
+    paciente_nome: str = Field(default="", max_length=150)
+    mensagem: str = Field(default="", sa_column=Column(Text))
+    status: str = Field(default="PENDENTE", max_length=20, index=True)  # ENVIADO | FALHA | PENDENTE | COPIADO
+    sucesso: bool = Field(default=False)
+    resposta_gateway: str = Field(default="", sa_column=Column(Text))
+    erro: str = Field(default="", max_length=500)
+
 
 

@@ -1,9 +1,12 @@
+import logging
 import os
 import socket
 import subprocess
 import tempfile
 import time
 from typing import Optional
+
+logger = logging.getLogger("pec_tunnel")
 
 _TUNNEL_PROC: Optional[subprocess.Popen] = None
 _TUNNEL_PORT: int = 5433
@@ -200,6 +203,7 @@ def garantir_tunel_db(cfg=None) -> tuple[bool, str]:
                 dsn = f"postgresql://{usuario}:{senha}@127.0.0.1:{porta_local}/{banco}"
                 return True, dsn
         except Exception as e:
+            logger.warning("Erro ao inicializar túnel SSH PEC: %s", e)
             return False, ""
 
     # Se SSH não estiver habilitado, usa conexão direta

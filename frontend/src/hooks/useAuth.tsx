@@ -21,6 +21,10 @@ type AuthCtx = {
   isMedico: boolean;
   /** Perfil de lançamento restrito (sem urgente/agendamento direto). */
   isLancamentoRestrito: boolean;
+  /** Perfil Central TFD (pode escolher qualquer unidade e data). */
+  isTfdCentral: boolean;
+  /** Perfil PSF (restrito à sua unidade e data de hoje). */
+  isPsf: boolean;
   /** Trava de lançamentos retroativos (data < hoje), salvo flag ou superuser. */
   retroativoBloqueado: boolean;
   /** Permissão para alterar viagens em datas passadas. */
@@ -82,6 +86,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   /** Perfil de lançamento restrito: pode adicionar à fila, mas não pode setar urgente nem agendar direto. */
   const isLancamentoRestrito = !!user && !user.is_superuser && concedida(user.telas, "tfd_fila_lancamento") && !concedida(user.telas, "tfd_medico");
 
+  /** Perfil TFD Central: superusuário ou permissão central sem restrição a PSF. */
+  const isTfdCentral = !!user && (user.is_superuser || (concedida(user.telas, "tfd") && !concedida(user.telas, "tfd_fila_lancamento")));
+
+  /** Perfil PSF: lotado em unidade de saúde e não pertencente à central TFD. */
+  const isPsf = !!user && !isTfdCentral && !!user.unidade_saude_id;
+
   const retroativoBloqueado = !!user && !user.is_superuser && user.permite_retroativo === false;
 
   const podeEditarPassadas = !!user && (user.is_superuser || (user.permite_retroativo !== false && (concedida(user.telas, "tfd_viagens_passadas") || concedida(user.telas, "usuarios"))));
@@ -98,8 +108,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ user, loading, login, logout, refreshMe, can, isMedico, isLancamentoRestrito, retroativoBloqueado, podeEditarPassadas, podeAlterarPrioridade, precisaTrocarSenha }),
-    [user, loading, login, logout, refreshMe, can, isMedico, isLancamentoRestrito, retroativoBloqueado, podeEditarPassadas, podeAlterarPrioridade, precisaTrocarSenha]
+    () => ({ user, loading, login, logout, refreshMe, can, isMedico, isLancamentoRestrito, isTfdCentral, isPsf, retroativoBloqueado, podeEditarPassadas, podeAlterarPrioridade, precisaTrocarSenha }),
+    [user, loading, login, logout, refreshMe, can, isMedico, isLancamentoRestrito, isTfdCentral, isPsf, retroativoBloqueado, podeEditarPassadas, podeAlterarPrioridade, precisaTrocarSenha]
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

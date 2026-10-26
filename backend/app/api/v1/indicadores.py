@@ -1,7 +1,6 @@
 """Indicadores / Dashboard — agregados fila TFD + agenda lab (somente leitura agregada)."""
 
 from calendar import monthrange
-from collections import defaultdict
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query
@@ -305,8 +304,6 @@ def evolucao_impl(db: Session, de: str | None, ate: str | None, granularidade: s
 
     if granularidade == "semana":
         buckets = _iter_semanas(d_de, d_ate)
-        keys = [k for k, _, _ in buckets]
-        inicios = {k: ini for k, ini, _ in buckets}
         pontos = []
         for k, ini, fim in buckets:
             criados = sum(1 for e in exames if e.data_pedido and ini <= e.data_pedido <= fim)

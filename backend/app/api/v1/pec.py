@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlmodel import Session, select
+from sqlmodel import Session
 
-from app.core.deps import get_current_user_senha_ok as get_current_user, get_db
+from app.core.deps import get_db
 from app.services.permissoes import need_perm
 from app.services.pec import (
     EQUIPE_RE,

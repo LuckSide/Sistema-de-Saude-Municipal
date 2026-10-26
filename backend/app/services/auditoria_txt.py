@@ -134,7 +134,6 @@ FIELD_LABELS = {
     "motorista": "Motorista",
     "departamento": "Departamento",
     "veiculo_id": "Veículo",
-    "medico_id": "Médico",
     "paciente_id": "Paciente",
     "exame": "Exame",
     "especialidade": "Especialidade",

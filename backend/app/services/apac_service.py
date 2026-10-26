@@ -5,15 +5,13 @@ from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.models.apac import (
-    AnexoLaudoAPAC,
     FaixaNumeracaoAPAC,
     LoteFaturamentoAPAC,
     ProcedimentoSecundarioAPAC,
     SolicitacaoAPAC,
 )
-from app.models.cadastros_saude import Medico, UnidadeSaude
+from app.models.cadastros_saude import Medico
 from app.models.lab_exames import SigtapCid, SigtapProcedimento
-from app.models.tfd import Paciente
 
 
 def limpar_digitos(v: str | None) -> str:

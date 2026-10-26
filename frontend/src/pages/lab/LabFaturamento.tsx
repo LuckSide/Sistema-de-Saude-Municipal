@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import { CheckCheck, Download, FileSpreadsheet, FileText, FlaskConical, Layers, TrendingUp, Users } from "lucide-react";
+import { CheckCheck, Download, FileSpreadsheet, FlaskConical, Layers, TrendingUp, Users } from "lucide-react";
 import {
-  labExportarLote,
   labMarcarFaturado,
   labProntos,
   labBpaConsolidado,
@@ -11,7 +10,7 @@ import {
   type LabSol,
   type BpaResumo,
 } from "../../services/api";
-import { Button, Card, Input, Label } from "../../components/ui/primitives";
+import { Button, Card } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
 

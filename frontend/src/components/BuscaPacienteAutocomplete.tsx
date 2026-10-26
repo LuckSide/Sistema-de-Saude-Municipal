@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, RefreshCw, Search, User, X } from "lucide-react";
-import { tfdPacientes, pagData, type Paciente } from "../services/api";
+import { RefreshCw, Search, User } from "lucide-react";
+import { tfdPacientes, tfdPaciente, pagData, type Paciente } from "../services/api";
 import { Label } from "./ui/primitives";
 
 interface BuscaPacienteAutocompleteProps {
@@ -38,23 +38,21 @@ export default function BuscaPacienteAutocomplete({
     }
   }, [pacienteInicial, pacienteId]);
 
-  // Se temos pacienteId mas não temos pacienteAtivo carregado, tenta buscar
+  // Se temos pacienteId mas não temos pacienteAtivo carregado, busca diretamente pelo ID do paciente
   useEffect(() => {
     if (pacienteId && !pacienteAtivo) {
-      tfdPacientes(undefined, 1, 100)
-        .then((r) => {
-          const lista = pagData<Paciente>(r);
-          const achou = lista.find((p) => String(p.id) === String(pacienteId));
-          if (achou) setPacienteAtivo(achou);
+      tfdPaciente(Number(pacienteId))
+        .then((p) => {
+          if (p) setPacienteAtivo(p);
         })
         .catch(() => {});
     }
   }, [pacienteId, pacienteAtivo]);
 
-  // Debounce na busca de pacientes
+  // Debounce na busca sob demanda de pacientes
   useEffect(() => {
     const q = busca.trim();
-    if (!q || q.length < 2) {
+    if (!q) {
       setSugestoes([]);
       setBuscando(false);
       return;
@@ -178,30 +176,38 @@ export default function BuscaPacienteAutocomplete({
 
           {aberto && sugestoes.length > 0 && (
             <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-60 overflow-y-auto rounded-xl border border-sus-900/15 bg-white shadow-xl divide-y divide-sus-900/5">
-              {sugestoes.map((p) => (
-                <div
-                  key={p.id}
-                  onClick={() => handleSelecionar(p)}
-                  className="flex items-center justify-between p-3 text-left hover:bg-sand/60 cursor-pointer transition"
-                >
-                  <div>
-                    <span className="block font-medium text-sm text-sus-950">{p.nome}</span>
-                    <span className="block text-xs text-ink/50 font-mono">
-                      {p.cpf ? `CPF: ${p.cpf}` : "Sem CPF"} · {p.cns ? `CNS: ${p.cns}` : "Sem CNS"}
-                      {p.nascimento ? ` · Nasc: ${p.nascimento.slice(0, 10).split("-").reverse().join("/")}` : ""}
+              {sugestoes.map((p) => {
+                const prontLimpo = p.codigo_prontuario?.replace(/^PR-0*/, "") || String(p.id);
+                return (
+                  <div
+                    key={p.id}
+                    onClick={() => handleSelecionar(p)}
+                    className="flex items-center justify-between p-3 text-left hover:bg-sand/60 cursor-pointer transition"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-sm text-sus-950">{p.nome}</span>
+                        <span className="font-mono text-[11px] font-bold text-teal bg-teal/10 px-1.5 py-0.5 rounded">
+                          Pront. {prontLimpo}
+                        </span>
+                      </div>
+                      <span className="block text-xs text-ink/50 font-mono mt-0.5">
+                        {p.cpf ? `CPF: ${p.cpf}` : "Sem CPF"} · {p.cns ? `CNS: ${p.cns}` : "Sem CNS"}
+                        {p.nascimento ? ` · Nasc: ${p.nascimento.slice(0, 10).split("-").reverse().join("/")}` : ""}
+                      </span>
+                    </div>
+                    <span className="text-xs font-semibold text-teal bg-teal/10 px-2 py-0.5 rounded-md shrink-0">
+                      Selecionar
                     </span>
                   </div>
-                  <span className="text-xs font-semibold text-teal bg-teal/10 px-2 py-0.5 rounded-md">
-                    Selecionar
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
-          {aberto && busca.trim().length >= 2 && !buscando && sugestoes.length === 0 && (
+          {aberto && busca.trim() && !buscando && sugestoes.length === 0 && (
             <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-sus-900/15 bg-white p-4 text-center text-xs text-ink/50 shadow-xl">
-              Nenhum paciente encontrado para "{busca}".
+              Nenhum paciente encontrado para "{busca}". Digite o nome, CPF, CNS ou número do prontuário.
             </div>
           )}
         </div>
