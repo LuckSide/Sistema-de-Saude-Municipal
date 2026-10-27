@@ -180,7 +180,7 @@ def update_user(db: Session, user: User, data: UserUpdate) -> User:
         try:
             user.acoes = json.dumps(validar_acoes(patch.pop("acoes")))
         except ValueError as e:
-            raise ValueError(str(e))
+            raise ValueError("Erro de validação ao processar as ações.")
     for k, v in patch.items():
         if v is not None and hasattr(user, k):
             setattr(user, k, v.strip() if isinstance(v, str) else v)

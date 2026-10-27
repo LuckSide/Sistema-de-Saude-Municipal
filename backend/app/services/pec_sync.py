@@ -452,7 +452,7 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
 
     except Exception as e:
         duracao = round(time.time() - t0, 2)
-        err_msg = str(e).split("\n")[0][:950]
+        err_msg = "Ocorreu um erro interno durante a sincronizacao."
         try:
             db.rollback()
         except Exception:
@@ -462,7 +462,7 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
         log.status = "ERRO"
         log.duracao_segundos = duracao
         log.mensagem = f"Falha na sincronização: {err_msg}"
-        log.detalhes = str(e)
+        log.detalhes = "Erro logado pelo sistema"
 
         try:
             cfg = db.exec(select(IntegrationSettings).where(IntegrationSettings.id == 1)).first()

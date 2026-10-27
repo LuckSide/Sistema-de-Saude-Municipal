@@ -43,11 +43,11 @@ def exportar_backup(
         # 3. Criptografa com AES-256-GCM + PBKDF2
         arquivo_bak = criptografar_dados(dados_comprimidos, payload.senha.strip())
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro de validação. Verifique os parâmetros.")
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Falha ao gerar backup: {e}",
+            detail="Falha interna ao gerar backup. Consulte os logs.",
         )
 
     data_formatada = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -97,7 +97,7 @@ async def restaurar_backup(
         # 3. Restauração atômica no banco de dados
         detalhes = restaurar_dump_dados(db, dump, autor_id=user.id or 0)
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro de validação. Verifique os parâmetros.")
     except json.JSONDecodeError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -106,7 +106,7 @@ async def restaurar_backup(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erro interno durante a restauração do banco: {e}",
+            detail="Erro interno durante a restauração do banco. Consulte os logs.",
         )
 
     return {

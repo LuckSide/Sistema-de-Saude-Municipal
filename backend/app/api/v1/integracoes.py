@@ -346,7 +346,7 @@ def testar_pec(db: Session = Depends(get_db), user: User = Depends(need_perm("cf
             "detalhe": msg,
         }
     except Exception as e:
-        msg = str(e).split("\n")[0][:250]
+        msg = "Erro interno de conexão. Verifique as configurações e os logs."
         return {"ok": False, "fonte_efetiva": "postgres", "detalhe": f"Falha de conexão com e-SUS PEC: {msg}"}
 
 
@@ -557,7 +557,7 @@ def importar_filas(
     try:
         linhas = ler_csv(conteudo) if ext == "csv" else ler_xlsx(conteudo)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="Erro de validação ou regra de negócio. Verifique os dados fornecidos.")
     if not linhas:
         raise HTTPException(status_code=400, detail="Nenhuma linha de dados")
     if len(linhas) > MAX_LINHAS:

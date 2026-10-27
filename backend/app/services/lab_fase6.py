@@ -202,7 +202,7 @@ def criar_solicitacao_mestre(
         raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(400, f"Falha ao agendar: {e}")
+        raise HTTPException(400, "Falha interna ao agendar. Verifique os dados fornecidos e tente novamente.")
     db.refresh(mestre)
     return mestre
 
@@ -368,7 +368,7 @@ def auditar_mestre(
         raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(400, f"Falha ao auditar: {e}")
+        raise HTTPException(400, "Falha interna ao auditar o pedido. Verifique os dados fornecidos e tente novamente.")
     db.refresh(m)
     return m
 
