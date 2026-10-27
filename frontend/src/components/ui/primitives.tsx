@@ -27,7 +27,7 @@ export function Button({
     <button
       {...props}
       className={cn(
-        "inline-flex h-11 min-h-[44px] items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-display text-sm font-semibold transition active:scale-[.99] disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex h-11 min-h-[44px] items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-display text-sm font-semibold transition active:scale-[.99] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sus-700",
         variantStyles,
         className
       )}
@@ -43,10 +43,28 @@ export function Input({
     <input
       {...props}
       className={cn(
-        "w-full h-11 rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink/35 focus:border-sus-700 focus:ring-2 focus:ring-sus-700/20",
+        "w-full h-11 rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink/60 focus:border-sus-700 focus-visible:ring-2 focus-visible:ring-sus-700/20",
         className
       )}
     />
+  );
+}
+
+export function Select({
+  className,
+  children,
+  ...props
+}: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <select
+      {...props}
+      className={cn(
+        "w-full h-11 rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition focus:border-sus-700 focus-visible:ring-2 focus-visible:ring-sus-700/20",
+        className
+      )}
+    >
+      {children}
+    </select>
   );
 }
 

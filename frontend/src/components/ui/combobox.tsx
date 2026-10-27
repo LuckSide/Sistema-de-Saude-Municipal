@@ -119,7 +119,7 @@ export function Combobox({
         }}
         className={cn(
           "combo-input w-full h-11 rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition",
-          "placeholder:text-ink/35 focus:border-sus-700 focus:ring-2 focus:ring-sus-700/20",
+          "placeholder:text-ink/60 focus:border-sus-700 focus-visible:ring-2 focus-visible:ring-sus-700/20",
           disabled && "cursor-not-allowed bg-sand/30 opacity-60"
         )}
       />

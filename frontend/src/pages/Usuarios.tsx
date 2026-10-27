@@ -16,7 +16,7 @@ import {
   type UnidadeSaude,
   type Usuario,
 } from "../services/api";
-import { Button, Card, Input, Label } from "../components/ui/primitives";
+import { Button, Card, Input, Label, Select } from "../components/ui/primitives";
 import Paginacao from "../components/Paginacao";
 import ExportarExcel from "../components/ExportarExcel";
 import PermissoesTree from "../components/PermissoesTree";
@@ -392,21 +392,19 @@ export default function Usuarios() {
               )}
               <div>
                 <Label>Área</Label>
-                <select
+                <Select
                   value={form.area}
                   onChange={(e) => setForm({ ...form, area: e.target.value })}
-                  className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-sus-700"
                 >
                   <option value="painel">painel</option>
                   <option value="ferramentas">ferramentas</option>
-                </select>
+                </Select>
               </div>
               <div>
                 <Label>Unidade de Saúde / PSF do Usuário</Label>
-                <select
+                <Select
                   value={form.unidade_saude_id}
                   onChange={(e) => setForm({ ...form, unidade_saude_id: e.target.value })}
-                  className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-sus-700"
                 >
                   <option value="">Nenhuma / Secretaria Central</option>
                   {unidades.filter((u) => u.ativo).map((u) => (
@@ -414,33 +412,31 @@ export default function Usuarios() {
                       {u.nome}
                     </option>
                   ))}
-                </select>
+                </Select>
                 <p className="mt-1 text-xs text-ink/50">
                   Unidade padrão atribuída a este operador para preenchimento automático em formulários de exames e filas.
                 </p>
               </div>
               <div>
                 <Label>Médico vinculado (perfil Médico)</Label>
-                <select
+                <Select
                   value={form.medico_id}
                   onChange={(e) => setForm({ ...form, medico_id: e.target.value })}
-                  className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-sus-700"
                 >
                   <option value="">Nenhum (não é médico)</option>
                   {medicos.filter((m) => m.ativo).map((m) => (
                     <option key={m.id} value={m.id}>{m.nome}{m.crm ? ` · ${m.crm}` : ""}</option>
                   ))}
-                </select>
+                </Select>
                 <p className="mt-1 text-xs text-ink/50">
                   Combine com a tela <b>Painel Médico</b> nas permissões. Só o médico vinculado edita prioridade/justificativa dos próprios encaminhamentos.
                 </p>
               </div>
               <div>
                 <Label>Laboratório Conveniado Vinculado</Label>
-                <select
+                <Select
                   value={form.laboratorio_id}
                   onChange={(e) => setForm({ ...form, laboratorio_id: e.target.value })}
-                  className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-sus-700"
                 >
                   <option value="">Nenhum / Não vinculado a laboratório</option>
                   {labs.filter((l) => l.ativo).map((l) => (
@@ -448,7 +444,7 @@ export default function Usuarios() {
                       {l.nome} {l.cnes ? `(CNES: ${l.cnes})` : ""}
                     </option>
                   ))}
-                </select>
+                </Select>
                 <p className="mt-1 text-xs text-ink/50">
                   Atribui o usuário a um laboratório conveniado específico, restringindo o acesso exclusivamente aos pedidos e coletas desta unidade.
                 </p>

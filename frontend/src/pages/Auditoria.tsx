@@ -16,7 +16,7 @@ import {
   Smartphone,
   X,
 } from "lucide-react";
-import { Badge, Button, Card, Input, Label } from "../components/ui/primitives";
+import { Badge, Button, Card, Input, Label, Select } from "../components/ui/primitives";
 import Paginacao from "../components/Paginacao";
 import ExportarExcel from "../components/ExportarExcel";
 import {
@@ -461,7 +461,7 @@ export default function Auditoria() {
           </div>
           <div>
             <Label>Ação</Label>
-            <select value={acao} onChange={(e) => setAcao(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-sus-700">
+            <Select value={acao} onChange={(e) => setAcao(e.target.value)}>
               <option value="">Todas as Ações</option>
               {filtros.acoes.map((item, idx) => {
                 const val = typeof item === "string" ? item : (item?.valor ?? "");
@@ -470,11 +470,11 @@ export default function Auditoria() {
                   <option key={val || idx} value={val}>{rot}</option>
                 );
               })}
-            </select>
+            </Select>
           </div>
           <div>
             <Label>Módulo / Entidade</Label>
-            <select value={entidade} onChange={(e) => setEntidade(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-sus-700">
+            <Select value={entidade} onChange={(e) => setEntidade(e.target.value)}>
               <option value="">Todos os Módulos</option>
               {filtros.entidades.map((item, idx) => {
                 const val = typeof item === "string" ? item : (item?.valor ?? "");
@@ -483,7 +483,7 @@ export default function Auditoria() {
                   <option key={val || idx} value={val}>{rot}</option>
                 );
               })}
-            </select>
+            </Select>
           </div>
           <div className="flex items-end">
             <Button onClick={() => { setPage(1); carregar(1); }} disabled={loading} className="w-full">
@@ -660,18 +660,18 @@ export default function Auditoria() {
                 A recomendação padrão é manter 6 ou 12 meses de logs na base ativa e arquivar dados anteriores de forma compactada.
               </div>
 
-              <div>
+              <div className="mt-1">
                 <Label>Período de Retenção (preservar logs dos últimos):</Label>
-                <select
+                <Select
                   value={rotacaoMeses}
                   onChange={(e) => setRotacaoMeses(Number(e.target.value))}
                   disabled={executandoRotacao}
-                  className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-sus-700">
+                >
                   <option value={3}>3 Meses (Expurgar anteriores a 90 dias)</option>
                   <option value={6}>6 Meses (Recomendado)</option>
                   <option value={12}>12 Meses (1 Ano)</option>
                   <option value={24}>24 Meses (2 Anos)</option>
-                </select>
+                </Select>
               </div>
 
               <div className="flex items-center gap-2 pt-1">
