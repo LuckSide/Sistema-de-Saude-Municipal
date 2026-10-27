@@ -557,7 +557,7 @@ def importar_filas(
     try:
         linhas = ler_csv(conteudo) if ext == "csv" else ler_xlsx(conteudo)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail="Erro de validação ou regra de negócio. Verifique os dados fornecidos.")
+        raise HTTPException(status_code=400, detail=str(e))
     if not linhas:
         raise HTTPException(status_code=400, detail="Nenhuma linha de dados")
     if len(linhas) > MAX_LINHAS:

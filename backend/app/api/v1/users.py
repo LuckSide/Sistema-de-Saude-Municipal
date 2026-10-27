@@ -26,7 +26,7 @@ def trocar_minha_senha(
     try:
         trocar_senha(db, user, data.senha_atual, data.nova_senha)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail="Erro de validação ou regra de negócio. Verifique os dados fornecidos.")
+        raise HTTPException(status_code=400, detail=str(e))
     return {"ok": True, "detail": "Senha atualizada"}
 
 
@@ -39,7 +39,7 @@ def primeira_troca_senha(
     try:
         primeira_troca(db, user, data.senha_atual, data.nova_senha, data.confirmar_senha)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail="Erro de validação ou regra de negócio. Verifique os dados fornecidos.")
+        raise HTTPException(status_code=400, detail=str(e))
     return {"ok": True, "detail": "Senha definida. Acesso liberado."}
 
 
@@ -113,7 +113,7 @@ def criar(
     try:
         user, temporaria = create_user(db, data)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail="Erro de validação ou regra de negócio. Verifique os dados fornecidos.")
+        raise HTTPException(status_code=400, detail=str(e))
     if not temporaria:
         raise HTTPException(status_code=400, detail="Falha ao gerar temporária")
     return ResetSenhaOut(
@@ -142,7 +142,7 @@ def atualizar(
     try:
         return to_out(update_user(db, user, data), db)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail="Erro de validação ou regra de negócio. Verifique os dados fornecidos.")
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

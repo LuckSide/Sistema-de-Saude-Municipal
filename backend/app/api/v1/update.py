@@ -42,7 +42,7 @@ def executar_update(
     try:
         return iniciar_atualizacao()
     except ValueError as e:
-        raise HTTPException(status_code=400, detail="Erro de validação ou regra de negócio. Verifique os dados fornecidos.")
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/log")

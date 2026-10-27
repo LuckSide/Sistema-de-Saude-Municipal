@@ -1,3 +1,6 @@
+import logging
+logger = logging.getLogger(__name__)
+
 import re
 import threading
 import time
@@ -451,6 +454,7 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
         return log
 
     except Exception as e:
+        logger.error(f"Erro na sincronização e-SUS PEC: {e}", exc_info=True)
         duracao = round(time.time() - t0, 2)
         err_msg = "Ocorreu um erro interno durante a sincronizacao."
         try:
@@ -462,7 +466,7 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
         log.status = "ERRO"
         log.duracao_segundos = duracao
         log.mensagem = f"Falha na sincronização: {err_msg}"
-        log.detalhes = "Erro logado pelo sistema"
+        log.detalhes = str(e)[:2000]
 
         try:
             cfg = db.exec(select(IntegrationSettings).where(IntegrationSettings.id == 1)).first()
