@@ -5,7 +5,7 @@ import {
   CheckCircle2,
   Clock,
   FlaskConical,
-  Printer,
+  QrCode,
   Search,
   X,
 } from "lucide-react";
@@ -18,8 +18,7 @@ import {
   type SolicMestre,
 } from "../../services/api";
 import { Button, Card, Input, Label } from "../../components/ui/primitives";
-import ComprovanteExameModal from "../../components/ComprovanteExameModal";
-import BotaoWhatsApp from "../../components/BotaoWhatsApp";
+import ModalLeituraRapidaQR from "../../components/ModalLeituraRapidaQR";
 import { useAuth } from "../../hooks/useAuth";
 
 function hojeISO() {
@@ -39,7 +38,7 @@ export default function RecepcaoLab() {
   const [termoBusca, setTermoBusca] = useState("");
 
   // Modais
-  const [comprovanteId, setComprovanteId] = useState<number | null>(null);
+  const [modalLeituraQR, setModalLeituraQR] = useState(false);
 
   // Modal de Pedido de Ajuste
   const [modalAjuste, setModalAjuste] = useState(false);
@@ -144,6 +143,16 @@ export default function RecepcaoLab() {
               </span>
             )}
           </p>
+        </div>
+
+        <div>
+          <Button
+            type="button"
+            onClick={() => setModalLeituraQR(true)}
+            className="border border-teal/40 bg-teal/5 text-teal hover:bg-teal/15 text-xs font-bold flex items-center gap-1.5 !h-10"
+          >
+            <QrCode className="h-4 w-4" /> Leitura Rápida QR Code
+          </Button>
         </div>
       </div>
 
@@ -351,61 +360,30 @@ export default function RecepcaoLab() {
                 </div>
 
                 {/* Ações da Recepção */}
-                <div className="flex flex-wrap items-center justify-between pt-3 border-t border-sus-900/10 gap-2">
-                  <div className="flex items-center gap-1.5">
+                {!isColetado && (
+                  <div className="flex flex-wrap items-center justify-end pt-3 border-t border-sus-900/10 gap-2">
                     <Button
                       type="button"
-                      onClick={() => setComprovanteId(item.id)}
-                      className="border border-sus-900/15 bg-white text-ink hover:bg-sand !h-9 text-xs"
-                      title="Visualizar ou imprimir comprovante"
+                      onClick={() => abrirModalAjuste(item)}
+                      className="border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 !h-9 text-xs"
+                      title="Notificar divergência ou solicitar alteração"
                     >
-                      <Printer className="h-3.5 w-3.5 text-teal" /> Comprovante
+                      <AlertTriangle className="h-3.5 w-3.5 text-amber-600" /> Solicitar Ajuste
                     </Button>
-                    <BotaoWhatsApp
-                      exameId={item.id}
-                      exame={{
-                        ...item,
-                        exame: (item.itens || []).map((x: any) => x.descricao || x.procedimento_descricao).join(", ") || "Exames Laboratoriais",
-                        destino: item.laboratorio_nome,
-                      }}
-                      tipo="agendamento"
-                      variante="compacto"
-                    />
+
+                    <Button
+                      type="button"
+                      onClick={() => confirmarRecepcao(item)}
+                      className="!h-9 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                    >
+                      <CheckCircle2 className="h-4 w-4" /> Marcar Coleta Realizada
+                    </Button>
                   </div>
-
-                  {!isColetado && (
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        onClick={() => abrirModalAjuste(item)}
-                        className="border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 !h-9 text-xs"
-                        title="Notificar divergência ou solicitar alteração"
-                      >
-                        <AlertTriangle className="h-3.5 w-3.5 text-amber-600" /> Solicitar Ajuste
-                      </Button>
-
-                      <Button
-                        type="button"
-                        onClick={() => confirmarRecepcao(item)}
-                        className="!h-9 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
-                      >
-                        <CheckCircle2 className="h-4 w-4" /> Marcar Coleta Realizada
-                      </Button>
-                    </div>
-                  )}
-                </div>
+                )}
               </Card>
             );
           })}
         </div>
-      )}
-
-      {/* Modal de Impressão do Comprovante Oficial */}
-      {comprovanteId && (
-        <ComprovanteExameModal
-          solicitacaoId={comprovanteId}
-          onClose={() => setComprovanteId(null)}
-        />
       )}
 
       {/* Modal de Pedido de Ajuste / Notificação de Divergência */}
@@ -490,6 +468,13 @@ export default function RecepcaoLab() {
             </div>
           </div>
         </div>
+      )}
+
+      {modalLeituraQR && (
+        <ModalLeituraRapidaQR
+          onClose={() => setModalLeituraQR(false)}
+          onRecepcaoSucesso={() => carregar()}
+        />
       )}
     </div>
   );

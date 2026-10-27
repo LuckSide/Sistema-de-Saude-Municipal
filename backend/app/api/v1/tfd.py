@@ -1,12 +1,14 @@
 from datetime import date, datetime
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlmodel import Session, and_, case, func, or_, select
+from sqlmodel import Session, and_, case, desc, func, or_, select
+import urllib.parse
 
 import re as _re
 
 from app.core.deps import get_current_user_senha_ok as get_current_user, get_db
 from app.models.cadastros_saude import Medico, UnidadeSaude
+from app.models.lab_exames import SigtapCid
 from app.models.tfd import (
     Destino,
     Especialidade,
@@ -59,8 +61,17 @@ from app.schemas.tfd import (
     ViagemFilaOut,
     ViagemPacienteIn,
     ViagemPacienteOut,
+    ViagemConfirmacaoPublicaOut,
+    ViagemConfirmarIn,
+    ViagemStatusConfirmacaoIn,
 )
 from app.services.tfd import hoje_str, resumo_tfd
+from app.services.geradores import (
+    gerar_prontuario_aleatorio,
+    gerar_exame_curto_aleatorio,
+    gerar_numero_pedido_aleatorio,
+    gerar_protocolo_lab_aleatorio,
+)
 
 router = APIRouter()
 
@@ -130,10 +141,7 @@ def medico_do_usuario(db: Session, user: User) -> Medico | None:
 
 
 def valida_justificativa(texto: str | None) -> str:
-    t = (texto or "").strip()
-    if len(t) < JUSTIFICATIVA_MIN:
-        raise HTTPException(400, "A justificativa deve conter no mínimo 12 caracteres.")
-    return t
+    return (texto or "").strip()
 
 
 def exige_ator_prioridade(db: Session, user: User, exame: ExameFila) -> Medico | None:
@@ -224,6 +232,14 @@ _PERMS_PACIENTES_LEITURA = (
     "usuarios",
 )
 
+def _remover_acentos_str(texto: str) -> str:
+    if not texto:
+        return ""
+    import unicodedata
+    nfkd = unicodedata.normalize("NFKD", str(texto))
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
 # ---------- Pacientes ----------
 @router.get("/pacientes", response_model=Pagina[PacienteOut])
 def listar_pacientes(
@@ -234,6 +250,11 @@ def listar_pacientes(
     db: Session = Depends(get_db),
     ator: User | None = Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
 ):
+    if not isinstance(page, int):
+        page = getattr(page, "default", 1)
+    if not isinstance(limit, int):
+        limit = getattr(limit, "default", 100)
+
     q_limpo = (q or "").strip()
     if not q_limpo:
         # Busca Sob Demanda (Item 2): não exibe nenhum resultado automático ao abrir sem pesquisa
@@ -241,7 +262,7 @@ def listar_pacientes(
 
     so_num = "".join(c for c in q_limpo if c.isdigit())
 
-    # 1. Busca EXATA prioritária (quando o usuário digita CPF, CNS ou Prontuário/ID numérico)
+    # 1. Busca EXATA prioritária (quando o usuário digita CPF, CNS ou Prontuário Exato)
     exatos: list[Paciente] = []
     if len(so_num) == 11:
         cpf_fmt = f"{so_num[:3]}.{so_num[3:6]}.{so_num[6:9]}-{so_num[9:]}"
@@ -250,22 +271,12 @@ def listar_pacientes(
         ).all()
     elif len(so_num) == 15:
         exatos = db.exec(select(Paciente).where(Paciente.cns == so_num)).all()
-    else:
-        q_upper = q_limpo.upper()
-        filtros_pront = [Paciente.codigo_prontuario.ilike(q_upper)]
-        digits = "".join(c for c in q_upper if c.isdigit())
-        if digits:
-            val_id = int(digits)
-            filtros_pront.append(Paciente.id == val_id)
-            filtros_pront.append(Paciente.codigo_prontuario.ilike(f"PR-{val_id:05d}"))
-            filtros_pront.append(Paciente.codigo_prontuario.ilike(f"%{val_id}%"))
-            filtros_pront.append(Paciente.codigo_prontuario == str(val_id))
-        exatos_pront = db.exec(select(Paciente).where(or_(*filtros_pront))).all()
-        if exatos_pront:
-            exatos = exatos_pront
+    elif q_limpo.upper().startswith("PR-"):
+        exatos = db.exec(select(Paciente).where(Paciente.codigo_prontuario.ilike(q_limpo.upper()))).all()
+    elif q_limpo.isdigit() and len(q_limpo) == 5:
+        exatos = db.exec(select(Paciente).where(Paciente.codigo_prontuario.ilike(f"PR-{q_limpo}"))).all()
 
     # Se encontrou correspondência exata, retorna SOMENTE esse(s) paciente(s)
-    # Se a busca foi por CPF, deduplica eventuais prontuários duplicados do PEC, mantendo o registro mais completo
     if exatos:
         if len(so_num) == 11:
             exatos.sort(key=lambda p: (bool(p.endereco), bool(p.cns), p.id or 0), reverse=True)
@@ -279,8 +290,8 @@ def listar_pacientes(
             exatos = unicos
 
         for p in exatos:
-            if not getattr(p, "codigo_prontuario", "") and p.id:
-                p.codigo_prontuario = f"PR-{p.id:05d}"
+            if not getattr(p, "codigo_prontuario", ""):
+                p.codigo_prontuario = gerar_prontuario_aleatorio(db, p.id)
         try:
             from app.core.audit import registrar_log_pesquisa
             u_id = ator.id if ator else None
@@ -291,43 +302,57 @@ def listar_pacientes(
             pass
         return {"data": exatos, "total": len(exatos), "page": 1, "pages": 1}
 
-    # 2. Busca aproximada inteligente (relevância com prioridade no início)
-    filtros = [
-        Paciente.nome.ilike(f"%{q_limpo}%"),
-        Paciente.cpf.ilike(f"%{q_limpo}%"),
-        Paciente.cns.ilike(f"%{q_limpo}%"),
-        Paciente.codigo_prontuario.ilike(f"%{q_limpo}%"),
-    ]
-    digits = "".join(c for c in q_limpo if c.isdigit())
-    if digits:
-        val_id = int(digits)
-        filtros.append(Paciente.id == val_id)
-        filtros.append(Paciente.codigo_prontuario.ilike(f"%{digits}%"))
-    if so_num and so_num != q_limpo:
-        filtros.append(Paciente.cpf.ilike(f"%{so_num}%"))
-        filtros.append(Paciente.cns.ilike(f"%{so_num}%"))
-        filtros.append(Paciente.codigo_prontuario.ilike(f"%{so_num}%"))
+    # 2. Busca multi-palavras inteligente e sem distinção de acentos
+    palavras = [p for p in q_limpo.split() if p]
+    if not palavras:
+        return {"data": [], "total": 0, "page": 1, "pages": 1}
+
+    try:
+        is_pg = getattr(db.get_bind().dialect, "name", "") == "postgresql"
+    except Exception:
+        is_pg = False
+    nome_campo = func.unaccent(Paciente.nome) if is_pg else Paciente.nome
+
+    lista_and = []
+    for w in palavras:
+        w_clean = _remover_acentos_str(w)
+        w_digits = "".join(c for c in w if c.isdigit())
+        conds = [
+            nome_campo.ilike(f"%{w_clean}%"),
+            Paciente.cpf.ilike(f"%{w}%"),
+            Paciente.cns.ilike(f"%{w}%"),
+            Paciente.codigo_prontuario.ilike(f"%{w}%"),
+        ]
+        if w_digits:
+            if len(w_digits) <= 9 and int(w_digits) <= 2147483647:
+                conds.append(Paciente.id == int(w_digits))
+            conds.append(Paciente.codigo_prontuario.ilike(f"%{w_digits}%"))
+            conds.append(Paciente.cpf.ilike(f"%{w_digits}%"))
+            conds.append(Paciente.cns.ilike(f"%{w_digits}%"))
+        lista_and.append(or_(*conds))
+
     # Relevância inteligente: quem começa com o termo aparece primeiro
+    primeira_w = _remover_acentos_str(palavras[0])
     ordem_relevancia = case(
-        (Paciente.nome.ilike(f"{q_limpo}%"), 0),
-        (Paciente.codigo_prontuario.ilike(f"{q_limpo}%"), 0),
+        (nome_campo.ilike(f"{primeira_w}%"), 0),
+        (Paciente.codigo_prontuario.ilike(f"{palavras[0]}%"), 0),
         else_=1,
     )
-    base = select(Paciente).where(or_(*filtros)).order_by(ordem_relevancia, Paciente.nome)
+    base = select(Paciente).where(and_(*lista_and)).order_by(ordem_relevancia, Paciente.nome)
     total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
     meta = paginar(total, page, limit)
     rows = db.exec(base.offset(meta["offset"]).limit(limit)).all()
     # Garante prontuário curto em cada paciente
     for p in rows:
-        if not getattr(p, "codigo_prontuario", "") and p.id:
-            p.codigo_prontuario = f"PR-{p.id:05d}"
+        if not getattr(p, "codigo_prontuario", ""):
+            p.codigo_prontuario = gerar_prontuario_aleatorio(db, p.id)
 
     try:
         from app.core.audit import registrar_log_pesquisa
         u_id = ator.id if ator else None
         u_nome = (ator.nome or ator.username) if ator else ""
         ua = request.headers.get("user-agent", "") if request else ""
-        registrar_log_pesquisa("pacientes", q.strip(), u_id, u_nome, ua, total)
+        registrar_log_pesquisa("pacientes", q_limpo, u_id, u_nome, ua, total)
     except Exception:
         pass
 
@@ -353,7 +378,7 @@ def buscar_pacientes_pec(
 
     so_num = "".join(c for c in termo_limpo if c.isdigit())
 
-    # 1. Busca EXATA prioritária (CPF, CNS ou Prontuário/ID numérico)
+    # 1. Busca EXATA prioritária (CPF, CNS ou Prontuário Exato)
     exatos_busca: list[Paciente] = []
     if len(so_num) == 11:
         cpf_fmt = f"{so_num[:3]}.{so_num[3:6]}.{so_num[6:9]}-{so_num[9:]}"
@@ -362,19 +387,10 @@ def buscar_pacientes_pec(
         ).all()
     elif len(so_num) == 15:
         exatos_busca = db.exec(select(Paciente).where(Paciente.cns == so_num)).all()
-    else:
-        t_upper = termo_limpo.upper()
-        filtros_p = [Paciente.codigo_prontuario.ilike(t_upper)]
-        digits = "".join(c for c in t_upper if c.isdigit())
-        if digits:
-            val_id = int(digits)
-            filtros_p.append(Paciente.id == val_id)
-            filtros_p.append(Paciente.codigo_prontuario.ilike(f"PR-{val_id:05d}"))
-            filtros_p.append(Paciente.codigo_prontuario.ilike(f"%{val_id}%"))
-            filtros_p.append(Paciente.codigo_prontuario == str(val_id))
-        exatos_p = db.exec(select(Paciente).where(or_(*filtros_p))).all()
-        if exatos_p:
-            exatos_busca = exatos_p
+    elif termo_limpo.upper().startswith("PR-"):
+        exatos_busca = db.exec(select(Paciente).where(Paciente.codigo_prontuario.ilike(termo_limpo.upper()))).all()
+    elif termo_limpo.isdigit() and len(termo_limpo) == 5:
+        exatos_busca = db.exec(select(Paciente).where(Paciente.codigo_prontuario.ilike(f"PR-{termo_limpo}"))).all()
 
     if exatos_busca:
         if len(so_num) == 11:
@@ -389,28 +405,44 @@ def buscar_pacientes_pec(
             exatos_busca = unicos
         locais = exatos_busca
     else:
-        like = f"%{termo_limpo}%"
-        filtros = [
-            Paciente.nome.ilike(like),
-            Paciente.cpf.ilike(like),
-            Paciente.cns.ilike(like),
-            Paciente.codigo_prontuario.ilike(like),
-        ]
-        if so_num and so_num != termo_limpo:
-            filtros.append(Paciente.cpf.ilike(f"%{so_num}%"))
-            filtros.append(Paciente.cns.ilike(f"%{so_num}%"))
-            filtros.append(Paciente.codigo_prontuario.ilike(f"%{so_num}%"))
+        palavras = [p for p in termo_limpo.split() if p]
+        if not palavras:
+            return {"fonte": "local", "termo": termo, "resultados": []}
 
-        # Relevância inteligente: prioriza quem começa exatamente com o termo pesquisado
+        try:
+            is_pg = getattr(db.get_bind().dialect, "name", "") == "postgresql"
+        except Exception:
+            is_pg = False
+        nome_campo = func.unaccent(Paciente.nome) if is_pg else Paciente.nome
+
+        lista_and = []
+        for w in palavras:
+            w_clean = _remover_acentos_str(w)
+            w_digits = "".join(c for c in w if c.isdigit())
+            conds = [
+                nome_campo.ilike(f"%{w_clean}%"),
+                Paciente.cpf.ilike(f"%{w}%"),
+                Paciente.cns.ilike(f"%{w}%"),
+                Paciente.codigo_prontuario.ilike(f"%{w}%"),
+            ]
+            if w_digits:
+                if len(w_digits) <= 9 and int(w_digits) <= 2147483647:
+                    conds.append(Paciente.id == int(w_digits))
+                conds.append(Paciente.codigo_prontuario.ilike(f"%{w_digits}%"))
+                conds.append(Paciente.cpf.ilike(f"%{w_digits}%"))
+                conds.append(Paciente.cns.ilike(f"%{w_digits}%"))
+            lista_and.append(or_(*conds))
+
+        primeira_w = _remover_acentos_str(palavras[0])
         ordem_relevancia = case(
-            (Paciente.nome.ilike(f"{termo_limpo}%"), 0),
-            (Paciente.codigo_prontuario.ilike(f"{termo_limpo}%"), 0),
+            (nome_campo.ilike(f"{primeira_w}%"), 0),
+            (Paciente.codigo_prontuario.ilike(f"{palavras[0]}%"), 0),
             else_=1,
         )
 
         locais = db.exec(
             select(Paciente)
-            .where(or_(*filtros))
+            .where(and_(*lista_and))
             .order_by(ordem_relevancia, Paciente.nome)
             .limit(20)
         ).all()
@@ -421,7 +453,7 @@ def buscar_pacientes_pec(
             "nome": p.nome,
             "cns": p.cns,
             "cpf": p.cpf,
-            "prontuario": p.codigo_prontuario or (f"PR-{p.id:05d}" if p.id else str(p.co_seq_cidadao_pec or "")),
+            "prontuario": p.codigo_prontuario or (gerar_prontuario_aleatorio(None, p.id) if p.id else str(p.co_seq_cidadao_pec or "")),
             "nascimento": p.nascimento.isoformat() if p.nascimento else None,
             "ubs": p.unidade_nome or "",
             "unidade_cnes": p.unidade_cnes or "",
@@ -514,8 +546,8 @@ def criar_paciente(
     obj = Paciente(**data.model_dump())
     db.add(obj)
     db.flush()
-    if obj.id and not obj.codigo_prontuario:
-        obj.codigo_prontuario = f"PR-{obj.id:05d}"
+    if not obj.codigo_prontuario:
+        obj.codigo_prontuario = gerar_prontuario_aleatorio(db, obj.id)
         db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -532,8 +564,8 @@ def obter_paciente(
     obj = db.get(Paciente, pid)
     if not obj:
         raise HTTPException(404, "Paciente não encontrado")
-    if not getattr(obj, "codigo_prontuario", "") and obj.id:
-        obj.codigo_prontuario = f"PR-{obj.id:05d}"
+    if not getattr(obj, "codigo_prontuario", ""):
+        obj.codigo_prontuario = gerar_prontuario_aleatorio(db, obj.id)
     return obj
 
 
@@ -553,8 +585,8 @@ def atualizar_paciente(
         if k == "codigo_prontuario" and not v:
             continue
         setattr(obj, k, v)
-    if obj.id and not obj.codigo_prontuario:
-        obj.codigo_prontuario = f"PR-{obj.id:05d}"
+    if not obj.codigo_prontuario:
+        obj.codigo_prontuario = gerar_prontuario_aleatorio(db, obj.id)
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -584,6 +616,7 @@ def perfil_paciente(
         except Exception:
             unidade_nome = ""
     rank = _rank_por_especialidade(db)
+    rank_geral = _rank_fila_geral(db)
     itens = list(
         db.exec(
             select(ExameFila)
@@ -598,6 +631,7 @@ def perfil_paciente(
     demanda = []
     for e in itens:
         pos, total_esp = rank.get(e.id, (None, None))
+        pos_g, total_g = rank_geral.get(e.id, (None, None))
         demanda.append(
             DemandaItemOut(
                 id=e.id or 0,
@@ -611,6 +645,8 @@ def perfil_paciente(
                 data_inclusao=_data_inclusao_iso(e),
                 posicao_especialidade=pos,
                 total_fila_especialidade=total_esp,
+                posicao_fila_geral=pos_g,
+                total_fila_geral=total_g,
                 status=e.status or "",
                 status_rotulo=_status_rotulo(e),
                 data_agendada=e.data_agendada,
@@ -678,7 +714,7 @@ def exportar_pacientes(
     linhas = []
     for p in list(db.exec(base).all())[:20000]:
         linhas.append({
-            "codigo_prontuario": p.codigo_prontuario or (f"PR-{p.id:05d}" if p.id else ""),
+            "codigo_prontuario": p.codigo_prontuario or (gerar_prontuario_aleatorio(None, p.id) if p.id else ""),
             "nome": p.nome,
             "cpf": p.cpf or "",
             "cns": p.cns or "",
@@ -741,7 +777,8 @@ def exportar_demanda(
         "especialidade": d.nome_especialidade or d.especialidade or d.tipo_fila,
         "procedimento": d.exame,
         "risco": d.classificacao_risco,
-        "posicao": f"{d.posicao_especialidade}º de {d.total_fila_especialidade}" if d.posicao_especialidade else "",
+        "posicao_geral": f"{d.posicao_fila_geral}º de {d.total_fila_geral}" if d.posicao_fila_geral else "",
+        "posicao_especialidade": f"{d.posicao_especialidade}º de {d.total_fila_especialidade}" if d.posicao_especialidade else "",
         "status": d.status_rotulo,
     } for d in demandas_ordenadas]
     return resposta_xlsx(
@@ -752,7 +789,8 @@ def exportar_demanda(
             {"chave": "especialidade", "rotulo": "Especialidade", "largura": 30},
             {"chave": "procedimento", "rotulo": "Procedimento", "largura": 40},
             {"chave": "risco", "rotulo": "Classificação de risco", "largura": 18},
-            {"chave": "posicao", "rotulo": "Posição na fila", "largura": 16},
+            {"chave": "posicao_geral", "rotulo": "Posição na Fila Geral", "largura": 22},
+            {"chave": "posicao_especialidade", "rotulo": "Posição na Especialidade", "largura": 22},
             {"chave": "status", "rotulo": "Status", "largura": 24},
         ],
         linhas,
@@ -1176,6 +1214,8 @@ def excluir_viagem(vid: int, db: Session = Depends(get_db), ator: User = Depends
 
 @router.get("/viagens/{vid}/passageiros", response_model=list[ViagemPacienteOut])
 def listar_passageiros(vid: int, db: Session = Depends(get_db), _=Depends(need_perm("tfd_viagens"))):
+    import os
+    app_url = os.getenv("APP_URL", "http://localhost:5173").rstrip("/")
     out: list[ViagemPacienteOut] = []
     for vp in db.exec(select(ViagemPaciente).where(ViagemPaciente.viagem_id == vid)).all():
         pac = db.get(Paciente, vp.paciente_id)
@@ -1184,9 +1224,14 @@ def listar_passageiros(vid: int, db: Session = Depends(get_db), _=Depends(need_p
             vf = db.get(ViagemFila, vp.viagem_fila_id)
             if vf and vf.prioridade:
                 prio = vf.prioridade
+        link_conf = f"{app_url}/confirmar-presenca/{vp.token_confirmacao}" if getattr(vp, "token_confirmacao", "") else ""
         out.append(
             ViagemPacienteOut(
-                **vp.model_dump(), paciente_nome=pac.nome if pac else "?", prioridade=prio
+                **vp.model_dump(),
+                paciente_nome=pac.nome if pac else "?",
+                paciente_telefone=pac.telefone if pac else "",
+                prioridade=prio,
+                link_confirmacao=link_conf,
             )
         )
     return out
@@ -1199,6 +1244,8 @@ def add_passageiro(
     db: Session = Depends(get_db),
     ator: User = Depends(need_perm("tfd_viagens", "criar")),
 ):
+    import secrets
+    import os
     viagem = db.get(Viagem, vid)
     if not viagem:
         raise HTTPException(404, "Viagem não encontrada")
@@ -1227,6 +1274,8 @@ def add_passageiro(
                 f"O paciente só pode ser alocado em veículos cadastrados para o mesmo destino (ex: {fila.destino}).",
             )
     obj = ViagemPaciente(viagem_id=vid, **data.model_dump())
+    if not obj.token_confirmacao:
+        obj.token_confirmacao = secrets.token_urlsafe(24)
     # Acompanhante via busca no sistema: resolve nome/CPF a partir do ID (manual continua válido).
     if data.acompanhante_id:
         acomp = db.get(Paciente, data.acompanhante_id)
@@ -1260,7 +1309,15 @@ def add_passageiro(
     db.refresh(obj)
     pac = db.get(Paciente, obj.paciente_id)
     prio = (fila.prioridade if fila and fila.prioridade else "")
-    return ViagemPacienteOut(**obj.model_dump(), paciente_nome=pac.nome if pac else "", prioridade=prio)
+    app_url = os.getenv("APP_URL", "http://localhost:5173").rstrip("/")
+    link_conf = f"{app_url}/confirmar-presenca/{obj.token_confirmacao}" if obj.token_confirmacao else ""
+    return ViagemPacienteOut(
+        **obj.model_dump(),
+        paciente_nome=pac.nome if pac else "",
+        paciente_telefone=pac.telefone if pac else "",
+        prioridade=prio,
+        link_confirmacao=link_conf,
+    )
 
 
 @router.delete("/viagens/{vid}/passageiros/{vpid}", status_code=204)
@@ -1281,6 +1338,118 @@ def remover_passageiro(
             db.add(fila)
     db.delete(obj)
     db.commit()
+
+
+@router.patch("/viagens/{vid}/passageiros/{vpid}/confirmacao", response_model=ViagemPacienteOut)
+def atualizar_confirmacao_passageiro(
+    vid: int,
+    vpid: int,
+    data: ViagemStatusConfirmacaoIn,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_perm("tfd_viagens")),
+):
+    """Atualização manual do status de presença pelo operador de viagens/transporte."""
+    import os
+    viagem = db.get(Viagem, vid)
+    if not viagem:
+        raise HTTPException(404, "Viagem não encontrada")
+    obj = db.get(ViagemPaciente, vpid)
+    if not obj or obj.viagem_id != vid:
+        raise HTTPException(404, "Passageiro não encontrado nesta viagem")
+
+    obj.status_confirmacao = data.status_confirmacao
+    if data.status_confirmacao == "confirmado":
+        obj.confirmado_em = datetime.utcnow()
+        obj.presente = True
+    elif data.status_confirmacao in ("desistiu", "nao_compareceu"):
+        obj.presente = False
+    elif data.status_confirmacao == "pendente":
+        obj.confirmado_em = None
+
+    if data.observacoes:
+        obj.observacoes = data.observacoes
+
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+
+    pac = db.get(Paciente, obj.paciente_id)
+    app_url = os.getenv("APP_URL", "http://localhost:5173").rstrip("/")
+    link_conf = f"{app_url}/confirmar-presenca/{obj.token_confirmacao}" if obj.token_confirmacao else ""
+    return ViagemPacienteOut(
+        **obj.model_dump(),
+        paciente_nome=pac.nome if pac else "",
+        paciente_telefone=pac.telefone if pac else "",
+        prioridade="",
+        link_confirmacao=link_conf,
+    )
+
+
+@router.post("/viagens/{vid}/passageiros/{vpid}/enviar-whatsapp", response_model=dict)
+def enviar_whatsapp_confirmacao_passageiro(
+    vid: int,
+    vpid: int,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_perm("tfd_viagens")),
+):
+    """Dispara notificação de lembrete com link de confirmação para o paciente via WhatsApp."""
+    import os
+    import secrets
+    from app.services.whatsapp import gerar_texto_lembrete_viagem, disparar_whatsapp_gateway, gerar_link_whatsapp
+
+    viagem = db.get(Viagem, vid)
+    if not viagem:
+        raise HTTPException(404, "Viagem não encontrada")
+    obj = db.get(ViagemPaciente, vpid)
+    if not obj or obj.viagem_id != vid:
+        raise HTTPException(404, "Passageiro não encontrado nesta viagem")
+
+    if not obj.token_confirmacao:
+        obj.token_confirmacao = secrets.token_urlsafe(24)
+        db.add(obj)
+        db.commit()
+        db.refresh(obj)
+
+    paciente = db.get(Paciente, obj.paciente_id)
+    if not paciente:
+        raise HTTPException(404, "Paciente não encontrado")
+
+    veiculo = db.get(Veiculo, viagem.veiculo_id) if viagem.veiculo_id else None
+    app_url = os.getenv("APP_URL", "http://localhost:5173").rstrip("/")
+    link_conf = f"{app_url}/confirmar-presenca/{obj.token_confirmacao}"
+    mensagem = gerar_texto_lembrete_viagem(
+        paciente=paciente,
+        viagem=viagem,
+        vp=obj,
+        veiculo=veiculo,
+        link_confirmacao=link_conf,
+    )
+
+    wa_link = gerar_link_whatsapp(paciente.telefone, mensagem)
+    res_gateway = disparar_whatsapp_gateway(
+        db=db,
+        telefone=paciente.telefone,
+        mensagem=mensagem,
+        paciente_id=paciente.id,
+        exame_id=None,
+        paciente_nome=paciente.nome or "",
+        tipo_evento="lembrete_viagem",
+    )
+
+    if res_gateway.get("sucesso"):
+        obj.lembrete_enviado = True
+        obj.lembrete_enviado_em = datetime.utcnow()
+        db.add(obj)
+        db.commit()
+
+    return {
+        "sucesso": res_gateway.get("sucesso", False),
+        "link_confirmacao": link_conf,
+        "mensagem": mensagem,
+        "whatsapp_link": wa_link,
+        "telefone": paciente.telefone,
+        "gateway_resultado": res_gateway,
+    }
 
 
 # ---------- Fila de exames ----------
@@ -1476,6 +1645,21 @@ def _rank_por_especialidade(db: Session) -> dict[int, tuple[int, int]]:
         total = len(membros)
         for i, m in enumerate(_ordenar_regulacao(membros)):
             rank[m.id] = (i + 1, total)
+    return rank
+
+
+def _rank_fila_geral(db: Session) -> dict[int, tuple[int, int]]:
+    """Posição na fila geral de espera (todas as especialidades unificadas). Retorna {id: (posicao, total)}."""
+    base = list(
+        db.exec(
+            select(ExameFila).where(ExameFila.ativo == True, ExameFila.status.in_(["aguardando", "agendado"]))  # noqa: E712
+        ).all()
+    )
+    ordenados = _ordenar_regulacao(base)
+    total = len(ordenados)
+    rank: dict[int, tuple[int, int]] = {}
+    for i, m in enumerate(ordenados):
+        rank[m.id] = (i + 1, total)
     return rank
 
 
@@ -1684,7 +1868,7 @@ def _com_posicao(
 
         dump = e.model_dump()
         if not dump.get("codigo_curto") and e.id:
-            dump["codigo_curto"] = f"EX-{e.id:06d}"
+            dump["codigo_curto"] = gerar_exame_curto_aleatorio(None, e.id)
 
         out.append(
             ExameOut(
@@ -2044,8 +2228,8 @@ def _linha_fila(
     cns = "".join(c for c in (pac.cns if pac else "") if c.isdigit())
     pec = cache.get("pec") or {}
     comp = pec.get(f"cpf:{cpf}") or pec.get(f"cns:{cns}") or {}
-    cod_curto = getattr(e, "codigo_curto", "") or (f"EX-{e.id:06d}" if getattr(e, "id", None) else "")
-    prontuario = getattr(pac, "codigo_prontuario", "") or (f"PR-{pac.id:05d}" if pac and getattr(pac, "id", None) else "")
+    cod_curto = getattr(e, "codigo_curto", "") or (gerar_exame_curto_aleatorio(None, getattr(e, "id", None)) if getattr(e, "id", None) else "")
+    prontuario = getattr(pac, "codigo_prontuario", "") or (gerar_prontuario_aleatorio(None, getattr(pac, "id", None)) if pac and getattr(pac, "id", None) else "")
 
     nome_exame = (e.exame or "").strip()
     cod_proc = (e.codigo_procedimento or "").strip()
@@ -2083,7 +2267,7 @@ def _linha_fila(
         "medico": e.medico_nome or "",
         "unidade": e.unidade_nome or e.destino or "",
         "numero_pedido": e.numero_pedido or "",
-        "justificativa": e.justificativa or e.justificativa_prioridade or "",
+        "justificativa": e.justificativa or (e.justificativa_prioridade if e.justificativa_prioridade != "P1 - Médico ESF" else "") or "",
         "observacoes": e.observacoes or "",
     }
 
@@ -2477,14 +2661,13 @@ def criar_exame(data: ExameIn, db: Session = Depends(get_db), ator: User = Depen
     if obj.data_agendada and obj.status in ("aguardando",):
         obj.status = "agendado"
     _garantir_token(obj)
+    if not obj.codigo_curto:
+        obj.codigo_curto = gerar_exame_curto_aleatorio(db)
+    if not obj.numero_pedido:
+        obj.numero_pedido = gerar_numero_pedido_aleatorio(db)
     db.add(obj)
     db.commit()
     db.refresh(obj)
-    if not obj.codigo_curto and obj.id:
-        obj.codigo_curto = f"EX-{obj.id:06d}"
-        db.add(obj)
-        db.commit()
-        db.refresh(obj)
 
     # Disparo automático via WhatsApp (Entrada na Fila / Agendamento)
     try:
@@ -2562,16 +2745,28 @@ def atualizar_exames_lote(
             obj.justificativa_prioridade = justificativa
         if data.observacoes != "":
             obj.observacoes = data.observacoes
+        if data.instrucoes_transporte != "":
+            obj.instrucoes_transporte = data.instrucoes_transporte
         db.add(obj)
         n += 1
     db.commit()
-    if agendando:
+    if agendando and data.enviar_whatsapp:
         try:
             from app.services.whatsapp import notificar_paciente_evento
+            por_pac: dict[int, list[ExameFila]] = {}
             for i in ids:
                 ob = objs.get(i)
-                if ob and ob.data_agendada:
-                    notificar_paciente_evento(db, "agendamento", ob)
+                if ob and ob.data_agendada and ob.paciente_id:
+                    por_pac.setdefault(ob.paciente_id, []).append(ob)
+            for pid, lista_pac in por_pac.items():
+                principal = lista_pac[0]
+                notificar_paciente_evento(
+                    db,
+                    "agendamento",
+                    principal,
+                    instrucoes_adicionais=data.instrucoes_transporte,
+                    lista_exames=lista_pac,
+                )
         except Exception:
             pass
     return ExameLoteOut(atualizados=n, nao_encontrados=faltando)
@@ -2757,9 +2952,7 @@ def definir_status_atendimento(
         raise HTTPException(400, f"Só agendados/recepcionados mudam de status (atual: {obj.status or '—'}).")
     if alvo == "realizado":
         texto = (data.resultado or "").strip()
-        if not texto:
-            raise HTTPException(400, "Informe o resultado do exame realizado.")
-        obj.resultado = texto[:2000]
+        obj.resultado = texto[:2000] if texto else ""
     obj.status_anterior = obj.status or ""
     obj.status = alvo
     db.add(obj)
@@ -2836,6 +3029,7 @@ def obter_relatorio_agendados(
     medico_id: int | None = Query(default=None),
     status_: str | None = Query(default=None, alias="status"),
     tipo_fila: str = Query(default="", max_length=80),
+    procedimento: str = Query(default="", max_length=150),
     segmentacao: str = Query(default="", max_length=50),
     escopo: str = Query(default="agendados", max_length=50),
     q: str = Query(default="", max_length=80),
@@ -2896,6 +3090,8 @@ def obter_relatorio_agendados(
         filtros.append(ExameFila.status == status_)
     if isinstance(tipo_fila, str) and tipo_fila.strip():
         filtros.append(ExameFila.tipo_fila.ilike(f"%{tipo_fila.strip()}%"))
+    if isinstance(procedimento, str) and procedimento.strip():
+        filtros.append(ExameFila.exame.ilike(f"%{procedimento.strip()}%"))
 
     # Segmentação: Consultas Especializadas vs. Exames Especializados (Item 6)
     seg = (segmentacao or "").lower() if isinstance(segmentacao, str) else ""
@@ -2956,7 +3152,7 @@ def obter_relatorio_agendados(
         pac = pac_cache[e.paciente_id]
         itens_out.append({
             "id": e.id,
-            "codigo_curto": e.codigo_curto or f"EX-{e.id:06d}",
+            "codigo_curto": e.codigo_curto or gerar_exame_curto_aleatorio(None, e.id),
             "paciente_id": e.paciente_id,
             "paciente_nome": pac.nome if pac else e.paciente_nome,
             "paciente_cpf": pac.cpf if pac else "",
@@ -3009,6 +3205,7 @@ def exportar_relatorio_agendados(
     medico_id: int | None = Query(default=None),
     status_: str | None = Query(default=None, alias="status"),
     tipo_fila: str = Query(default="", max_length=80),
+    procedimento: str = Query(default="", max_length=150),
     segmentacao: str = Query(default="", max_length=50),
     escopo: str = Query(default="agendados", max_length=50),
     q: str = Query(default="", max_length=80),
@@ -3022,6 +3219,7 @@ def exportar_relatorio_agendados(
     dados = obter_relatorio_agendados(
         data_de=data_de, data_ate=data_ate, unidade_id=unidade_id,
         medico_id=medico_id, status_=status_, tipo_fila=tipo_fila,
+        procedimento=procedimento,
         segmentacao=segmentacao, escopo=escopo,
         q=q, page=1, limit=10000, db=db, ator=ator
     )
@@ -3132,6 +3330,452 @@ def regenerar_token(eid: int, db: Session = Depends(get_db), _=Depends(need_perm
     return _com_posicao(db, [obj])[0]
 
 
+def gerar_dados_comprovante_tfd(db: Session, exame: ExameFila) -> dict:
+    from app.services.lab_fase6 import determinar_preparo
+    from app.services.lab_preparo import obter_preparo_exame
+
+    # Busca exames irmãos do mesmo pedido (solicitação) para unificar
+    irmaos: list[ExameFila] = []
+    if exame.numero_pedido:
+        irmaos = db.exec(
+            select(ExameFila).where(
+                ExameFila.numero_pedido == exame.numero_pedido,
+                ExameFila.ativo == True,
+            )
+        ).all()
+    elif exame.paciente_id and exame.data_pedido:
+        query = select(ExameFila).where(
+            ExameFila.paciente_id == exame.paciente_id,
+            ExameFila.data_pedido == exame.data_pedido,
+            ExameFila.ativo == True,
+        )
+        if exame.unidade_saude_id:
+            query = query.where(ExameFila.unidade_saude_id == exame.unidade_saude_id)
+        irmaos = db.exec(query).all()
+
+    exames_pedido = irmaos if irmaos else [exame]
+    if not any(e.id == exame.id for e in exames_pedido):
+        exames_pedido.insert(0, exame)
+
+    pac = db.get(Paciente, exame.paciente_id)
+
+    def _eh_lab_item(e: ExameFila) -> bool:
+        tf = (getattr(e, "tipo_fila", "") or "").upper()
+        if tf in ("LAB", "LABORATORIO", "EXAMES LABORATORIAIS", "SANGUE", "EXAMES DE SANGUE"):
+            return True
+        c = (getattr(e, "codigo_procedimento", "") or "").strip()
+        if c.startswith("0202"):
+            return True
+        n = (getattr(e, "exame", "") or "").upper()
+        palavras = (
+            "HEMOGRAMA", "GLICOSE", "COLESTEROL", "TRIGLICER", "UREIA", "CREATININA",
+            "COAGULOGRAMA", "TSH", "PSA", "TGO", "TGP", "LIPIDOGRAMA", "ACIDO URICO",
+            "EAS", "URINA", "FEZES", "PARASITOLOGICO", "BILIRRUBINA", "INSULINA",
+            "PROLACTINA", "FERRITINA", "SOROLOGIA", "SANGUE"
+        )
+        return any(p in n for p in palavras)
+
+    eh_laboratorial = any(_eh_lab_item(e) for e in exames_pedido)
+
+    itens = []
+    nomes_procs = []
+    for idx, e in enumerate(exames_pedido, 1):
+        codigo = e.codigo_procedimento or ""
+        nome = e.exame or ""
+        if " · " in nome:
+            parts = nome.split(" · ", 1)
+            if not codigo:
+                codigo = parts[0]
+            nome = parts[1]
+        nomes_procs.append(nome)
+        p_info = obter_preparo_exame(nome) if _eh_lab_item(e) else {}
+        itens.append({
+            "id": e.id,
+            "solicitacao_id": exame.id,
+            "sigtap_id": e.id,
+            "quantidade": 1,
+            "status_auditoria": e.status,
+            "observacao": e.observacoes or "",
+            "procedimento_codigo": codigo,
+            "procedimento_descricao": nome,
+            "preparo_especifico": p_info.get("badge", "") if _eh_lab_item(e) else "",
+        })
+
+    if eh_laboratorial:
+        jejum_h, prep_itens, orient_gerais = determinar_preparo(nomes_procs)
+    else:
+        jejum_h, prep_itens, orient_gerais = "", [], []
+
+    prontuario = getattr(pac, "codigo_prontuario", "") or (gerar_prontuario_aleatorio(None, pac.id) if pac and pac.id else "—")
+    cod_curto = exame.codigo_curto or gerar_exame_curto_aleatorio(None, exame.id)
+    num_pedido = exame.numero_pedido or cod_curto
+
+    # Link e QR Code de identificação exclusiva
+    qr_data = f"PEDIDO:{cod_curto}|PRONT:{prontuario}|PAC:{pac.id if pac else ''}"
+    qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={urllib.parse.quote(qr_data)}"
+
+    data_ag_str = exame.data_agendada.isoformat() if exame.data_agendada else (exame.data_pedido.isoformat() if exame.data_pedido else "")
+
+    from app.services.whatsapp import buscar_transporte_vinculado
+    data_busca = exame.data_agendada or exame.data_pedido
+    transporte_info = buscar_transporte_vinculado(db, exame.paciente_id, data_busca)
+
+    return {
+        "id": exame.id,
+        "protocolo": num_pedido,
+        "codigo_curto": cod_curto,
+        "numero_pedido": exame.numero_pedido or "",
+        "public_token": exame.public_token or "",
+        "paciente_id": exame.paciente_id,
+        "paciente_nome": pac.nome if pac else "?",
+        "paciente_cpf": getattr(pac, "cpf", "") or "",
+        "paciente_cns": getattr(pac, "cns", "") or "",
+        "paciente_prontuario": prontuario,
+        "paciente_nascimento": pac.data_nascimento.isoformat() if pac and getattr(pac, "data_nascimento", None) else "",
+        "data_agendada": data_ag_str,
+        "hora_agendada": exame.hora_agendada or "07:30",
+        "laboratorio_id": exame.unidade_saude_id or 1,
+        "laboratorio_nome": exame.unidade_nome or exame.destino or "Laboratório / Unidade Conveniada",
+        "unidade_psf": exame.unidade_nome or "Secretaria Municipal de Saúde",
+        "medico_solicitante": exame.medico_nome or "Médico da Unidade",
+        "justificativa": exame.justificativa or "",
+        "instrucoes_transporte": getattr(exame, "instrucoes_transporte", "") or "",
+        "transporte": transporte_info,
+        "status": exame.status,
+        "status_auditoria": exame.status,
+        "itens": itens,
+        "exige_preparo": eh_laboratorial,
+        "jejum_horas": jejum_h,
+        "preparo_instrucoes": prep_itens,
+        "orientacoes_gerais": orient_gerais,
+        "emitido_em": datetime.utcnow().strftime("%d/%m/%Y %H:%M"),
+        "agendado_por": getattr(exame, "recepcionado_por", "") or "Regulação Municipal",
+        "qr_code_url": qr_url,
+    }
+
+
+@router.get("/exames/{eid}/comprovante")
+def emitir_comprovante_unificado_tfd(
+    eid: int,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("tfd_exames", "tfd_fila_leitura", "lab_recepcao", "lab_marcacao", "usuarios")),
+):
+    """Emite o comprovante unificado de agendamento/solicitação agrupando todos os exames do mesmo pedido."""
+    exame = db.get(ExameFila, eid)
+    if not exame or not exame.ativo:
+        raise HTTPException(404, "Exame ou solicitação não encontrada")
+    return gerar_dados_comprovante_tfd(db, exame)
+
+
+@router.get("/exames/pedido/{numero_pedido}/comprovante")
+def emitir_comprovante_por_pedido(
+    numero_pedido: str,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("tfd_exames", "tfd_fila_leitura", "lab_recepcao", "lab_marcacao", "usuarios")),
+):
+    """Emite o comprovante unificado a partir do número do pedido."""
+    exame = db.exec(
+        select(ExameFila).where(
+            or_(
+                ExameFila.numero_pedido == numero_pedido,
+                ExameFila.codigo_curto == numero_pedido,
+            ),
+            ExameFila.ativo == True,
+        ).order_by(desc(ExameFila.id))
+    ).first()
+    if not exame:
+        raise HTTPException(404, f"Nenhuma solicitação encontrada para o pedido '{numero_pedido}'")
+    return gerar_dados_comprovante_tfd(db, exame)
+
+
+class RecepcionarRapidoIn(BaseModel):
+    codigo: str
+    resultado: str | None = None
+
+
+@router.get("/leitura-rapida")
+def leitura_rapida_qr(
+    codigo: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("tfd_exames", "tfd_fila_leitura", "lab_recepcao", "lab_vagas", "usuarios")),
+):
+    """Consulta rápida para leitores de QR Code e código de barras no balcão e laboratório."""
+    from app.services.lab_fase6 import determinar_preparo
+
+    termo = codigo.strip()
+    if termo.startswith("http://") or termo.startswith("https://"):
+        try:
+            parsed = urllib.parse.urlparse(termo)
+            params = urllib.parse.parse_qs(parsed.query)
+            if "data" in params:
+                termo = params["data"][0]
+            elif "token" in params:
+                termo = params["token"][0]
+            elif "/public/exames/" in parsed.path:
+                termo = parsed.path.split("/public/exames/")[-1].strip("/")
+            elif "/acompanhar/" in parsed.path:
+                termo = parsed.path.split("/acompanhar/")[-1].strip("/")
+        except Exception:
+            pass
+
+    if "|" in termo:
+        partes = termo.split("|")
+        for p in partes:
+            if p.startswith("PEDIDO:"):
+                termo = p.replace("PEDIDO:", "").strip()
+                break
+            elif p.startswith("PED:"):
+                termo = p.replace("PED:", "").strip()
+                break
+
+    exame = db.exec(
+        select(ExameFila).where(
+            or_(
+                ExameFila.codigo_curto == termo,
+                ExameFila.numero_pedido == termo,
+                ExameFila.public_token == termo,
+            ),
+            ExameFila.ativo == True,
+        ).order_by(desc(ExameFila.id))
+    ).first()
+
+    if not exame and termo.isdigit():
+        exame = db.get(ExameFila, int(termo))
+        if exame and not exame.ativo:
+            exame = None
+
+    if not exame and termo.upper().startswith("EX-"):
+        num_str = termo.upper().replace("EX-", "").strip()
+        if num_str.isdigit():
+            exame = db.get(ExameFila, int(num_str))
+
+    if exame:
+        pac = db.get(Paciente, exame.paciente_id)
+        irmaos = []
+        if exame.numero_pedido:
+            irmaos = db.exec(
+                select(ExameFila).where(
+                    ExameFila.numero_pedido == exame.numero_pedido,
+                    ExameFila.ativo == True
+                )
+            ).all()
+        else:
+            irmaos = [exame]
+
+        nomes_procs = []
+        itens_resumo = []
+        for e in irmaos:
+            c = e.codigo_procedimento or ""
+            n = e.exame or ""
+            if " · " in n:
+                parts = n.split(" · ", 1)
+                if not c:
+                    c = parts[0]
+                n = parts[1]
+            nomes_procs.append(n)
+            itens_resumo.append({
+                "id": e.id,
+                "codigo": c,
+                "nome": n,
+                "status": e.status,
+                "resultado": e.resultado or "",
+                "observacoes": e.observacoes or "",
+            })
+
+        jejum_h, prep_itens, orient_gerais = determinar_preparo(nomes_procs)
+        prontuario = getattr(pac, "codigo_prontuario", "") or (gerar_prontuario_aleatorio(None, pac.id) if pac and pac.id else "—")
+        cod_curto = exame.codigo_curto or gerar_exame_curto_aleatorio(None, exame.id)
+        num_pedido = exame.numero_pedido or cod_curto
+
+        from app.services.whatsapp import buscar_transporte_vinculado
+        data_busca = exame.data_agendada or exame.data_pedido
+        transporte_info = buscar_transporte_vinculado(db, exame.paciente_id, data_busca)
+
+        return {
+            "encontrado": True,
+            "tipo": "tfd",
+            "pedido_id": exame.id,
+            "codigo_curto": cod_curto,
+            "numero_pedido": num_pedido,
+            "status": exame.status,
+            "data_pedido": exame.data_pedido.isoformat() if exame.data_pedido else "",
+            "data_agendada": exame.data_agendada.isoformat() if exame.data_agendada else "",
+            "hora_agendada": exame.hora_agendada or "07:30",
+            "unidade_nome": exame.unidade_nome or "Secretaria de Saúde",
+            "medico_nome": exame.medico_nome or "Médico da Unidade",
+            "destino": exame.destino or "Laboratório / Unidade Conveniada",
+            "instrucoes_transporte": getattr(exame, "instrucoes_transporte", "") or "",
+            "transporte": transporte_info,
+            "paciente": {
+                "id": pac.id if pac else None,
+                "nome": pac.nome if pac else "Paciente",
+                "prontuario": prontuario,
+                "cpf": getattr(pac, "cpf", "") or "",
+                "cns": getattr(pac, "cns", "") or "",
+                "telefone": getattr(pac, "telefone", "") or "",
+                "data_nascimento": pac.data_nascimento.isoformat() if pac and getattr(pac, "data_nascimento", None) else "",
+            },
+            "exames": itens_resumo,
+            "preparo": {
+                "jejum": jejum_h,
+                "instrucoes": prep_itens,
+            },
+            "pode_recepcionar": any(e.status in ("agendado", "aguardando") for e in irmaos),
+            "todos_coletados": all(e.status in ("recepcionado", "concluido", "realizado") for e in irmaos),
+        }
+
+    try:
+        from app.models.lab_fase6 import SolicitacaoMestre, SolicitacaoItem, Laboratorio
+    except ImportError:
+        SolicitacaoMestre = None
+
+    if SolicitacaoMestre:
+        mestre = db.exec(
+            select(SolicitacaoMestre).where(
+                or_(
+                    SolicitacaoMestre.protocolo == termo,
+                    SolicitacaoMestre.public_token == termo,
+                )
+            ).order_by(desc(SolicitacaoMestre.id))
+        ).first()
+
+        if not mestre and termo.isdigit():
+            mestre = db.get(SolicitacaoMestre, int(termo))
+
+        if mestre:
+            pac = db.get(Paciente, mestre.paciente_id)
+            lab = db.get(Laboratorio, mestre.laboratorio_id) if mestre.laboratorio_id else None
+            itens = db.exec(
+                select(SolicitacaoItem).where(SolicitacaoItem.solicitacao_id == mestre.id)
+            ).all()
+
+            nomes_procs = [it.procedimento_descricao or it.procedimento_codigo for it in itens]
+            procs = [
+                {
+                    "id": it.id,
+                    "codigo": it.procedimento_codigo,
+                    "nome": it.procedimento_descricao,
+                    "status": it.status_auditoria,
+                    "observacoes": it.observacao or "",
+                }
+                for it in itens
+            ]
+
+            jejum_h, prep_itens, _ = determinar_preparo(nomes_procs)
+            prontuario = getattr(pac, "codigo_prontuario", "") or (gerar_prontuario_aleatorio(None, pac.id) if pac and pac.id else "—")
+            protocolo = getattr(mestre, "protocolo", "") or gerar_protocolo_lab_aleatorio(mestre.data_agendada, mestre.id)
+
+            from app.services.whatsapp import buscar_transporte_vinculado
+            transporte_info = buscar_transporte_vinculado(db, mestre.paciente_id, mestre.data_agendada)
+
+            return {
+                "encontrado": True,
+                "tipo": "lab",
+                "pedido_id": mestre.id,
+                "codigo_curto": protocolo,
+                "numero_pedido": protocolo,
+                "status": mestre.status,
+                "data_pedido": mestre.data_agendada.isoformat(),
+                "data_agendada": mestre.data_agendada.isoformat(),
+                "hora_agendada": getattr(mestre, "hora_agendada", "07:00") or "07:00",
+                "unidade_nome": getattr(mestre, "unidade_psf", "") or "Secretaria de Saúde",
+                "medico_nome": getattr(mestre, "medico_solicitante", "") or "Médico da Unidade",
+                "destino": lab.nome if lab else "Laboratório Conveniado",
+                "instrucoes_transporte": getattr(mestre, "instrucoes_transporte", "") or "",
+                "transporte": transporte_info,
+                "paciente": {
+                    "id": pac.id if pac else None,
+                    "nome": pac.nome if pac else "Paciente",
+                    "prontuario": prontuario,
+                    "cpf": getattr(pac, "cpf", "") or "",
+                    "cns": getattr(pac, "cns", "") or "",
+                    "telefone": getattr(pac, "telefone", "") or "",
+                    "data_nascimento": pac.data_nascimento.isoformat() if pac and getattr(pac, "data_nascimento", None) else "",
+                },
+                "exames": procs,
+                "preparo": {
+                    "jejum": jejum_h,
+                    "instrucoes": prep_itens,
+                },
+                "pode_recepcionar": mestre.status != "coletado",
+                "todos_coletados": mestre.status == "coletado",
+            }
+
+    raise HTTPException(404, f"Nenhuma solicitação encontrada para o código: '{termo}'")
+
+
+@router.post("/recepcao-rapida")
+def recepcao_rapida(
+    payload: RecepcionarRapidoIn,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("tfd_exames", "tfd_fila_lancamento", "lab_recepcao", "lab_vagas", "usuarios")),
+):
+    """Executa o check-in / conferência imediata de todos os exames vinculados à solicitação lida via QR Code."""
+    consulta = leitura_rapida_qr(codigo=payload.codigo, db=db, ator=ator)
+    if not consulta or not consulta.get("encontrado"):
+        raise HTTPException(404, "Solicitação não encontrada para recepção")
+
+    tipo = consulta["tipo"]
+    pedido_id = consulta["pedido_id"]
+    agora = datetime.utcnow()
+    nome_ator = ator.nome or ator.username
+
+    if tipo == "tfd":
+        exame = db.get(ExameFila, pedido_id)
+        if not exame:
+            raise HTTPException(404, "Exame não encontrado")
+
+        irmaos = []
+        if exame.numero_pedido:
+            irmaos = db.exec(
+                select(ExameFila).where(
+                    ExameFila.numero_pedido == exame.numero_pedido,
+                    ExameFila.ativo == True
+                )
+            ).all()
+        else:
+            irmaos = [exame]
+
+        atualizados = 0
+        for e in irmaos:
+            if e.status in ("agendado", "aguardando"):
+                e.status = "recepcionado"
+                e.recepcionado_em = agora
+                e.recepcionado_por = nome_ator
+                if payload.resultado:
+                    e.resultado = payload.resultado.strip()
+                db.add(e)
+                atualizados += 1
+
+        db.commit()
+        return {
+            "sucesso": True,
+            "tipo": "tfd",
+            "pedido_id": pedido_id,
+            "total_recepcionados": atualizados,
+            "status": "recepcionado",
+            "mensagem": f"{atualizados} exame(s) recepcionado(s) com sucesso para o paciente {consulta['paciente']['nome']}!",
+        }
+    else:
+        from app.models.lab_fase6 import SolicitacaoMestre
+        m = db.get(SolicitacaoMestre, pedido_id)
+        if not m:
+            raise HTTPException(404, "Solicitação mestre não encontrada")
+        m.status = "coletado"
+        m.coletado_em = agora
+        m.coletado_por = nome_ator
+        db.add(m)
+        db.commit()
+        return {
+            "sucesso": True,
+            "tipo": "lab",
+            "pedido_id": pedido_id,
+            "total_recepcionados": len(consulta.get("exames", [])),
+            "status": "coletado",
+            "mensagem": f"Coleta confirmada com sucesso para o paciente {consulta['paciente']['nome']}!",
+        }
+
+
 @router.get("/public/exames/{token}", response_model=ExamePublicoOut)
 def consultar_exame_publico(token: str, db: Session = Depends(get_db)):
     """Consulta pública sem login — só status/posição, sem PII (LGPD)."""
@@ -3161,6 +3805,119 @@ def consultar_exame_publico(token: str, db: Session = Depends(get_db)):
         ).model_dump_json(),
         media_type="application/json",
         headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/public/viagens/confirmar/{token}", response_model=ViagemConfirmacaoPublicaOut)
+def obter_confirmacao_viagem_publica(token: str, db: Session = Depends(get_db)):
+    """Acesso público seguro com token p/ paciente visualizar dados da viagem e confirmar presença."""
+    if not token or len(token) > 64:
+        raise HTTPException(404, "Link de confirmação inválido ou expirado")
+
+    vp = db.exec(select(ViagemPaciente).where(ViagemPaciente.token_confirmacao == token)).first()
+    if not vp:
+        raise HTTPException(404, "Agendamento de viagem não encontrado. Verifique o link enviado pelo WhatsApp.")
+
+    viagem = db.get(Viagem, vp.viagem_id)
+    if not viagem:
+        raise HTTPException(404, "Viagem não encontrada.")
+
+    pac = db.get(Paciente, vp.paciente_id)
+    veiculo = db.get(Veiculo, viagem.veiculo_id) if viagem.veiculo_id else None
+
+    modelo = getattr(veiculo, "modelo", "") or ""
+    placa = getattr(veiculo, "placa", "") or ""
+    if modelo and placa:
+        desc_v = f"{modelo} (Placa: {placa})"
+    elif modelo or placa:
+        desc_v = modelo or f"Placa {placa}"
+    else:
+        desc_v = viagem.departamento or "Veículo Municipal da Saúde"
+
+    ponto = getattr(viagem, "ponto_saida", "") or "Prefeitura Municipal de Guapé"
+    obs = viagem.observacoes or ""
+    if obs and any(k in obs.lower() for k in ["ponto", "embarque", "saida", "saída", "local"]):
+        ponto = obs
+
+    return ViagemConfirmacaoPublicaOut(
+        token=token,
+        paciente_nome=pac.nome if pac else "Paciente",
+        paciente_iniciais=_iniciais(pac.nome if pac else ""),
+        data_viagem=viagem.data_viagem.isoformat() if viagem.data_viagem else "",
+        hora_saida=viagem.hora_saida or "06:00",
+        ponto_saida=ponto,
+        destino=viagem.destino or "Atendimento Especializado",
+        unidade=vp.unidade or viagem.unidade or "",
+        veiculo=desc_v,
+        modelo_veiculo=modelo,
+        placa_veiculo=placa,
+        motorista=viagem.motorista or "",
+        tratamento=vp.tratamento or "",
+        acompanhante=(vp.acompanhante or "").strip(),
+        status_confirmacao=vp.status_confirmacao or "pendente",
+        confirmado_em=vp.confirmado_em,
+        observacoes=obs,
+    )
+
+
+@router.post("/public/viagens/confirmar/{token}", response_model=ViagemConfirmacaoPublicaOut)
+def confirmar_presenca_viagem_publica(
+    token: str,
+    data: ViagemConfirmarIn,
+    db: Session = Depends(get_db),
+):
+    """Ação do paciente confirmando presença ou informando desistência no transporte."""
+    if not token or len(token) > 64:
+        raise HTTPException(404, "Link de confirmação inválido ou expirado")
+
+    vp = db.exec(select(ViagemPaciente).where(ViagemPaciente.token_confirmacao == token)).first()
+    if not vp:
+        raise HTTPException(404, "Agendamento de viagem não encontrado.")
+
+    viagem = db.get(Viagem, vp.viagem_id)
+    if not viagem:
+        raise HTTPException(404, "Viagem não encontrada.")
+
+    if data.acao == "confirmar":
+        vp.status_confirmacao = "confirmado"
+        vp.confirmado_em = datetime.utcnow()
+        vp.presente = True
+    elif data.acao in ("desistir", "cancelar"):
+        vp.status_confirmacao = "desistiu"
+        vp.presente = False
+        if data.motivo:
+            nota = f"[Desistência informada pelo paciente: {data.motivo.strip()}]"
+            vp.observacoes = f"{vp.observacoes} {nota}".strip()
+
+    db.add(vp)
+    db.commit()
+    db.refresh(vp)
+
+    pac = db.get(Paciente, vp.paciente_id)
+    veiculo = db.get(Veiculo, viagem.veiculo_id) if viagem.veiculo_id else None
+    modelo = getattr(veiculo, "modelo", "") or ""
+    placa = getattr(veiculo, "placa", "") or ""
+    desc_v = f"{modelo} (Placa: {placa})" if modelo and placa else (modelo or placa or viagem.departamento or "Veículo Municipal")
+    ponto = getattr(viagem, "ponto_saida", "") or "Prefeitura Municipal de Guapé"
+
+    return ViagemConfirmacaoPublicaOut(
+        token=token,
+        paciente_nome=pac.nome if pac else "Paciente",
+        paciente_iniciais=_iniciais(pac.nome if pac else ""),
+        data_viagem=viagem.data_viagem.isoformat() if viagem.data_viagem else "",
+        hora_saida=viagem.hora_saida or "06:00",
+        ponto_saida=ponto,
+        destino=viagem.destino or "Atendimento Especializado",
+        unidade=vp.unidade or viagem.unidade or "",
+        veiculo=desc_v,
+        modelo_veiculo=modelo,
+        placa_veiculo=placa,
+        motorista=viagem.motorista or "",
+        tratamento=vp.tratamento or "",
+        acompanhante=(vp.acompanhante or "").strip(),
+        status_confirmacao=vp.status_confirmacao or "pendente",
+        confirmado_em=vp.confirmado_em,
+        observacoes=viagem.observacoes or "",
     )
 
 
@@ -3505,6 +4262,35 @@ def excluir_procedimento(pid: int, db: Session = Depends(get_db), _=Depends(need
 
 
 # ---------- CRUD Especialidades (CBO) ----------
+@router.get("/cids")
+def buscar_cids_tfd(
+    q: str = Query(default="", min_length=1, max_length=80),
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("tfd_exames", "tfd_fila_lancamento", "tfd_medico", "tfd", "tfd_agenda", "tfd_catalogo")),
+):
+    """Busca rápida de CID-10 por código ou descrição para a regulação do TFD."""
+    termo = f"%{q.strip()}%"
+    cids = db.exec(
+        select(SigtapCid)
+        .where(
+            or_(
+                SigtapCid.cid.ilike(termo),
+                SigtapCid.descricao.ilike(termo),
+            )
+        )
+        .order_by(SigtapCid.cid.asc())
+        .limit(50)
+    ).all()
+
+    vistos = set()
+    resultado = []
+    for c in cids:
+        if c.cid not in vistos:
+            vistos.add(c.cid)
+            resultado.append({"codigo": c.cid, "descricao": c.descricao})
+    return resultado
+
+
 @router.get("/especialidades", response_model=Pagina[EspecialidadeOut])
 def listar_especialidades(
     q: str = Query(default="", max_length=80),
@@ -4038,8 +4824,10 @@ def _dia_payload(
     """Quadro de um dia: destinos com viagens, veículos, vagas e passageiros.
     Totalmente otimizado em lote para alta concorrência sem queries N+1.
     """
+    from datetime import date as _date
+    dt_obj = _date.fromisoformat(data) if isinstance(data, str) else data
     viagens = list(db.exec(
-        select(Viagem).where(func.to_char(Viagem.data_viagem, "YYYY-MM-DD") == data)
+        select(Viagem).where(Viagem.data_viagem == dt_obj)
         .order_by(Viagem.destino, Viagem.hora_saida)
     ).all())
     v_ids = [v.id for v in viagens if v.id]
@@ -4098,9 +4886,13 @@ def _dia_payload(
                     vf = vfs_map.get(p.viagem_fila_id)
                     if vf and vf.prioridade:
                         prio = vf.prioridade
+                import os
+                app_url = os.getenv("APP_URL", "http://localhost:5173").rstrip("/")
+                link_conf = f"{app_url}/confirmar-presenca/{p.token_confirmacao}" if getattr(p, "token_confirmacao", "") else ""
                 passageiros.append({
                     "id": p.id, "viagem_id": p.viagem_id, "paciente_id": p.paciente_id,
                     "paciente_nome": pac.nome if pac else "?",
+                    "paciente_telefone": pac.telefone if pac else "",
                     "paciente_cpf": pac.cpf if pac else "",
                     "paciente_nascimento": pac.nascimento.isoformat() if pac and pac.nascimento else None,
                     "acompanhante": acomp_nome, "presente": p.presente,
@@ -4112,7 +4904,17 @@ def _dia_payload(
                     "tratamento": p.tratamento or "", "unidade": p.unidade or "",
                     "hora_consulta": p.hora_consulta or "",
                     "observacoes": getattr(p, "observacoes", "") or "",
+                    "status_confirmacao": getattr(p, "status_confirmacao", "pendente") or "pendente",
+                    "confirmado_em": p.confirmado_em.isoformat() if getattr(p, "confirmado_em", None) else None,
+                    "token_confirmacao": getattr(p, "token_confirmacao", "") or "",
+                    "lembrete_enviado": getattr(p, "lembrete_enviado", False) or False,
+                    "lembrete_enviado_em": p.lembrete_enviado_em.isoformat() if getattr(p, "lembrete_enviado_em", None) else None,
+                    "link_confirmacao": link_conf,
                 })
+
+        n_conf = sum(1 for p in v_pass if getattr(p, "status_confirmacao", "") == "confirmado")
+        n_pend = sum(1 for p in v_pass if getattr(p, "status_confirmacao", "pendente") in ("pendente", ""))
+        n_desist = sum(1 for p in v_pass if getattr(p, "status_confirmacao", "") in ("desistiu", "nao_compareceu"))
 
         por_destino.setdefault(v.destino or "A definir", []).append({
             "id": v.id, "nome": _nome_viagem(v.destino, v.hora_saida, v.id),
@@ -4120,6 +4922,7 @@ def _dia_payload(
             "data_viagem": v.data_viagem.isoformat() if v.data_viagem else "",
             "hora_saida": v.hora_saida or "",
             "hora_retorno": v.hora_retorno or "",
+            "ponto_saida": getattr(v, "ponto_saida", "") or "Prefeitura Municipal de Guapé",
             "motorista": v.motorista or "",
             "motorista_id": getattr(v, "motorista_id", None),
             "status": v.status, "finalidade": v.finalidade or "",
@@ -4127,6 +4930,9 @@ def _dia_payload(
             "veiculo_placa": veh.placa if veh else "",
             "veiculo_modelo": veh.modelo if veh else "",
             "capacidade": cap, "ocupados": ocup, "vagas": max(cap - ocup, 0),
+            "confirmados": n_conf,
+            "pendentes": n_pend,
+            "desistencias": n_desist,
             "passageiros": passageiros,
             "passageiros_restritos": redigir_pacientes,
         })

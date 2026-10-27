@@ -1,4 +1,5 @@
 import json
+import urllib.parse
 from datetime import date, datetime
 
 from fastapi import HTTPException
@@ -15,48 +16,10 @@ from app.models.lab_fase6 import (
     VagaLab,
 )
 from app.models.tfd import Paciente
+from app.services.geradores import gerar_prontuario_aleatorio, gerar_protocolo_lab_aleatorio
+from app.services.lab_preparo import determinar_preparo, obter_preparo_exame
 
 LABS_PADRAO = ["Municipal", "Santa Casa", "Terceirizado"]
-
-
-def determinar_preparo(nomes_procedimentos: list[str]) -> tuple[str, list[str], list[str]]:
-    """Calcula orientações clínicas de preparo com base nos exames solicitados."""
-    nomes_upper = [str(n).upper() for n in nomes_procedimentos]
-
-    # Procedimentos que exigem jejum de 8 a 12 horas
-    exige_jejum_estrito = any(
-        any(termo in n for termo in ("GLICOSE", "GLICEMIA", "LIPID", "COLESTEROL", "TRIGLICER", "INSULIN", "CURVA GLICEMICA"))
-        for n in nomes_upper
-    )
-
-    # Procedimentos que exigem jejum leve (3 a 4h)
-    exige_jejum_leve = any(
-        any(termo in n for termo in ("HEMOGRAMA", "UREIA", "CREATININA", "TGO", "TGP", "TSH", "T4", "ACIDO URICO"))
-        for n in nomes_upper
-    )
-
-    if exige_jejum_estrito:
-        jejum_horas = "8 a 12 horas"
-    elif exige_jejum_leve:
-        jejum_horas = "4 horas"
-    else:
-        jejum_horas = "Sem jejum obrigatório"
-
-    preparo_instrucoes = [
-        f"Jejum alimentar recomendado: {jejum_horas} antes da coleta.",
-        "Ingestão de água pura é permitida em quantidade moderada.",
-        "Evitar bebidas alcoólicas nas 72 horas que antecedem o exame.",
-        "Evitar a prática de atividades físicas intensas na véspera da coleta.",
-        "Manter medicações de uso contínuo (anti-hipertensivos, tireoide, etc.), salvo orientação médica expressa.",
-    ]
-
-    orientacoes_gerais = [
-        "Horário de atendimento para coleta matinal: de Segunda a Sexta, das 07:00 às 09:30.",
-        "Apresentar obrigatoriamente: Documento Oficial com Foto (RG/CNH), Cartão Nacional de Saúde (SUS) e este Comprovante de Agendamento.",
-        "Para exames de urina ou fezes associados, utilize apenas frascos esterilizados fornecidos pelo laboratório ou UBS.",
-    ]
-
-    return jejum_horas, preparo_instrucoes, orientacoes_gerais
 
 
 def seed_laboratorios(db: Session) -> int:
@@ -218,6 +181,8 @@ def enriquecer_mestre(db: Session, m: SolicitacaoMestre) -> dict:
     itens_out = []
     for it in itens:
         proc = db.get(SigtapProcedimento, it.sigtap_id)
+        desc = proc.descricao if proc else "?"
+        p_info = obter_preparo_exame(desc)
         itens_out.append(
             {
                 "id": it.id,
@@ -227,7 +192,8 @@ def enriquecer_mestre(db: Session, m: SolicitacaoMestre) -> dict:
                 "status_auditoria": it.status_auditoria,
                 "observacao": it.observacao,
                 "procedimento_codigo": proc.codigo if proc else "?",
-                "procedimento_descricao": proc.descricao if proc else "?",
+                "procedimento_descricao": desc,
+                "preparo_especifico": p_info.get("badge", ""),
             }
         )
     nomes_procs = [it["procedimento_descricao"] for it in itens_out]
@@ -238,7 +204,7 @@ def enriquecer_mestre(db: Session, m: SolicitacaoMestre) -> dict:
         "paciente_nome": pac.nome if pac else "?",
         "paciente_cpf": getattr(pac, "cpf", "") or "",
         "paciente_cns": getattr(pac, "cns", "") or "",
-        "paciente_prontuario": getattr(pac, "prontuario", "") or (f"PR-{pac.id:05d}" if pac and pac.id else ""),
+        "paciente_prontuario": getattr(pac, "codigo_prontuario", "") or (gerar_prontuario_aleatorio(pac_id=pac.id) if pac and pac.id else ""),
         "paciente_nascimento": pac.data_nascimento.isoformat() if pac and getattr(pac, "data_nascimento", None) else "",
         "data_agendada": m.data_agendada,
         "hora_agendada": getattr(m, "hora_agendada", "07:00") or "07:00",
@@ -298,6 +264,7 @@ def enriquecer_mestre_lote(db: Session, mestres: list[SolicitacaoMestre]) -> lis
                 "observacao": it.observacao,
                 "procedimento_codigo": procs.get(it.sigtap_id).codigo if procs.get(it.sigtap_id) else "?",
                 "procedimento_descricao": procs.get(it.sigtap_id).descricao if procs.get(it.sigtap_id) else "?",
+                "preparo_especifico": obter_preparo_exame(procs.get(it.sigtap_id).descricao)["badge"] if procs.get(it.sigtap_id) else "",
             }
             for it in itens_m
         ]
@@ -309,7 +276,7 @@ def enriquecer_mestre_lote(db: Session, mestres: list[SolicitacaoMestre]) -> lis
             "paciente_nome": pac.nome if pac else "?",
             "paciente_cpf": getattr(pac, "cpf", "") or "",
             "paciente_cns": getattr(pac, "cns", "") or "",
-            "paciente_prontuario": getattr(pac, "prontuario", "") or (f"PR-{pac.id:05d}" if pac and pac.id else ""),
+            "paciente_prontuario": getattr(pac, "codigo_prontuario", "") or (gerar_prontuario_aleatorio(pac_id=pac.id) if pac and pac.id else ""),
             "paciente_nascimento": pac.data_nascimento.isoformat() if pac and getattr(pac, "data_nascimento", None) else "",
             "data_agendada": m.data_agendada,
             "hora_agendada": getattr(m, "hora_agendada", "07:00") or "07:00",
@@ -383,14 +350,25 @@ def gerar_comprovante_agendamento(db: Session, mestre_id: int) -> dict:
     jejum, prep, orient = determinar_preparo(nomes_procs)
     pac = db.get(Paciente, m.paciente_id)
     lab = db.get(Laboratorio, m.laboratorio_id)
+    protocolo = getattr(m, "protocolo", "") or gerar_protocolo_lab_aleatorio(m.data_agendada, m.id)
+    prontuario = getattr(pac, "codigo_prontuario", "") or getattr(pac, "prontuario", "") or (gerar_prontuario_aleatorio(None, pac.id) if pac and pac.id else "")
+    qr_data = f"PEDIDO:{protocolo}|PRONT:{prontuario}|PAC:{pac.id if pac else ''}"
+    qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={urllib.parse.quote(qr_data)}"
+
+    from app.services.whatsapp import buscar_transporte_vinculado
+    transporte_info = buscar_transporte_vinculado(db, m.paciente_id, m.data_agendada)
+
     return {
         "id": m.id,
-        "protocolo": f"LAB-{m.data_agendada.strftime('%Y%m')}-{m.id:06d}",
+        "protocolo": protocolo,
+        "codigo_curto": protocolo,
+        "numero_pedido": protocolo,
+        "qr_code_url": qr_url,
         "paciente_id": m.paciente_id,
         "paciente_nome": pac.nome if pac else "?",
         "paciente_cpf": getattr(pac, "cpf", "") or "",
         "paciente_cns": getattr(pac, "cns", "") or "",
-        "paciente_prontuario": getattr(pac, "prontuario", "") or (f"PR-{pac.id:05d}" if pac and pac.id else ""),
+        "paciente_prontuario": prontuario,
         "paciente_nascimento": pac.data_nascimento.isoformat() if pac and getattr(pac, "data_nascimento", None) else "",
         "data_agendada": m.data_agendada.isoformat(),
         "hora_agendada": getattr(m, "hora_agendada", "07:00") or "07:00",
@@ -399,6 +377,8 @@ def gerar_comprovante_agendamento(db: Session, mestre_id: int) -> dict:
         "unidade_psf": getattr(m, "unidade_psf", "") or "Secretaria de Saúde",
         "medico_solicitante": getattr(m, "medico_solicitante", "") or "Médico da Unidade",
         "justificativa": getattr(m, "justificativa", "") or "",
+        "instrucoes_transporte": getattr(m, "instrucoes_transporte", "") or "",
+        "transporte": transporte_info,
         "status": m.status,
         "status_auditoria": m.status_auditoria,
         "itens": dados["itens"],
@@ -407,6 +387,7 @@ def gerar_comprovante_agendamento(db: Session, mestre_id: int) -> dict:
         "orientacoes_gerais": orient,
         "emitido_em": datetime.utcnow().isoformat(),
         "agendado_por": m.agendado_por,
+        "exige_preparo": True,
     }
 
 
@@ -418,6 +399,7 @@ def agendar_lote_fila(
     hora_agendada: str,
     sigtap_ids: list[int],
     agendado_por: str,
+    instrucoes_transporte: str = "",
 ) -> list[SolicitacaoMestre]:
     """Marcação mensal em lote da fila do PSF para laboratórios conveniados."""
     if not sigtap_ids:
@@ -427,6 +409,16 @@ def agendar_lote_fila(
         fila = db.get(FilaPsf, fid)
         if not fila or fila.status != "na_fila":
             continue
+        ids_exames = sigtap_ids
+        if fila.observacoes and "SIGTAP_IDS:" in fila.observacoes:
+            try:
+                import json
+                trecho = fila.observacoes.split("SIGTAP_IDS:")[1].split("|")[0].strip()
+                parsed = json.loads(trecho)
+                if isinstance(parsed, list) and parsed:
+                    ids_exames = [int(x) for x in parsed]
+            except Exception:
+                pass
         try:
             m = criar_solicitacao_mestre(
                 db,
@@ -434,13 +426,18 @@ def agendar_lote_fila(
                 data_agendada=data_agendada,
                 hora_agendada=hora_agendada or "07:00",
                 laboratorio_id=laboratorio_id,
-                sigtap_ids=sigtap_ids,
+                sigtap_ids=ids_exames,
                 origem_fila_id=fila.id,
                 agendado_por=agendado_por,
                 medico_solicitante=fila.medico_solicitante,
                 unidade_psf=fila.unidade_psf,
                 justificativa=fila.justificativa or "Agendamento mensal em lote da fila PSF",
             )
+            if instrucoes_transporte:
+                m.instrucoes_transporte = instrucoes_transporte
+                db.add(m)
+                db.commit()
+                db.refresh(m)
             agendados.append(m)
         except HTTPException:
             # Se esgotar vagas no dia, interrompe e comita o que deu

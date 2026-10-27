@@ -117,6 +117,9 @@ class Viagem(SQLModel, table=True):
         default="agendada", max_length=20, index=True
     )  # agendada|andamento|concluida|cancelada
     finalidade: str = Field(default="consulta", max_length=30)  # consulta|exame|cirurgia|retorno
+    ponto_saida: str = Field(
+        default="Prefeitura Municipal de Guapé", max_length=150
+    )
     observacoes: str = Field(default="", max_length=500)
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
@@ -139,6 +142,17 @@ class ViagemPaciente(SQLModel, table=True):
     unidade: str = Field(default="", max_length=150)
     hora_consulta: str = Field(default="", max_length=5)
     observacoes: str = Field(default="", max_length=500)
+    status_confirmacao: str = Field(
+        default="pendente", max_length=30, index=True
+    )  # pendente | confirmado | desistiu | nao_compareceu
+    confirmado_em: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=False))
+    )
+    token_confirmacao: str = Field(default="", max_length=64, index=True)
+    lembrete_enviado: bool = Field(default=False, index=True)
+    lembrete_enviado_em: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=False))
+    )
 
 
 class ViagemFila(SQLModel, table=True):
@@ -186,6 +200,8 @@ class ExameFila(SQLModel, table=True):
     codigo_procedimento: str = Field(default="", max_length=20, index=True)
     codigo_especialidade: str = Field(default="", max_length=10, index=True)
     nome_especialidade: str = Field(default="", max_length=120)
+    cid_codigo: str = Field(default="", max_length=10, index=True)
+    cid_descricao: str = Field(default="", max_length=255)
     prioridade: str = Field(default="rotina", max_length=20)  # rotina|urgente
     justificativa_prioridade: str = Field(default="", max_length=500)
     status: str = Field(
@@ -215,6 +231,7 @@ class ExameFila(SQLModel, table=True):
     removido_por: str = Field(default="", max_length=120)
     destino: str = Field(default="", max_length=120)
     observacoes: str = Field(default="", max_length=500)
+    instrucoes_transporte: str = Field(default="", max_length=500)
     justificativa: str = Field(default="", max_length=500)  # justificativa clínica do pedido
     resultado: str = Field(default="", max_length=2000)  # resultado/laudo do exame realizado
     recepcionado_em: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=False)))

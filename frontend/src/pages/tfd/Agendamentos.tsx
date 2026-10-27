@@ -12,6 +12,8 @@ import {
   Layers,
   ListOrdered,
   Plus,
+  Printer,
+  QrCode,
   RotateCcw,
   Search,
   Sparkles,
@@ -42,6 +44,9 @@ import { Button, Card, Input, Label } from "../../components/ui/primitives";
 import { rotuloPrioridade } from "../../utils/rotulos";
 import ExportarExcel from "../../components/ExportarExcel";
 import BotaoWhatsApp from "../../components/BotaoWhatsApp";
+import ModalLeituraRapidaQR from "../../components/ModalLeituraRapidaQR";
+import ComprovanteExameModal from "../../components/ComprovanteExameModal";
+import { useBackdropClose } from "../../hooks/useBackdropClose";
 
 type Visao = "mes" | "semana" | "dia";
 type Formato = "calendario" | "lista";
@@ -115,6 +120,8 @@ export default function Agendamentos() {
   const [mostraResultado, setMostraResultado] = useState(false);
   const [agindo, setAgindo] = useState(false);
   const [erroModal, setErroModal] = useState("");
+  const [modalLeituraQR, setModalLeituraQR] = useState(false);
+  const [comprovanteExameId, setComprovanteExameId] = useState<number | null>(null);
 
   // Modal de Marcação Direta da Fila de Espera
   const [modalAgendarFila, setModalAgendarFila] = useState(false);
@@ -127,6 +134,10 @@ export default function Agendamentos() {
   const [medicoIdMarca, setMedicoIdMarca] = useState("");
   const [unidadeIdMarca, setUnidadeIdMarca] = useState("");
   const [salvandoMarca, setSalvandoMarca] = useState(false);
+
+  const selBackdrop = useBackdropClose(() => setSel(null), !!sel);
+  const loteStatusBackdrop = useBackdropClose(() => setModalLoteStatus(null), !!modalLoteStatus);
+  const agendarFilaBackdrop = useBackdropClose(() => setModalAgendarFila(false), modalAgendarFila);
 
   // Cálculo dos dias visíveis em torno da data de referência
   const semanaPills = useMemo(() => {
@@ -338,22 +349,18 @@ export default function Agendamentos() {
 
   async function acaoStatus(status: "faltou" | "realizado" | "cancelado") {
     if (!sel) return;
-    if (status === "realizado" && !mostraResultado) {
-      setMostraResultado(true);
-      return;
-    }
     const alvo = sel;
     const statusAntes = alvo.status;
     setAgindo(true);
     setErroModal("");
     try {
-      await tfdAtendimentoStatus(alvo.id, status, status === "realizado" ? resultado.trim() : undefined);
+      await tfdAtendimentoStatus(alvo.id, status, status === "realizado" && resultado.trim() ? resultado.trim() : undefined);
       setSel(null);
       setOk(
         status === "faltou"
           ? `${alvo.paciente_nome} marcado como faltou.`
           : status === "realizado"
-          ? `Resultado registrado p/ ${alvo.paciente_nome}.`
+          ? `Atendimento realizado registrado p/ ${alvo.paciente_nome}.`
           : `Agendamento de ${alvo.paciente_nome} cancelado.`,
       );
       await carregar();
@@ -526,6 +533,14 @@ export default function Agendamentos() {
           </div>
 
           <Button
+            type="button"
+            onClick={() => setModalLeituraQR(true)}
+            className="border border-teal/40 bg-teal/5 text-teal hover:bg-teal/15 text-xs font-bold flex items-center gap-1.5 !h-9"
+          >
+            <QrCode className="h-4 w-4" /> Leitura Rápida QR
+          </Button>
+
+          <Button
             onClick={abrirModalMarcacao}
             className="bg-teal text-white hover:brightness-110 shadow-xs text-xs font-bold flex items-center gap-1.5"
           >
@@ -657,45 +672,47 @@ export default function Agendamentos() {
           </div>
         </div>
 
-        {/* Linha 2: Faixa Semanal de Dias (SEG - DOM) com Contagens */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-0.5">
-          {semanaPills.map((d) => {
-            const itensDoDia = porDia.get(d) ?? [];
-            const ativo = d === dia;
-            const ehHoje = d === hojeISO();
-            const di = (new Date(`${d}T12:00:00`).getDay() + 6) % 7;
-            return (
-              <button
-                key={d}
-                type="button"
-                onClick={() => setDia(d)}
-                className={`flex min-w-[95px] flex-1 flex-col items-center justify-center rounded-xl border px-2 py-1.5 transition ${
-                  ativo
-                    ? "border-sus-900 bg-sus-900 text-white shadow-xs font-bold"
-                    : ehHoje
-                    ? "border-teal/60 bg-teal/5 text-sus-950 font-bold hover:bg-teal/10"
-                    : "border-sus-900/10 bg-white text-sus-900 hover:border-sus-900/25"
-                }`}
-              >
-                <span className={`text-[10px] uppercase font-bold tracking-wider ${ativo ? "text-white/80" : "text-ink/50"}`}>
-                  {NOMES_DIA[di]}
-                </span>
-                <span className="font-display text-xs font-extrabold">{fmtDia(d).slice(0, 5)}</span>
-                <span
-                  className={`mt-0.5 rounded-full px-1.5 text-[9px] font-black leading-tight ${
+        {/* Linha 2: Faixa Semanal de Dias (SEG - DOM) com Contagens (Exibido no Modo Lista; ocultado no Modo Calendário para evitar calendário duplo) */}
+        {formato === "lista" && (
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-0.5">
+            {semanaPills.map((d) => {
+              const itensDoDia = porDia.get(d) ?? [];
+              const ativo = d === dia;
+              const ehHoje = d === hojeISO();
+              const di = (new Date(`${d}T12:00:00`).getDay() + 6) % 7;
+              return (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setDia(d)}
+                  className={`flex min-w-[95px] flex-1 flex-col items-center justify-center rounded-xl border px-2 py-1.5 transition ${
                     ativo
-                      ? "bg-white/20 text-white"
-                      : itensDoDia.length > 0
-                      ? "bg-teal/15 text-teal"
-                      : "text-ink/30"
+                      ? "border-sus-900 bg-sus-900 text-white shadow-xs font-bold"
+                      : ehHoje
+                      ? "border-teal/60 bg-teal/5 text-sus-950 font-bold hover:bg-teal/10"
+                      : "border-sus-900/10 bg-white text-sus-900 hover:border-sus-900/25"
                   }`}
                 >
-                  {itensDoDia.length}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+                  <span className={`text-[10px] uppercase font-bold tracking-wider ${ativo ? "text-white/80" : "text-ink/50"}`}>
+                    {NOMES_DIA[di]}
+                  </span>
+                  <span className="font-display text-xs font-extrabold">{fmtDia(d).slice(0, 5)}</span>
+                  <span
+                    className={`mt-0.5 rounded-full px-1.5 text-[9px] font-black leading-tight ${
+                      ativo
+                        ? "bg-white/20 text-white"
+                        : itensDoDia.length > 0
+                        ? "bg-teal/15 text-teal"
+                        : "text-ink/30"
+                    }`}
+                  >
+                    {itensDoDia.length}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Linha 3: Filtros Avançados (Unidade, Status, Médico, Tipo, Busca) */}
         <div className="grid grid-cols-1 gap-2.5 pt-2 border-t border-sus-900/10 sm:grid-cols-2 lg:grid-cols-5">
@@ -886,28 +903,28 @@ export default function Agendamentos() {
                           {fmtDia((it.data_agendada || "").slice(0, 10))}
                         </span>
                       </td>
-                      <td className="px-3 py-2.5 font-mono text-[11px] text-ink/70">
+                      <td className="px-3.5 py-3 font-mono text-xs text-ink/70">
                         {it.codigo_curto || `EX-${String(it.id).padStart(6, "0")}`}
                       </td>
-                      <td className="px-3 py-2.5">
-                        <div className="flex items-center gap-1.5">
-                          <p className="font-bold text-sus-950">{it.paciente_nome}</p>
+                      <td className="px-3.5 py-3">
+                        <div className="flex items-center gap-2">
+                          <p className="font-bold text-sm text-sus-950">{it.paciente_nome}</p>
                           {isPriorizado && (
-                            <span className="rounded bg-red-100 px-1 py-0.2 text-[9px] font-bold text-red-700 leading-tight">
+                            <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700 leading-tight">
                               Urgente
                             </span>
                           )}
                         </div>
                       </td>
-                      <td className="px-3 py-2.5">
-                        <p className="font-semibold text-sus-950">{it.exame}</p>
-                        <p className="text-[10px] text-ink/60">{it.tipo_fila || "Eletivo"}</p>
+                      <td className="px-3.5 py-3">
+                        <p className="font-semibold text-xs text-sus-950">{it.exame}</p>
+                        <p className="text-[11px] text-ink/60">{it.tipo_fila || "Eletivo"}</p>
                       </td>
-                      <td className="px-3 py-2.5 text-ink/80">{it.unidade_nome || it.destino || "—"}</td>
-                      <td className="px-3 py-2.5 text-ink/80">{it.medico_nome || "—"}</td>
-                      <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                      <td className="px-3.5 py-3 text-xs text-ink/80">{it.unidade_nome || it.destino || "—"}</td>
+                      <td className="px-3.5 py-3 text-xs text-ink/80">{it.medico_nome || "—"}</td>
+                      <td className="px-3.5 py-3 text-center whitespace-nowrap">
                         <span
-                          className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+                          className={`inline-block rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${
                             COR_STATUS[it.status] || "bg-gray-100 text-gray-800"
                           }`}
                         >
@@ -929,6 +946,14 @@ export default function Agendamentos() {
                               Recepcionar
                             </button>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => setComprovanteExameId(it.id)}
+                            className="rounded-lg p-1.5 text-teal hover:bg-teal/10 transition"
+                            title="Comprovante Unificado / QR Code"
+                          >
+                            <Printer className="h-4 w-4" />
+                          </button>
                           <BotaoWhatsApp exameId={it.id} exame={it} tipo="agendamento" variante="compacto" />
                           <Button
                             variant="outline"
@@ -1121,29 +1146,29 @@ export default function Agendamentos() {
                           ev.stopPropagation();
                           abrirAcao(e);
                         }}
-                        className="group block w-full rounded-xl border border-sus-900/10 bg-sand/40 p-2 text-left transition hover:border-teal hover:bg-white hover:shadow-xs"
+                        className="group block w-full rounded-xl border border-sus-900/15 bg-white p-3 text-left transition-all hover:border-teal hover:shadow-md hover:scale-[1.01]"
                       >
-                        <div className="flex items-start justify-between gap-1">
-                          <p className="flex items-center gap-1.5 min-w-0 text-[11px] font-bold text-sus-950">
-                            <span className="shrink-0 text-ink/60 font-mono text-[10px]">
+                        <div className="flex items-start justify-between gap-1.5">
+                          <p className="flex items-center gap-2 min-w-0 text-sm font-bold text-sus-950">
+                            <span className="shrink-0 text-sus-900 font-mono text-xs font-bold">
                               {e.hora_agendada || "--:--"}
                             </span>
-                            <span className="truncate font-semibold group-hover:text-teal transition">
+                            <span className="truncate font-bold group-hover:text-teal transition">
                               {e.paciente_nome}
                             </span>
                           </p>
-                          <span className="shrink-0 rounded bg-sus-900/10 px-1 py-0.5 text-[9px] font-mono font-bold text-sus-900">
+                          <span className="shrink-0 rounded bg-sus-900/10 px-1.5 py-0.5 text-[10px] font-mono font-bold text-sus-900">
                             {e.codigo_curto || `EX-${String(e.id).padStart(6, "0")}`}
                           </span>
                         </div>
 
-                        <p className="mt-0.5 truncate text-[10px] text-ink/60 font-medium" title={e.exame}>
+                        <p className="mt-1 truncate text-xs text-ink/75 font-semibold" title={e.exame}>
                           {e.exame}
                         </p>
 
-                        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
                           <span
-                            className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold leading-none ${
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-bold leading-none ${
                               COR_STATUS[e.status] ?? "bg-sus-900/10 text-sus-900"
                             }`}
                           >
@@ -1151,12 +1176,12 @@ export default function Agendamentos() {
                           </span>
 
                           {isPriorizado && (
-                            <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-bold text-red-700 leading-none">
+                            <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700 leading-none">
                               Urgente
                             </span>
                           )}
 
-                          <span className="truncate text-[9px] text-ink/45 max-w-[120px]">
+                          <span className="truncate text-[11px] text-ink/60 font-medium max-w-[150px]">
                             {e.unidade_nome || e.destino || "—"}
                           </span>
                         </div>
@@ -1182,7 +1207,7 @@ export default function Agendamentos() {
       {sel && (
         <div
           className="fixed inset-0 z-50 grid place-items-center bg-sus-950/40 p-4"
-          onClick={() => setSel(null)}
+          {...selBackdrop}
         >
           <div
             className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl"
@@ -1227,8 +1252,26 @@ export default function Agendamentos() {
               )}
             </div>
 
-            <div className="mb-4">
+            <div className="mb-4 space-y-2">
               <BotaoWhatsApp exameId={sel.id} exame={sel} tipo="agendamento" variante="completo" />
+              <Button
+                type="button"
+                onClick={() => setComprovanteExameId(sel.id)}
+                variant="outline"
+                className="w-full text-xs font-semibold flex items-center justify-center gap-1.5 border-teal/40 text-teal hover:bg-teal/5 !h-9"
+              >
+                <Printer className="h-4 w-4" /> Comprovante Unificado / QR Code
+              </Button>
+            </div>
+
+            <div className="mb-2">
+              <button
+                type="button"
+                onClick={() => setMostraResultado((v) => !v)}
+                className="text-xs font-semibold text-teal hover:underline flex items-center gap-1"
+              >
+                {mostraResultado ? "− Ocultar campo de laudo / observação" : "+ Informar laudo / resultado (opcional)"}
+              </button>
             </div>
 
             {mostraResultado && (
@@ -1247,12 +1290,6 @@ export default function Agendamentos() {
             )}
 
             <div className="flex flex-wrap gap-2 pt-2 border-t border-sus-900/10">
-              {mostraResultado && (
-                <Button onClick={() => acaoStatus("realizado")} disabled={agindo} className="!w-auto bg-teal text-white">
-                  <CheckCircle2 className="h-4 w-4" /> Salvar Realizado
-                </Button>
-              )}
-
               <button
                 type="button"
                 onClick={acaoRecepcionar}
@@ -1308,7 +1345,7 @@ export default function Agendamentos() {
       {modalLoteStatus && (
         <div
           className="fixed inset-0 z-50 grid place-items-center bg-sus-950/40 p-4"
-          onClick={() => setModalLoteStatus(null)}
+          {...loteStatusBackdrop}
         >
           <div
             className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"
@@ -1368,7 +1405,7 @@ export default function Agendamentos() {
       {modalAgendarFila && (
         <div
           className="fixed inset-0 z-50 grid place-items-center bg-sus-950/40 p-4"
-          onClick={() => setModalAgendarFila(false)}
+          {...agendarFilaBackdrop}
         >
           <div
             className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto"
@@ -1531,6 +1568,20 @@ export default function Agendamentos() {
             </div>
           </div>
         </div>
+      )}
+
+      {modalLeituraQR && (
+        <ModalLeituraRapidaQR
+          onClose={() => setModalLeituraQR(false)}
+          onRecepcaoSucesso={() => carregar()}
+        />
+      )}
+
+      {comprovanteExameId && (
+        <ComprovanteExameModal
+          exameId={comprovanteExameId}
+          onClose={() => setComprovanteExameId(null)}
+        />
       )}
     </div>
   );

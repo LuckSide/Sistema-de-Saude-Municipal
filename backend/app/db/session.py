@@ -193,6 +193,13 @@ def init_db() -> None:
                 except Exception:
                     pass
         # Agendamento em lote: data/hora, médico e unidade PSF
+        # Limpeza permanente de tipo de serviço corrompido ("11/10" / "11/10/2026")
+        try:
+            conn.execute(text("DELETE FROM tfd_tipos_fila WHERE nome ILIKE '%11/10%'"))
+            conn.execute(text("UPDATE tfd_procedimentos SET tipo_fila = 'CONSULTAS ESPECIALIZADAS' WHERE tipo_fila ILIKE '%11/10%'"))
+            conn.execute(text("UPDATE tfd_exames_fila SET tipo_fila = 'CONSULTAS ESPECIALIZADAS' WHERE tipo_fila ILIKE '%11/10%'"))
+        except Exception:
+            pass
         try:
             cols_ex2 = [c["name"] for c in inspect(conn).get_columns("tfd_exames_fila")]
         except Exception:
@@ -379,6 +386,8 @@ def init_db() -> None:
             cols_ex3 = []
         for col, ddl in {
             "justificativa_prioridade": "VARCHAR(500) DEFAULT '' NOT NULL",
+            "cid_codigo": "VARCHAR(10) DEFAULT '' NOT NULL",
+            "cid_descricao": "VARCHAR(255) DEFAULT '' NOT NULL",
             "medico_nome": "VARCHAR(150) DEFAULT '' NOT NULL",
             "medico_cpf": "VARCHAR(14) DEFAULT '' NOT NULL",
             "medico_cbo_codigo": "VARCHAR(10) DEFAULT '' NOT NULL",
@@ -402,6 +411,7 @@ def init_db() -> None:
                     pass
         try:
             conn.execute(text("UPDATE tfd_exames_fila SET ativo = TRUE WHERE ativo IS NULL"))
+            conn.execute(text("UPDATE tfd_exames_fila SET justificativa_prioridade = '' WHERE justificativa_prioridade = 'P1 - Médico ESF'"))
         except Exception:
             pass
         # SIGTAP: detalhe Tabela Unificada nos procedimentos
@@ -464,12 +474,38 @@ def init_db() -> None:
             "acompanhante_id": "INTEGER",
             "acompanhante_cpf": "VARCHAR(14) DEFAULT '' NOT NULL",
             "observacoes": "VARCHAR(500) DEFAULT '' NOT NULL",
+            "status_confirmacao": "VARCHAR(30) DEFAULT 'pendente' NOT NULL",
+            "confirmado_em": "TIMESTAMP",
+            "token_confirmacao": "VARCHAR(64) DEFAULT '' NOT NULL",
+            "lembrete_enviado": "BOOLEAN DEFAULT FALSE NOT NULL",
+            "lembrete_enviado_em": "TIMESTAMP",
         }.items():
             if col not in cols_vp:
                 try:
                     conn.execute(text(f"ALTER TABLE tfd_viagem_pacientes ADD COLUMN {col} {ddl}"))
                 except Exception:
                     pass
+        for idx, col in (
+            ("ix_tfd_viagem_pacientes_token_confirmacao", "token_confirmacao"),
+            ("ix_tfd_viagem_pacientes_status_confirmacao", "status_confirmacao"),
+        ):
+            try:
+                conn.execute(text(f"CREATE INDEX IF NOT EXISTS {idx} ON tfd_viagem_pacientes ({col})"))
+            except Exception:
+                pass
+        # Backfill token de confirmação de presença p/ viagens existentes
+        try:
+            import secrets
+            pend_vp = conn.execute(
+                text("SELECT id FROM tfd_viagem_pacientes WHERE token_confirmacao IS NULL OR token_confirmacao = '' LIMIT 5000")
+            ).all()
+            for (vpid,) in pend_vp:
+                conn.execute(
+                    text("UPDATE tfd_viagem_pacientes SET token_confirmacao = :tok WHERE id = :vpid"),
+                    {"tok": secrets.token_urlsafe(24), "vpid": vpid},
+                )
+        except Exception:
+            pass
         try:
             cols_vf = [c["name"] for c in inspect(conn).get_columns("tfd_viagem_fila")]
         except Exception:
@@ -507,6 +543,11 @@ def init_db() -> None:
         if "motorista_id" not in cols_via2:
             try:
                 conn.execute(text("ALTER TABLE tfd_viagens ADD COLUMN motorista_id INTEGER"))
+            except Exception:
+                pass
+        if "ponto_saida" not in cols_via2:
+            try:
+                conn.execute(text("ALTER TABLE tfd_viagens ADD COLUMN ponto_saida VARCHAR(150) DEFAULT 'Prefeitura Municipal de Guapé' NOT NULL"))
             except Exception:
                 pass
         # Auditoria: payload completo do diff (TEXT p/ Raw Payload na íntegra)

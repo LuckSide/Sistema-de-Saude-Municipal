@@ -62,6 +62,8 @@ services:
       - backend
     ports:
       - "5173:80"
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
 
 volumes:
   pgdata:

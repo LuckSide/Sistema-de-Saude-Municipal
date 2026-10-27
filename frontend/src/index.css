@@ -8,6 +8,21 @@ body {
   @apply bg-sand text-ink font-body antialiased;
 }
 
+/* Previne scroll chaining em modais/diálogos e seus contêineres roláveis */
+[role="dialog"],
+.modal-overlay,
+.modal-backdrop,
+.fixed.inset-0,
+.fixed.inset-0 > div,
+.dialog-content,
+.modal-scroll {
+  overscroll-behavior: contain;
+}
+
+body.modal-aberto {
+  overflow: hidden !important;
+}
+
 /* textura sutil + reveal */
 .dot-grid {
   background-image: radial-gradient(rgba(10, 61, 98, 0.14) 1px, transparent 1px);

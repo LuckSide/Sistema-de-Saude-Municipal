@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 from app.models.cadastros_saude import UnidadeSaude
 from app.models.integracoes import IntegrationSettings, PecSyncLog
 from app.models.tfd import Paciente
+from app.services.geradores import gerar_prontuario_aleatorio
 from app.services.pec_tunnel import garantir_tunel_db
 
 ADVISORY_LOCK_SYNC = 847291992
@@ -441,7 +442,7 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
                             db.add(novo_p)
                             db.flush()
                             if novo_p.id and not novo_p.codigo_prontuario:
-                                novo_p.codigo_prontuario = f"PR-{novo_p.id:05d}"
+                                novo_p.codigo_prontuario = gerar_prontuario_aleatorio(db, novo_p.id)
                                 db.add(novo_p)
 
                             pacientes_cache[novo_p.id] = novo_p

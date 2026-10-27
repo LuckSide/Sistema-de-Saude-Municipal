@@ -1,12 +1,13 @@
 import { useEffect, useState, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Pencil, Plus, Trash2, UserPlus, X, Search } from "lucide-react";
+import { Pencil, Plus, Trash2, UserPlus, X, Search, Check, Clock, MessageCircle, XCircle } from "lucide-react";
 import {
   tfdAddPassageiro,
   tfdAtualizarViagem,
   tfdBuscarPacientesPec,
   tfdCriarViagem,
   tfdDestinos,
+  tfdEnviarWhatsAppConfirmacaoPassageiro,
   tfdExcluirViagem,
   tfdMotoristas,
   tfdPacientes,
@@ -358,8 +359,36 @@ export default function TfdViagens() {
             <div className="mt-3 space-y-1">
               {pass.map((p) => (
                 <div key={p.id} className="flex items-center justify-between rounded-xl bg-sand px-3 py-2 text-sm">
-                  <span className="font-medium">{p.paciente_nome}{(p.acompanhante_nome || p.acompanhante) ? ` + ${(p.acompanhante_nome || p.acompanhante).trim()} (Acompanhante de ${p.paciente_nome})` : ""}</span>
-                  <button onClick={async () => { await tfdRemoverPassageiro(sel.id, p.id); setPass(await tfdPassageiros(sel.id)); carregar(); }} className="rounded-lg p-1.5 text-red-600 hover:bg-red-50"><X className="h-4 w-4" /></button>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{p.paciente_nome}{(p.acompanhante_nome || p.acompanhante) ? ` + ${(p.acompanhante_nome || p.acompanhante).trim()} (Acompanhante de ${p.paciente_nome})` : ""}</span>
+                    {p.status_confirmacao === "confirmado" ? (
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 flex items-center gap-1">
+                        <Check className="h-3 w-3" /> Confirmado
+                      </span>
+                    ) : p.status_confirmacao === "desistiu" ? (
+                      <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700 flex items-center gap-1">
+                        <XCircle className="h-3 w-3" /> Desistiu
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800 flex items-center gap-1">
+                        <Clock className="h-3 w-3" /> Pendente
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={async () => {
+                        const res = await tfdEnviarWhatsAppConfirmacaoPassageiro(sel.id, p.id);
+                        if (res.whatsapp_link) window.open(res.whatsapp_link, "_blank");
+                        setPass(await tfdPassageiros(sel.id));
+                      }}
+                      className="rounded-lg p-1.5 text-emerald-700 hover:bg-emerald-50"
+                      title="Enviar link no WhatsApp"
+                    >
+                      <MessageCircle className="h-4 w-4" />
+                    </button>
+                    <button onClick={async () => { await tfdRemoverPassageiro(sel.id, p.id); setPass(await tfdPassageiros(sel.id)); carregar(); }} className="rounded-lg p-1.5 text-red-600 hover:bg-red-50"><X className="h-4 w-4" /></button>
+                  </div>
                 </div>
               ))}
               {pass.length === 0 && <p className="text-sm text-ink/45">Nenhum passageiro ainda.</p>}

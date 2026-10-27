@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { createPortal } from "react-dom";
-import { AlertTriangle, Building2, Calendar, CheckCircle2, Copy, Download, Eye, MapPin, Pencil, Plus, Printer, QrCode, RefreshCw, Search, Stethoscope, Trash2, X } from "lucide-react";
+import { AlertTriangle, Building2, Bus, Calendar, CheckCircle2, ClipboardList, Copy, Download, Eye, MapPin, MessageSquare, Pencil, Plus, Printer, QrCode, RefreshCw, Search, Stethoscope, Trash2, X } from "lucide-react";
 import {
   tfdAtualizarExame,
   tfdAtualizarExamesLote,
+  tfdBuscarCids,
   tfdBuscarPacientesPec,
   tfdCatalogoExames,
   tfdConsultarExamePublico,
@@ -27,6 +28,7 @@ import {
   type Paciente,
   type PacientePec,
   type SigtapCbo,
+  type SigtapCidItem,
   fetchMedicos,
   fetchUnidadesSaude,
   type Medico,
@@ -41,6 +43,9 @@ import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
 import PerfilPaciente from "../../components/PerfilPaciente";
 import BotaoWhatsApp from "../../components/BotaoWhatsApp";
+import ComprovanteExameModal from "../../components/ComprovanteExameModal";
+import ModalLeituraRapidaQR from "../../components/ModalLeituraRapidaQR";
+import { useBackdropClose } from "../../hooks/useBackdropClose";
 import { PRIO_ROTULO } from "../../utils/rotulos";
 
 const STATUS = ["aguardando", "agendado", "realizado", "cancelado"];
@@ -77,6 +82,8 @@ function novoForm(unidadePadraoId?: string | number | null, medicoPadraoId?: str
     codigo_procedimento: "",
     codigo_especialidade: "",
     nome_especialidade: "",
+    cid_codigo: "",
+    cid_descricao: "",
     prioridade: "rotina",
     justificativa_prioridade: "",
     status: "aguardando",
@@ -155,7 +162,7 @@ export default function FilaExames() {
   const hojeISO = () => new Date().toISOString().slice(0, 10);
   const ehRetroativa = (d: string) => !!d && d < hojeISO();
   const [lista, setLista] = useState<Exame[]>([]);
-  const [sp] = useSearchParams();
+  const [sp, setSearchParams] = useSearchParams();
   const [soMeus, setSoMeus] = useState(false);
   const [filtro, setFiltro] = useState("aguardando");
   const [q, setQ] = useState("");
@@ -200,6 +207,7 @@ export default function FilaExames() {
   const [removerMotivo, setRemoverMotivo] = useState("");
   const [removendo, setRemovendo] = useState(false);
   const [comprovante, setComprovante] = useState<Exame | null>(null);
+  const [modalLeituraQR, setModalLeituraQR] = useState(false);
   const [detalhe, setDetalhe] = useState<Exame | null>(null);
   const [perfilId, setPerfilId] = useState<number | null>(null);
   const [page, setPage] = useState(1);
@@ -209,7 +217,7 @@ export default function FilaExames() {
   const [pages, setPages] = useState(1);
   const [sel, setSel] = useState<number[]>([]);
   const [loteModal, setLoteModal] = useState<"agendar" | "status" | "editar" | null>(null);
-  const [loteForm, setLoteForm] = useState({ data_agendada: "", hora_agendada: "", medico_id: "", unidade_id: "", destino: "", status: "", prioridade: "", justificativa: "", observacoes: "" });
+  const [loteForm, setLoteForm] = useState({ data_agendada: "", hora_agendada: "", medico_id: "", unidade_id: "", destino: "", status: "", prioridade: "", justificativa: "", observacoes: "", enviar_whatsapp: true, instrucoes_transporte: "" });
   const [loteSalvando, setLoteSalvando] = useState(false);
   const [medicos, setMedicos] = useState<Medico[]>([]);
   const medGenerico = useMemo(() => acharMedicoGenerico(medicos), [medicos]);
@@ -218,12 +226,42 @@ export default function FilaExames() {
   const [mostrarAgendamento, setMostrarAgendamento] = useState(false);
   const [unidades, setUnidades] = useState<UnidadeSaude[]>([]);
   const [confirmandoLote, setConfirmandoLote] = useState(false);
+  const [buscaCidModal, setBuscaCidModal] = useState("");
+  const [cidsModal, setCidsModal] = useState<SigtapCidItem[]>([]);
+
+  useEffect(() => {
+    if (!buscaCidModal || buscaCidModal.trim().length < 1) {
+      setCidsModal([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      tfdBuscarCids(buscaCidModal.trim())
+        .then(setCidsModal)
+        .catch(() => setCidsModal([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [buscaCidModal]);
+
+  const fecharDetalhe = () => {
+    setDetalhe(null);
+    const nextSp = new URLSearchParams(sp);
+    if (nextSp.has("registro") || nextSp.has("id")) {
+      nextSp.delete("registro");
+      nextSp.delete("id");
+      setSearchParams(nextSp, { replace: true });
+    }
+  };
+
+  const detalheBackdrop = useBackdropClose(fecharDetalhe, !!detalhe);
+  const perfilBackdrop = useBackdropClose(() => setPerfilId(null), perfilId !== null);
+  const modalBackdrop = useBackdropClose(fecharModal, modal);
 
   // Modo de visualização da fila: por tipo de fila, por especialidade ou simultâneo (ambas)
   const [modoVisualizacao, setModoVisualizacao] = useState<"tipo" | "especialidade" | "ambas">("ambas");
   // Modal de seleção de colunas para exportação
   const [exportModal, setExportModal] = useState(false);
   const [exportarApenasSel, setExportarApenasSel] = useState(false);
+  const exportBackdrop = useBackdropClose(() => setExportModal(false), exportModal);
   const COLUNAS_EXPORTACAO = [
     { id: "codigo_curto", label: "ID do Pedido", padrao: true },
     { id: "posicao", label: "Posição", padrao: true },
@@ -330,7 +368,7 @@ export default function FilaExames() {
   }
   function abrirLote(kind: "agendar" | "status" | "editar") {
     setErro("");
-    setLoteForm({ data_agendada: "", hora_agendada: "", medico_id: "", unidade_id: "", destino: "", status: "", prioridade: "", justificativa: "", observacoes: "" });
+    setLoteForm({ data_agendada: "", hora_agendada: "", medico_id: "", unidade_id: "", destino: "", status: "", prioridade: "", justificativa: "", observacoes: "", enviar_whatsapp: true, instrucoes_transporte: "" });
     setLoteModal(kind);
   }
   async function salvarLote() {
@@ -368,6 +406,10 @@ export default function FilaExames() {
         }
         if (loteForm.destino.trim()) payload.destino = loteForm.destino.trim();
         payload.status = "agendado";
+        if (loteForm.instrucoes_transporte.trim()) {
+          payload.instrucoes_transporte = loteForm.instrucoes_transporte.trim();
+        }
+        payload.enviar_whatsapp = loteForm.enviar_whatsapp;
       } else if (loteModal === "status") {
         if (!loteForm.status) {
           setErro("Escolha o novo status.");
@@ -761,6 +803,8 @@ export default function FilaExames() {
           codigo_procedimento: e.codigo_procedimento ?? sigtapDe(e.exame),
           codigo_especialidade: e.codigo_especialidade ?? "",
           nome_especialidade: e.nome_especialidade ?? e.especialidade ?? "",
+          cid_codigo: e.cid_codigo ?? "",
+          cid_descricao: e.cid_descricao ?? "",
           prioridade: e.prioridade,
           justificativa_prioridade: e.justificativa_prioridade ?? "",
           status: e.status,
@@ -811,6 +855,8 @@ export default function FilaExames() {
     setExameFoco(false);
     setMostrarAgendamento(false);
     setValCbo(null);
+    setBuscaCidModal("");
+    setCidsModal([]);
     setErro("");
   }
 
@@ -836,11 +882,6 @@ export default function FilaExames() {
       return;
     }
     const original = editId ? lista.find((x) => x.id === editId) : undefined;
-    const prioMudou = !!original && form.prioridade !== original.prioridade;
-    if (prioMudou && form.justificativa_prioridade.trim().length < JUST_MIN) {
-      setErro("A justificativa deve conter no mínimo 12 caracteres.");
-      return;
-    }
     if (retroativoBloqueado && ehRetroativa(form.data_pedido)) {
       setErro(RETRO_MSG);
       return;
@@ -997,6 +1038,13 @@ export default function FilaExames() {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            onClick={() => setModalLeituraQR(true)}
+            className="border border-teal/40 bg-teal/5 text-teal hover:bg-teal/15 text-xs font-bold flex items-center gap-1.5 !h-9"
+          >
+            <QrCode className="h-4 w-4" /> Leitura Rápida QR
+          </Button>
           <Link to="/tfd/solicitacoes/nova">
             <Button className="bg-teal text-white hover:brightness-110 text-xs shadow-xs font-bold flex items-center gap-1.5">
               <Plus className="h-4 w-4" /> Nova Solicitação
@@ -1492,6 +1540,35 @@ export default function FilaExames() {
                     />
                   </div>
                   <div><Label>Unidade / destino (texto)</Label><Input value={loteForm.destino} onChange={(e) => setLoteForm({ ...loteForm, destino: e.target.value })} placeholder="Cidade / unidade (se não selecionar PSF)" /></div>
+                  <div>
+                    <Label className="flex items-center gap-1.5">
+                      <Bus className="h-3.5 w-3.5 text-teal" />
+                      Instruções Adicionais / Transporte para o Paciente
+                    </Label>
+                    <textarea
+                      value={loteForm.instrucoes_transporte}
+                      onChange={(e) => setLoteForm({ ...loteForm, instrucoes_transporte: e.target.value })}
+                      rows={2}
+                      maxLength={500}
+                      placeholder="Ex: Aguardar na prefeitura às 07h para o transporte do exame..."
+                      className="w-full rounded-xl border border-sus-900/15 bg-white p-2.5 text-xs outline-none focus:border-teal"
+                    />
+                    <p className="mt-0.5 text-[10px] text-ink/50">
+                      Esse texto será incluído automaticamente no comprovante impresso e no WhatsApp do paciente.
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-emerald-500/20 bg-emerald-50/50 p-3">
+                    <label className="flex items-center gap-2.5 text-xs font-semibold text-emerald-950 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={loteForm.enviar_whatsapp}
+                        onChange={(e) => setLoteForm({ ...loteForm, enviar_whatsapp: e.target.checked })}
+                        className="h-4 w-4 rounded border-emerald-400 text-teal focus:ring-teal"
+                      />
+                      <MessageSquare className="h-4 w-4 text-emerald-600 shrink-0" />
+                      <span>Enviar confirmação via WhatsApp para os pacientes selecionados</span>
+                    </label>
+                  </div>
                   <p className="text-xs text-ink/55">Status muda para <b>agendado</b>. Campos vazios mantêm valor atual.</p>
                 </>
               )}
@@ -1618,7 +1695,7 @@ export default function FilaExames() {
         </div>
       )}
       {modal && (
-        <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-sus-950/50 p-4 print:hidden" onClick={fecharModal}>
+        <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-sus-950/50 p-4 print:hidden" {...modalBackdrop}>
           <div className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-2xl bg-white p-6 shadow-card md:p-8" onClick={(e) => e.stopPropagation()}>
             <div className="mb-5 flex items-center justify-between">
               <p className="font-display text-lg font-bold text-sus-950">{editId ? "Editar pedido" : "Novo pedido na fila"}</p>
@@ -2072,6 +2149,58 @@ export default function FilaExames() {
                       ))}
                     </datalist>
                   </div>
+                  <div className="md:col-span-3">
+                    <Label className="flex items-center gap-1.5">
+                      <ClipboardList className="h-3.5 w-3.5 text-teal" /> Diagnóstico / CID-10 (opcional)
+                    </Label>
+                    {form.cid_codigo ? (
+                      <div className="mt-1 flex items-center justify-between rounded-xl border border-teal/40 bg-teal/10 px-3 py-2 text-xs">
+                        <div>
+                          <span className="font-mono font-bold text-teal">{form.cid_codigo}</span>
+                          <span className="ml-2 font-medium text-sus-950">{form.cid_descricao}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setForm({ ...form, cid_codigo: "", cid_descricao: "" })}
+                          className="rounded p-1 text-ink/40 hover:text-red-600"
+                          title="Remover CID"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="relative mt-1">
+                        <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/40" />
+                        <Input
+                          value={buscaCidModal}
+                          onChange={(e) => setBuscaCidModal(e.target.value)}
+                          placeholder="Pesquise por código ou nome do CID-10 (ex: J06, cefaleia, diabetes)…"
+                          className="pl-9 text-xs"
+                        />
+                        {cidsModal.length > 0 && (
+                          <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-48 overflow-y-auto rounded-xl border border-sus-900/15 bg-white shadow-lg">
+                            {cidsModal.map((c) => (
+                              <button
+                                key={c.codigo}
+                                type="button"
+                                onClick={() => {
+                                  setForm({ ...form, cid_codigo: c.codigo, cid_descricao: c.descricao });
+                                  setBuscaCidModal("");
+                                  setCidsModal([]);
+                                }}
+                                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-teal/10 transition"
+                              >
+                                <span className="rounded bg-teal/15 px-1.5 py-0.5 font-mono font-bold text-teal">
+                                  {c.codigo}
+                                </span>
+                                <span className="truncate text-ink/80">{c.descricao}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </section>
               {/* Situação e datas */}
@@ -2109,12 +2238,9 @@ export default function FilaExames() {
                       onChange={(e) => setForm({ ...form, justificativa_prioridade: e.target.value })}
                       rows={3}
                       maxLength={500}
-                      placeholder={podeEditarPrio ? "Obrigatória ao alterar a prioridade (mín. 12 caracteres)…" : "Somente o médico envolvido registra justificativa"}
+                      placeholder={podeEditarPrio ? "Justificativa da prioridade…" : "Somente o médico envolvido registra justificativa"}
                       className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm outline-none focus:border-teal disabled:bg-sand disabled:text-ink/50"
                     />
-                    <p className={`mt-1 text-xs ${form.justificativa_prioridade.trim().length < JUST_MIN ? "text-ink/45" : "text-teal"}`}>
-                      {form.justificativa_prioridade.trim().length}/{JUST_MIN} caracteres mínimos
-                    </p>
                   </div>
                 )}
               </section>
@@ -2240,65 +2366,28 @@ export default function FilaExames() {
         </div>
       )}
 
-      {comprovante && createPortal(
-        <div id="comprovante-overlay" className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" onClick={() => setComprovante(null)}>
-          <div id="comprovante-print" className="max-h-[90vh] w-full max-w-md overflow-auto rounded-2xl bg-white p-6 shadow-card print:max-h-none print:overflow-visible print:rounded-none print:shadow-none" onClick={(e) => e.stopPropagation()}>
-            <div className="comprovante-header mb-4 flex items-center justify-between print:hidden">
-              <p className="flex items-center gap-2 font-display text-base font-bold text-sus-950">
-                <CheckCircle2 className="h-5 w-5 text-teal" /> Comprovante do pedido
-              </p>
-              <button onClick={() => setComprovante(null)} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar"><X className="h-4 w-4" /></button>
-            </div>
-            <div id="comprovante-dados" className="rounded-2xl border border-sus-900/10 p-4 text-sm print:block">
-              <p className="mb-2 inline-flex items-center gap-2 rounded-xl bg-sus-900 px-3 py-1.5 font-display text-sm font-extrabold text-white print:border print:border-black print:bg-white print:text-black">
-                Número do Pedido: #{comprovante.numero_pedido || comprovante.id}
-              </p>
-              <p className="font-display text-base font-bold text-sus-950">{comprovante.exame}</p>
-              <p className="text-xs text-ink/55">{comprovante.especialidade || "—"} · {PRIO_ROTULO[comprovante.prioridade] ?? comprovante.prioridade} · pedido {fmtData(comprovante.data_pedido)}</p>
-              <p className="mt-2 font-semibold">{comprovante.paciente_nome}</p>
-              {comprovante.paciente_cpf && <p className="text-xs text-ink/60">CPF: {comprovante.paciente_cpf}</p>}
-              <p className="mt-1 text-xs text-ink/60">
-                Status: <b>{comprovante.status}</b>
-                {comprovante.posicao ? ` · posição ${rotuloPosicao(comprovante)}` : ""}
-              </p>
-              {comprovante.public_token && (
-                <>
-                  <div className="mt-3 grid place-items-center rounded-xl bg-sand/60 p-3 print:block print:bg-white print:p-0">
-                    <img src={qrUrl(linkAcompanhar(comprovante))} alt="QR Code acompanhamento" className="h-44 w-44 print:block" loading="lazy" />
-                    <p className="mt-2 flex items-center gap-1 text-xs font-semibold text-sus-900"><QrCode className="h-3.5 w-3.5 print:hidden" /> Escaneie para acompanhar</p>
-                  </div>
-                  <p className="mt-2 break-all rounded-xl bg-sand/60 px-3 py-2 text-xs text-sus-900 print:block print:bg-white print:px-0">{linkAcompanhar(comprovante)}</p>
-                </>
-              )}
-            </div>
-            <div className="comprovante-acoes mt-3 grid grid-cols-2 gap-2 print:hidden">
-              {comprovante.public_token && (
-                <Button onClick={() => copiar(linkAcompanhar(comprovante))} className="!w-auto"><Copy className="h-4 w-4" /> Copiar link</Button>
-              )}
-              <button onClick={() => window.print()} className="flex items-center justify-center gap-2 rounded-xl bg-sus-900/10 px-4 py-2.5 text-sm font-semibold text-sus-900 hover:bg-sus-900/15">
-                <Printer className="h-4 w-4" /> Imprimir
-              </button>
-            </div>
-            <button onClick={() => regenerar(comprovante.id)} className="comprovante-extra mt-2 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold text-sus-900/60 hover:bg-sand print:hidden">
-              <RefreshCw className="h-3.5 w-3.5" /> Renovar link de acompanhamento
-            </button>
-            {comprovante.public_token && (
-              <div className="comprovante-extra print:hidden">
-                <ComprovanteCheck token={comprovante.public_token} />
-              </div>
-            )}
-          </div>
-        </div>,
-        document.body
+      {comprovante && (
+        <ComprovanteExameModal
+          exameId={comprovante.id}
+          numeroPedido={comprovante.numero_pedido}
+          onClose={() => setComprovante(null)}
+        />
+      )}
+
+      {modalLeituraQR && (
+        <ModalLeituraRapidaQR
+          onClose={() => setModalLeituraQR(false)}
+          onRecepcaoSucesso={() => carregar(page)}
+        />
       )}
       {detalhe && (
-        <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-sus-950/50 p-4 print:hidden" onClick={() => setDetalhe(null)}>
+        <div className="fixed inset-0 z-[70] grid place-items-center overflow-y-auto bg-sus-950/60 p-4 print:hidden" {...detalheBackdrop}>
           <div className="max-h-[90vh] w-full max-w-5xl overflow-auto rounded-2xl bg-white p-6 shadow-card md:p-8" onClick={(e) => e.stopPropagation()}>
             <div className="mb-5 flex items-center justify-between">
               <p className="flex items-center gap-2 font-display text-lg font-bold text-sus-950">
                 <Eye className="h-5 w-5 text-sus-900" /> Detalhes do pedido #{detalhe.id}
               </p>
-              <button onClick={() => setDetalhe(null)} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar"><X className="h-4 w-4" /></button>
+              <button onClick={fecharDetalhe} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar"><X className="h-4 w-4" /></button>
             </div>
             <div className="grid gap-4 text-sm lg:grid-cols-3">
               <div className="space-y-4 lg:col-span-2">
@@ -2361,6 +2450,15 @@ export default function FilaExames() {
                   <div><dt className="text-ink/45">Data agendada</dt><dd className="font-semibold">{fmtData(detalhe.data_agendada)}</dd></div>
                   <div><dt className="text-ink/45">Destino</dt><dd className="font-semibold">{detalhe.destino || "—"}</dd></div>
                 </dl>
+                {detalhe.cid_codigo && (
+                  <div className="mt-3 flex items-center gap-2 rounded-xl border border-teal/30 bg-teal/5 p-2.5 text-xs">
+                    <ClipboardList className="h-4 w-4 text-teal shrink-0" />
+                    <div>
+                      <span className="font-bold text-teal">CID-10 {detalhe.cid_codigo}:</span>{" "}
+                      <span className="text-sus-950 font-medium">{detalhe.cid_descricao || "Diagnóstico informado"}</span>
+                    </div>
+                  </div>
+                )}
                 {detalhe.justificativa && (
                   <p className="mt-2 rounded-xl bg-teal/10 p-3 text-xs text-ink/80">
                     <span className="font-bold text-sus-950">Justificativa do pedido: </span>
@@ -2432,19 +2530,26 @@ export default function FilaExames() {
         </div>
       )}
       {perfilId !== null && (
-        <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-sus-950/50 p-4 print:hidden" onClick={() => setPerfilId(null)}>
+        <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-sus-950/50 p-4 print:hidden" {...perfilBackdrop}>
           <div className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-2xl bg-white p-6 shadow-card md:p-8" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
               <p className="font-display text-lg font-bold text-sus-950">Perfil do paciente</p>
               <button onClick={() => setPerfilId(null)} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar"><X className="h-4 w-4" /></button>
             </div>
-            <PerfilPaciente pid={perfilId} />
+            <PerfilPaciente
+              pid={perfilId}
+              onVerExame={(id) => {
+                tfdExameDetalhe(id).then((item) => {
+                  if (item) setDetalhe(item);
+                });
+              }}
+            />
           </div>
         </div>
       )}
       {/* Modal de seleção de colunas para exportação */}
       {exportModal && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4 print:hidden" onClick={() => setExportModal(false)}>
+        <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4 print:hidden" {...exportBackdrop}>
           <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl bg-white shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
             {/* Cabeçalho Fixo (Header / Sticky) com Título e Ações */}
             <div className="border-b border-sus-900/10 p-5 bg-sand/40">

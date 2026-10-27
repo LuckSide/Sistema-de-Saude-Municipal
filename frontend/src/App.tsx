@@ -29,6 +29,7 @@ import AuditLab from "./pages/lab/AuditLab";
 import LabFaturamento from "./pages/lab/LabFaturamento";
 import LabSigtap from "./pages/lab/LabSigtap";
 import AcompanharExame from "./pages/AcompanharExame";
+import ConfirmarPresencaViagem from "./pages/ConfirmarPresencaViagem";
 import Auditoria from "./pages/Auditoria";
 import FilaExames from "./pages/tfd/FilaExames";
 import NovaSolicitacao from "./pages/tfd/NovaSolicitacao";
@@ -111,6 +112,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/alterar-senha-inicial" element={<AlterarSenhaInicial />} />
           <Route path="/acompanhar/:token" element={<AcompanharExame />} />
+          <Route path="/confirmar-presenca/:token" element={<ConfirmarPresencaViagem />} />
           <Route path="/fila-exames" element={
             <Protected>
               <GuardQualquer telas={["tfd_exames", "tfd_fila_lancamento", "tfd_medico", "tfd"]}>

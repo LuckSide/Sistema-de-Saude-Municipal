@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Building2, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Building2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import {
   type Medico,
   type SigtapCbo,
   type UnidadeSaude,
+  type EspecialidadeCat,
   createMedico,
   deleteMedico,
   fetchMedicos,
   fetchUnidadesSaude,
+  pagData,
   sigtapCbos,
+  tfdEspecialidades,
   updateMedico,
 } from "../services/api";
 import {
@@ -24,6 +27,7 @@ import {
 import { Button, Card, Input, Label } from "../components/ui/primitives";
 import { useUndo } from "../components/UndoToast";
 import ExportarExcel from "../components/ExportarExcel";
+import { useBackdropClose } from "../hooks/useBackdropClose";
 
 const vazio = {
   nome: "",
@@ -53,6 +57,11 @@ export default function Medicos() {
   const [ok, setOk] = useState("");
   const [cbos, setCbos] = useState<SigtapCbo[]>([]);
   const [buscaCbo, setBuscaCbo] = useState("");
+  const [buscaUnidade, setBuscaUnidade] = useState("");
+  const [buscaEsp, setBuscaEsp] = useState("");
+  const [especialidadesCadastradas, setEspecialidadesCadastradas] = useState<EspecialidadeCat[]>([]);
+
+  const backdrop = useBackdropClose(fechar, modal);
 
   const ROTULOS: Record<string, string> = {
     nome: "Nome completo", cpf: "CPF", crm: "CRM", telefone: "Telefone", email: "E-mail",
@@ -76,9 +85,14 @@ export default function Medicos() {
 
   async function carregar() {
     try {
-      const [meds, unis] = await Promise.all([fetchMedicos(), fetchUnidadesSaude()]);
+      const [meds, unis, esps] = await Promise.all([
+        fetchMedicos(),
+        fetchUnidadesSaude(),
+        tfdEspecialidades({ limit: 200 }).catch(() => []),
+      ]);
       setLista(meds);
       setUnidades(unis);
+      setEspecialidadesCadastradas(pagData<EspecialidadeCat>(esps));
     } catch {
       setErro("Falha ao carregar médicos e unidades de saúde.");
     }
@@ -121,7 +135,16 @@ export default function Medicos() {
     setBuscaCbo("");
     setModal(true);
   }
-  function fechar() { setModal(false); setEditId(null); setForm(vazio); setErroModal(""); setErros({}); setBuscaCbo(""); }
+  function fechar() {
+    setModal(false);
+    setEditId(null);
+    setForm(vazio);
+    setErroModal("");
+    setErros({});
+    setBuscaCbo("");
+    setBuscaUnidade("");
+    setBuscaEsp("");
+  }
 
   async function salvar() {
     setErroModal("");
@@ -242,7 +265,7 @@ export default function Medicos() {
       </Card>
 
       {modal && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" onClick={fechar}>
+        <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" {...backdrop}>
           <div className="rise max-h-[90vh] w-full max-w-2xl overflow-auto rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between gap-2">
               <p className="font-display text-base font-bold text-sus-950">{editId ? "Editar médico" : "Novo médico"}</p>
@@ -263,7 +286,55 @@ export default function Medicos() {
                   ))}
                 </div>
               )}
-              <div className="md:col-span-2"><Label>Especialidade(s)</Label><Input value={form.especialidades} onChange={(e) => setForm({ ...form, especialidades: e.target.value })} placeholder="separar por vírgula" /></div>
+              <div className="md:col-span-2">
+                <Label>Especialidade(s)</Label>
+                <div className="relative">
+                  <Input
+                    value={form.especialidades}
+                    onChange={(e) => setForm({ ...form, especialidades: e.target.value })}
+                    placeholder="Digite ou selecione uma especialidade (separar por vírgula)"
+                  />
+                </div>
+                {especialidadesCadastradas.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {especialidadesCadastradas.slice(0, 10).map((esp) => {
+                      const jaTem = (form.especialidades || "")
+                        .split(",")
+                        .map((s) => s.trim().toLowerCase())
+                        .includes(esp.nome.toLowerCase());
+                      return (
+                        <button
+                          key={esp.id}
+                          type="button"
+                          onClick={() => {
+                            const atuais = form.especialidades
+                              ? form.especialidades.split(",").map((s) => s.trim()).filter(Boolean)
+                              : [];
+                            if (jaTem) {
+                              setForm({
+                                ...form,
+                                especialidades: atuais.filter((s) => s.toLowerCase() !== esp.nome.toLowerCase()).join(", "),
+                              });
+                            } else {
+                              setForm({
+                                ...form,
+                                especialidades: [...atuais, esp.nome].join(", "),
+                              });
+                            }
+                          }}
+                          className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold transition ${
+                            jaTem
+                              ? "bg-teal text-white shadow-2xs"
+                              : "bg-sand hover:bg-teal/15 text-sus-900 border border-sus-900/10"
+                          }`}
+                        >
+                          {jaTem ? "✓ " : "+ "}{esp.nome}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
               <div><Label>Telefone</Label><Input value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} placeholder="DDD + número" className={borda("telefone")} />{msg("telefone")}</div>
               <div><Label>E-mail</Label><Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="usuario@dominio.ext" className={borda("email")} />{msg("email")}</div>
 
@@ -292,39 +363,76 @@ export default function Medicos() {
                     </button>
                   </div>
                 </div>
+
+                {/* Campo de pesquisa por digitação para unidades */}
+                <div className="relative mb-2">
+                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/40" />
+                  <Input
+                    value={buscaUnidade}
+                    onChange={(e) => setBuscaUnidade(e.target.value)}
+                    placeholder="Pesquisar unidade por nome ou CNES…"
+                    className="pl-8 !py-1 text-xs"
+                  />
+                  {buscaUnidade && (
+                    <button
+                      type="button"
+                      onClick={() => setBuscaUnidade("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+
                 <div className="grid max-h-40 grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-sus-900/10 bg-sand/30 p-2.5 sm:grid-cols-2">
-                  {unidades.filter((u) => u.ativo).map((u) => {
-                    const marcado = form.unidades_ids.includes(u.id);
-                    return (
-                      <label
-                        key={u.id}
-                        className={`flex cursor-pointer items-start gap-2 rounded-lg border p-2 text-xs transition ${
-                          marcado ? "border-teal bg-teal/10 font-bold text-teal" : "border-sus-900/10 bg-white text-ink/75 hover:bg-sand"
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={marcado}
-                          onChange={(e) => {
-                            const checked = e.target.checked;
-                            setForm((f) => ({
-                              ...f,
-                              unidades_ids: checked
-                                ? [...f.unidades_ids, u.id]
-                                : f.unidades_ids.filter((id) => id !== u.id),
-                            }));
-                          }}
-                          className="mt-0.5 h-3.5 w-3.5 cursor-pointer accent-teal"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate leading-tight">{u.nome}</p>
-                          {u.cnes && <p className="text-[10px] font-normal text-ink/45">CNES: {u.cnes}</p>}
-                        </div>
-                      </label>
-                    );
-                  })}
-                  {unidades.length === 0 && (
-                    <p className="col-span-2 py-3 text-center text-xs text-ink/45">Nenhuma unidade de saúde cadastrada.</p>
+                  {unidades
+                    .filter(
+                      (u) =>
+                        u.ativo &&
+                        (!buscaUnidade.trim() ||
+                          u.nome.toLowerCase().includes(buscaUnidade.toLowerCase()) ||
+                          (u.cnes && u.cnes.includes(buscaUnidade.trim())))
+                    )
+                    .map((u) => {
+                      const marcado = form.unidades_ids.includes(u.id);
+                      return (
+                        <label
+                          key={u.id}
+                          className={`flex cursor-pointer items-start gap-2 rounded-lg border p-2 text-xs transition ${
+                            marcado ? "border-teal bg-teal/10 font-bold text-teal" : "border-sus-900/10 bg-white text-ink/75 hover:bg-sand"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={marcado}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setForm((f) => ({
+                                ...f,
+                                unidades_ids: checked
+                                  ? [...f.unidades_ids, u.id]
+                                  : f.unidades_ids.filter((id) => id !== u.id),
+                              }));
+                            }}
+                            className="mt-0.5 h-3.5 w-3.5 cursor-pointer accent-teal"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate leading-tight">{u.nome}</p>
+                            {u.cnes && <p className="text-[10px] font-normal text-ink/45">CNES: {u.cnes}</p>}
+                          </div>
+                        </label>
+                      );
+                    })}
+                  {unidades.filter(
+                    (u) =>
+                      u.ativo &&
+                      (!buscaUnidade.trim() ||
+                        u.nome.toLowerCase().includes(buscaUnidade.toLowerCase()) ||
+                        (u.cnes && u.cnes.includes(buscaUnidade.trim())))
+                  ).length === 0 && (
+                    <p className="col-span-2 py-3 text-center text-xs text-ink/45">
+                      {buscaUnidade ? "Nenhuma unidade encontrada para esta busca." : "Nenhuma unidade de saúde cadastrada."}
+                    </p>
                   )}
                 </div>
               </div>

@@ -93,7 +93,7 @@ class PacienteOut(PacienteBase):
 
 
 class DemandaItemOut(BaseModel):
-    """Item da demanda reprimida do paciente (fila ativa por especialidade)."""
+    """Item da demanda reprimida do paciente (fila ativa por especialidade e fila geral)."""
 
     id: int
     exame: str = ""
@@ -106,6 +106,8 @@ class DemandaItemOut(BaseModel):
     data_inclusao: str = ""
     posicao_especialidade: int | None = None
     total_fila_especialidade: int | None = None
+    posicao_fila_geral: int | None = None
+    total_fila_geral: int | None = None
     status: str = ""
     status_rotulo: str = ""
     data_agendada: date | None = None
@@ -234,6 +236,7 @@ class ViagemIn(BaseModel):
         pattern="^(agendada|andamento|concluida|cancelada)$",
     )
     finalidade: str = Field(default="consulta", max_length=30)
+    ponto_saida: str = Field(default="Prefeitura Municipal de Guapé", max_length=150)
     observacoes: str = Field(default="", max_length=500)
 
 
@@ -255,14 +258,52 @@ class ViagemPacienteIn(BaseModel):
     unidade: str = Field(default="", max_length=150)
     hora_consulta: str = Field(default="", max_length=5)
     observacoes: str = Field(default="", max_length=500)
+    status_confirmacao: str = Field(default="pendente", max_length=30)
 
 
 class ViagemPacienteOut(ViagemPacienteIn):
     id: int
     viagem_id: int
     paciente_nome: str = ""
+    paciente_telefone: str = ""
     observacoes: str = ""
     prioridade: str = ""
+    status_confirmacao: str = "pendente"
+    confirmado_em: datetime | None = None
+    token_confirmacao: str = ""
+    lembrete_enviado: bool = False
+    lembrete_enviado_em: datetime | None = None
+    link_confirmacao: str = ""
+
+
+class ViagemConfirmacaoPublicaOut(BaseModel):
+    token: str
+    paciente_nome: str
+    paciente_iniciais: str
+    data_viagem: str
+    hora_saida: str
+    ponto_saida: str
+    destino: str
+    unidade: str
+    veiculo: str
+    modelo_veiculo: str
+    placa_veiculo: str
+    motorista: str
+    tratamento: str
+    acompanhante: str
+    status_confirmacao: str
+    confirmado_em: datetime | None = None
+    observacoes: str = ""
+
+
+class ViagemConfirmarIn(BaseModel):
+    acao: str = Field(pattern="^(confirmar|desistir|cancelar)$")
+    motivo: str = Field(default="", max_length=500)
+
+
+class ViagemStatusConfirmacaoIn(BaseModel):
+    status_confirmacao: str = Field(pattern="^(pendente|confirmado|desistiu|nao_compareceu)$")
+    observacoes: str = Field(default="", max_length=500)
 
 
 # ---------- Fila de espera para viagem ----------
@@ -302,6 +343,8 @@ class ExameBase(BaseModel):
     codigo_procedimento: str = Field(default="", max_length=20)
     codigo_especialidade: str = Field(default="", max_length=10)
     nome_especialidade: str = Field(default="", max_length=120)
+    cid_codigo: str = Field(default="", max_length=10)
+    cid_descricao: str = Field(default="", max_length=255)
     prioridade: str = Field(default="rotina", max_length=20)
     justificativa_prioridade: str = Field(default="", max_length=500)
     status: str = Field(default="aguardando", max_length=20)
@@ -312,6 +355,7 @@ class ExameBase(BaseModel):
     unidade_saude_id: int | None = None
     destino: str = Field(default="", max_length=120)
     observacoes: str = Field(default="", max_length=500)
+    instrucoes_transporte: str = Field(default="", max_length=500)
     justificativa: str = Field(default="", max_length=500)
     resultado: str = Field(default="", max_length=2000)
     codigo_curto: str = Field(default="", max_length=20)  # ID único e imutável (ex: EX-000123)
@@ -329,10 +373,7 @@ class ExameIn(ExameBase):
     @field_validator("justificativa")
     @classmethod
     def _valida_justificativa(cls, v: str) -> str:
-        s = (v or "").strip()
-        if not s or len(s) < 12:
-            raise ValueError("A justificativa clínica é obrigatória e deve ter pelo menos 12 caracteres.")
-        return s
+        return (v or "").strip()
 
 
 class ExameLoteIn(BaseModel):
@@ -349,6 +390,8 @@ class ExameLoteIn(BaseModel):
     prioridade: str = Field(default="", pattern="^(|rotina|urgente)$")
     justificativa_prioridade: str = Field(default="", max_length=500)
     observacoes: str = Field(default="", max_length=500)
+    enviar_whatsapp: bool = True
+    instrucoes_transporte: str = Field(default="", max_length=500)
 
 
 class ExameLoteOut(BaseModel):

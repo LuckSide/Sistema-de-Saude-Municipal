@@ -524,6 +524,11 @@ export default function LabMarcacao() {
                                 </span>
                                 {it.descricao || it.procedimento_descricao}
                               </span>
+                              {it.preparo_especifico && (
+                                <span className="text-[9px] font-semibold text-amber-900 bg-amber-100 px-1.5 py-0.2 rounded border border-amber-200 shrink-0 mr-1.5">
+                                  {it.preparo_especifico}
+                                </span>
+                              )}
                               {it.quantidade > 1 && (
                                 <span className="text-[10px] font-bold text-teal bg-teal/10 px-1.5 rounded">
                                   ×{it.quantidade}

@@ -64,6 +64,7 @@ class SolicitacaoMestre(SQLModel, table=True):
     unidade_saude_id: int | None = Field(default=None)
     unidade_psf: str = Field(default="", max_length=150)
     justificativa: str = Field(default="", max_length=500)
+    instrucoes_transporte: str = Field(default="", max_length=500)
     hora_agendada: str = Field(default="07:00", max_length=10)
     coletado_em: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=False))

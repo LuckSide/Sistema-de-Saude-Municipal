@@ -315,6 +315,8 @@ export const whatsappTestar = (telefone: string, mensagem?: string) =>
 
 export const whatsappLogs = (limit = 30) =>
   api.get<WhatsAppLogItem[]>("/api/whatsapp/logs", { params: { limit } }).then((r) => r.data);
+export const whatsappDispararLembretes = (dataAlvo?: string) =>
+  api.post<{ executado: boolean; total_elegiveis: number; total_enviados: number; total_ja_enviados: number; total_falhas: number }>("/api/whatsapp/lembretes/disparar", null, { params: dataAlvo ? { data_alvo: dataAlvo } : undefined }).then((r) => r.data);
 
 export const sincronizarPecPacientes = (background = true) =>
   api.post<{
@@ -483,6 +485,8 @@ export type DemandaItem = {
   data_inclusao: string;
   posicao_especialidade: number | null;
   total_fila_especialidade: number | null;
+  posicao_fila_geral?: number | null;
+  total_fila_geral?: number | null;
   status: string;
   status_rotulo: string;
   data_agendada: string | null;
@@ -552,12 +556,39 @@ export type Passageiro = {
   acompanhante_cpf?: string;
   presente: boolean;
   paciente_nome: string;
+  paciente_telefone?: string;
   viagem_fila_id?: number | null;
   prioridade?: string;
   tratamento?: string;
   unidade?: string;
   hora_consulta?: string;
   observacoes?: string;
+  status_confirmacao?: string; // "pendente" | "confirmado" | "desistiu" | "nao_compareceu"
+  confirmado_em?: string | null;
+  token_confirmacao?: string;
+  lembrete_enviado?: boolean;
+  lembrete_enviado_em?: string | null;
+  link_confirmacao?: string;
+};
+
+export type ViagemConfirmacaoPublica = {
+  token: string;
+  paciente_nome: string;
+  paciente_iniciais: string;
+  data_viagem: string;
+  hora_saida: string;
+  ponto_saida: string;
+  destino: string;
+  unidade: string;
+  veiculo: string;
+  modelo_veiculo: string;
+  placa_veiculo: string;
+  motorista: string;
+  tratamento: string;
+  acompanhante: string;
+  status_confirmacao: string;
+  confirmado_em: string | null;
+  observacoes: string;
 };
 
 export type ViagemFila = {
@@ -594,6 +625,7 @@ export type DiaViagem = {
   data_viagem: string;
   hora_saida: string;
   hora_retorno?: string;
+  ponto_saida?: string;
   motorista: string;
   motorista_id?: number | null;
   status: string;
@@ -604,6 +636,9 @@ export type DiaViagem = {
   capacidade: number;
   ocupados: number;
   vagas: number;
+  confirmados?: number;
+  pendentes?: number;
+  desistencias?: number;
   passageiros_restritos?: boolean;
   passageiros: DiaPassageiro[];
 };
@@ -689,6 +724,8 @@ export type Exame = {
   codigo_procedimento: string;
   codigo_especialidade: string;
   nome_especialidade: string;
+  cid_codigo?: string;
+  cid_descricao?: string;
   prioridade: string;
   justificativa_prioridade?: string;
   status: string;
@@ -880,6 +917,14 @@ export const tfdAddPassageiro = (viagemId: number, p: Record<string, unknown>) =
   api.post<Passageiro>(`/api/tfd/viagens/${viagemId}/passageiros`, p).then((r) => r.data);
 export const tfdRemoverPassageiro = (viagemId: number, pid: number) =>
   api.delete(`/api/tfd/viagens/${viagemId}/passageiros/${pid}`);
+export const tfdAtualizarConfirmacaoPassageiro = (viagemId: number, pid: number, status_confirmacao: string, observacoes?: string) =>
+  api.patch<Passageiro>(`/api/tfd/viagens/${viagemId}/passageiros/${pid}/confirmacao`, { status_confirmacao, observacoes }).then((r) => r.data);
+export const tfdEnviarWhatsAppConfirmacaoPassageiro = (viagemId: number, pid: number) =>
+  api.post<{ sucesso: boolean; link_confirmacao: string; mensagem: string; whatsapp_link: string; telefone: string }>(`/api/tfd/viagens/${viagemId}/passageiros/${pid}/enviar-whatsapp`).then((r) => r.data);
+export const tfdConsultarViagemPublica = (token: string) =>
+  api.get<ViagemConfirmacaoPublica>(`/api/tfd/public/viagens/confirmar/${token}`).then((r) => r.data);
+export const tfdConfirmarPresencaPublica = (token: string, acao: "confirmar" | "desistir" | "cancelar", motivo?: string) =>
+  api.post<ViagemConfirmacaoPublica>(`/api/tfd/public/viagens/confirmar/${token}`, { acao, motivo }).then((r) => r.data);
 
 export type Pagina<T> = {
   data: T[];
@@ -979,6 +1024,14 @@ export const tfdAtualizarEspecialidade = (id: number, p: Record<string, unknown>
   api.put<EspecialidadeCat>(`/api/tfd/especialidades/${id}`, p).then((r) => r.data);
 export const tfdExcluirEspecialidade = (id: number) => api.delete(`/api/tfd/especialidades/${id}`);
 
+export type SigtapCidItem = {
+  codigo: string;
+  descricao: string;
+};
+
+export const tfdBuscarCids = (q: string) =>
+  api.get<SigtapCidItem[]>("/api/tfd/cids", { params: { q } }).then((r) => r.data);
+
 export const tfdExames = (statusOrParams?: string | FilaExamesParams) => {
   const params =
     typeof statusOrParams === "string" ? { status: statusOrParams || undefined } : statusOrParams;
@@ -1004,6 +1057,8 @@ export type ExameLotePayload = {
   prioridade?: string;
   justificativa_prioridade?: string;
   observacoes?: string;
+  enviar_whatsapp?: boolean;
+  instrucoes_transporte?: string;
 };
 export const tfdAtualizarExamesLote = (p: ExameLotePayload) =>
   api.put<{ atualizados: number; nao_encontrados: number[] }>("/api/tfd/exames/lote", p).then((r) => r.data);
@@ -1140,6 +1195,7 @@ export const tfdRelatorioAgendados = (params?: {
   medico_id?: number;
   status?: string;
   tipo_fila?: string;
+  procedimento?: string;
   segmentacao?: string;
   escopo?: string;
   q?: string;
@@ -1148,6 +1204,71 @@ export const tfdRelatorioAgendados = (params?: {
 }) => api.get<RelatorioAgendadosRes>("/api/tfd/relatorios/agendados", { params }).then((r) => r.data);
 export const tfdConsultarExamePublico = (token: string) =>
   api.get<ExamePublico>(`/api/tfd/public/exames/${token}`).then((r) => r.data);
+
+export type LeituraRapidaRes = {
+  encontrado: boolean;
+  tipo: "tfd" | "lab";
+  pedido_id: number;
+  codigo_curto: string;
+  numero_pedido: string;
+  status: string;
+  data_pedido: string;
+  data_agendada: string;
+  hora_agendada: string;
+  unidade_nome: string;
+  medico_nome: string;
+  destino: string;
+  paciente: {
+    id: number | null;
+    nome: string;
+    prontuario: string;
+    cpf: string;
+    cns: string;
+    telefone: string;
+    data_nascimento: string;
+  };
+  exames: {
+    id: number;
+    codigo: string;
+    nome: string;
+    status: string;
+    resultado?: string;
+    observacoes?: string;
+  }[];
+  preparo: {
+    jejum: string;
+    instrucoes: string[];
+  };
+  transporte?: {
+    possui_viagem: boolean;
+    viagem_id?: number;
+    veiculo: string;
+    modelo_veiculo?: string;
+    placa_veiculo?: string;
+    tipo_veiculo?: string;
+    ponto_saida: string;
+    horario_saida: string;
+    destino: string;
+    motorista?: string;
+    acompanhante?: string;
+    observacoes?: string;
+  } | null;
+  instrucoes_transporte?: string;
+  pode_recepcionar: boolean;
+  todos_coletados: boolean;
+};
+
+export const tfdObterComprovante = (id: number): Promise<ComprovanteExame> =>
+  api.get(`/api/tfd/exames/${id}/comprovante`).then((r) => r.data as ComprovanteExame);
+
+export const tfdObterComprovantePorPedido = (numeroPedido: string): Promise<ComprovanteExame> =>
+  api.get(`/api/tfd/exames/pedido/${encodeURIComponent(numeroPedido)}/comprovante`).then((r) => r.data as ComprovanteExame);
+
+export const tfdLeituraRapida = (codigo: string): Promise<LeituraRapidaRes> =>
+  api.get("/api/tfd/leitura-rapida", { params: { codigo } }).then((r) => r.data as LeituraRapidaRes);
+
+export const tfdRecepcaoRapida = (codigo: string, resultado?: string): Promise<{ sucesso: boolean; tipo: string; pedido_id: number; total_recepcionados: number; status: string; mensagem: string }> =>
+  api.post("/api/tfd/recepcao-rapida", { codigo, resultado }).then((r) => r.data);
 
 export const tfdFaturas = (competencia?: string, page?: number, limit?: number) =>
   api.get<Pagina<Fatura> | Fatura[]>("/api/tfd/faturamento", { params: { competencia, page, limit } }).then((r) => r.data);
@@ -1308,6 +1429,8 @@ export type FilaPsfItem = {
   obs: string;
   status: string;
   criado_em: string;
+  sigtap_ids?: number[];
+  exames_nomes?: string[];
 };
 
 export function mapFila(o: any): FilaPsfItem {
@@ -1327,17 +1450,46 @@ export function mapFila(o: any): FilaPsfItem {
     obs: o.obs ?? o.observacoes ?? "",
     status: o.status ?? "",
     criado_em: o.data_solicitacao ?? "",
+    sigtap_ids: o.sigtap_ids ?? [],
+    exames_nomes: o.exames_nomes ?? [],
   };
 }
 
-export const filaPsfListar = (status?: string, unidade?: string, page?: number, limit?: number) =>
-  api
-    .get("/api/exames/fila-psf", { params: { status, unidade, page, limit } })
+export type FilaPsfFiltros = {
+  status?: string;
+  unidade?: string;
+  data_de?: string;
+  data_ate?: string;
+  q?: string;
+  page?: number;
+  limit?: number;
+};
+
+export const filaPsfListar = (
+  filtroOuStatus?: FilaPsfFiltros | string,
+  unidade?: string,
+  page?: number,
+  limit?: number
+) => {
+  let params: Record<string, any> = {};
+  if (typeof filtroOuStatus === "object" && filtroOuStatus !== null) {
+    params = { ...filtroOuStatus };
+  } else {
+    params = {
+      status: filtroOuStatus,
+      unidade,
+      page,
+      limit,
+    };
+  }
+  return api
+    .get("/api/exames/fila-psf", { params })
     .then((r) => {
       const d = r.data as any;
       if (Array.isArray(d)) return d.map(mapFila);
       return { data: (d?.data ?? []).map(mapFila), total: d?.total ?? 0, page: d?.page ?? 1, pages: d?.pages ?? 1 };
     });
+};
 
 export const filaPsfCriar = (p: Record<string, unknown>) =>
   api
@@ -1349,6 +1501,7 @@ export const filaPsfCriar = (p: Record<string, unknown>) =>
         (p as any).data_solicitacao ?? new Date().toISOString().slice(0, 10),
       justificativa: (p as any).justificativa ?? "",
       observacoes: (p as any).observacoes ?? (p as any).obs ?? "",
+      sigtap_ids: (p as any).sigtap_ids ?? [],
     })
     .then((r) => mapFila(r.data));
 
@@ -1360,6 +1513,7 @@ export const filaPsfAtualizar = (id: number, p: Record<string, unknown>) =>
       data_solicitacao: (p as any).data_solicitacao,
       justificativa: (p as any).justificativa ?? "",
       observacoes: (p as any).observacoes ?? (p as any).obs ?? "",
+      sigtap_ids: (p as any).sigtap_ids,
     })
     .then((r) => mapFila(r.data));
 
@@ -1369,6 +1523,8 @@ export const filaPsfAgendarLote = (p: {
   data_agendada: string;
   hora_agendada?: string;
   sigtap_ids?: number[];
+  enviar_whatsapp?: boolean;
+  instrucoes_transporte?: string;
 }) => api.post("/api/exames/fila-psf/agendar-lote", p).then((r) => r.data);
 
 export const filaPsfExcluir = (id: number) =>
@@ -1500,12 +1656,31 @@ export type ComprovanteExame = {
   justificativa: string;
   status: string;
   status_auditoria: string;
-  itens: { id: number; solicitacao_id: number; sigtap_id: number; quantidade: number; procedimento_codigo: string; procedimento_descricao: string }[];
+  itens: { id: number; solicitacao_id: number; sigtap_id: number; quantidade: number; procedimento_codigo: string; procedimento_descricao: string; preparo_especifico?: string }[];
   jejum_horas: string;
   preparo_instrucoes: string[];
   orientacoes_gerais: string[];
   emitido_em: string;
   agendado_por: string;
+  qr_code_url?: string;
+  codigo_curto?: string;
+  numero_pedido?: string;
+  exige_preparo?: boolean;
+  transporte?: {
+    possui_viagem: boolean;
+    viagem_id?: number;
+    veiculo: string;
+    modelo_veiculo?: string;
+    placa_veiculo?: string;
+    tipo_veiculo?: string;
+    ponto_saida: string;
+    horario_saida: string;
+    destino: string;
+    motorista?: string;
+    acompanhante?: string;
+    observacoes?: string;
+  } | null;
+  instrucoes_transporte?: string;
 };
 
 export type PedidoAjuste = {

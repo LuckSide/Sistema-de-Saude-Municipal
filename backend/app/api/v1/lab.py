@@ -30,7 +30,7 @@ from app.services.lab import (
 router = APIRouter()
 
 
-from app.services.permissoes import need_perm
+from app.services.permissoes import need_any_perm, need_perm
 
 
 def _enriquecer(db: Session, obj: LabSolicitacao) -> SolicitacaoOut:
@@ -81,7 +81,7 @@ def listar_sigtap(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    _=Depends(need_perm("lab_sigtap")),
+    _=Depends(need_any_perm("lab_sigtap", "lab_fila", "lab_marcacao", "lab", "tfd_exames", "tfd_fila_lancamento", "tfd")),
 ):
     from app.models.settings import SystemSettings
 
@@ -437,7 +437,7 @@ def exportar_solicitacoes(
 @router.get("/sigtap/versoes", response_model=list[SigtapVersaoOut])
 def versoes_sigtap(
     db: Session = Depends(get_db),
-    _=Depends(need_perm("lab_sigtap")),
+    _=Depends(need_any_perm("lab_sigtap", "lab_fila", "lab_marcacao", "lab", "tfd_exames", "tfd_fila_lancamento", "tfd")),
 ):
     """Histórico de cargas SIGTAP com competência (mês/ano)."""
     from app.models.lab_exames import SigtapVersao

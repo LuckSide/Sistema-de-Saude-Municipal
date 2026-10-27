@@ -52,9 +52,10 @@ class FilaPsfIn(BaseModel):
     paciente_id: int
     unidade_psf: str = Field(min_length=1, max_length=120)
     medico_solicitante: str = Field(min_length=1, max_length=120)
-    data_solicitacao: date
+    data_solicitacao: date | None = None
     justificativa: str = Field(default="", max_length=500)
     observacoes: str = Field(default="", max_length=500)
+    sigtap_ids: list[int] = Field(default_factory=list)
 
     @field_validator("justificativa")
     @classmethod
@@ -65,11 +66,14 @@ class FilaPsfIn(BaseModel):
         return s
 
 
-
 class FilaPsfOut(FilaPsfIn):
     id: int
     status: str = "na_fila"
     paciente_nome: str = ""
+    paciente_cpf: str = ""
+    paciente_cns: str = ""
+    paciente_prontuario: str = ""
+    exames_nomes: list[str] = Field(default_factory=list)
 
 
 class FilaPsfStatusIn(BaseModel):
@@ -82,6 +86,7 @@ class FilaPsfUpdateIn(BaseModel):
     data_solicitacao: date | None = None
     justificativa: str | None = None
     observacoes: str | None = None
+    sigtap_ids: list[int] | None = None
 
     @field_validator("justificativa")
     @classmethod
@@ -100,6 +105,8 @@ class FilaPsfAgendarLoteIn(BaseModel):
     data_agendada: date
     hora_agendada: str = Field(default="07:00", max_length=10)
     sigtap_ids: list[int] = Field(default_factory=list)
+    enviar_whatsapp: bool = True
+    instrucoes_transporte: str = ""
 
 
 # ---------- Solicitação mestre + itens ----------
@@ -159,6 +166,7 @@ class ItemOut(BaseModel):
     observacao: str = ""
     procedimento_codigo: str = ""
     procedimento_descricao: str = ""
+    preparo_especifico: str = ""
 
 
 class SolicMestreOut(BaseModel):
@@ -214,6 +222,12 @@ class ComprovanteExameOut(BaseModel):
     orientacoes_gerais: list[str]
     emitido_em: str
     agendado_por: str
+    qr_code_url: str | None = None
+    codigo_curto: str | None = None
+    numero_pedido: str | None = None
+    exige_preparo: bool = True
+    transporte: dict | None = None
+    instrucoes_transporte: str = ""
 
 
 # ---------- Pedidos de Ajuste / Laboratório ----------

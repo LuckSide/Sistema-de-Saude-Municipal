@@ -2,9 +2,10 @@ import json
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlmodel import Session, func, select
+from sqlmodel import Session, func, select, or_
 
 from app.core.deps import get_current_user_senha_ok as get_current_user, get_db
+from app.models.lab_exames import SigtapProcedimento
 from app.models.lab_fase6 import (
     FilaPsf,
     Laboratorio,
@@ -13,6 +14,7 @@ from app.models.lab_fase6 import (
     VagaLab,
 )
 from app.models.tfd import Paciente
+from app.services.geradores import gerar_prontuario_aleatorio
 from app.core.pagination import Pagina, paginar
 from app.schemas.lab_fase6 import (
     AuditoriaIn,
@@ -340,38 +342,123 @@ def excluir_vaga(vid: int, db: Session = Depends(get_db), _=Depends(need_perm("l
     db.commit()
 
 
+def _formatar_fila_out(o: FilaPsf, pac: Paciente | None) -> FilaPsfOut:
+    sids = []
+    nomes = []
+    obs = o.observacoes or ""
+    if "SIGTAP_IDS:" in obs:
+        try:
+            import json
+            parte = obs.split("SIGTAP_IDS:")[1].split("|")[0].strip()
+            sids = json.loads(parte)
+        except Exception:
+            sids = []
+    if "Exames:" in obs:
+        try:
+            nomes_str = obs.split("Exames:")[1].split("|")[0].strip()
+            nomes = [n.strip() for n in nomes_str.split(",") if n.strip()]
+        except Exception:
+            nomes = []
+
+    prontuario = getattr(pac, "codigo_prontuario", "") or (gerar_prontuario_aleatorio(pac_id=pac.id) if pac and pac.id else "")
+    return FilaPsfOut(
+        id=o.id,
+        paciente_id=o.paciente_id,
+        unidade_psf=o.unidade_psf,
+        medico_solicitante=o.medico_solicitante,
+        data_solicitacao=o.data_solicitacao,
+        justificativa=o.justificativa,
+        observacoes=o.observacoes,
+        status=o.status,
+        sigtap_ids=sids,
+        exames_nomes=nomes,
+        paciente_nome=pac.nome if pac else "?",
+        paciente_cpf=getattr(pac, "cpf", "") or "",
+        paciente_cns=getattr(pac, "cns", "") or "",
+        paciente_prontuario=prontuario,
+    )
+
+
 # ---------- Fila PSF ----------
 @router.get("/exames/fila-psf", response_model=Pagina[FilaPsfOut])
 def listar_fila(
     status_: str | None = Query(default=None, alias="status"),
     unidade: str = "",
+    data_de: str | None = None,
+    data_ate: str | None = None,
+    q: str = "",
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
     _=Depends(need_any_perm("lab_fila", "lab_agenda")),
 ):
+    if not isinstance(status_, str):
+        status_ = getattr(status_, "default", None)
+    if not isinstance(page, int):
+        page = getattr(page, "default", 1)
+    if not isinstance(limit, int):
+        limit = getattr(limit, "default", 100)
+    if not isinstance(unidade, str):
+        unidade = getattr(unidade, "default", "") or ""
+    if not isinstance(data_de, str):
+        data_de = getattr(data_de, "default", None)
+    if not isinstance(data_ate, str):
+        data_ate = getattr(data_ate, "default", None)
+    if not isinstance(q, str):
+        q = getattr(q, "default", "") or ""
+
     filtros = []
-    if status_:
-        filtros.append(FilaPsf.status == status_)
-    if unidade:
-        filtros.append(FilaPsf.unidade_psf.ilike(f"%{unidade}%"))
-    base = select(FilaPsf).order_by(FilaPsf.data_solicitacao.desc())
+    if status_ and status_.strip() and status_ != "todos":
+        filtros.append(FilaPsf.status == status_.strip())
+    if unidade and unidade.strip() and unidade != "todas":
+        filtros.append(FilaPsf.unidade_psf.ilike(f"%{unidade.strip()}%"))
+    if data_de and str(data_de).strip():
+        try:
+            d_de = date.fromisoformat(str(data_de).strip())
+            filtros.append(FilaPsf.data_solicitacao >= d_de)
+        except ValueError:
+            pass
+    if data_ate and str(data_ate).strip():
+        try:
+            d_ate = date.fromisoformat(str(data_ate).strip())
+            filtros.append(FilaPsf.data_solicitacao <= d_ate)
+        except ValueError:
+            pass
+
+    base = select(FilaPsf).join(Paciente, FilaPsf.paciente_id == Paciente.id, isouter=True)
+
+    if q and str(q).strip():
+        q_clean = str(q).strip()
+        so_num = "".join(c for c in q_clean if c.isdigit())
+        is_sqlite = bool(db.bind and db.bind.dialect.name == "sqlite")
+        conds = [
+            Paciente.nome.ilike(f"%{q_clean}%"),
+            FilaPsf.unidade_psf.ilike(f"%{q_clean}%"),
+            FilaPsf.medico_solicitante.ilike(f"%{q_clean}%"),
+            FilaPsf.observacoes.ilike(f"%{q_clean}%"),
+            FilaPsf.justificativa.ilike(f"%{q_clean}%"),
+        ]
+        if not is_sqlite:
+            conds.append(func.unaccent(Paciente.nome).ilike(f"%{q_clean}%"))
+        if so_num:
+            conds.append(Paciente.cpf.ilike(f"%{so_num}%"))
+            conds.append(Paciente.cns.ilike(f"%{so_num}%"))
+            conds.append(Paciente.codigo_prontuario.ilike(f"%{so_num}%"))
+            if len(so_num) <= 9 and int(so_num) <= 2147483647:
+                conds.append(Paciente.id == int(so_num))
+                conds.append(FilaPsf.id == int(so_num))
+        filtros.append(or_(*conds))
+
     if filtros:
-        base = (
-            select(FilaPsf)
-            .where(*filtros)
-            .order_by(FilaPsf.data_solicitacao.desc())
-        )
+        base = base.where(*filtros)
+
+    base = base.order_by(FilaPsf.data_solicitacao.desc(), FilaPsf.id.desc())
     total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
     meta = paginar(total, page, limit)
     out = []
     for o in db.exec(base.offset(meta["offset"]).limit(limit)).all():
         pac = db.get(Paciente, o.paciente_id)
-        out.append(
-            FilaPsfOut(
-                **o.model_dump(), paciente_nome=pac.nome if pac else "?"
-            )
-        )
+        out.append(_formatar_fila_out(o, pac))
     return {"data": out, "total": total, "page": meta["page"], "pages": meta["pages"]}
 
 
@@ -379,19 +466,42 @@ def listar_fila(
 def criar_fila(
     data: FilaPsfIn, db: Session = Depends(get_db), _=Depends(need_perm("lab_fila", "criar"))
 ):
-    if not db.get(Paciente, data.paciente_id):
+    pac = db.get(Paciente, data.paciente_id)
+    if not pac:
         raise HTTPException(404, "Paciente não encontrado")
-    obj = FilaPsf(**data.model_dump(), status="na_fila")
+
+    obs_final = (data.observacoes or "").strip()
+    if data.sigtap_ids:
+        procs = db.exec(select(SigtapProcedimento).where(SigtapProcedimento.id.in_(data.sigtap_ids))).all()
+        nomes_exames = [p.descricao for p in procs]
+        import json
+        trecho_ids = json.dumps(data.sigtap_ids)
+        trecho_nomes = ", ".join(nomes_exames)
+        obs_extra = f"Exames: {trecho_nomes} | SIGTAP_IDS:{trecho_ids}"
+        if obs_final:
+            obs_final = f"{obs_extra} | {obs_final}"
+        else:
+            obs_final = obs_extra
+        obs_final = obs_final[:500]
+
+    obj = FilaPsf(
+        paciente_id=data.paciente_id,
+        unidade_psf=data.unidade_psf,
+        medico_solicitante=data.medico_solicitante,
+        data_solicitacao=data.data_solicitacao,
+        justificativa=data.justificativa,
+        observacoes=obs_final,
+        status="na_fila",
+    )
     db.add(obj)
     db.commit()
     db.refresh(obj)
-    pac = db.get(Paciente, obj.paciente_id)
     try:
         from app.services.whatsapp import notificar_paciente_evento
         notificar_paciente_evento(db, "entrada_fila", obj, pac)
     except Exception:
         pass
-    return FilaPsfOut(**obj.model_dump(), paciente_nome=pac.nome if pac else "?")
+    return _formatar_fila_out(obj, pac)
 
 
 @router.patch("/exames/fila-psf/{fid}", response_model=FilaPsfOut)
@@ -418,7 +528,7 @@ def atualizar_status_fila(
         notificar_paciente_evento(db, "entrada_fila", obj, pac)
     except Exception:
         pass
-    return FilaPsfOut(**obj.model_dump(), paciente_nome=pac.nome if pac else "?")
+    return _formatar_fila_out(obj, pac)
 
 
 @router.put("/exames/fila-psf/{fid}", response_model=FilaPsfOut)
@@ -440,7 +550,24 @@ def atualizar_fila(
     if data.justificativa is not None:
         obj.justificativa = data.justificativa.strip()
     if data.observacoes is not None:
-        obj.observacoes = data.observacoes.strip()
+        obs_limpa = data.observacoes.strip()
+        if data.sigtap_ids is not None:
+            procs = db.exec(select(SigtapProcedimento).where(SigtapProcedimento.id.in_(data.sigtap_ids))).all()
+            nomes_exames = [p.descricao for p in procs]
+            import json
+            trecho_ids = json.dumps(data.sigtap_ids)
+            trecho_nomes = ", ".join(nomes_exames)
+            obs_extra = f"Exames: {trecho_nomes} | SIGTAP_IDS:{trecho_ids}"
+            obs_limpa = f"{obs_extra} | {obs_limpa}" if obs_limpa else obs_extra
+        obj.observacoes = obs_limpa[:500]
+    elif data.sigtap_ids is not None:
+        procs = db.exec(select(SigtapProcedimento).where(SigtapProcedimento.id.in_(data.sigtap_ids))).all()
+        nomes_exames = [p.descricao for p in procs]
+        import json
+        trecho_ids = json.dumps(data.sigtap_ids)
+        trecho_nomes = ", ".join(nomes_exames)
+        obj.observacoes = f"Exames: {trecho_nomes} | SIGTAP_IDS:{trecho_ids}"[:500]
+
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -450,7 +577,7 @@ def atualizar_fila(
         notificar_paciente_evento(db, "entrada_fila", obj, pac)
     except Exception:
         pass
-    return FilaPsfOut(**obj.model_dump(), paciente_nome=pac.nome if pac else "?")
+    return _formatar_fila_out(obj, pac)
 
 
 @router.post("/exames/fila-psf/agendar-lote", response_model=dict)
@@ -468,13 +595,20 @@ def agendar_fila_lote(
         hora_agendada=data.hora_agendada,
         sigtap_ids=data.sigtap_ids,
         agendado_por=user.username,
+        instrucoes_transporte=data.instrucoes_transporte,
     )
-    try:
-        from app.services.whatsapp import notificar_paciente_evento
-        for s in solicitacoes:
-            notificar_paciente_evento(db, "agendamento", s)
-    except Exception:
-        pass
+    if data.enviar_whatsapp:
+        try:
+            from app.services.whatsapp import notificar_paciente_evento
+            for s in solicitacoes:
+                notificar_paciente_evento(
+                    db,
+                    "agendamento",
+                    s,
+                    instrucoes_adicionais=data.instrucoes_transporte,
+                )
+        except Exception:
+            pass
     return {
         "ok": True,
         "total_agendados": len(solicitacoes),
@@ -902,6 +1036,9 @@ def solicitar_autorizacao(
 def exportar_fila_psf(
     status_: str | None = Query(default=None, alias="status"),
     unidade: str = "",
+    data_de: str | None = None,
+    data_ate: str | None = None,
+    q: str = "",
     ids: str | None = Query(default=None),
     db: Session = Depends(get_db),
     ator=Depends(need_any_perm("lab_fila", "lab_agenda")),
@@ -913,34 +1050,84 @@ def exportar_fila_psf(
     ids_set: set[int] = set()
     filtros = []
     st_val = status_ if isinstance(status_, str) else None
-    unid_val = unidade if isinstance(unidade, str) else ""
+    unid_val = unidade.strip() if isinstance(unidade, str) else ""
     ids_str = ids if isinstance(ids, str) else None
 
-    if st_val:
-        filtros.append(FilaPsf.status == st_val)
-    if unid_val:
+    if st_val and st_val.strip() and st_val != "todos":
+        filtros.append(FilaPsf.status == st_val.strip())
+    if unid_val and unid_val != "todas":
         filtros.append(FilaPsf.unidade_psf.ilike(f"%{unid_val}%"))
+    if data_de and str(data_de).strip():
+        try:
+            d_de = date.fromisoformat(str(data_de).strip())
+            filtros.append(FilaPsf.data_solicitacao >= d_de)
+        except ValueError:
+            pass
+    if data_ate and str(data_ate).strip():
+        try:
+            d_ate = date.fromisoformat(str(data_ate).strip())
+            filtros.append(FilaPsf.data_solicitacao <= d_ate)
+        except ValueError:
+            pass
     if ids_str and ids_str.strip():
         ids_set = {int(x.strip()) for x in ids_str.split(",") if x.strip().isdigit()}
         if ids_set:
             filtros.append(FilaPsf.id.in_(ids_set))
 
-    base = select(FilaPsf).order_by(FilaPsf.data_solicitacao.desc())
+    base = select(FilaPsf).join(Paciente, FilaPsf.paciente_id == Paciente.id, isouter=True)
+
+    if q and str(q).strip():
+        q_clean = str(q).strip()
+        so_num = "".join(c for c in q_clean if c.isdigit())
+        is_sqlite = bool(db.bind and db.bind.dialect.name == "sqlite")
+        conds = [
+            Paciente.nome.ilike(f"%{q_clean}%"),
+            FilaPsf.unidade_psf.ilike(f"%{q_clean}%"),
+            FilaPsf.medico_solicitante.ilike(f"%{q_clean}%"),
+            FilaPsf.observacoes.ilike(f"%{q_clean}%"),
+            FilaPsf.justificativa.ilike(f"%{q_clean}%"),
+        ]
+        if not is_sqlite:
+            conds.append(func.unaccent(Paciente.nome).ilike(f"%{q_clean}%"))
+        if so_num:
+            conds.append(Paciente.cpf.ilike(f"%{so_num}%"))
+            conds.append(Paciente.cns.ilike(f"%{so_num}%"))
+            conds.append(Paciente.codigo_prontuario.ilike(f"%{so_num}%"))
+            if len(so_num) <= 9 and int(so_num) <= 2147483647:
+                conds.append(Paciente.id == int(so_num))
+                conds.append(FilaPsf.id == int(so_num))
+        filtros.append(or_(*conds))
+
     if filtros:
-        base = select(FilaPsf).where(*filtros).order_by(FilaPsf.data_solicitacao.desc())
+        base = base.where(*filtros)
+
+    base = base.order_by(FilaPsf.data_solicitacao.desc(), FilaPsf.id.desc())
+
     linhas = []
     for o in list(db.exec(base).all())[:20000]:
         pac = db.get(Paciente, o.paciente_id)
+        obs = o.observacoes or ""
+        exames_str = "—"
+        if "Exames:" in obs:
+            try:
+                exames_str = obs.split("Exames:")[1].split("|")[0].strip() or "—"
+            except Exception:
+                pass
+        prontuario = getattr(pac, "codigo_prontuario", "") or (gerar_prontuario_aleatorio(pac_id=pac.id) if pac and pac.id else "")
         linhas.append({
             "paciente": pac.nome if pac else "?",
+            "cpf": getattr(pac, "cpf", "") or "",
+            "prontuario": prontuario,
+            "data": o.data_solicitacao,
             "unidade": o.unidade_psf or "",
             "medico": o.medico_solicitante or "",
-            "data": o.data_solicitacao,
+            "exames": exames_str,
             "status": o.status,
-            "obs": o.observacoes or "",
+            "justificativa": o.justificativa or "",
+            "obs": obs,
         })
 
-    titulo_relatorio = "Fila do PSF" if not ids_set else f"Fila do PSF — {len(linhas)} selecionado(s)"
+    titulo_relatorio = "Fila de Exames de Sangue (PSF)" if not ids_set else f"Fila de Exames — {len(linhas)} selecionado(s)"
 
     registrar_log_exportacao(
         modulo="lab_fila",
@@ -951,6 +1138,9 @@ def exportar_fila_psf(
         filtros={
             "status": status_,
             "unidade": unidade,
+            "data_de": data_de,
+            "data_ate": data_ate,
+            "q": q,
             "ids_selecionados": list(ids_set) if ids_set else None,
         },
     )
@@ -958,12 +1148,16 @@ def exportar_fila_psf(
     return resposta_xlsx(
         titulo_relatorio, getattr(ator, "nome", "") or getattr(ator, "username", ""),
         [
-            {"chave": "paciente", "rotulo": "Paciente", "largura": 32},
-            {"chave": "unidade", "rotulo": "Unidade PSF", "largura": 24},
-            {"chave": "medico", "rotulo": "Médico solicitante", "largura": 28},
-            {"chave": "data", "rotulo": "Data", "largura": 14, "formato": "data"},
+            {"chave": "data", "rotulo": "Data Pedido", "largura": 14, "formato": "data"},
+            {"chave": "paciente", "rotulo": "Nome do Paciente", "largura": 32},
+            {"chave": "cpf", "rotulo": "CPF", "largura": 16},
+            {"chave": "prontuario", "rotulo": "Prontuário", "largura": 14},
+            {"chave": "unidade", "rotulo": "PSF / Origem", "largura": 24},
+            {"chave": "medico", "rotulo": "Médico Requisitante", "largura": 28},
+            {"chave": "exames", "rotulo": "Exames Solicitados", "largura": 35},
+            {"chave": "justificativa", "rotulo": "Justificativa Clínica", "largura": 35},
             {"chave": "status", "rotulo": "Status", "largura": 14},
-            {"chave": "obs", "rotulo": "Observações", "largura": 40},
+            {"chave": "obs", "rotulo": "Observações", "largura": 30},
         ],
-        linhas, "fila_psf",
+        linhas, "fila_exames_sangue",
     )

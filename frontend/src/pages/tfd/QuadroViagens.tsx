@@ -5,9 +5,14 @@ import {
   ArrowRight,
   Bus,
   CalendarDays,
+  Check,
+  CheckCircle2,
   ChevronsLeft,
   ChevronsRight,
+  Clock,
+  Copy,
   FileDown,
+  MessageCircle,
   Pencil,
   Plus,
   Printer,
@@ -15,16 +20,20 @@ import {
   Sparkles,
   Trash2,
   UserPlus,
+  UserX,
   X,
+  XCircle,
 } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
 import {
   tfdAddPassageiro,
+  tfdAtualizarConfirmacaoPassageiro,
   tfdAtualizarFilaViagem,
   tfdAtualizarViagem,
   tfdCriarFilaViagem,
   tfdCriarViagem,
   tfdDestinos,
+  tfdEnviarWhatsAppConfirmacaoPassageiro,
   tfdExcluirFilaViagem,
   tfdExcluirViagem,
   tfdFaturarDeslocamento,
@@ -219,6 +228,12 @@ export default function QuadroViagens() {
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
   const [arrastando, setArrastando] = useState<string | null>(null);
+  const [menuPassageiro, setMenuPassageiro] = useState<{
+    vid: number;
+    pid: number;
+    p: DiaPassageiro;
+  } | null>(null);
+  const [enviandoWa, setEnviandoWa] = useState(false);
   const [visualizarOrdem, setVisualizarOrdem] = useState<DiaViagem | null>(null);
 
   useEffect(() => {
@@ -532,6 +547,44 @@ export default function QuadroViagens() {
       setErro("Falha ao devolver.");
     } finally {
       setArrastando(null);
+    }
+  }
+
+  async function alterarStatusPresenca(vid: number, passId: number, novoStatus: string) {
+    setErro("");
+    try {
+      await tfdAtualizarConfirmacaoPassageiro(vid, passId, novoStatus);
+      await recarregar();
+      setOk(`Status de presença atualizado para "${novoStatus}".`);
+      if (menuPassageiro && menuPassageiro.pid === passId) {
+        setMenuPassageiro((prev) => (prev ? {
+          ...prev,
+          p: { ...prev.p, status_confirmacao: novoStatus },
+        } : null));
+      }
+    } catch {
+      setErro("Falha ao atualizar status de presença.");
+    }
+  }
+
+  async function enviarWhatsAppPassageiro(vid: number, passId: number) {
+    setErro("");
+    setEnviandoWa(true);
+    try {
+      const res = await tfdEnviarWhatsAppConfirmacaoPassageiro(vid, passId);
+      if (res.sucesso) {
+        setOk(`Lembrete e link de confirmação enviados via WhatsApp para ${res.telefone || "o paciente"}!`);
+      } else if (res.whatsapp_link) {
+        window.open(res.whatsapp_link, "_blank");
+        setOk("WhatsApp Web aberto com o link de confirmação.");
+      } else {
+        setOk(`Link gerado: ${res.link_confirmacao}`);
+      }
+      await recarregar();
+    } catch {
+      setErro("Falha ao disparar lembrete via WhatsApp.");
+    } finally {
+      setEnviandoWa(false);
     }
   }
 
@@ -1415,10 +1468,31 @@ export default function QuadroViagens() {
                               <p className="mt-1 text-xs font-bold text-red-600">Destino diferente</p>
                             )}
                             <p className="mt-1 truncate text-[11px] font-medium text-ink/70">{v.motorista || "Motorista a definir"}{v.hora_saida ? ` · ${v.hora_saida}→${v.hora_retorno || retornoAutomatico(v.hora_saida)}` : ""}</p>
+                            {v.passageiros.length > 0 && (
+                              <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
+                                <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-50 px-2 py-0.5 font-bold text-emerald-800 border border-emerald-200" title="Passageiros com presença confirmada">
+                                  <CheckCircle2 className="h-2.5 w-2.5 text-emerald-600" />
+                                  {v.confirmados ?? v.passageiros.filter((p) => p.status_confirmacao === "confirmado").length} confirmados
+                                </span>
+                                {(v.pendentes ?? v.passageiros.filter((p) => !p.status_confirmacao || p.status_confirmacao === "pendente").length) > 0 && (
+                                  <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-800 border border-amber-200" title="Aguardando confirmação do paciente">
+                                    <Clock className="h-2.5 w-2.5 text-amber-600" />
+                                    {v.pendentes ?? v.passageiros.filter((p) => !p.status_confirmacao || p.status_confirmacao === "pendente").length} pendentes
+                                  </span>
+                                )}
+                                {(v.desistencias ?? v.passageiros.filter((p) => p.status_confirmacao && p.status_confirmacao !== "confirmado" && p.status_confirmacao !== "pendente").length) > 0 && (
+                                  <span className="inline-flex items-center gap-0.5 rounded-full bg-red-50 px-2 py-0.5 font-semibold text-red-700 border border-red-200" title="Desistências ou faltas">
+                                    <XCircle className="h-2.5 w-2.5 text-red-600" />
+                                    {v.desistencias ?? v.passageiros.filter((p) => p.status_confirmacao && p.status_confirmacao !== "confirmado" && p.status_confirmacao !== "pendente").length}
+                                  </span>
+                                )}
+                              </div>
+                            )}
                             {podeVerPacientes ? (
-                            <div className="mt-1.5 space-y-1">
+                            <div className="mt-1.5 space-y-1.5">
                               {v.passageiros.map((p) => {
                                 const acomp = (p.acompanhante_nome || p.acompanhante || "").trim();
+                                const stConf = p.status_confirmacao || "pendente";
                                 return (
                                 <div
                                   key={p.id}
@@ -1432,23 +1506,64 @@ export default function QuadroViagens() {
                                     dragPass(e, v.id, p.id);
                                   }}
                                   onDragEnd={() => setArrastando(null)}
-                                  className="flex items-center gap-1.5 rounded-lg bg-sand/80 px-2 py-1.5 text-xs"
+                                  className="flex flex-col gap-1 rounded-lg bg-sand/80 px-2 py-1.5 text-xs transition-colors hover:bg-sand/95 border border-sus-900/5"
                                 >
-                                  <span className="min-w-0 flex-1 truncate font-semibold text-sus-950" title={acomp ? `${p.paciente_nome} + ${acomp} (Acompanhante de ${p.paciente_nome})` : p.paciente_nome}>
-                                    <span className="inline-flex items-center gap-1.5 max-w-full">
-                                      <span className="truncate">{p.paciente_nome}</span>
-                                      {p.prioridade ? (
-                                        <span className={`shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${p.prioridade === "urgente" ? "bg-red-100 text-red-700" : "bg-sus-900/10 text-sus-900"}`}>
-                                          {rotuloPrioridade(p.prioridade)}
-                                        </span>
-                                      ) : null}
+                                  <div className="flex items-center gap-1.5 w-full">
+                                    <span className="min-w-0 flex-1 truncate font-semibold text-sus-950" title={acomp ? `${p.paciente_nome} + ${acomp} (Acompanhante de ${p.paciente_nome})` : p.paciente_nome}>
+                                      <span className="inline-flex items-center gap-1.5 max-w-full">
+                                        <span className="truncate">{p.paciente_nome}</span>
+                                        {p.prioridade ? (
+                                          <span className={`shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${p.prioridade === "urgente" ? "bg-red-100 text-red-700" : "bg-sus-900/10 text-sus-900"}`}>
+                                            {rotuloPrioridade(p.prioridade)}
+                                          </span>
+                                        ) : null}
+                                      </span>
+                                      {acomp && <span className="block truncate text-[11px] font-normal text-ink/60">{acomp} (Acompanhante de {p.paciente_nome})</span>}
                                     </span>
-                                    {acomp && <span className="block truncate text-[11px] font-normal text-ink/60">{acomp} (Acompanhante de {p.paciente_nome})</span>}
-                                  </span>
-                                  {acomp && <span className="shrink-0 rounded-full bg-teal/15 px-1.5 text-[10px] font-bold text-teal" title={acomp}>+1</span>}
-                                  {podeEditar && (data >= hoje || podeEditarPassadas) && (
-                                    <button onClick={() => devolver(v.id, p.id)} className="ml-auto rounded p-1 text-ink/40 hover:bg-red-50 hover:text-red-600" title="Devolver à fila"><X className="h-3.5 w-3.5" /></button>
-                                  )}
+                                    {acomp && <span className="shrink-0 rounded-full bg-teal/15 px-1.5 text-[10px] font-bold text-teal" title={acomp}>+1</span>}
+                                    {podeEditar && (data >= hoje || podeEditarPassadas) && (
+                                      <button onClick={() => devolver(v.id, p.id)} className="ml-auto rounded p-1 text-ink/40 hover:bg-red-50 hover:text-red-600 shrink-0" title="Devolver à fila"><X className="h-3.5 w-3.5" /></button>
+                                    )}
+                                  </div>
+
+                                  {/* Barra de Status de Confirmação e Disparo WhatsApp */}
+                                  <div className="flex items-center justify-between gap-1 border-t border-sus-900/10 pt-1 text-[10px]">
+                                    <button
+                                      type="button"
+                                      onClick={() => setMenuPassageiro({ vid: v.id, pid: p.id, p })}
+                                      className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-bold transition-all hover:brightness-95 cursor-pointer"
+                                      title={p.confirmado_em ? `Confirmado em ${new Date(p.confirmado_em).toLocaleString("pt-BR")} — clique p/ gerenciar` : "Clique para gerenciar a confirmação de presença"}
+                                    >
+                                      {stConf === "confirmado" ? (
+                                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 px-1.5 py-0.5 text-[9px] font-bold">
+                                          <Check className="h-2.5 w-2.5" /> Confirmado
+                                        </span>
+                                      ) : stConf === "desistiu" ? (
+                                        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 text-red-700 px-1.5 py-0.5 text-[9px] font-bold">
+                                          <XCircle className="h-2.5 w-2.5" /> Desistiu
+                                        </span>
+                                      ) : stConf === "nao_compareceu" ? (
+                                        <span className="inline-flex items-center gap-1 rounded-full bg-gray-200 text-gray-700 px-1.5 py-0.5 text-[9px] font-bold">
+                                          <UserX className="h-2.5 w-2.5" /> Faltou
+                                        </span>
+                                      ) : (
+                                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-800 px-1.5 py-0.5 text-[9px] font-semibold">
+                                          <Clock className="h-2.5 w-2.5" /> Pendente
+                                        </span>
+                                      )}
+                                    </button>
+
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => enviarWhatsAppPassageiro(v.id, p.id)}
+                                        className="inline-flex items-center gap-1 rounded bg-teal/10 px-1.5 py-0.5 text-[9px] font-bold text-teal hover:bg-teal hover:text-white transition-colors"
+                                        title="Enviar link de confirmação no WhatsApp"
+                                      >
+                                        <MessageCircle className="h-2.5 w-2.5" /> WhatsApp
+                                      </button>
+                                    </div>
+                                  </div>
                                 </div>
                                 );
                               })}
@@ -1982,6 +2097,131 @@ export default function QuadroViagens() {
                 <Trash2 className="mr-1 inline h-4 w-4" /> Excluir e devolver à fila
               </button>
               <button onClick={() => setExcluirViagem(null)} className="rounded-xl border border-sus-900/15 px-4 py-2.5 text-sm font-bold text-sus-900 hover:bg-sand">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {menuPassageiro && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-sus-950/50 p-4 backdrop-blur-xs" onClick={() => setMenuPassageiro(null)}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between border-b border-sus-900/10 pb-3">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Confirmação de Presença</span>
+                <h3 className="font-display text-base font-bold text-sus-950">{menuPassageiro.p.paciente_nome}</h3>
+                {menuPassageiro.p.paciente_cpf && <p className="text-xs text-ink/60">CPF: {menuPassageiro.p.paciente_cpf}</p>}
+              </div>
+              <button onClick={() => setMenuPassageiro(null)} className="rounded-lg p-1 text-ink/40 hover:bg-sand">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Status Atual */}
+            <div className="rounded-xl border border-sus-900/10 bg-sand/30 p-3 text-xs">
+              <p className="text-ink/60 font-medium">Status Atual:</p>
+              <div className="mt-1 flex items-center gap-2">
+                {menuPassageiro.p.status_confirmacao === "confirmado" ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">
+                    <Check className="h-3.5 w-3.5" /> Confirmado pelo Paciente
+                  </span>
+                ) : menuPassageiro.p.status_confirmacao === "desistiu" ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-red-100 px-3 py-1 text-xs font-bold text-red-700">
+                    <XCircle className="h-3.5 w-3.5" /> Paciente Informou Desistência
+                  </span>
+                ) : menuPassageiro.p.status_confirmacao === "nao_compareceu" ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-200 px-3 py-1 text-xs font-bold text-gray-800">
+                    <UserX className="h-3.5 w-3.5" /> Não Compareceu / Falta
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">
+                    <Clock className="h-3.5 w-3.5" /> Pendente de Confirmação
+                  </span>
+                )}
+              </div>
+              {menuPassageiro.p.confirmado_em && (
+                <p className="mt-1 text-[11px] text-ink/50">
+                  Confirmado em: {new Date(menuPassageiro.p.confirmado_em).toLocaleString("pt-BR")}
+                </p>
+              )}
+            </div>
+
+            {/* Alterar Status Manualmente */}
+            <div>
+              <p className="text-xs font-bold text-sus-950 mb-1.5">Alterar status manualmente:</p>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => alterarStatusPresenca(menuPassageiro.vid, menuPassageiro.pid, "confirmado")}
+                  className="flex items-center justify-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-2 font-bold text-emerald-800 hover:bg-emerald-100 transition-colors cursor-pointer"
+                >
+                  <Check className="h-3.5 w-3.5" /> Confirmar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => alterarStatusPresenca(menuPassageiro.vid, menuPassageiro.pid, "pendente")}
+                  className="flex items-center justify-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-2 font-semibold text-amber-800 hover:bg-amber-100 transition-colors cursor-pointer"
+                >
+                  <Clock className="h-3.5 w-3.5" /> Pendente
+                </button>
+                <button
+                  type="button"
+                  onClick={() => alterarStatusPresenca(menuPassageiro.vid, menuPassageiro.pid, "nao_compareceu")}
+                  className="flex items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-gray-100 px-2.5 py-2 font-semibold text-gray-800 hover:bg-gray-200 transition-colors cursor-pointer"
+                >
+                  <UserX className="h-3.5 w-3.5" /> Falta
+                </button>
+                <button
+                  type="button"
+                  onClick={() => alterarStatusPresenca(menuPassageiro.vid, menuPassageiro.pid, "desistiu")}
+                  className="flex items-center justify-center gap-1.5 rounded-lg border border-red-300 bg-red-50 px-2.5 py-2 font-semibold text-red-700 hover:bg-red-100 transition-colors cursor-pointer"
+                >
+                  <XCircle className="h-3.5 w-3.5" /> Desistência
+                </button>
+              </div>
+            </div>
+
+            {/* Disparo de WhatsApp */}
+            <div className="rounded-xl border border-sus-900/10 p-3 space-y-2 text-xs">
+              <p className="font-bold text-sus-950 flex items-center gap-1.5">
+                <MessageCircle className="h-4 w-4 text-emerald-600" /> Notificação via WhatsApp
+              </p>
+              <p className="text-ink/65 text-[11px]">
+                Envia uma mensagem no WhatsApp do paciente com o link direto e seguro para confirmação de presença no transporte.
+              </p>
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => enviarWhatsAppPassageiro(menuPassageiro.vid, menuPassageiro.pid)}
+                  disabled={enviandoWa}
+                  className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 font-bold text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors cursor-pointer"
+                >
+                  <MessageCircle className="h-3.5 w-3.5" />
+                  {enviandoWa ? "Enviando..." : "Enviar no WhatsApp"}
+                </button>
+                {menuPassageiro.p.link_confirmacao && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(menuPassageiro.p.link_confirmacao || "");
+                      setOk("Link de confirmação copiado!");
+                    }}
+                    className="rounded-lg border border-sus-900/15 px-3 py-2 text-ink/70 hover:bg-sand flex items-center gap-1 cursor-pointer"
+                    title="Copiar link de confirmação"
+                  >
+                    <Copy className="h-3.5 w-3.5" /> Copiar Link
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setMenuPassageiro(null)}
+                className="rounded-xl bg-sus-900/10 px-4 py-2 text-xs font-bold text-sus-900 hover:bg-sus-900/15 cursor-pointer"
+              >
+                Fechar
+              </button>
             </div>
           </div>
         </div>

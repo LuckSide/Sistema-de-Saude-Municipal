@@ -21,6 +21,7 @@ import {
 } from "../../services/api";
 import { Badge, Button, Card, Input, Label } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
+import { useBackdropClose } from "../../hooks/useBackdropClose";
 
 type Aba = "tipos" | "procedimentos" | "especialidades";
 
@@ -48,6 +49,8 @@ export default function CatalogoExames() {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
+
+  const modalBackdrop = useBackdropClose(fecharModal, modal);
 
   async function carregar(p = 1, abaAtual = aba, busca = q) {
     const params = { q: busca.trim() || undefined, page: p, limit: 100 };
@@ -339,7 +342,7 @@ export default function CatalogoExames() {
       </Card>
 
       {modal && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" onClick={fecharModal}>
+        <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" {...modalBackdrop}>
           <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
               <p className="font-display text-base font-bold text-sus-950">
@@ -362,7 +365,30 @@ export default function CatalogoExames() {
                   <div className="md:col-span-2"><Label>Nome procedimento *</Label><Input value={formProc.nome} onChange={(e) => setFormProc({ ...formProc, nome: e.target.value.toUpperCase() })} placeholder="Ex: ULTRASSONOGRAFIA TRANSVAGINAL" /></div>
                   <div><Label>Tipo de fila</Label><Input value={formProc.tipo_fila} onChange={(e) => setFormProc({ ...formProc, tipo_fila: e.target.value.toUpperCase() })} placeholder="Ex: ULTRASSONOGRAFIA" /></div>
                   <div><Label>CBO padrão</Label><Input value={formProc.codigo_especialidade} onChange={(e) => setFormProc({ ...formProc, codigo_especialidade: e.target.value.replace(/\D/g, "").slice(0, 6) })} placeholder="Ex: 225320" inputMode="numeric" /></div>
-                  <div className="md:col-span-2"><Label>Nome especialidade</Label><Input value={formProc.nome_especialidade} onChange={(e) => setFormProc({ ...formProc, nome_especialidade: e.target.value })} placeholder="Ex: Médico em radiologia e diagnóstico por imagem" /></div>
+                  <div className="md:col-span-2">
+                    <Label>Nome especialidade</Label>
+                    <Input
+                      value={formProc.nome_especialidade}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const match = esps.find((x) => x.nome.toLowerCase() === val.toLowerCase());
+                        setFormProc({
+                          ...formProc,
+                          nome_especialidade: val,
+                          codigo_especialidade: match?.codigo_cbo || formProc.codigo_especialidade,
+                        });
+                      }}
+                      placeholder="Ex: Médico em radiologia e diagnóstico por imagem"
+                      list="proc-especialidades-list"
+                    />
+                    <datalist id="proc-especialidades-list">
+                      {esps.map((esp) => (
+                        <option key={esp.id} value={esp.nome}>
+                          {esp.codigo_cbo ? `CBO ${esp.codigo_cbo} · ` : ""}{esp.nome}
+                        </option>
+                      ))}
+                    </datalist>
+                  </div>
                   <label className="flex cursor-pointer items-center gap-2 text-sm"><input type="checkbox" checked={formProc.ativo} onChange={(e) => setFormProc({ ...formProc, ativo: e.target.checked })} className="rounded border-sus-900/30" /> Ativo</label>
                 </div>
               )}
