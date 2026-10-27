@@ -29,7 +29,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { Badge, Button, Card, Input, Label } from "../components/ui/primitives";
+import { Badge, Button, Card, Input, Label, Select } from "../components/ui/primitives";
 import { useAuth } from "../hooks/useAuth";
 import { useUndo } from "../components/UndoToast";
 import Medicos from "./Medicos";
@@ -929,16 +929,15 @@ function AbaPec() {
         {/* Fonte de dados avançada */}
         <div>
           <Label>Fonte de Dados Ativa</Label>
-          <select
+          <Select
             value={fonte}
             onChange={(e) => setFonte(e.target.value)}
-            className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none focus:border-sus-700"
           >
             <option value="auto">auto (Banco PEC se configurado → Arquivos locais → Mock)</option>
             <option value="postgres">postgres (Obrigatório banco oficial do PEC)</option>
             <option value="files">files (Arquivos locais em app/data/pec)</option>
             <option value="mock">mock (Demonstração estática)</option>
-          </select>
+          </Select>
         </div>
 
         {/* Mensagens de Feedback */}
@@ -1374,10 +1373,10 @@ function AbaRnds() {
       <div className="space-y-3">
         <div>
           <Label>Ambiente</Label>
-          <select value={amb} onChange={(e) => setAmb(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none focus:border-sus-700">
+          <Select value={amb} onChange={(e) => setAmb(e.target.value)}>
             <option value="homologacao">Homologação</option>
             <option value="producao">Produção</option>
-          </select>
+          </Select>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -1578,16 +1577,16 @@ function AbaWhatsApp() {
                 <Label className="text-xs font-bold text-sus-950">
                   Provedor de Conexão WhatsApp <span className="text-red-500">*</span>
                 </Label>
-                <select
+                <Select
                   value={config.whatsapp_provedor}
                   onChange={(e) => setConfig({ ...config, whatsapp_provedor: e.target.value })}
-                  className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-xs font-semibold text-sus-950 outline-none focus:border-teal"
+                  className="mt-1"
                 >
                   <option value="api_oficial">Meta Cloud API (Oficial / WhatsApp Business)</option>
                   <option value="z_api">Z-API (Instância Conectada por QR Code)</option>
                   <option value="evolution">Evolution API (Open-source / Auto-hospedado)</option>
                   <option value="webhook_generico">Webhook REST Genérico (POST JSON)</option>
-                </select>
+                </Select>
                 <p className="mt-1 text-[11px] text-ink/50">
                   Selecione o gateway ou provedor contratado pelo município.
                 </p>
