@@ -204,7 +204,7 @@ def criar_medico(
         db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Falha ao cadastrar profissional de saúde e criar usuário: {str(e)}",
+            detail="Falha ao cadastrar profissional de saúde e criar usuário. Verifique os dados fornecidos.",
         )
 
 
@@ -290,7 +290,7 @@ def atualizar_medico(
         db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Falha ao atualizar médico: {str(e)}",
+            detail="Falha ao atualizar médico. Verifique os dados fornecidos.",
         )
 
 

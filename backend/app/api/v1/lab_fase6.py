@@ -714,7 +714,7 @@ def criar_mestre(
     try:
         totais = data.itens_normalizados()
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, "Erro na formatação ou validação dos dados dos itens da solicitação.")
     m = criar_solicitacao_mestre(
         db,
         paciente_id=data.paciente_id,
