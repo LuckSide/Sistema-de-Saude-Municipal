@@ -43,6 +43,7 @@ import ExportarExcel from "../../components/ExportarExcel";
 import { Combobox, type ComboOption } from "../../components/ui/combobox";
 import BuscaPacienteAutocomplete from "../../components/BuscaPacienteAutocomplete";
 import { useAuth } from "../../hooks/useAuth";
+import { useConfirm } from "../../components/ConfirmDialog";
 
 const MEDICO_GENERICO = "Médico da Unidade / Responsável Técnico";
 
@@ -53,6 +54,7 @@ function fmtData(s?: string) {
 }
 
 export default function FilaPsf() {
+  const { confirmar } = useConfirm();
   const { user } = useAuth();
   const [lista, setLista] = useState<FilaPsfItem[]>([]);
   const [unidades, setUnidades] = useState<UnidadeSaude[]>([]);
@@ -384,7 +386,13 @@ export default function FilaPsf() {
   }
 
   async function excluir(id: number) {
-    if (!confirm("Remover este pedido da fila de exames?")) return;
+    const ok = await confirmar({
+      titulo: "Remover pedido da fila",
+      descricao: "Deseja realmente remover este pedido da fila de exames?",
+      textoConfirmar: "Sim, Remover",
+      variante: "danger",
+    });
+    if (!ok) return;
     try {
       await filaPsfExcluir(id);
       setOk("Pedido removido da fila.");
@@ -420,11 +428,11 @@ export default function FilaPsf() {
   async function executarAgendamentoLote() {
     if (selecionados.size === 0) return;
     if (!loteLabId) {
-      alert("Selecione o laboratório conveniado.");
+      setErro("Selecione o laboratório conveniado.");
       return;
     }
     if (!loteData) {
-      alert("Selecione a data do agendamento.");
+      setErro("Selecione a data do agendamento.");
       return;
     }
 
@@ -445,7 +453,7 @@ export default function FilaPsf() {
       );
       await carregar();
     } catch (e: any) {
-      alert(e?.response?.data?.detail || "Erro ao realizar marcação em lote.");
+      setErro(e?.response?.data?.detail || "Erro ao realizar marcação em lote.");
     } finally {
       setLoteSalvando(false);
     }

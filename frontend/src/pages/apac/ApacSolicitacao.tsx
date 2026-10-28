@@ -44,8 +44,10 @@ import { Button, Card, Input, Label, Badge } from "../../components/ui/primitive
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
 import LaudoApacPrint from "./LaudoApacPrint";
+import { useConfirm } from "../../components/ConfirmDialog";
 
 export default function ApacSolicitacao() {
+  const { confirmar } = useConfirm();
 
   // Estados da Listagem
   const [solicitacoes, setSolicitacoes] = useState<SolicitacaoApac[]>([]);
@@ -413,7 +415,7 @@ export default function ApacSolicitacao() {
   const confirmarContinuidade = async () => {
     if (!solicitacaoAlvoContinuidade) return;
     if (justificativaContinuidade.trim().length < 12) {
-      alert("A justificativa clínica deve conter no mínimo 12 caracteres.");
+      setMensagemErro("A justificativa clínica deve conter no mínimo 12 caracteres.");
       return;
     }
     setSalvandoContinuidade(true);
@@ -423,7 +425,7 @@ export default function ApacSolicitacao() {
       setModalContinuidadeAberto(false);
       carregarSolicitacoes(1);
     } catch (err: any) {
-      alert(err?.response?.data?.detail || "Falha ao gerar continuidade da APAC.");
+      setMensagemErro(err?.response?.data?.detail || "Falha ao gerar continuidade da APAC.");
     } finally {
       setSalvandoContinuidade(false);
     }
@@ -431,13 +433,19 @@ export default function ApacSolicitacao() {
 
   // Cancelar Solicitação
   const handleCancelar = async (id: number) => {
-    if (!confirm("Tem certeza que deseja cancelar esta solicitação de APAC?")) return;
+    const ok = await confirmar({
+      titulo: "Cancelar solicitação de APAC",
+      descricao: "Tem certeza que deseja cancelar esta solicitação de APAC?",
+      textoConfirmar: "Sim, Cancelar APAC",
+      variante: "danger",
+    });
+    if (!ok) return;
     try {
       await cancelarApacSolicitacao(id, "Cancelado pelo usuário solicitante");
       setMensagemSucesso("Solicitação cancelada com sucesso.");
       carregarSolicitacoes(page);
     } catch (err: any) {
-      alert(err?.response?.data?.detail || "Erro ao cancelar a solicitação.");
+      setMensagemErro(err?.response?.data?.detail || "Erro ao cancelar a solicitação.");
     }
   };
 

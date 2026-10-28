@@ -33,6 +33,24 @@ from app.services.whatsapp_reminder_worker import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import os
+    import logging
+    logger = logging.getLogger("uvicorn.error")
+    is_prod = (
+        os.getenv("ENV", "").lower() in ("production", "prod")
+        or os.getenv("PRODUCAO", "").lower() in ("1", "true")
+    )
+    if settings.SECRET_KEY == "troque-esta-chave-em-producao-32chars-min":
+        if is_prod:
+            raise RuntimeError(
+                "CRITICAL SECURITY FAILURE: Execução em produção bloqueada! "
+                "SECRET_KEY padrão detectada. Defina uma chave secreta com no mínimo 32 caracteres hexadecimais no .env "
+                "(gerada com 'openssl rand -hex 32')."
+            )
+        else:
+            logger.warning(
+                "⚠️  [ALERTA DE SEGURANÇA] SECRET_KEY padrão em uso. Configure uma chave segura no .env para ambientes de produção."
+            )
     init_db()
     with Session(engine) as db:
         ensure_first_superuser(

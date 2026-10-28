@@ -11,10 +11,12 @@ import {
 } from "../../services/api";
 import { Badge, Button, Card, Input, Label } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
+import { useConfirm } from "../../components/ConfirmDialog";
 
 const vazio = { nome_destino: "", hospital_referencia: "", procedimento_sigtap: "", codigo_desloc_pac: "", qtd_desloc_pac: "", codigo_desloc_acomp: "", qtd_desloc_acomp: "", ativo: true };
 
 export default function TfdDestinos() {
+  const { confirmar } = useConfirm();
   const [lista, setLista] = useState<Destino[]>([]);
   const [modal, setModal] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
@@ -121,7 +123,28 @@ export default function TfdDestinos() {
                 <td className="px-4 py-3">
                   <div className="flex justify-end gap-1">
                     <button onClick={() => abrirModal(d.id)} className="rounded-lg p-2 text-sus-800 hover:bg-sus-100" title="Editar"><Pencil className="h-4 w-4" /></button>
-                    <button onClick={async () => { if (confirm("Excluir destino?")) { await tfdExcluirDestino(d.id); carregar(); } }} className="rounded-lg p-2 text-red-600 hover:bg-red-50" title="Excluir"><Trash2 className="h-4 w-4" /></button>
+                    <button
+                      onClick={async () => {
+                        const okConf = await confirmar({
+                          titulo: `Excluir destino ${d.nome_destino}`,
+                          descricao: `Deseja realmente excluir o destino "${d.nome_destino}"?`,
+                          textoConfirmar: "Sim, Excluir",
+                          variante: "danger",
+                        });
+                        if (okConf) {
+                          try {
+                            await tfdExcluirDestino(d.id);
+                            await carregar();
+                          } catch {
+                            setErro("Falha ao excluir destino.");
+                          }
+                        }
+                      }}
+                      className="rounded-lg p-2 text-red-600 hover:bg-red-50"
+                      title="Excluir"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                   </div>
                 </td>
               </tr>

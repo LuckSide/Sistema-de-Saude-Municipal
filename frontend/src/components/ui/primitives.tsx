@@ -59,7 +59,7 @@ export function Select({
     <select
       {...props}
       className={cn(
-        "w-full h-11 rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition focus:border-sus-700 focus-visible:ring-2 focus-visible:ring-sus-700/20",
+        "w-full h-11 rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition focus:border-sus-700 focus-visible:ring-2 focus-visible:ring-sus-700/20 disabled:cursor-not-allowed disabled:bg-sand/30 disabled:opacity-60",
         className
       )}
     >

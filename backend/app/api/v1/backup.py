@@ -6,11 +6,10 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, Upl
 from pydantic import BaseModel, Field
 from sqlmodel import Session
 
-from app.core.deps import get_db
+from app.core.deps import get_db, require_senha_ok, require_superuser
 from app.models.user import User
 from app.services.backup_crypto import criptografar_dados, descriptografar_dados
 from app.services.backup_service import gerar_dump_dados, restaurar_dump_dados
-from app.services.permissoes import need_perm
 
 router = APIRouter()
 
@@ -23,7 +22,8 @@ class ExportarBackupIn(BaseModel):
 def exportar_backup(
     payload: ExportarBackupIn,
     db: Session = Depends(get_db),
-    user: User = Depends(need_perm("usuarios")),
+    admin: User = Depends(require_superuser),
+    _=Depends(require_senha_ok),
 ):
     """Gera um dump completo de todas as tabelas do sistema, comprime e criptografa com AES-256-GCM."""
     if not payload.senha or not payload.senha.strip():
@@ -68,7 +68,8 @@ async def restaurar_backup(
     arquivo: UploadFile = File(...),
     senha: str = Form(...),
     db: Session = Depends(get_db),
-    user: User = Depends(need_perm("usuarios")),
+    admin: User = Depends(require_superuser),
+    _=Depends(require_senha_ok),
 ):
     """Restaura o sistema a partir de um arquivo .bak criptografado com atomicidade total."""
     if not senha or not senha.strip():
@@ -95,7 +96,7 @@ async def restaurar_backup(
         dump = json.loads(dados_descriptografados.decode("utf-8"))
 
         # 3. Restauração atômica no banco de dados
-        detalhes = restaurar_dump_dados(db, dump, autor_id=user.id or 0)
+        detalhes = restaurar_dump_dados(db, dump, autor_id=admin.id or 0)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro de validação. Verifique os parâmetros.")
     except json.JSONDecodeError:

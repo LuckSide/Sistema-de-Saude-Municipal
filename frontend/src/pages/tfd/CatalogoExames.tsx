@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Pencil, Plus, Search, ShieldCheck, ShieldOff, Trash2, X } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { BookOpenText, Pencil, Plus, Search, ShieldCheck, ShieldOff, Trash2, X } from "lucide-react";
 import {
   pagData,
   pagMeta,
@@ -22,8 +23,10 @@ import {
 import { Badge, Button, Card, Input, Label } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
 import { useBackdropClose } from "../../hooks/useBackdropClose";
+import { useConfirm } from "../../components/ConfirmDialog";
+import LabSigtap from "../lab/LabSigtap";
 
-type Aba = "tipos" | "procedimentos" | "especialidades";
+type Aba = "tipos" | "procedimentos" | "especialidades" | "sigtap";
 
 const vazioTipo = { codigo: "", nome: "", ativo: true };
 const vazioProc = {
@@ -33,7 +36,14 @@ const vazioProc = {
 const vazioEsp = { codigo_cbo: "", nome: "", ativo: true };
 
 export default function CatalogoExames() {
-  const [aba, setAba] = useState<Aba>("tipos");
+  const { confirmar } = useConfirm();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const abaParam = searchParams.get("aba") as Aba | null;
+  const [aba, setAba] = useState<Aba>(
+    abaParam === "sigtap" || abaParam === "procedimentos" || abaParam === "especialidades"
+      ? abaParam
+      : "tipos",
+  );
   const [q, setQ] = useState("");
   const [tipos, setTipos] = useState<TipoFila[]>([]);
   const [procs, setProcs] = useState<ProcedimentoCat[]>([]);
@@ -41,6 +51,7 @@ export default function CatalogoExames() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
   const [modal, setModal] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [formTipo, setFormTipo] = useState(vazioTipo);
@@ -52,8 +63,14 @@ export default function CatalogoExames() {
 
   const modalBackdrop = useBackdropClose(fecharModal, modal);
 
-  async function carregar(p = 1, abaAtual = aba, busca = q) {
-    const params = { q: busca.trim() || undefined, page: p, limit: 100 };
+  function mudarAba(novaAba: Aba) {
+    setAba(novaAba);
+    setSearchParams(novaAba === "tipos" ? {} : { aba: novaAba }, { replace: true });
+  }
+
+  async function carregar(p = 1, abaAtual = aba, busca = q, limite = pageSize) {
+    if (abaAtual === "sigtap") return;
+    const params = { q: busca.trim() || undefined, page: p, limit: limite };
     if (abaAtual === "tipos") {
       const r = await tfdTipos(params);
       setTipos(pagData<TipoFila>(r));
@@ -74,7 +91,9 @@ export default function CatalogoExames() {
 
   useEffect(() => {
     setPage(1);
-    carregar(1, aba, "").catch(() => setErro("Falha ao carregar catálogo."));
+    if (aba !== "sigtap") {
+      carregar(1, aba, "").catch(() => setErro("Falha ao carregar catálogo."));
+    }
     setQ("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aba]);
@@ -155,7 +174,14 @@ export default function CatalogoExames() {
   }
 
   async function excluir(id: number) {
-    if (!confirm("Inativar/excluir este registro?")) return;
+    const rotuloAba = aba === "tipos" ? "tipo de fila" : aba === "procedimentos" ? "procedimento" : "especialidade";
+    const ok = await confirmar({
+      titulo: `Inativar/excluir ${rotuloAba}`,
+      descricao: `Deseja realmente inativar ou excluir este registro do catálogo de ${rotuloAba}?`,
+      textoConfirmar: "Sim, Excluir",
+      variante: "danger",
+    });
+    if (!ok) return;
     try {
       if (aba === "tipos") await tfdExcluirTipo(id);
       else if (aba === "procedimentos") await tfdExcluirProcedimento(id);
@@ -174,172 +200,195 @@ export default function CatalogoExames() {
 
   const titulo =
     aba === "tipos" ? "Tipos de fila" :
-    aba === "procedimentos" ? "Procedimentos" : "Especialidades";
+    aba === "procedimentos" ? "Procedimentos" :
+    aba === "especialidades" ? "Especialidades Médicas" : "Tabela SIGTAP";
 
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <h2 className="font-display text-lg font-bold text-sus-950">Catálogo de Procedimentos</h2>
-        <span className="rounded-full bg-teal/10 px-2.5 py-0.5 text-xs font-semibold text-teal">
-          {total} registro(s)
-        </span>
-        <Button onClick={() => abrirModal()} className="ml-auto"><Plus className="h-4 w-4" /> Novo</Button>
+        <h2 className="font-display text-lg font-bold text-sus-950">Catálogo e Tabela SIGTAP</h2>
+        {aba !== "sigtap" && (
+          <span className="rounded-full bg-teal/10 px-2.5 py-0.5 text-xs font-semibold text-teal">
+            {total} registro(s)
+          </span>
+        )}
+        {aba !== "sigtap" && (
+          <Button onClick={() => abrirModal()} className="ml-auto"><Plus className="h-4 w-4" /> Novo</Button>
+        )}
       </div>
       {erro && !modal && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
       {ok && <p className="mb-3 rounded-xl bg-teal/10 px-3 py-2 text-sm text-teal">{ok}</p>}
 
-      <Card className="mb-4 p-4">
-        <div className="mb-3 flex flex-wrap gap-2">
-          {(
-            [
-              { id: "tipos", label: "Tipos de fila" },
-              { id: "procedimentos", label: "Procedimentos" },
-              { id: "especialidades", label: "Especialidades" },
-            ] as { id: Aba; label: string }[]
-          ).map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setAba(t.id)}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                aba === t.id ? "bg-sus-900 text-white" : "bg-sand text-sus-900 hover:bg-sus-900/10"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <form onSubmit={buscar} className="flex flex-wrap items-end gap-2">
-          <div className="min-w-52 flex-1">
-            <Label>Buscar {titulo.toLowerCase()}</Label>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40" />
-              <Input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder={
-                  aba === "especialidades"
-                    ? "Ex: radiologia, 225320…"
-                    : aba === "procedimentos"
-                      ? "Ex: mamografia, 0205020186, MAMO…"
-                      : "Ex: ultrassonografia…"
-                }
-                className="pl-10"
-              />
-            </div>
-          </div>
-          <Button type="submit"><Search className="h-4 w-4" /> Buscar</Button>
+      <div className="mb-4 flex flex-wrap gap-2">
+        {(
+          [
+            { id: "tipos", label: "Tipos de fila" },
+            { id: "procedimentos", label: "Procedimentos" },
+            { id: "especialidades", label: "Especialidades Médicas" },
+            { id: "sigtap", label: "Tabela e Importação SIGTAP" },
+          ] as { id: Aba; label: string }[]
+        ).map((t) => (
           <button
-            type="button"
-            onClick={() => { setQ(""); carregar(1, aba, "").catch(() => {}); }}
-            className="rounded-xl px-4 py-2.5 text-sm font-semibold text-sus-900 hover:bg-sus-900/5"
+            key={t.id}
+            onClick={() => mudarAba(t.id)}
+            className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+              aba === t.id ? "bg-sus-900 text-white shadow-sm font-bold" : "bg-sand text-sus-900 hover:bg-sus-900/10"
+            }`}
           >
-            Limpar
+            {t.label}
           </button>
-        </form>
-        <p className="mt-2 text-xs text-ink/50">
-          Tipos e CBOs alimentam os filtros da Fila de exames com contagem. Procedimentos alimentam o autocomplete do pedido.
-        </p>
-      </Card>
+        ))}
+      </div>
 
-      <Card className="overflow-hidden">
-        {aba === "tipos" && (
-          <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead><tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
-              <th className="px-4 py-3">ID e-SUS</th><th className="px-4 py-3">Tipo de fila</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Ações</th>
-            </tr></thead>
-            <tbody>
-              {tipos.map((t) => (
-                <tr key={t.id} className="border-b border-sus-900/5 last:border-0">
-                  <td className="px-4 py-3 font-mono text-xs">{t.codigo || "—"}</td>
-                  <td className="px-4 py-3 font-semibold">{t.nome}</td>
-                  <td className="px-4 py-3">
-                    <Badge variant={t.ativo ? "success" : "outline"}>
-                      {t.ativo ? <ShieldCheck className="h-3 w-3" /> : <ShieldOff className="h-3 w-3" />}
-                      {t.ativo ? "Ativo" : "Inativo"}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3"><div className="flex justify-end gap-1">
-                    <button onClick={() => abrirModal(t.id)} className="rounded-lg p-2 text-sus-800 hover:bg-sus-100" title="Editar"><Pencil className="h-4 w-4" /></button>
-                    <button onClick={() => excluir(t.id)} className="rounded-lg p-2 text-red-600 hover:bg-red-50" title="Excluir"><Trash2 className="h-4 w-4" /></button>
-                  </div></td>
-                </tr>
-              ))}
-              {tipos.length === 0 && <tr><td colSpan={4} className="px-4 py-8 text-center text-ink/45">Nenhum tipo cadastrado.</td></tr>}
-            </tbody>
-          </table>
-          </div>
-        )}
-        {aba === "procedimentos" && (
-          <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead><tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
-              <th className="px-4 py-3">Código</th><th className="px-4 py-3">Procedimento</th><th className="px-4 py-3">Tipo / CBO</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Ações</th>
-            </tr></thead>
-            <tbody>
-              {procs.map((t) => (
-                <tr key={t.id} className="border-b border-sus-900/5 last:border-0">
-                  <td className="px-4 py-3 font-mono text-xs">{t.codigo}{t.codigo_curto ? <span className="block text-teal">· {t.codigo_curto}</span> : null}</td>
-                  <td className="px-4 py-3 font-semibold">{t.nome}</td>
-                  <td className="px-4 py-3 text-xs text-ink/60">
-                    {t.tipo_fila || "—"}
-                    {t.codigo_especialidade ? <span className="block">CBO {t.codigo_especialidade}{t.nome_especialidade ? ` · ${t.nome_especialidade}` : ""}</span> : null}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge variant={t.ativo ? "success" : "outline"}>
-                      {t.ativo ? <ShieldCheck className="h-3 w-3" /> : <ShieldOff className="h-3 w-3" />}
-                      {t.ativo ? "Ativo" : "Inativo"}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3"><div className="flex justify-end gap-1">
-                    <button onClick={() => abrirModal(t.id)} className="rounded-lg p-2 text-sus-800 hover:bg-sus-100" title="Editar"><Pencil className="h-4 w-4" /></button>
-                    <button onClick={() => excluir(t.id)} className="rounded-lg p-2 text-red-600 hover:bg-red-50" title="Excluir"><Trash2 className="h-4 w-4" /></button>
-                  </div></td>
-                </tr>
-              ))}
-              {procs.length === 0 && <tr><td colSpan={5} className="px-4 py-8 text-center text-ink/45">Nenhum procedimento cadastrado.</td></tr>}
-            </tbody>
-          </table>
-          </div>
-        )}
-        {aba === "especialidades" && (
-          <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead><tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
-              <th className="px-4 py-3">CBO</th><th className="px-4 py-3">Especialidade</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Ações</th>
-            </tr></thead>
-            <tbody>
-              {esps.map((t) => (
-                <tr key={t.id} className="border-b border-sus-900/5 last:border-0">
-                  <td className="px-4 py-3 font-mono text-xs">
-                    {t.codigo_cbo ? (
-                      <span className="font-bold">{t.codigo_cbo}</span>
-                    ) : (
-                      <span className="rounded bg-sus-900/10 px-1.5 py-0.5 font-sans text-[11px] font-normal text-ink/50">
-                        Geral / Sem CBO
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 font-semibold">{t.nome}</td>
-                  <td className="px-4 py-3">
-                    <Badge variant={t.ativo ? "success" : "outline"}>
-                      {t.ativo ? <ShieldCheck className="h-3 w-3" /> : <ShieldOff className="h-3 w-3" />}
-                      {t.ativo ? "Ativo" : "Inativo"}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3"><div className="flex justify-end gap-1">
-                    <button onClick={() => abrirModal(t.id)} className="rounded-lg p-2 text-sus-800 hover:bg-sus-100" title="Editar"><Pencil className="h-4 w-4" /></button>
-                    <button onClick={() => excluir(t.id)} className="rounded-lg p-2 text-red-600 hover:bg-red-50" title="Excluir"><Trash2 className="h-4 w-4" /></button>
-                  </div></td>
-                </tr>
-              ))}
-              {esps.length === 0 && <tr><td colSpan={4} className="px-4 py-8 text-center text-ink/45">Nenhuma especialidade cadastrada.</td></tr>}
-            </tbody>
-          </table>
-          </div>
-        )}
-        <Paginacao page={page} pages={pages} total={total} onPage={(p) => carregar(p).catch(() => setErro("Falha ao carregar catálogo."))} />
-      </Card>
+      {aba === "sigtap" ? (
+        <LabSigtap />
+      ) : (
+        <>
+          <Card className="mb-4 p-4">
+            <form onSubmit={buscar} className="flex flex-wrap items-end gap-2">
+              <div className="min-w-52 flex-1">
+                <Label>Buscar {titulo.toLowerCase()}</Label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40" />
+                  <Input
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    placeholder={
+                      aba === "especialidades"
+                        ? "Ex: radiologia, 225320…"
+                        : aba === "procedimentos"
+                          ? "Ex: mamografia, 0205020186, MAMO…"
+                          : "Ex: ultrassonografia…"
+                    }
+                    className="pl-10"
+                  />
+                </div>
+              </div>
+              <Button type="submit"><Search className="h-4 w-4" /> Buscar</Button>
+              <button
+                type="button"
+                onClick={() => { setQ(""); carregar(1, aba, "").catch(() => {}); }}
+                className="rounded-xl px-4 py-2.5 text-sm font-semibold text-sus-900 hover:bg-sus-900/5"
+              >
+                Limpar
+              </button>
+            </form>
+            <p className="mt-2 text-xs text-ink/50">
+              Tipos e CBOs alimentam os filtros da Fila de exames com contagem. Procedimentos alimentam o autocomplete do pedido.
+            </p>
+          </Card>
+
+          <Card className="overflow-hidden">
+            {aba === "tipos" && (
+              <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead><tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
+                  <th className="px-4 py-3">ID e-SUS</th><th className="px-4 py-3">Tipo de fila</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Ações</th>
+                </tr></thead>
+                <tbody>
+                  {tipos.map((t) => (
+                    <tr key={t.id} className="border-b border-sus-900/5 last:border-0">
+                      <td className="px-4 py-3 font-mono text-xs">{t.codigo || "—"}</td>
+                      <td className="px-4 py-3 font-semibold">{t.nome}</td>
+                      <td className="px-4 py-3">
+                        <Badge variant={t.ativo ? "success" : "outline"}>
+                          {t.ativo ? <ShieldCheck className="h-3 w-3" /> : <ShieldOff className="h-3 w-3" />}
+                          {t.ativo ? "Ativo" : "Inativo"}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3"><div className="flex justify-end gap-1">
+                        <button onClick={() => abrirModal(t.id)} className="rounded-lg p-2 text-sus-800 hover:bg-sus-100" title="Editar"><Pencil className="h-4 w-4" /></button>
+                        <button onClick={() => excluir(t.id)} className="rounded-lg p-2 text-red-600 hover:bg-red-50" title="Excluir"><Trash2 className="h-4 w-4" /></button>
+                      </div></td>
+                    </tr>
+                  ))}
+                  {tipos.length === 0 && <tr><td colSpan={4} className="px-4 py-8 text-center text-ink/45">Nenhum tipo cadastrado.</td></tr>}
+                </tbody>
+              </table>
+              </div>
+            )}
+            {aba === "procedimentos" && (
+              <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead><tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
+                  <th className="px-4 py-3">Código</th><th className="px-4 py-3">Procedimento</th><th className="px-4 py-3">Tipo / CBO</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Ações</th>
+                </tr></thead>
+                <tbody>
+                  {procs.map((t) => (
+                    <tr key={t.id} className="border-b border-sus-900/5 last:border-0">
+                      <td className="px-4 py-3 font-mono text-xs">{t.codigo}{t.codigo_curto ? <span className="block text-teal">· {t.codigo_curto}</span> : null}</td>
+                      <td className="px-4 py-3 font-semibold">{t.nome}</td>
+                      <td className="px-4 py-3 text-xs text-ink/60">
+                        {t.tipo_fila || "—"}
+                        {t.codigo_especialidade ? <span className="block">CBO {t.codigo_especialidade}{t.nome_especialidade ? ` · ${t.nome_especialidade}` : ""}</span> : null}
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge variant={t.ativo ? "success" : "outline"}>
+                          {t.ativo ? <ShieldCheck className="h-3 w-3" /> : <ShieldOff className="h-3 w-3" />}
+                          {t.ativo ? "Ativo" : "Inativo"}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3"><div className="flex justify-end gap-1">
+                        <button onClick={() => abrirModal(t.id)} className="rounded-lg p-2 text-sus-800 hover:bg-sus-100" title="Editar"><Pencil className="h-4 w-4" /></button>
+                        <button onClick={() => excluir(t.id)} className="rounded-lg p-2 text-red-600 hover:bg-red-50" title="Excluir"><Trash2 className="h-4 w-4" /></button>
+                      </div></td>
+                    </tr>
+                  ))}
+                  {procs.length === 0 && <tr><td colSpan={5} className="px-4 py-8 text-center text-ink/45">Nenhum procedimento cadastrado.</td></tr>}
+                </tbody>
+              </table>
+              </div>
+            )}
+            {aba === "especialidades" && (
+              <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead><tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
+                  <th className="px-4 py-3">CBO</th><th className="px-4 py-3">Especialidade</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Ações</th>
+                </tr></thead>
+                <tbody>
+                  {esps.map((t) => (
+                    <tr key={t.id} className="border-b border-sus-900/5 last:border-0">
+                      <td className="px-4 py-3 font-mono text-xs">
+                        {t.codigo_cbo ? (
+                          <span className="font-bold">{t.codigo_cbo}</span>
+                        ) : (
+                          <span className="rounded bg-sus-900/10 px-1.5 py-0.5 font-sans text-[11px] font-normal text-ink/50">
+                            Geral / Sem CBO
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 font-semibold">{t.nome}</td>
+                      <td className="px-4 py-3">
+                        <Badge variant={t.ativo ? "success" : "outline"}>
+                          {t.ativo ? <ShieldCheck className="h-3 w-3" /> : <ShieldOff className="h-3 w-3" />}
+                          {t.ativo ? "Ativo" : "Inativo"}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3"><div className="flex justify-end gap-1">
+                        <button onClick={() => abrirModal(t.id)} className="rounded-lg p-2 text-sus-800 hover:bg-sus-100" title="Editar"><Pencil className="h-4 w-4" /></button>
+                        <button onClick={() => excluir(t.id)} className="rounded-lg p-2 text-red-600 hover:bg-red-50" title="Excluir"><Trash2 className="h-4 w-4" /></button>
+                      </div></td>
+                    </tr>
+                  ))}
+                  {esps.length === 0 && <tr><td colSpan={4} className="px-4 py-8 text-center text-ink/45">Nenhuma especialidade cadastrada.</td></tr>}
+                </tbody>
+              </table>
+              </div>
+            )}
+            <Paginacao
+              page={page}
+              pages={pages}
+              total={total}
+              pageSize={pageSize}
+              onPageSize={(sz) => {
+                setPageSize(sz);
+                carregar(1, aba, q, sz).catch(() => setErro("Falha ao carregar catálogo."));
+              }}
+              onPage={(p) => carregar(p, aba, q, pageSize).catch(() => setErro("Falha ao carregar catálogo."))}
+            />
+          </Card>
+        </>
+      )}
 
       {modal && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" {...modalBackdrop}>

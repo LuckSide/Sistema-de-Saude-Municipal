@@ -65,6 +65,7 @@ import {
 } from "../../services/api";
 import { Button, Card, Input, Label } from "../../components/ui/primitives";
 import { useUndo } from "../../components/UndoToast";
+import { useConfirm } from "../../components/ConfirmDialog";
 import { rotuloPrioridade } from "../../utils/rotulos";
 import { retornoAutomatico, useDisponibilidade } from "../../hooks/useDisponibilidade";
 
@@ -161,6 +162,7 @@ function CampoMotorista({
 }
 
 export default function QuadroViagens() {
+  const { confirmar } = useConfirm();
   const { can, retroativoBloqueado, podeEditarPassadas } = useAuth();
   const { notificarUndo } = useUndo();
   const RETRO_MSG = "Seu perfil não possui permissão para realizar lançamentos com datas retroativas.";
@@ -254,8 +256,8 @@ export default function QuadroViagens() {
     dataCriacao, novoVeiculo.hora, novoVeiculo.retorno, null, alocandoEm !== null,
   );
   const veiculosLivresCriacao = dispCriacao
-    ? dispCriacao.veiculos.filter((f) => f.disponivel)
-    : frota;
+    ? dispCriacao.veiculos.filter((f) => f.disponivel && f.status !== "manutencao")
+    : frota.filter((f) => f.status === "disponivel");
   const motoristasLivresCriacao = dispCriacao
     ? motoristas.filter((m) => dispCriacao.motoristas.find((d) => d.id === m.id)?.disponivel !== false)
     : motoristas;
@@ -274,8 +276,8 @@ export default function QuadroViagens() {
     trocaVeiculo?.hora_retorno ?? "", trocaVeiculo?.id ?? null, trocaVeiculo !== null,
   );
   const veiculosLivresTroca = dispTroca
-    ? dispTroca.veiculos.filter((f) => f.disponivel || String(f.id) === String(trocaVeiculo?.veiculo_id))
-    : frota;
+    ? dispTroca.veiculos.filter((f) => (String(f.id) === String(trocaVeiculo?.veiculo_id)) || (f.disponivel && f.status !== "manutencao"))
+    : frota.filter((f) => (String(f.id) === String(trocaVeiculo?.veiculo_id)) || f.status === "disponivel");
   const motoristasLivresTroca = dispTroca
     ? motoristas.filter((m) => dispTroca.motoristas.find((d) => d.id === m.id)?.disponivel !== false
       || String(m.id) === String(trocaMotoristaId))
@@ -641,7 +643,13 @@ export default function QuadroViagens() {
   }
 
   async function faturar(v: DiaViagem) {
-    if (!confirm(`Gerar faturamento de deslocamento (${v.destino}) com ${v.passageiros.length} passageiro(s)?`)) return;
+    const ok = await confirmar({
+      titulo: `Gerar faturamento (${v.destino})`,
+      descricao: `Deseja gerar o faturamento de deslocamento para ${v.destino} com ${v.passageiros.length} passageiro(s)?`,
+      textoConfirmar: "Gerar Faturamento",
+      variante: "primary",
+    });
+    if (!ok) return;
     setErro("");
     try {
       const r = await tfdFaturarDeslocamento(v.id);
@@ -1754,7 +1762,25 @@ export default function QuadroViagens() {
                 {podeEditar && (
                   <div className="mt-1 flex gap-1">
                     <button onClick={(ev) => { ev.stopPropagation(); abrirFilaModal(f); }} className="rounded-md p-1 text-sus-800 hover:bg-sus-100" title="Editar"><Pencil className="h-3 w-3" /></button>
-                    <button onClick={async (ev) => { ev.stopPropagation(); if (confirm("Excluir da fila de viagem?")) { await tfdExcluirFilaViagem(f.id); recarregar(); } }} className="rounded-md p-1 text-red-600 hover:bg-red-50" title="Excluir"><Trash2 className="h-3 w-3" /></button>
+                    <button
+                      onClick={async (ev) => {
+                        ev.stopPropagation();
+                        const ok = await confirmar({
+                          titulo: "Excluir da fila de viagem",
+                          descricao: `Deseja realmente remover a solicitação de ${f.paciente_nome} da fila de viagem para ${f.destino}?`,
+                          textoConfirmar: "Sim, Excluir",
+                          variante: "danger",
+                        });
+                        if (ok) {
+                          await tfdExcluirFilaViagem(f.id);
+                          recarregar();
+                        }
+                      }}
+                      className="rounded-md p-1 text-red-600 hover:bg-red-50"
+                      title="Excluir"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
                   </div>
                 )}
               </div>

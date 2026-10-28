@@ -351,8 +351,8 @@ def validar_cbo_procedimento(
             "cbos_autorizados": [],
         }
 
-    # Lista formatada dos primeiros CBOs autorizados
-    cbos_formatados = [{"cbo": c.cbo, "descricao": c.descricao} for c in cbos_db[:10]]
+    # Lista formatada de todos os CBOs autorizados
+    cbos_formatados = [{"cbo": c.cbo, "descricao": c.descricao} for c in cbos_db]
 
     # Se profissional tem o CBO exato
     if cbo_limpo and cbo_limpo in cbos_permitidos:
@@ -422,6 +422,101 @@ def validar_cbo_procedimento(
     }
 
 
+ESPECIALIDADES_PADRAO = [
+    {"codigo_cbo": "225120", "nome": "Cardiologia"},
+    {"codigo_cbo": "225225", "nome": "Cirurgia Geral"},
+    {"codigo_cbo": "225125", "nome": "Clínica Médica"},
+    {"codigo_cbo": "225135", "nome": "Dermatologia"},
+    {"codigo_cbo": "225155", "nome": "Endocrinologia e Metabologia"},
+    {"codigo_cbo": "225165", "nome": "Gastroenterologia"},
+    {"codigo_cbo": "225250", "nome": "Ginecologia e Obstetrícia"},
+    {"codigo_cbo": "225270", "nome": "Ortopedia e Traumatologia"},
+    {"codigo_cbo": "225275", "nome": "Otorrinolaringologia"},
+    {"codigo_cbo": "225124", "nome": "Pediatria"},
+    {"codigo_cbo": "225112", "nome": "Neurologia"},
+    {"codigo_cbo": "225260", "nome": "Neurocirurgia"},
+    {"codigo_cbo": "225265", "nome": "Oftalmologia"},
+    {"codigo_cbo": "225180", "nome": "Pneumologia"},
+    {"codigo_cbo": "225133", "nome": "Psiquiatria"},
+    {"codigo_cbo": "225320", "nome": "Radiologia e Diagnóstico por Imagem"},
+    {"codigo_cbo": "225195", "nome": "Reumatologia"},
+    {"codigo_cbo": "225285", "nome": "Urologia"},
+    {"codigo_cbo": "225210", "nome": "Angiologia e Cirurgia Vascular"},
+    {"codigo_cbo": "225109", "nome": "Nefrologia"},
+    {"codigo_cbo": "225181", "nome": "Geriatria"},
+    {"codigo_cbo": "225103", "nome": "Infectologia"},
+    {"codigo_cbo": "225122", "nome": "Oncologia Clínica"},
+    {"codigo_cbo": "225185", "nome": "Hematologia e Hemoterapia"},
+    {"codigo_cbo": "225142", "nome": "Medicina de Família e Comunidade"},
+    {"codigo_cbo": "225160", "nome": "Fisiatria e Medicina Física"},
+    {"codigo_cbo": "225271", "nome": "Mastologia"},
+    {"codigo_cbo": "225310", "nome": "Patologia Clínica / Medicina Laboratorial"},
+    {"codigo_cbo": "225305", "nome": "Anatomia Patológica e Citopatologia"},
+    {"codigo_cbo": "225315", "nome": "Medicina Nuclear"},
+    {"codigo_cbo": "225230", "nome": "Cirurgia Plástica"},
+    {"codigo_cbo": "225240", "nome": "Cirurgia Pediátrica"},
+    {"codigo_cbo": "225215", "nome": "Cirurgia Cardiovascular"},
+    {"codigo_cbo": "225235", "nome": "Coloproctologia"},
+    {"codigo_cbo": "225110", "nome": "Alergia e Imunologia"},
+    {"codigo_cbo": "225151", "nome": "Anestesiologia"},
+    {"codigo_cbo": "225140", "nome": "Nutrologia"},
+    {"codigo_cbo": "225226", "nome": "Pequena Cirurgia"},
+]
+
+MAPA_TIPO_ESPECIALIDADE: dict[str, tuple[str, str]] = {
+    "ULTRASSONOGRAFIA": ("Ultrassonografia / Radiologia", "225320"),
+    "TOMOGRAFIA": ("Radiologia e Diagnóstico por Imagem", "225320"),
+    "RESSONÂNCIA MAGNÉTICA": ("Radiologia e Diagnóstico por Imagem", "225320"),
+    "EXAMES CARDIOLOGICOS": ("Cardiologia", "225120"),
+    "EXAMES NEUROLOGICOS": ("Neurologia", "225112"),
+    "EXAMES OTORRINOLARINGOLOGIA": ("Otorrinolaringologia", "225275"),
+    "EXAMES UROLOGICOS": ("Urologia", "225285"),
+    "EXAMES GASTROENTEROLOGIA": ("Gastroenterologia", "225165"),
+    "PROCEDIMENTOS OFTALMOLOGICOS": ("Oftalmologia", "225265"),
+    "CIRURGIAS": ("Cirurgia Geral", "225225"),
+    "AVALIAÇÃO CIRURGIA": ("Cirurgia Geral", "225225"),
+    "PEQUENA CIRURGIA": ("Cirurgia Geral", "225225"),
+    "MAMOGRAFIA E MASTOLOGIA": ("Mastologia", "225271"),
+    "DENSITOMETRIA OSSEA": ("Radiologia e Diagnóstico por Imagem", "225320"),
+    "ESPIROMETRIA": ("Pneumologia", "225180"),
+    "BIOPSIA": ("Anatomia Patológica", "225305"),
+    "CINTILOGRAFIA": ("Medicina Nuclear", "225315"),
+    "EXAME RADIOLOGICO CONTRASTADO E TFD": ("Radiologia e Diagnóstico por Imagem", "225320"),
+    "EX. LAB. GINECOLOGIA": ("Patologia Clínica / Medicina Laboratorial", "225310"),
+    "EX. LAB. HIPERDIA": ("Patologia Clínica / Medicina Laboratorial", "225310"),
+    "EX. LAB. PEDIATRIA": ("Patologia Clínica / Medicina Laboratorial", "225310"),
+    "EX. LAB. PRÉ-NATAL": ("Patologia Clínica / Medicina Laboratorial", "225310"),
+    "EX. LAB. PSF ROTINA": ("Patologia Clínica / Medicina Laboratorial", "225310"),
+    "EX. LAB. SECRETARIA": ("Patologia Clínica / Medicina Laboratorial", "225310"),
+    "CONSULTAS ESPECIALIZADAS": ("Clínica Médica / Especializada", "225125"),
+    "RETORNO CONSULTA ESPECIALIZADA": ("Clínica Médica / Especializada", "225125"),
+}
+
+
+def seed_especialidades(db: Session) -> int:
+    """Garante que a tabela tfd_especialidades contenha todas as especialidades médicas padrão."""
+    from app.models.tfd import Especialidade
+
+    existentes = {e.nome.strip().upper(): e for e in db.exec(select(Especialidade)).all()}
+    cbos_existentes = {e.codigo_cbo.strip() for e in existentes.values() if e.codigo_cbo}
+
+    inseridos = 0
+    for esp in ESPECIALIDADES_PADRAO:
+        nome_norm = esp["nome"].strip().upper()
+        if nome_norm not in existentes and esp["codigo_cbo"] not in cbos_existentes:
+            db.add(Especialidade(
+                nome=esp["nome"],
+                codigo_cbo=esp["codigo_cbo"],
+                ativo=True,
+            ))
+            cbos_existentes.add(esp["codigo_cbo"])
+            inseridos += 1
+
+    if inseridos:
+        db.commit()
+    return inseridos
+
+
 def seed_vivver_procedimentos(db: Session, caminho_csv: str | None = None) -> dict:
     """
     Importa procedimentos categorizados a partir das exportações do sistema Vivver
@@ -430,6 +525,12 @@ def seed_vivver_procedimentos(db: Session, caminho_csv: str | None = None) -> di
     import os
     import csv
     from app.models.tfd import ProcedimentoCatalogo, TipoFila
+
+    # Garante primeiro que as especialidades médicas estejam na base
+    try:
+        seed_especialidades(db)
+    except Exception:
+        pass
 
     caminhos_tentativas = [
         caminho_csv,
@@ -475,17 +576,32 @@ def seed_vivver_procedimentos(db: Session, caminho_csv: str | None = None) -> di
 
             chave = (cod, tipo_nome)
             if chave not in existentes:
+                esp_par = MAPA_TIPO_ESPECIALIDADE.get(tipo_nome, ("", ""))
                 proc = ProcedimentoCatalogo(
                     codigo=cod,
                     nome=nome[:150],
                     tipo_fila=tipo_nome[:80],
+                    nome_especialidade=esp_par[0][:120],
+                    codigo_especialidade=esp_par[1][:10],
                     ativo=True,
                 )
                 db.add(proc)
                 existentes.add(chave)
                 inseridos += 1
 
-    if inseridos > 0:
+    # Atualiza procedimentos que existiam sem especialidade preenchida
+    atualizados_esp = 0
+    todos_procs = db.exec(select(ProcedimentoCatalogo)).all()
+    for p in todos_procs:
+        tf = (p.tipo_fila or "").strip().upper()
+        if (not p.nome_especialidade or not p.codigo_especialidade) and tf in MAPA_TIPO_ESPECIALIDADE:
+            esp_nome, esp_cbo = MAPA_TIPO_ESPECIALIDADE[tf]
+            p.nome_especialidade = esp_nome
+            p.codigo_especialidade = esp_cbo
+            db.add(p)
+            atualizados_esp += 1
+
+    if inseridos > 0 or atualizados_esp > 0:
         db.commit()
 
-    return {"ok": True, "arquivo": arquivo_encontrado, "inseridos": inseridos}
+    return {"ok": True, "arquivo": arquivo_encontrado, "inseridos": inseridos, "especialidades_vinculadas": atualizados_esp}

@@ -19,6 +19,7 @@ import {
   Sparkles,
   Undo2,
   UserCheck,
+  UserMinus,
   UserX,
   X,
   XCircle,
@@ -34,6 +35,8 @@ import {
   tfdExames,
   tfdRecepcionarExame,
   tfdRecepcionarLote,
+  tfdBuscarCids,
+  type SigtapCidItem,
   type Exame,
   type Medico,
   type UnidadeSaude,
@@ -75,6 +78,7 @@ const COR_STATUS: Record<string, string> = {
   realizado: "bg-emerald-100 text-emerald-800 border-emerald-300",
   faltou: "bg-amber-100 text-amber-800 border-amber-300",
   cancelado: "bg-red-100 text-red-700 border-red-200",
+  desistiu: "bg-purple-100 text-purple-800 border-purple-300",
 };
 
 const ROTULO_STATUS: Record<string, string> = {
@@ -83,6 +87,7 @@ const ROTULO_STATUS: Record<string, string> = {
   realizado: "Realizado",
   faltou: "Faltou",
   cancelado: "Cancelado",
+  desistiu: "Desistência",
 };
 
 export default function Agendamentos() {
@@ -110,7 +115,7 @@ export default function Agendamentos() {
   // Seleção Múltipla para Recepção e Desfecho em Lote
   const [selMulti, setSelMulti] = useState<number[]>([]);
   const [recepcionandoLote, setRecepcionandoLote] = useState(false);
-  const [modalLoteStatus, setModalLoteStatus] = useState<"realizado" | "faltou" | "cancelado" | null>(null);
+  const [modalLoteStatus, setModalLoteStatus] = useState<"realizado" | "faltou" | "cancelado" | "desistiu" | null>(null);
   const [resultadoLote, setResultadoLote] = useState("");
   const [salvandoLote, setSalvandoLote] = useState(false);
 
@@ -122,6 +127,15 @@ export default function Agendamentos() {
   const [erroModal, setErroModal] = useState("");
   const [modalLeituraQR, setModalLeituraQR] = useState(false);
   const [comprovanteExameId, setComprovanteExameId] = useState<number | null>(null);
+
+  // Validação de CID Individual e em Lote (Requisito 1)
+  const [cidIndividual, setCidIndividual] = useState<{ codigo: string; descricao: string } | null>(null);
+  const [buscaCidIndiv, setBuscaCidIndiv] = useState("");
+  const [cidsSugestoes, setCidsSugestoes] = useState<SigtapCidItem[]>([]);
+  const [modalCidLote, setModalCidLote] = useState(false);
+  const [cidsLotePreenchidos, setCidsLotePreenchidos] = useState<Record<number, { codigo: string; descricao: string }>>({});
+  const [buscaCidLotePorItem, setBuscaCidLotePorItem] = useState<Record<number, string>>({});
+  const [sugestoesLotePorItem, setSugestoesLotePorItem] = useState<Record<number, SigtapCidItem[]>>({});
 
   // Modal de Marcação Direta da Fila de Espera
   const [modalAgendarFila, setModalAgendarFila] = useState(false);
@@ -266,33 +280,86 @@ export default function Agendamentos() {
     }
   }
 
-  // Ação de Recepção em Lote (Requisito 5)
-  async function executarRecepcaoLote() {
+  useEffect(() => {
+    if (!buscaCidIndiv || buscaCidIndiv.trim().length < 1) {
+      setCidsSugestoes([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      tfdBuscarCids(buscaCidIndiv.trim())
+        .then(setCidsSugestoes)
+        .catch(() => setCidsSugestoes([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [buscaCidIndiv]);
+
+  function buscarCidParaItem(id: number, termo: string) {
+    setBuscaCidLotePorItem((prev) => ({ ...prev, [id]: termo }));
+    if (!termo || termo.trim().length < 1) {
+      setSugestoesLotePorItem((prev) => ({ ...prev, [id]: [] }));
+      return;
+    }
+    tfdBuscarCids(termo.trim())
+      .then((res) => {
+        setSugestoesLotePorItem((prev) => ({ ...prev, [id]: res }));
+      })
+      .catch(() => {
+        setSugestoesLotePorItem((prev) => ({ ...prev, [id]: [] }));
+      });
+  }
+
+  // Ação de Recepção em Lote com Validação de CID (Requisito 1)
+  function iniciarRecepcaoLote() {
+    if (selMulti.length === 0) return;
+    const selecionados = lista.filter((d) => selMulti.includes(d.id));
+    const semCid = selecionados.filter((d) => !d.cid_codigo);
+    if (semCid.length > 0) {
+      setCidsLotePreenchidos({});
+      setBuscaCidLotePorItem({});
+      setSugestoesLotePorItem({});
+      setModalCidLote(true);
+      return;
+    }
+    executarRecepcaoLote();
+  }
+
+  async function executarRecepcaoLote(cidsExtras?: Record<string, string>) {
     if (selMulti.length === 0) return;
     setRecepcionandoLote(true);
     setErro("");
     setOk("");
     try {
-      const res = await tfdRecepcionarLote(selMulti);
+      const res = await tfdRecepcionarLote(selMulti, undefined, cidsExtras);
       setOk(`${res.atualizados} paciente(s) recepcionado(s) com sucesso na unidade!`);
       setSelMulti([]);
+      setModalCidLote(false);
       await carregar();
-    } catch {
-      setErro("Falha ao recepcionar pacientes em lote. Verifique as permissões.");
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ??
+        "Falha ao recepcionar pacientes em lote. Verifique as permissões.";
+      setErro(msg);
     } finally {
       setRecepcionandoLote(false);
     }
   }
 
   // Ação de Status / Desfecho em Lote
-  async function executarStatusLote(status: "realizado" | "faltou" | "cancelado") {
+  async function executarStatusLote(status: "realizado" | "faltou" | "cancelado" | "desistiu") {
     if (selMulti.length === 0) return;
     setSalvandoLote(true);
     setErro("");
     setOk("");
     try {
       const res = await tfdAtendimentoStatusLote(selMulti, status, resultadoLote);
-      const rotulo = status === "realizado" ? "concluído(s) como realizado" : status === "faltou" ? "marcado(s) como falta" : "cancelado(s)";
+      const rotulo =
+        status === "realizado"
+          ? "concluído(s) como realizado"
+          : status === "faltou"
+            ? "marcado(s) como falta"
+            : status === "desistiu"
+              ? "registrado(s) como desistência"
+              : "cancelado(s)";
       setOk(`${res.atualizados} atendimento(s) ${rotulo} com sucesso!`);
       setSelMulti([]);
       setModalLoteStatus(null);
@@ -311,14 +378,22 @@ export default function Agendamentos() {
     setResultado(e.resultado ?? "");
     setMostraResultado(false);
     setErroModal("");
+    setCidIndividual(e.cid_codigo ? { codigo: e.cid_codigo, descricao: e.cid_descricao || "" } : null);
+    setBuscaCidIndiv("");
+    setCidsSugestoes([]);
   }
 
   async function acaoRecepcionar() {
     if (!sel) return;
+    const cidFinal = cidIndividual?.codigo || sel.cid_codigo;
+    if (!cidFinal) {
+      setErroModal("É obrigatório selecionar ou preencher o CID-10 para recepcionar este paciente.");
+      return;
+    }
     setAgindo(true);
     setErroModal("");
     try {
-      await tfdRecepcionarExame(sel.id);
+      await tfdRecepcionarExame(sel.id, cidIndividual?.codigo, cidIndividual?.descricao);
       setSel(null);
       setOk(`Recepção confirmada para ${sel.paciente_nome}.`);
       await carregar();
@@ -347,7 +422,7 @@ export default function Agendamentos() {
     }
   }
 
-  async function acaoStatus(status: "faltou" | "realizado" | "cancelado") {
+  async function acaoStatus(status: "faltou" | "realizado" | "cancelado" | "desistiu") {
     if (!sel) return;
     const alvo = sel;
     const statusAntes = alvo.status;
@@ -361,6 +436,8 @@ export default function Agendamentos() {
           ? `${alvo.paciente_nome} marcado como faltou.`
           : status === "realizado"
           ? `Atendimento realizado registrado p/ ${alvo.paciente_nome}.`
+          : status === "desistiu"
+          ? `Desistência registrada p/ ${alvo.paciente_nome}.`
           : `Agendamento de ${alvo.paciente_nome} cancelado.`,
       );
       await carregar();
@@ -818,7 +895,7 @@ export default function Agendamentos() {
 
               <div className="flex flex-wrap items-center gap-2">
                 <Button
-                  onClick={executarRecepcaoLote}
+                  onClick={iniciarRecepcaoLote}
                   disabled={recepcionandoLote}
                   className="bg-teal text-white hover:brightness-110 text-xs font-bold shadow-xs py-1.5"
                 >
@@ -826,21 +903,29 @@ export default function Agendamentos() {
                   {recepcionandoLote ? "Recepcionando…" : "Recepcionar em Lote"}
                 </Button>
 
-                <Button
-                  variant="outline"
+                <button
+                  type="button"
                   onClick={() => setModalLoteStatus("realizado")}
-                  className="border-white/30 text-white hover:bg-white/15 text-xs font-bold py-1.5"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 transition"
                 >
-                  <CheckCircle2 className="h-4 w-4 text-emerald-300" /> Marcar Realizado
-                </Button>
+                  <CheckCircle2 className="h-4 w-4" /> Marcar Realizado
+                </button>
 
-                <Button
-                  variant="outline"
+                <button
+                  type="button"
                   onClick={() => setModalLoteStatus("faltou")}
-                  className="border-white/30 text-white hover:bg-white/15 text-xs font-bold py-1.5"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-amber-700 transition"
                 >
-                  <UserX className="h-4 w-4 text-amber-300" /> Marcar Faltou
-                </Button>
+                  <UserX className="h-4 w-4" /> Marcar Faltou
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setModalLoteStatus("desistiu")}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-purple-700 transition"
+                >
+                  <UserMinus className="h-4 w-4" /> Desistência
+                </button>
               </div>
             </div>
           )}
@@ -1252,6 +1337,67 @@ export default function Agendamentos() {
               )}
             </div>
 
+            {/* Bloco de Validação de CID (Requisito 1) */}
+            <div className="mb-4 rounded-xl border border-sus-900/10 bg-sand/30 p-3">
+              <div className="flex items-center justify-between mb-1">
+                <Label className="text-xs font-bold text-sus-950 flex items-center gap-1.5 !mb-0">
+                  <ClipboardList className="h-3.5 w-3.5 text-teal" /> Diagnóstico / CID-10 *
+                </Label>
+                {cidIndividual && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCidIndividual(null);
+                      setBuscaCidIndiv("");
+                    }}
+                    className="text-[10px] text-red-600 hover:underline"
+                  >
+                    Alterar CID
+                  </button>
+                )}
+              </div>
+              {cidIndividual ? (
+                <div className="mt-1 flex items-center gap-2 rounded-lg bg-teal/10 px-2.5 py-1.5 text-xs text-teal">
+                  <span className="font-mono font-bold">{cidIndividual.codigo}</span>
+                  <span className="truncate text-ink/80">{cidIndividual.descricao}</span>
+                </div>
+              ) : (
+                <div className="relative mt-1">
+                  <p className="mb-1 text-[11px] font-medium text-amber-800">
+                    ⚠️ Preenchimento de CID-10 obrigatório para recepcionar este paciente.
+                  </p>
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/40" />
+                    <Input
+                      value={buscaCidIndiv}
+                      onChange={(e) => setBuscaCidIndiv(e.target.value)}
+                      placeholder="Pesquise por código ou nome (ex: I10, diabetes)…"
+                      className="pl-8 text-xs !h-8 bg-white"
+                    />
+                  </div>
+                  {cidsSugestoes.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-40 overflow-y-auto rounded-xl border border-sus-900/15 bg-white shadow-lg">
+                      {cidsSugestoes.map((c) => (
+                        <button
+                          key={c.codigo}
+                          type="button"
+                          onClick={() => {
+                            setCidIndividual({ codigo: c.codigo, descricao: c.descricao });
+                            setBuscaCidIndiv("");
+                            setCidsSugestoes([]);
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-teal/10 transition"
+                        >
+                          <span className="font-mono font-bold text-teal">{c.codigo}</span>
+                          <span className="truncate text-ink/80">{c.descricao}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="mb-4 space-y-2">
               <BotaoWhatsApp exameId={sel.id} exame={sel} tipo="agendamento" variante="completo" />
               <Button
@@ -1328,6 +1474,15 @@ export default function Agendamentos() {
 
               <button
                 type="button"
+                onClick={() => acaoStatus("desistiu")}
+                disabled={agindo || (sel.status !== "agendado" && sel.status !== "recepcionado")}
+                className="inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-xl bg-purple-100 px-3 py-1.5 text-xs font-bold text-purple-800 hover:bg-purple-200 disabled:opacity-40 transition"
+              >
+                <UserMinus className="h-4 w-4" /> Desistência
+              </button>
+
+              <button
+                type="button"
                 onClick={() => acaoStatus("cancelado")}
                 disabled={agindo || (sel.status !== "agendado" && sel.status !== "recepcionado")}
                 className="inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-xl bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-40 transition"
@@ -1340,7 +1495,7 @@ export default function Agendamentos() {
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL 2: CONFIRMAÇÃO DE DESFECHO EM LOTE (REALIZADO / FALTOU)              */}
+      {/* MODAL 2: CONFIRMAÇÃO DE DESFECHO EM LOTE (REALIZADO / FALTOU / DESISTÊNCIA) */}
       {/* ========================================================================= */}
       {modalLoteStatus && (
         <div
@@ -1355,7 +1510,11 @@ export default function Agendamentos() {
               <h3 className="font-display text-base font-bold text-sus-950">
                 {modalLoteStatus === "realizado"
                   ? `Marcar ${selMulti.length} paciente(s) como Realizado`
-                  : `Marcar ${selMulti.length} paciente(s) como Faltou`}
+                  : modalLoteStatus === "faltou"
+                    ? `Marcar ${selMulti.length} paciente(s) como Faltou`
+                    : modalLoteStatus === "desistiu"
+                      ? `Registrar Desistência para ${selMulti.length} paciente(s)`
+                      : `Cancelar ${selMulti.length} agendamento(s)`}
               </h3>
               <button
                 type="button"
@@ -1582,6 +1741,142 @@ export default function Agendamentos() {
           exameId={comprovanteExameId}
           onClose={() => setComprovanteExameId(null)}
         />
+      )}
+
+      {/* Modal de Validação de CID para Recepção em Lote (Requisito 1) */}
+      {modalCidLote && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-sus-950/60 p-4"
+          onClick={() => setModalCidLote(false)}
+        >
+          <div
+            className="rise max-h-[90vh] w-full max-w-full sm:max-w-xl md:max-w-2xl lg:max-w-3xl overflow-auto rounded-2xl bg-white p-6 shadow-card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between border-b border-sus-900/10 pb-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-sus-950">
+                  Preenchimento Obrigatório de CID para Recepção em Lote
+                </h3>
+                <p className="mt-0.5 text-xs text-ink/65">
+                  Os seguintes atendimentos selecionados ainda não possuem CID-10 informado. É necessário selecionar o CID de cada um para confirmar a recepção.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalCidLote(false)}
+                className="rounded-lg p-1.5 text-ink/50 hover:bg-sand"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4 max-h-[55vh] overflow-y-auto pr-1">
+              {lista
+                .filter((d) => selMulti.includes(d.id) && !d.cid_codigo)
+                .map((it) => {
+                  const escolhido = cidsLotePreenchidos[it.id];
+                  const busca = buscaCidLotePorItem[it.id] ?? "";
+                  const sugestoes = sugestoesLotePorItem[it.id] ?? [];
+
+                  return (
+                    <div
+                      key={it.id}
+                      className="rounded-xl border border-sus-900/10 bg-sand/30 p-3 text-xs"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                        <span className="font-bold text-sus-950 text-sm">
+                          {it.paciente_nome}
+                        </span>
+                        <span className="text-ink/60">{it.exame}</span>
+                      </div>
+
+                      {escolhido ? (
+                        <div className="flex items-center justify-between rounded-lg bg-teal/10 px-3 py-1.5 text-teal font-semibold">
+                          <span className="font-mono">{escolhido.codigo} — {escolhido.descricao}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCidsLotePreenchidos((prev) => {
+                                const next = { ...prev };
+                                delete next[it.id];
+                                return next;
+                              });
+                            }}
+                            className="text-red-600 hover:underline text-[11px]"
+                          >
+                            Trocar
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="relative">
+                          <div className="relative">
+                            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/40" />
+                            <Input
+                              value={busca}
+                              onChange={(e) => buscarCidParaItem(it.id, e.target.value)}
+                              placeholder="Digite o código ou nome do CID (ex: I10, diabetes)…"
+                              className="pl-8 text-xs !h-8 bg-white"
+                            />
+                          </div>
+                          {sugestoes.length > 0 && (
+                            <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-36 overflow-y-auto rounded-xl border border-sus-900/15 bg-white shadow-lg">
+                              {sugestoes.map((sug) => (
+                                <button
+                                  key={sug.codigo}
+                                  type="button"
+                                  onClick={() => {
+                                    setCidsLotePreenchidos((prev) => ({
+                                      ...prev,
+                                      [it.id]: { codigo: sug.codigo, descricao: sug.descricao },
+                                    }));
+                                    setBuscaCidLotePorItem((prev) => ({ ...prev, [it.id]: "" }));
+                                    setSugestoesLotePorItem((prev) => ({ ...prev, [it.id]: [] }));
+                                  }}
+                                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-teal/10 transition"
+                                >
+                                  <span className="font-mono font-bold text-teal">{sug.codigo}</span>
+                                  <span className="truncate text-ink/80">{sug.descricao}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+
+            <div className="mt-5 flex items-center justify-end gap-2 border-t border-sus-900/10 pt-3">
+              <Button
+                variant="outline"
+                onClick={() => setModalCidLote(false)}
+                className="text-xs"
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={() => {
+                  const mapaCids: Record<string, string> = {};
+                  Object.entries(cidsLotePreenchidos).forEach(([k, v]) => {
+                    mapaCids[k] = v.codigo;
+                  });
+                  executarRecepcaoLote(mapaCids);
+                }}
+                disabled={
+                  recepcionandoLote ||
+                  lista
+                    .filter((d) => selMulti.includes(d.id) && !d.cid_codigo)
+                    .some((it) => !cidsLotePreenchidos[it.id])
+                }
+                className="bg-teal text-white hover:brightness-110 text-xs font-bold"
+              >
+                {recepcionandoLote ? "Recepcionando…" : "Confirmar Recepção em Lote"}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

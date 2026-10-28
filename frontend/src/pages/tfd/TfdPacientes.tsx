@@ -16,10 +16,12 @@ import { Button, Card, Input, Label } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
 import PerfilPaciente from "../../components/PerfilPaciente";
+import { useConfirm } from "../../components/ConfirmDialog";
 
 const vazio = { nome: "", cpf: "", cns: "", nascimento: "", telefone: "", endereco: "", endereco_numero: "", complemento: "", bairro: "", cep: "", unidade_saude_id: "", equipe_esf: "", acs_nome: "", observacoes: "" };
 
 export default function TfdPacientes() {
+  const { confirmar } = useConfirm();
   const [lista, setLista] = useState<Paciente[]>([]);
   const [sp] = useSearchParams();
   const [q, setQ] = useState("");
@@ -33,10 +35,11 @@ export default function TfdPacientes() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
   const [unidades, setUnidades] = useState<UnidadeSaude[]>([]);
   const [perfilId, setPerfilId] = useState<number | null>(null);
 
-  async function carregar(p = 1) {
+  async function carregar(p = 1, limite = pageSize) {
     if (!q.trim()) {
       setLista([]);
       setTotal(0);
@@ -47,7 +50,7 @@ export default function TfdPacientes() {
     }
     setCarregando(true);
     try {
-      const r = await tfdPacientes(q.trim(), p, 100);
+      const r = await tfdPacientes(q.trim(), p, limite);
       setLista(pagData<Paciente>(r));
       const m = pagMeta(r);
       setTotal(m.total);
@@ -329,9 +332,19 @@ export default function TfdPacientes() {
                         </button>
                         <button
                           onClick={async () => {
-                            if (confirm(`Excluir paciente ${p.nome}?`)) {
-                              await tfdExcluirPaciente(p.id);
-                              carregar(page);
+                            const ok = await confirmar({
+                              titulo: `Excluir paciente ${p.nome}`,
+                              descricao: `Tem certeza que deseja excluir o cadastro do paciente ${p.nome}?`,
+                              textoConfirmar: "Sim, Excluir",
+                              variante: "danger",
+                            });
+                            if (ok) {
+                              try {
+                                await tfdExcluirPaciente(p.id);
+                                await carregar(page);
+                              } catch {
+                                setErro("Falha ao excluir paciente.");
+                              }
                             }
                           }}
                           className="rounded-lg p-2 text-red-600 hover:bg-red-50"
@@ -349,13 +362,23 @@ export default function TfdPacientes() {
         </table>
         </div>
         {q.trim() && lista.length > 0 && (
-          <Paginacao page={page} pages={pages} total={total} onPage={(p) => carregar(p).catch(() => setErro("Falha ao carregar."))} />
+          <Paginacao
+            page={page}
+            pages={pages}
+            total={total}
+            pageSize={pageSize}
+            onPageSize={(sz) => {
+              setPageSize(sz);
+              carregar(1, sz).catch(() => setErro("Falha ao carregar."));
+            }}
+            onPage={(p) => carregar(p, pageSize).catch(() => setErro("Falha ao carregar."))}
+          />
         )}
       </Card>
 
       {perfilId !== null && (
         <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-sus-950/50 p-4" onClick={() => setPerfilId(null)}>
-          <div className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-2xl bg-white p-6 shadow-card md:p-8" onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[90vh] w-full max-w-full sm:max-w-2xl md:max-w-4xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[94vw] overflow-auto rounded-2xl bg-white p-6 shadow-card md:p-8 transition-all duration-200" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
               <p className="font-display text-lg font-bold text-sus-950">Perfil do paciente</p>
               <button onClick={() => setPerfilId(null)} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar"><X className="h-4 w-4" /></button>

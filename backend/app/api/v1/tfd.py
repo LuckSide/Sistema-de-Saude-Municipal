@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, and_, case, desc, func, or_, select
 import urllib.parse
 
@@ -55,6 +56,7 @@ from app.schemas.tfd import (
     ValidarCboOut,
     VeiculoIn,
     VeiculoOut,
+    VeiculoManutencaoIn,
     ViagemIn,
     ViagemOut,
     ViagemFilaIn,
@@ -245,7 +247,7 @@ def _remover_acentos_str(texto: str) -> str:
 def listar_pacientes(
     q: str = "",
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
     request: Request = None,
     db: Session = Depends(get_db),
     ator: User | None = Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
@@ -483,7 +485,7 @@ def buscar_pacientes_pec(
 def listar_destinos(
     ativos: bool | None = None,
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
     _=Depends(need_any_perm("tfd_destinos", "tfd_viagens", "tfd_frota_gestao")),
 ):
@@ -508,6 +510,7 @@ def criar_destino(data: DestinoIn, db: Session = Depends(get_db), _=Depends(need
     return obj
 
 
+
 @router.put("/destinos/{did}", response_model=DestinoOut)
 def atualizar_destino(did: int, data: DestinoIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_destinos", "editar"))):
     obj = db.get(Destino, did)
@@ -523,6 +526,7 @@ def atualizar_destino(did: int, data: DestinoIn, db: Session = Depends(get_db), 
     db.commit()
     db.refresh(obj)
     return obj
+
 
 
 @router.delete("/destinos/{did}", status_code=204)
@@ -552,6 +556,7 @@ def criar_paciente(
     db.commit()
     db.refresh(obj)
     return obj
+
 
 
 @router.get("/pacientes/{pid}", response_model=PacienteOut)
@@ -591,6 +596,7 @@ def atualizar_paciente(
     db.commit()
     db.refresh(obj)
     return obj
+
 
 
 @router.get("/pacientes/{pid}/perfil", response_model=PacientePerfilOut)
@@ -813,12 +819,26 @@ def excluir_paciente(pid: int, db: Session = Depends(get_db), _=Depends(need_per
 # ---------- Veículos (frota) ----------
 @router.get("/veiculos", response_model=Pagina[VeiculoOut])
 def listar_veiculos(
+    q: str = "",
+    ativo: bool | None = None,
+    status: str | None = None,
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
-    _=Depends(need_perm("tfd_frota")),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "tfd_viagens", "usuarios")),
 ):
-    base = select(Veiculo).order_by(Veiculo.placa)
+    filtros = []
+    if q.strip():
+        like = f"%{q.strip().upper()}%"
+        filtros.append((Veiculo.placa.like(like)) | (Veiculo.modelo.ilike(f"%{q.strip()}%")))
+    if ativo is not None:
+        filtros.append(Veiculo.ativo == ativo)
+    if status:
+        filtros.append(Veiculo.status == status)
+    base = select(Veiculo)
+    if filtros:
+        base = base.where(*filtros)
+    base = base.order_by(Veiculo.placa)
     total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
     meta = paginar(total, page, limit)
     rows = db.exec(base.offset(meta["offset"]).limit(limit)).all()
@@ -827,7 +847,9 @@ def listar_veiculos(
 
 @router.post("/veiculos", response_model=VeiculoOut, status_code=201)
 def criar_veiculo(
-    data: VeiculoIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_frota", "criar"))
+    data: VeiculoIn,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "usuarios", acoes=("criar",))),
 ):
     placa = data.placa.strip().upper()
     if db.exec(select(Veiculo).where(Veiculo.placa == placa)).first():
@@ -839,13 +861,21 @@ def criar_veiculo(
     return obj
 
 
+
 @router.put("/veiculos/{vid}", response_model=VeiculoOut)
 def atualizar_veiculo(
-    vid: int, data: VeiculoIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_frota", "editar"))
+    vid: int,
+    data: VeiculoIn,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "usuarios", acoes=("editar",))),
 ):
     obj = db.get(Veiculo, vid)
     if not obj:
         raise HTTPException(404, "Veículo não encontrado")
+    placa = data.placa.strip().upper()
+    existente = db.exec(select(Veiculo).where(Veiculo.placa == placa, Veiculo.id != vid)).first()
+    if existente:
+        raise HTTPException(400, "Placa já cadastrada em outro veículo")
     for k, v in data.model_dump().items():
         setattr(obj, k, v.strip().upper() if k == "placa" else v)
     db.add(obj)
@@ -854,13 +884,59 @@ def atualizar_veiculo(
     return obj
 
 
-@router.delete("/veiculos/{vid}", status_code=204)
-def excluir_veiculo(vid: int, db: Session = Depends(get_db), _=Depends(need_perm("tfd_frota", "excluir"))):
+@router.post("/veiculos/{vid}/manutencao", response_model=VeiculoOut)
+def gerenciar_manutencao_veiculo(
+    vid: int,
+    data: VeiculoManutencaoIn,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "usuarios", acoes=("editar",))),
+):
     obj = db.get(Veiculo, vid)
     if not obj:
         raise HTTPException(404, "Veículo não encontrado")
-    db.delete(obj)
+    if data.em_manutencao:
+        obj.status = "manutencao"
+        obj.manutencao_motivo = (data.motivo or "").strip()
+        obj.manutencao_data_entrada = data.data_entrada
+        obj.manutencao_indefinida = bool(data.indefinida)
+        obj.manutencao_previsao_retorno = None if data.indefinida else data.previsao_retorno
+    else:
+        obj.status = "disponivel"
+        obj.manutencao_motivo = ""
+        obj.manutencao_data_entrada = None
+        obj.manutencao_previsao_retorno = None
+        obj.manutencao_indefinida = False
+    db.add(obj)
     db.commit()
+    db.refresh(obj)
+    return obj
+
+
+
+@router.delete("/veiculos/{vid}", status_code=204)
+def excluir_veiculo(
+    vid: int,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "usuarios", acoes=("excluir",))),
+):
+    obj = db.get(Veiculo, vid)
+    if not obj:
+        raise HTTPException(404, "Veículo não encontrado")
+    vinculado = db.exec(select(Viagem).where(Viagem.veiculo_id == vid).limit(1)).first()
+    if vinculado:
+        # Preserva histórico das viagens vinculadas: inativa em vez de apagar do banco
+        obj.ativo = False
+        db.add(obj)
+        db.commit()
+        return
+    try:
+        db.delete(obj)
+        db.commit()
+    except Exception:
+        db.rollback()
+        obj.ativo = False
+        db.add(obj)
+        db.commit()
 
 
 def _resolver_motorista(db: Session, motorista_id, motorista_txt: str) -> tuple:
@@ -916,6 +992,7 @@ def criar_motorista(
     return obj
 
 
+
 @router.put("/motoristas/{mid}", response_model=MotoristaOut)
 def atualizar_motorista(
     mid: int,
@@ -937,6 +1014,7 @@ def atualizar_motorista(
     db.commit()
     db.refresh(obj)
     return obj
+
 
 
 @router.delete("/motoristas/{mid}", status_code=204)
@@ -966,7 +1044,7 @@ def listar_viagens(
     mes: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
     ano: int | None = Query(default=None, ge=2000, le=2100),
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
     _=Depends(need_perm("tfd_viagens")),
 ):
@@ -1130,7 +1208,7 @@ def trocar_veiculo_viagem(
 ):
     """Troca rápida de veículo na visão semanal (seletor direto no card)."""
 
-    obj = db.get(Viagem, vid)
+    obj = db.exec(select(Viagem).where(Viagem.id == vid).with_for_update()).first()
     if not obj:
         raise HTTPException(404, "Viagem não encontrada")
     exige_permissao_viagem_passada(ator, obj.data_viagem)
@@ -1159,12 +1237,14 @@ def trocar_veiculo_viagem(
                          obj.veiculo_id, getattr(obj, "motorista_id", None),
                          obj.motorista, ignorar_id=vid)
     db.add(obj)
-    db.commit()
-    db.refresh(obj)
+    db.flush()
     # Valida capacidade após a troca (assentos ocupados vs novo veículo).
     ocup, cap = _assentos(db, vid)
     if cap and ocup > cap:
+        db.rollback()
         raise HTTPException(400, f"Veículo sem capacidade p/ esta viagem ({ocup}/{cap} assentos).")
+    db.commit()
+    db.refresh(obj)
     n = db.exec(
         select(func.count(ViagemPaciente.id)).where(ViagemPaciente.viagem_id == vid)
     ).one()
@@ -1246,9 +1326,13 @@ def add_passageiro(
 ):
     import secrets
     import os
-    viagem = db.get(Viagem, vid)
+    # Lock pessimista (SELECT ... FOR UPDATE) na linha da viagem para serializar alocações concorrentes e evitar race conditions / overbooking
+    stmt_viagem = select(Viagem).where(Viagem.id == vid).with_for_update()
+    viagem = db.exec(stmt_viagem).first()
     if not viagem:
         raise HTTPException(404, "Viagem não encontrada")
+    if viagem.veiculo_id:
+        db.exec(select(Veiculo).where(Veiculo.id == viagem.veiculo_id).with_for_update()).first()
     exige_permissao_viagem_passada(ator, viagem.data_viagem)
     if not db.get(Paciente, data.paciente_id):
         raise HTTPException(404, "Paciente não encontrado")
@@ -1262,17 +1346,24 @@ def add_passageiro(
         raise HTTPException(400, "Paciente já está nesta viagem")
     fila = None
     if data.viagem_fila_id:
-        fila = db.get(ViagemFila, data.viagem_fila_id)
+        fila = db.exec(
+            select(ViagemFila).where(ViagemFila.id == data.viagem_fila_id).with_for_update()
+        ).first()
         if not fila or fila.status != "aguardando":
             raise HTTPException(400, "Registro da fila indisponível")
         if fila.paciente_id != data.paciente_id:
             raise HTTPException(400, "Paciente divergente da fila")
-        viagem = db.get(Viagem, vid)
         if viagem and (fila.destino or "").strip().upper() != (viagem.destino or "").strip().upper():
             raise HTTPException(
                 400,
                 f"O paciente só pode ser alocado em veículos cadastrados para o mesmo destino (ex: {fila.destino}).",
             )
+    # Validação atômica prévia de assentos disponíveis antes da inserção
+    ocup_antes, cap = _assentos(db, vid)
+    assentos_novos = 2 if (data.acompanhante or data.acompanhante_id or (fila and fila.acompanhante)) else 1
+    if cap and (ocup_antes + assentos_novos) > cap:
+        raise HTTPException(400, f"Capacidade do veículo excedida ({ocup_antes + assentos_novos}/{cap} assentos).")
+
     obj = ViagemPaciente(viagem_id=vid, **data.model_dump())
     if not obj.token_confirmacao:
         obj.token_confirmacao = secrets.token_urlsafe(24)
@@ -1296,8 +1387,12 @@ def add_passageiro(
         obj.unidade = obj.unidade or fila.unidade or ""
         obj.hora_consulta = obj.hora_consulta or fila.hora_consulta or ""
         obj.observacoes = getattr(obj, "observacoes", "") or fila.observacoes or ""
-    db.add(obj)
-    db.flush()
+    try:
+        db.add(obj)
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(400, "Paciente já está nesta viagem")
     ocup, cap = _assentos(db, vid)
     if cap and ocup > cap:
         db.rollback()
@@ -1346,13 +1441,15 @@ def atualizar_confirmacao_passageiro(
     vpid: int,
     data: ViagemStatusConfirmacaoIn,
     db: Session = Depends(get_db),
-    ator: User = Depends(need_perm("tfd_viagens")),
+    ator: User = Depends(need_perm("tfd_viagens", "editar")),
 ):
     """Atualização manual do status de presença pelo operador de viagens/transporte."""
     import os
     viagem = db.get(Viagem, vid)
     if not viagem:
         raise HTTPException(404, "Viagem não encontrada")
+    exige_permissao_viagem_passada(ator, viagem.data_viagem)
+    exige_sem_retroativo(ator, viagem.data_viagem, True)
     obj = db.get(ViagemPaciente, vpid)
     if not obj or obj.viagem_id != vid:
         raise HTTPException(404, "Passageiro não encontrado nesta viagem")
@@ -1908,6 +2005,7 @@ def listar_exames(
     tipo_fila: str = Query(default="", max_length=80),
     procedimento: str = Query(default="", max_length=150),
     codigo_especialidade: str = Query(default="", max_length=10),
+    justificativa: str = Query(default="", max_length=150),
     destino: str = Query(default="", max_length=120),
     unidade_id: int | None = Query(default=None),
     unidade: str = Query(default="", max_length=150),
@@ -1934,6 +2032,7 @@ def listar_exames(
     p_tf = tipo_fila if isinstance(tipo_fila, str) else ""
     p_proc = procedimento if isinstance(procedimento, str) else ""
     p_cbo = codigo_especialidade if isinstance(codigo_especialidade, str) else ""
+    p_just = justificativa if isinstance(justificativa, str) else ""
     p_dest = destino if isinstance(destino, str) else ""
     p_uid = unidade_id if isinstance(unidade_id, int) else None
     p_unome = unidade if isinstance(unidade, str) else ""
@@ -1949,6 +2048,7 @@ def listar_exames(
         p_proc, p_cbo, p_dest, p_de, p_ate,
         p_ag, p_meus, p_uid, p_unome,
         p_ag_de, p_ag_ate, p_apenas_ag,
+        justificativa=p_just,
     )
     total = len(itens)
     meta = paginar(total, p_page, p_limit)
@@ -1992,6 +2092,7 @@ def _filtrar_exames_lista(
     agendada_de: str | None = None,
     agendada_ate: str | None = None,
     apenas_agendados: bool = False,
+    justificativa: str = "",
 ) -> list:
     """Filtros da fila compartilhados entre listagem e exportação XLSX."""
     filtros = [ExameFila.ativo == True]  # noqa: E712
@@ -2059,20 +2160,29 @@ def _filtrar_exames_lista(
                 (ExameFila.exame.ilike(f"%{p_strip}%"))
                 | (ExameFila.codigo_procedimento.ilike(f"%{p_strip}%"))
             )
+    if isinstance(justificativa, str) and justificativa.strip():
+        filtros.append(ExameFila.justificativa.ilike(f"%{justificativa.strip()}%"))
     if isinstance(codigo_especialidade, str) and codigo_especialidade.strip():
         cbo_strip = codigo_especialidade.strip()
+        from app.models.lab_exames import SigtapCbo
+        procs_compativeis = {
+            c.procedimento_codigo
+            for c in db.exec(select(SigtapCbo).where(SigtapCbo.cbo == cbo_strip)).all()
+            if c.procedimento_codigo
+        }
         nome_cbo = CBO_PARA_NOME_CANONICO.get(cbo_strip, "")
+        condicoes_cbo = [ExameFila.codigo_especialidade == cbo_strip]
+        if procs_compativeis:
+            condicoes_cbo.append(ExameFila.codigo_procedimento.in_(procs_compativeis))
         if nome_cbo:
             nome_simples = nome_cbo.replace("Médico ", "").replace("médico ", "").strip()
             like_cbo_nome = f"%{nome_simples}%"
-            filtros.append(
-                (ExameFila.codigo_especialidade == cbo_strip)
-                | (ExameFila.nome_especialidade.ilike(like_cbo_nome))
-                | (ExameFila.especialidade.ilike(like_cbo_nome))
-                | (ExameFila.exame.ilike(like_cbo_nome))
-            )
-        else:
-            filtros.append(ExameFila.codigo_especialidade == cbo_strip)
+            condicoes_cbo.extend([
+                ExameFila.nome_especialidade.ilike(like_cbo_nome),
+                ExameFila.especialidade.ilike(like_cbo_nome),
+                ExameFila.exame.ilike(like_cbo_nome),
+            ])
+        filtros.append(or_(*condicoes_cbo))
     if isinstance(destino, str) and destino.strip():
         filtros.append(ExameFila.destino.ilike(f"%{destino}%"))
     if isinstance(data_de, str) and data_de:
@@ -2112,6 +2222,7 @@ def _filtrar_exames_lista(
                 e.exame or "", e.especialidade or "", e.tipo_fila or "",
                 e.codigo_procedimento or "", e.codigo_especialidade or "",
                 e.nome_especialidade or "", e.destino or "",
+                e.justificativa or "", e.justificativa_prioridade or "",
                 pac.nome if pac else "", pac.cns if pac else "",
                 pac.cpf if pac else "",
             ]).lower()
@@ -2281,6 +2392,7 @@ def exportar_fila(
     tipo_fila: str = Query(default="", max_length=80),
     procedimento: str = Query(default="", max_length=150),
     codigo_especialidade: str = Query(default="", max_length=10),
+    justificativa: str = Query(default="", max_length=150),
     destino: str = Query(default="", max_length=120),
     unidade_id: int | None = Query(default=None),
     unidade: str = Query(default="", max_length=150),
@@ -2310,6 +2422,7 @@ def exportar_fila(
     tipo_val = tipo_fila if isinstance(tipo_fila, str) else ""
     proc_val = procedimento if isinstance(procedimento, str) else ""
     cod_esp_val = codigo_especialidade if isinstance(codigo_especialidade, str) else ""
+    just_val = justificativa if isinstance(justificativa, str) else ""
     dest_val = destino if isinstance(destino, str) else ""
     unid_id_val = unidade_id if isinstance(unidade_id, int) else None
     unid_val = unidade if isinstance(unidade, str) else ""
@@ -2324,6 +2437,7 @@ def exportar_fila(
         db, ator, st_val, q_val, prio_val, esp_val, tipo_val,
         proc_val, cod_esp_val, dest_val, de_val, ate_val,
         ag_val, meus_val, unid_id_val, unid_val,
+        justificativa=just_val,
     )
     if ids_set:
         itens_filtrados = [it for it in itens if it.id in ids_set]
@@ -2574,11 +2688,13 @@ def eh_tfd_central(ator: User) -> bool:
     """
     if ator.is_superuser:
         return True
+    if ator.unidade_saude_id:
+        return False
     from app.services.permissoes import tem_tela
     tem_tfd_geral = tem_tela(ator, "tfd") and not tem_tela(ator, "tfd_fila_lancamento")
-    if tem_tfd_geral and not (ator.unidade_saude_id and tem_tela(ator, "tfd_fila_lancamento")):
+    if tem_tfd_geral:
         return True
-    if tem_tela(ator, "tfd_resumo") and not ator.unidade_saude_id:
+    if tem_tela(ator, "tfd_resumo"):
         return True
     return False
 
@@ -2605,6 +2721,10 @@ def criar_exame(data: ExameIn, db: Session = Depends(get_db), ator: User = Depen
             if payload.get("unidade_saude_id") and payload.get("unidade_saude_id") != ator.unidade_saude_id:
                 raise HTTPException(403, "Usuários do PSF só podem lançar pedidos vinculados à sua própria unidade.")
             payload["unidade_saude_id"] = ator.unidade_saude_id
+
+        # Usuário PSF: não pode agendar diretamente (furar a fila)
+        if payload.get("data_agendada") or (payload.get("status") or "").lower() == "agendado":
+            raise HTTPException(403, "Apenas a Central de Regulação/TFD pode realizar agendamento direto. Usuários do PSF lançam pedidos para a fila de espera.")
 
     # Perfil de Lançamento Restrito: apenas adiciona à fila, sem marcar urgente e sem agendar direto
     from app.services.permissoes import tem_tela
@@ -2639,6 +2759,9 @@ def criar_exame(data: ExameIn, db: Session = Depends(get_db), ator: User = Depen
         payload["codigo_curto"] = str(payload["codigo_curto"]).strip().upper()
     if payload.get("numero_pedido"):
         payload["numero_pedido"] = str(payload["numero_pedido"]).strip().upper()[:30]
+    else:
+        import random
+        payload["numero_pedido"] = f"PED-{hoje.strftime('%Y%m%d')}-{random.randint(100000, 999999)}"
     if not str(payload.get("tipo_fila") or "").strip():
         payload["tipo_fila"] = "ELETIVO"
     if payload.get("data_agendada"):
@@ -2657,6 +2780,8 @@ def criar_exame(data: ExameIn, db: Session = Depends(get_db), ator: User = Depen
         payload["unidade_bairro"] = uni.bairro or ""
         payload["unidade_municipio"] = getattr(uni, "municipio", "") or ""
         payload["unidade_cep"] = getattr(uni, "cep", "") or ""
+    if not payload.get("criado_por"):
+        payload["criado_por"] = (ator.nome or ator.username or "")[:120]
     obj = ExameFila(**payload)
     if obj.data_agendada and obj.status in ("aguardando",):
         obj.status = "agendado"
@@ -2885,18 +3010,43 @@ def atualizar_exame(
     )
 
 
+class RecepcionarExameIn(BaseModel):
+    cid_codigo: str | None = None
+    cid_descricao: str | None = None
+
+
 @router.post("/exames/{eid}/recepcionar", response_model=ExameOut)
 def recepcionar_exame(
-    eid: int, db: Session = Depends(get_db), ator: User = Depends(need_perm("tfd_agenda", "editar"))
+    eid: int,
+    data: RecepcionarExameIn | None = None,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_perm("tfd_agenda", "editar")),
 ):
-    """Check-in na recepção: agendado -> recepcionado (guarda status anterior)."""
+    """Check-in na recepção: agendado -> recepcionado (guarda status anterior).
+
+    Exige obrigatoriamente preenchimento de CID se o atendimento ainda não possuir.
+    """
     from datetime import datetime
 
-    obj = db.get(ExameFila, eid)
+    obj = db.exec(select(ExameFila).where(ExameFila.id == eid).with_for_update()).first()
     if not obj or not obj.ativo:
         raise HTTPException(404, "Agendamento não encontrado")
     if (obj.status or "") != "agendado":
         raise HTTPException(400, f"Só agendados podem ser recepcionados (atual: {obj.status or '—'}).")
+
+    cid_cod = (data.cid_codigo if data else None) or (obj.cid_codigo or "").strip()
+    cid_desc = (data.cid_descricao if data else None) or (obj.cid_descricao or "").strip()
+    if not cid_cod:
+        pac = db.get(Paciente, obj.paciente_id) if obj.paciente_id else None
+        nome_pac = getattr(pac, "nome", "") or "paciente"
+        raise HTTPException(
+            400,
+            f"O atendimento de '{nome_pac}' exige o preenchimento do CID para ser recepcionado.",
+        )
+    obj.cid_codigo = cid_cod[:10]
+    if cid_desc:
+        obj.cid_descricao = cid_desc[:255]
+
     obj.status_anterior = obj.status or ""
     obj.status = "recepcionado"
     obj.recepcionado_em = datetime.now()
@@ -2912,7 +3062,7 @@ def estornar_recepcao_exame(
     eid: int, db: Session = Depends(get_db), _=Depends(need_perm("tfd_agenda", "editar"))
 ):
     """Reverte recepção lançada por engano: recepcionado -> status anterior."""
-    obj = db.get(ExameFila, eid)
+    obj = db.exec(select(ExameFila).where(ExameFila.id == eid).with_for_update()).first()
     if not obj or not obj.ativo:
         raise HTTPException(404, "Agendamento não encontrado")
     if (obj.status or "") != "recepcionado":
@@ -2937,15 +3087,17 @@ def definir_status_atendimento(
     eid: int, data: AtendimentoStatusIn, db: Session = Depends(get_db),
     _=Depends(need_perm("tfd_agenda", "editar")),
 ):
-    """Gestão do atendimento: faltou | realizado (+resultado) | cancelado.
+    """Gestão do atendimento: faltou | realizado (+resultado) | cancelado | desistiu.
 
     Aceita a partir de agendado/recepcionado. Resultado obrigatório
     ao marcar realizado.
     """
     alvo = (data.status or "").strip().lower()
-    if alvo not in ("faltou", "realizado", "cancelado"):
-        raise HTTPException(400, "Status inválido (use faltou, realizado ou cancelado).")
-    obj = db.get(ExameFila, eid)
+    if alvo in ("desistencia", "desistir"):
+        alvo = "desistiu"
+    if alvo not in ("faltou", "realizado", "cancelado", "desistiu"):
+        raise HTTPException(400, "Status inválido (use faltou, realizado, cancelado ou desistiu).")
+    obj = db.exec(select(ExameFila).where(ExameFila.id == eid).with_for_update()).first()
     if not obj or not obj.ativo:
         raise HTTPException(404, "Agendamento não encontrado")
     if (obj.status or "") not in ("agendado", "recepcionado"):
@@ -2961,8 +3113,16 @@ def definir_status_atendimento(
     return _com_posicao(db, [obj])[0]
 
 
+class RecepcionarLoteItem(BaseModel):
+    id: int
+    cid_codigo: str | None = None
+    cid_descricao: str | None = None
+
+
 class ExameIdsIn(BaseModel):
-    ids: list[int] = Field(min_length=1, max_length=500)
+    ids: list[int] = Field(default_factory=list)
+    itens: list[RecepcionarLoteItem] = Field(default_factory=list)
+    cids: dict[str, str] = Field(default_factory=dict)
 
 
 class AtendimentoStatusLoteIn(BaseModel):
@@ -2977,16 +3137,55 @@ def recepcionar_exames_lote(
     db: Session = Depends(get_db),
     ator: User = Depends(need_perm("tfd_agenda", "editar")),
 ):
-    """Recepção em lote: marca múltiplos exames/consultas agendados como recepcionados."""
+    """Recepção em lote: marca múltiplos exames/consultas agendados como recepcionados.
+
+    Exige preenchimento de CID para todos os atendimentos sem CID.
+    """
     from datetime import datetime
 
-    ids = sorted(set(data.ids))
+    ids_set = set(data.ids)
+    itens_map = {item.id: item for item in data.itens}
+    ids_set.update(itens_map.keys())
+    ids = sorted(ids_set)
+    if not ids:
+        raise HTTPException(400, "Nenhum atendimento informado para recepção.")
+
     objs = list(db.exec(select(ExameFila).where(ExameFila.id.in_(ids), ExameFila.ativo == True)).all())
+    objs_map = {o.id: o for o in objs}
+
+    # Validação rigorosa de CID
+    sem_cid = []
+    for eid in ids:
+        obj = objs_map.get(eid)
+        if not obj:
+            continue
+        item_info = itens_map.get(eid)
+        cid_env = (item_info.cid_codigo if item_info else None) or data.cids.get(str(eid)) or data.cids.get(eid)
+        cid_atual = (obj.cid_codigo or "").strip()
+        if not cid_atual and not cid_env:
+            pac = db.get(Paciente, obj.paciente_id)
+            nome_p = pac.nome if pac else f"Pedido #{obj.id}"
+            sem_cid.append(f"{nome_p} (Pedido #{obj.id})")
+
+    if sem_cid:
+        raise HTTPException(
+            400,
+            f"O(s) seguinte(s) atendimento(s) exige(m) o preenchimento de CID para recepção: {', '.join(sem_cid)}",
+        )
+
     atualizados = 0
     agora = datetime.now()
     nome_ator = (ator.nome or ator.username or "")[:120]
     for obj in objs:
         if (obj.status or "") in ("agendado", "aguardando"):
+            item_info = itens_map.get(obj.id)
+            cid_env = (item_info.cid_codigo if item_info else None) or data.cids.get(str(obj.id)) or data.cids.get(obj.id)
+            cid_desc = (item_info.cid_descricao if item_info else None)
+            if cid_env:
+                obj.cid_codigo = str(cid_env).strip()[:10]
+            if cid_desc:
+                obj.cid_descricao = str(cid_desc).strip()[:255]
+
             obj.status_anterior = obj.status or ""
             obj.status = "recepcionado"
             obj.recepcionado_em = agora
@@ -3003,10 +3202,12 @@ def definir_status_atendimento_lote(
     db: Session = Depends(get_db),
     ator: User = Depends(need_perm("tfd_agenda", "editar")),
 ):
-    """Define desfecho do atendimento em lote (realizado, faltou, cancelado)."""
+    """Define desfecho do atendimento em lote (realizado, faltou, cancelado, desistiu)."""
     alvo = (data.status or "").strip().lower()
-    if alvo not in ("realizado", "faltou", "cancelado"):
-        raise HTTPException(400, "Status inválido (use realizado, faltou ou cancelado).")
+    if alvo in ("desistencia", "desistir"):
+        alvo = "desistiu"
+    if alvo not in ("realizado", "faltou", "cancelado", "desistiu"):
+        raise HTTPException(400, "Status inválido (use realizado, faltou, cancelado ou desistiu).")
     ids = sorted(set(data.ids))
     objs = list(db.exec(select(ExameFila).where(ExameFila.id.in_(ids), ExameFila.ativo == True)).all())
     atualizados = 0
@@ -3870,7 +4071,7 @@ def confirmar_presenca_viagem_publica(
     if not token or len(token) > 64:
         raise HTTPException(404, "Link de confirmação inválido ou expirado")
 
-    vp = db.exec(select(ViagemPaciente).where(ViagemPaciente.token_confirmacao == token)).first()
+    vp = db.exec(select(ViagemPaciente).where(ViagemPaciente.token_confirmacao == token).with_for_update()).first()
     if not vp:
         raise HTTPException(404, "Agendamento de viagem não encontrado.")
 
@@ -3879,19 +4080,24 @@ def confirmar_presenca_viagem_publica(
         raise HTTPException(404, "Viagem não encontrada.")
 
     if data.acao == "confirmar":
-        vp.status_confirmacao = "confirmado"
-        vp.confirmado_em = datetime.utcnow()
-        vp.presente = True
+        if vp.status_confirmacao != "confirmado":
+            vp.status_confirmacao = "confirmado"
+            vp.confirmado_em = datetime.utcnow()
+            vp.presente = True
+            db.add(vp)
+            db.commit()
+            db.refresh(vp)
     elif data.acao in ("desistir", "cancelar"):
-        vp.status_confirmacao = "desistiu"
-        vp.presente = False
-        if data.motivo:
-            nota = f"[Desistência informada pelo paciente: {data.motivo.strip()}]"
-            vp.observacoes = f"{vp.observacoes} {nota}".strip()
-
-    db.add(vp)
-    db.commit()
-    db.refresh(vp)
+        if vp.status_confirmacao != "desistiu":
+            vp.status_confirmacao = "desistiu"
+            vp.presente = False
+            if data.motivo:
+                nota = f"[Desistência informada pelo paciente: {data.motivo.strip()}]"
+                if nota not in (vp.observacoes or ""):
+                    vp.observacoes = f"{vp.observacoes or ''} {nota}".strip()
+            db.add(vp)
+            db.commit()
+            db.refresh(vp)
 
     pac = db.get(Paciente, vp.paciente_id)
     veiculo = db.get(Veiculo, viagem.veiculo_id) if viagem.veiculo_id else None
@@ -3927,15 +4133,30 @@ def catalogo_procedimentos(
     q: str = Query(default="", max_length=80),
     tipo_fila: str = Query(default="", max_length=80),
     apenas_laboratoriais: bool | None = Query(default=None),
+    especialidade: str = Query(default="", max_length=120),
     db: Session = Depends(get_db),
     _=Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
 ):
-    """Catálogo dinâmico + oficial SIGTAP com filtragem contextual por Grupo/Subgrupo."""
+    """Catálogo dinâmico + oficial SIGTAP com filtragem contextual por Grupo/Subgrupo e Especialidade."""
     from app.models.settings import SystemSettings
     from app.models.lab_exames import SigtapProcedimento
-    from app.services.sigtap_hierarquia import obter_filtro_sigtap_por_tipo, decompor_codigo_sigtap
+    from app.services.sigtap_hierarquia import (
+        obter_filtro_sigtap_por_tipo,
+        decompor_codigo_sigtap,
+        MAPA_TIPO_ESPECIALIDADE,
+    )
+
+    if not isinstance(q, str):
+        q = getattr(q, "default", "") or ""
+    if not isinstance(tipo_fila, str):
+        tipo_fila = getattr(tipo_fila, "default", "") or ""
+    if not isinstance(especialidade, str):
+        especialidade = getattr(especialidade, "default", "") or ""
+    if not isinstance(apenas_laboratoriais, (bool, type(None))):
+        apenas_laboratoriais = getattr(apenas_laboratoriais, "default", None)
 
     ql = (q or "").strip().lower()
+    esp_filtro = (especialidade or "").strip().lower()
     regras = obter_filtro_sigtap_por_tipo(tipo_fila)
 
     # Determina se a busca é estritamente laboratorial
@@ -3960,11 +4181,21 @@ def catalogo_procedimentos(
             )
             .order_by(ProcedimentoCatalogo.nome)
         )
-    for p in db.exec(base.limit(500)).all():
+    for p in db.exec(base.limit(800)).all():
         rotulo = f"{p.codigo_curto} · {p.nome}" if p.codigo_curto else p.nome
-        hay = f"{p.codigo} {p.nome} {p.codigo_curto} {p.tipo_fila} {p.nome_especialidade}".lower()
+        esp_nome = p.nome_especialidade or ""
+        esp_cod = p.codigo_especialidade or ""
+        if not esp_nome:
+            tf_up = (p.tipo_fila or "").strip().upper()
+            if tf_up in MAPA_TIPO_ESPECIALIDADE:
+                esp_nome, esp_cod = MAPA_TIPO_ESPECIALIDADE[tf_up]
+
+        hay = f"{p.codigo} {p.nome} {p.codigo_curto} {p.tipo_fila} {esp_nome} {esp_cod}".lower()
         if ql and ql not in hay:
             continue
+        if esp_filtro and (esp_filtro not in esp_nome.lower() and esp_filtro not in esp_cod.lower()):
+            continue
+
         cod = (p.codigo or "").strip()
         # Se filtrando fila especializada/cirúrgica, desconsidera exames de sangue (0202)
         if regras.get("excluir_prefixos") and any(cod.startswith(pref) for pref in regras["excluir_prefixos"]):
@@ -3974,9 +4205,9 @@ def catalogo_procedimentos(
             "exame": f"{p.codigo} - {p.nome}" if p.codigo else p.nome,
             "nome_procedimento": p.nome,
             "codigo_procedimento": p.codigo,
-            "especialidade": p.nome_especialidade or "",
-            "codigo_especialidade": p.codigo_especialidade or "",
-            "nome_especialidade": p.nome_especialidade or "",
+            "especialidade": esp_nome,
+            "codigo_especialidade": esp_cod,
+            "nome_especialidade": esp_nome,
             "tipo_fila": p.tipo_fila or "",
             "codigo_curto": p.codigo_curto or "",
             "rotulo": rotulo,
@@ -4018,13 +4249,16 @@ def catalogo_procedimentos(
             )
 
         base_sig = select(SigtapProcedimento).where(*filtros_sig).order_by(SigtapProcedimento.descricao)
-        limite_sig = 120 if ql else 40
+        limite_sig = 150 if ql else 50
         for s in db.exec(base_sig.limit(limite_sig)).all():
             cod = (s.codigo or "").strip()
             if not cod or cod in codigos_tfd:
                 continue
             hier = decompor_codigo_sigtap(cod)
             esp_nome = hier.get("subgrupo_nome", "")
+            if esp_filtro and esp_filtro not in esp_nome.lower():
+                continue
+
             out.append({
                 "exame": f"{cod} - {s.descricao}",
                 "nome_procedimento": s.descricao,
@@ -4051,8 +4285,11 @@ def catalogo_procedimentos(
             comeca = 0 if (nome_l.startswith(ql) or cod_l.startswith(ql) or curto_l.startswith(ql)) else 1
             return (comeca, nome_l)
         out.sort(key=_chave_proc)
-        return out[:60]
-    return out[:40]
+        return out[:100]
+
+    if tipo_fila or esp_filtro:
+        return out[:250]
+    return out[:100]
 
 
 @router.post("/procedimentos/validar-cbo", response_model=ValidarCboOut)
@@ -4097,9 +4334,9 @@ def listar_tipos(
     q: str = Query(default="", max_length=80),
     ativos: bool | None = None,
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
-    _=Depends(need_perm("tfd_catalogo")),
+    _=Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
 ):
     base = select(TipoFila).order_by(TipoFila.nome)
     filtros = []
@@ -4127,6 +4364,7 @@ def criar_tipo(data: TipoFilaIn, db: Session = Depends(get_db), _=Depends(need_p
     return obj
 
 
+
 @router.put("/tipos/{tid}", response_model=TipoFilaOut)
 def atualizar_tipo(tid: int, data: TipoFilaIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_catalogo", "editar"))):
     obj = db.get(TipoFila, tid)
@@ -4145,6 +4383,7 @@ def atualizar_tipo(tid: int, data: TipoFilaIn, db: Session = Depends(get_db), _=
     return obj
 
 
+
 @router.delete("/tipos/{tid}", status_code=204)
 def excluir_tipo(tid: int, db: Session = Depends(get_db), _=Depends(need_perm("tfd_catalogo", "excluir"))):
     obj = db.get(TipoFila, tid)
@@ -4161,10 +4400,10 @@ def listar_procedimentos(
     tipo_fila: str = Query(default="", max_length=80),
     ativos: bool | None = None,
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
     request: Request = None,
     db: Session = Depends(get_db),
-    ator: User = Depends(need_perm("tfd_catalogo")),
+    ator: User = Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
 ):
     base = select(ProcedimentoCatalogo).order_by(ProcedimentoCatalogo.nome)
     filtros = []
@@ -4234,6 +4473,7 @@ def criar_procedimento(data: ProcedimentoIn, db: Session = Depends(get_db), _=De
     return obj
 
 
+
 @router.put("/procedimentos/{pid}", response_model=ProcedimentoOut)
 def atualizar_procedimento(pid: int, data: ProcedimentoIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_catalogo", "editar"))):
     obj = db.get(ProcedimentoCatalogo, pid)
@@ -4250,6 +4490,7 @@ def atualizar_procedimento(pid: int, data: ProcedimentoIn, db: Session = Depends
     db.commit()
     db.refresh(obj)
     return obj
+
 
 
 @router.delete("/procedimentos/{pid}", status_code=204)
@@ -4296,9 +4537,9 @@ def listar_especialidades(
     q: str = Query(default="", max_length=80),
     ativos: bool | None = None,
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
-    _=Depends(need_perm("tfd_catalogo")),
+    _=Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
 ):
     base = select(Especialidade).order_by(Especialidade.nome)
     filtros = []
@@ -4330,6 +4571,7 @@ def criar_especialidade(data: EspecialidadeIn, db: Session = Depends(get_db), _=
     return obj
 
 
+
 @router.put("/especialidades/{eid}", response_model=EspecialidadeOut)
 def atualizar_especialidade(eid: int, data: EspecialidadeIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_catalogo", "editar"))):
     obj = db.get(Especialidade, eid)
@@ -4349,6 +4591,7 @@ def atualizar_especialidade(eid: int, data: EspecialidadeIn, db: Session = Depen
     return obj
 
 
+
 @router.delete("/especialidades/{eid}", status_code=204)
 def excluir_especialidade(eid: int, db: Session = Depends(get_db), _=Depends(need_perm("tfd_catalogo", "excluir"))):
     obj = db.get(Especialidade, eid)
@@ -4363,7 +4606,7 @@ def excluir_especialidade(eid: int, db: Session = Depends(get_db), _=Depends(nee
 def listar_faturas(
     competencia: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
     _=Depends(need_perm("tfd_faturamento")),
 ):
@@ -4433,12 +4676,21 @@ def exportar_faturamento(
 def criar_fatura(data: FaturaIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_faturamento", "criar"))):
     if not db.get(Paciente, data.paciente_id):
         raise HTTPException(404, "Paciente não encontrado")
-    obj = Faturamento(**data.model_dump())
+    payload = data.model_dump()
+    cod_sigtap = (data.codigo_sigtap or "").strip()
+    if cod_sigtap:
+        from app.models.lab_exames import SigtapProcedimento
+        proc = db.exec(select(SigtapProcedimento).where(SigtapProcedimento.codigo == cod_sigtap)).first()
+        if proc:
+            val_sigtap = float(round(float(proc.valor_sa + proc.valor_sp + proc.valor_sh), 2))
+            payload["valor"] = val_sigtap
+    payload["status"] = "pendente"
+    obj = Faturamento(**payload)
     db.add(obj)
     db.commit()
     db.refresh(obj)
     return FaturaOut(
-        **obj.model_dump(), total=round(float(obj.valor) * obj.quantidade, 2)
+        **obj.model_dump(), total=float(round(float(obj.valor) * obj.quantidade, 2))
     )
 
 
@@ -4449,7 +4701,15 @@ def atualizar_fatura(
     obj = db.get(Faturamento, fid)
     if not obj:
         raise HTTPException(404, "Fatura não encontrada")
-    for k, v in data.model_dump().items():
+    payload = data.model_dump()
+    cod_sigtap = (data.codigo_sigtap or "").strip()
+    if cod_sigtap:
+        from app.models.lab_exames import SigtapProcedimento
+        proc = db.exec(select(SigtapProcedimento).where(SigtapProcedimento.codigo == cod_sigtap)).first()
+        if proc:
+            val_sigtap = float(round(float(proc.valor_sa + proc.valor_sp + proc.valor_sh), 2))
+            payload["valor"] = val_sigtap
+    for k, v in payload.items():
         setattr(obj, k, v)
     db.add(obj)
     db.commit()
@@ -4458,7 +4718,7 @@ def atualizar_fatura(
     return FaturaOut(
         **obj.model_dump(),
         paciente_nome=pac.nome if pac else "",
-        total=round(float(obj.valor) * obj.quantidade, 2),
+        total=float(round(float(obj.valor) * obj.quantidade, 2)),
     )
 
 
@@ -4660,19 +4920,24 @@ def puxar_agendados(
         if ids is not None and e.id not in ids:
             ignorados += 1
             continue
-        db.add(ViagemFila(
-            paciente_id=e.paciente_id,
-            destino=(e.unidade_nome or e.destino or "").strip() or "A definir",
-            unidade=e.unidade_nome or "",
-            tratamento=(e.exame or "")[:150],
-            data_consulta=e.data_agendada,
-            hora_consulta=e.hora_agendada or "",
-            acompanhante=False,
-            prioridade=e.prioridade or "rotina",
-            status="aguardando",
-            exame_fila_id=e.id,
-        ))
-        criados += 1
+        try:
+            with db.begin_nested():
+                db.add(ViagemFila(
+                    paciente_id=e.paciente_id,
+                    destino=(e.unidade_nome or e.destino or "").strip() or "A definir",
+                    unidade=e.unidade_nome or "",
+                    tratamento=(e.exame or "")[:150],
+                    data_consulta=e.data_agendada,
+                    hora_consulta=e.hora_agendada or "",
+                    acompanhante=False,
+                    prioridade=e.prioridade or "rotina",
+                    status="aguardando",
+                    exame_fila_id=e.id,
+                ))
+                db.flush()
+            criados += 1
+        except IntegrityError:
+            ignorados += 1
     db.commit()
     return {"criados": criados, "ignorados": ignorados}
 
@@ -4791,6 +5056,16 @@ def _conflitos_viagem(db, data_viagem, saida: str, retorno: str,
 def _exigir_sem_conflito(db, data_viagem, saida: str, retorno: str,
                          veiculo_id, motorista_id, motorista_nome: str,
                          ignorar_id: int | None = None) -> None:
+    if veiculo_id:
+        veh = db.get(Veiculo, int(veiculo_id))
+        if veh and ((veh.status or "") == "manutencao" or not veh.ativo):
+            viagem_atual = db.get(Viagem, ignorar_id) if ignorar_id else None
+            if not viagem_atual or viagem_atual.veiculo_id != int(veiculo_id):
+                motivo_extra = f" (Motivo: {veh.manutencao_motivo})" if getattr(veh, "manutencao_motivo", None) else ""
+                raise HTTPException(
+                    400,
+                    f"Veículo indisponível: o veículo {veh.placa} encontra-se em manutenção e não pode ser alocado para viagens{motivo_extra}.",
+                )
     cv, cm = _conflitos_viagem(db, data_viagem, saida, retorno, veiculo_id,
                                motorista_id, motorista_nome, ignorar_id)
     if cv is not None:
@@ -5416,13 +5691,23 @@ def faturar_deslocamento(
                 continue
             proc = db.exec(select(ProcedimentoCatalogo).where(
                 ProcedimentoCatalogo.codigo == cod)).first()
-            db.add(Faturamento(
-                viagem_id=vid, paciente_id=p.paciente_id,
-                procedimento=(proc.nome if proc else f"DESLOCAMENTO {v.destino}")[:150],
-                codigo_sigtap=cod, competencia=comp, quantidade=qtd,
-                valor=0, tipo="BPA", status="pendente",
-                observacoes=f"Deslocamento {v.destino} ({qtd}x50km)",
-            ))
-            criados += 1
+            from app.models.lab_exames import SigtapProcedimento
+            val_desloc = 0.0
+            sig_p = db.exec(select(SigtapProcedimento).where(SigtapProcedimento.codigo == cod)).first()
+            if sig_p:
+                val_desloc = round(float(sig_p.valor_sa + sig_p.valor_sp + sig_p.valor_sh), 2)
+            try:
+                with db.begin_nested():
+                    db.add(Faturamento(
+                        viagem_id=vid, paciente_id=p.paciente_id,
+                        procedimento=(proc.nome if proc else (sig_p.descricao if sig_p else f"DESLOCAMENTO {v.destino}"))[:150],
+                        codigo_sigtap=cod, competencia=comp, quantidade=qtd,
+                        valor=val_desloc, tipo="BPA", status="pendente",
+                        observacoes=f"Deslocamento {v.destino} ({qtd}x50km)",
+                    ))
+                    db.flush()
+                criados += 1
+            except IntegrityError:
+                pula += 1
     db.commit()
     return {"criados": criados, "ignorados": pula}

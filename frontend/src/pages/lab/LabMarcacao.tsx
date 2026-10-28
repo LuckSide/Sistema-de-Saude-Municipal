@@ -44,10 +44,12 @@ import { Combobox, type ComboOption } from "../../components/ui/combobox";
 import BuscaPacienteAutocomplete from "../../components/BuscaPacienteAutocomplete";
 import ComprovanteExameModal from "../../components/ComprovanteExameModal";
 import { useAuth } from "../../hooks/useAuth";
+import { useConfirm } from "../../components/ConfirmDialog";
 
 type ItemLote = { sigtap: SigtapProc; quantidade: number };
 
 export default function LabMarcacao() {
+  const { confirmar } = useConfirm();
   const { user } = useAuth();
   const [labs, setLabs] = useState<Laboratorio[]>([]);
   const [medicos, setMedicos] = useState<Medico[]>([]);
@@ -350,7 +352,13 @@ export default function LabMarcacao() {
   }
 
   async function cancelarPedido(id: number) {
-    if (!confirm(`Deseja realmente cancelar o agendamento do pedido #${id}?`)) return;
+    const ok = await confirmar({
+      titulo: `Cancelar agendamento #${id}`,
+      descricao: `Deseja realmente cancelar o agendamento do pedido #${id}?`,
+      textoConfirmar: "Sim, Cancelar",
+      variante: "danger",
+    });
+    if (!ok) return;
     try {
       await labCancelarSolicitacao(id);
       setOk(`Pedido #${id} cancelado com sucesso.`);

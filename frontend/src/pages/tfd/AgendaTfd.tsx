@@ -102,10 +102,11 @@ export default function AgendaTfd() {
   const [unidades, setUnidades] = useState<{ id: number; nome: string }[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [erroModal, setErroModal] = useState("");
+  const [pageSize, setPageSize] = useState(100);
 
-  async function carregar(p = 1, d = dia, st = statusFiltro) {
+  async function carregar(p = 1, d = dia, st = statusFiltro, limite = pageSize) {
     try {
-      const r = await tfdExames({ agendada_em: d, status: st || undefined, page: p, limit: 100 });
+      const r = await tfdExames({ agendada_em: d, status: st || undefined, page: p, limit: limite });
       setLista(pagData<Exame>(r));
       const m = pagMeta(r);
       setTotal(m.total);
@@ -424,7 +425,17 @@ export default function AgendaTfd() {
             </tbody>
           </table>
         </div>
-        <Paginacao page={page} pages={pages} total={total} onPage={(p) => carregar(p).catch(() => setErro("Falha ao carregar agenda."))} />
+        <Paginacao
+          page={page}
+          pages={pages}
+          total={total}
+          pageSize={pageSize}
+          onPageSize={(sz) => {
+            setPageSize(sz);
+            carregar(1, dia, statusFiltro, sz).catch(() => setErro("Falha ao carregar agenda."));
+          }}
+          onPage={(p) => carregar(p, dia, statusFiltro, pageSize).catch(() => setErro("Falha ao carregar agenda."))}
+        />
       </Card>
 
       {marcando && (

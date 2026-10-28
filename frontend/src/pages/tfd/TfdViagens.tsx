@@ -28,6 +28,7 @@ import {
 import { useAuth } from "../../hooks/useAuth";
 import { retornoAutomatico, useDisponibilidade } from "../../hooks/useDisponibilidade";
 import { Button, Card, Input, Label, Badge } from "../../components/ui/primitives";
+import { useConfirm } from "../../components/ConfirmDialog";
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
 
@@ -53,6 +54,7 @@ const vazio = {
 };
 
 export default function TfdViagens() {
+  const { confirmar } = useConfirm();
   const { retroativoBloqueado } = useAuth();
   const [sp] = useSearchParams();
   const RETRO_MSG = "Seu perfil não possui permissão para realizar lançamentos com datas retroativas.";
@@ -72,24 +74,27 @@ export default function TfdViagens() {
   const [buscaDebounce, setBuscaDebounce] = useState("");
   const [sel, setSel] = useState<Viagem | null>(null);
   const [pass, setPass] = useState<Passageiro[]>([]);
+  const [adicionandoPassId, setAdicionandoPassId] = useState<number | null>(null);
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
   const { disp } = useDisponibilidade(
     form.data_viagem, form.hora_saida, form.hora_retorno, editId, modal,
   );
-  const veiculosLivres = disp
-    ? disp.veiculos.filter((f) => f.disponivel || String(f.id) === String(form.veiculo_id))
-    : veiculos;
+  const veiculosLivres = (disp
+    ? disp.veiculos.filter((f) => (editId && String(f.id) === String(form.veiculo_id)) || (f.disponivel && f.status !== "manutencao"))
+    : veiculos.filter((v) => (editId && String(v.id) === String(form.veiculo_id)) || (v.status !== "manutencao" && v.ativo !== false))
+  );
   const motoristasLivres = disp
     ? motoristas.filter((m) => disp.motoristas.find((d) => d.id === m.id)?.disponivel !== false
       || String(m.id) === String(form.motorista_id))
     : motoristas;
 
-  async function carregar(p = page) {
-    const params: Record<string, string | number> = { page: p, limit: 100 };
+  async function carregar(p = page, limite = pageSize) {
+    const params: Record<string, string | number> = { page: p, limit: limite };
     if (statusFiltro) params.status = statusFiltro;
     if (mesFiltro) params.mes = mesFiltro;
     else if (anoFiltro) params.ano = anoFiltro;
@@ -293,7 +298,28 @@ export default function TfdViagens() {
                 <td className="px-4 py-3"><div className="flex justify-end gap-1">
                   <button onClick={() => setSel(v)} className="rounded-lg p-2 text-teal hover:bg-teal/10" title="Passageiros"><UserPlus className="h-4 w-4" /></button>
                   <button onClick={() => abrirModal(v.id)} className="rounded-lg p-2 text-sus-800 hover:bg-sus-100" title="Editar"><Pencil className="h-4 w-4" /></button>
-                  <button onClick={async () => { if (confirm("Excluir viagem?")) { await tfdExcluirViagem(v.id); carregar(); } }} className="rounded-lg p-2 text-red-600 hover:bg-red-50" title="Excluir"><Trash2 className="h-4 w-4" /></button>
+                  <button
+                    onClick={async () => {
+                      const ok = await confirmar({
+                        titulo: `Excluir viagem ${v.destino}`,
+                        descricao: `Deseja realmente cancelar/excluir a viagem para ${v.destino} em ${v.data_viagem}?`,
+                        textoConfirmar: "Sim, Excluir",
+                        variante: "danger",
+                      });
+                      if (ok) {
+                        try {
+                          await tfdExcluirViagem(v.id);
+                          await carregar();
+                        } catch {
+                          setErro("Falha ao excluir viagem.");
+                        }
+                      }
+                    }}
+                    className="rounded-lg p-2 text-red-600 hover:bg-red-50"
+                    title="Excluir"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
                 </div></td>
               </tr>
             ))}
@@ -301,7 +327,17 @@ export default function TfdViagens() {
           </tbody>
         </table>
         </div>
-        <Paginacao page={page} pages={pages} total={total} onPage={(p) => carregar(p).catch(() => setErro("Falha ao carregar viagens."))} />
+        <Paginacao
+          page={page}
+          pages={pages}
+          total={total}
+          pageSize={pageSize}
+          onPageSize={(sz) => {
+            setPageSize(sz);
+            carregar(1, sz).catch(() => setErro("Falha ao carregar viagens."));
+          }}
+          onPage={(p) => carregar(p, pageSize).catch(() => setErro("Falha ao carregar viagens."))}
+        />
       </Card>
 
       {sel && (
@@ -325,16 +361,25 @@ export default function TfdViagens() {
                 {pacientesPec.slice(0, 15).map((p) => (
                   <button
                     key={`${p.origem}-${p.id || p.cns || p.cpf || p.nome}`}
+                    disabled={adicionandoPassId !== null}
                     onClick={async () => {
                       if (p.origem === "pec" && p.id === null) {
-                        alert("Paciente do PEC: cadastre localmente primeiro ou use busca local.");
+                        setErro("Paciente do PEC: cadastre localmente primeiro ou use busca local.");
                         return;
                       }
-                      await tfdAddPassageiro(sel.id, { paciente_id: p.id! });
-                      setPass(await tfdPassageiros(sel.id));
-                      carregar();
+                      if (!p.id || !sel) return;
+                      setAdicionandoPassId(p.id);
+                      try {
+                        await tfdAddPassageiro(sel.id, { paciente_id: p.id });
+                        setPass(await tfdPassageiros(sel.id));
+                        carregar();
+                      } catch (err: any) {
+                        setErro(err?.response?.data?.detail || "Erro ao adicionar passageiro.");
+                      } finally {
+                        setAdicionandoPassId(null);
+                      }
                     }}
-                    className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-sand border-b border-sus-900/5 last:border-0"
+                    className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-sand border-b border-sus-900/5 last:border-0 disabled:opacity-50"
                   >
                     <div className="flex flex-col">
                       <span className="font-medium">{p.nome}</span>

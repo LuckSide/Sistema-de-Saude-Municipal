@@ -35,8 +35,10 @@ import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
 import { useAuth } from "../../hooks/useAuth";
 import LaudoApacPrint from "./LaudoApacPrint";
+import { useConfirm } from "../../components/ConfirmDialog";
 
 export default function ApacRegulacao() {
+  const { confirmar } = useConfirm();
   const { user } = useAuth();
 
   // Abas superiores do Painel: "regulacao" ou "faixas"
@@ -269,7 +271,13 @@ export default function ApacRegulacao() {
       return;
     }
 
-    if (!confirm("Tem certeza que deseja indeferir e negar esta APAC?")) return;
+    const ok = await confirmar({
+      titulo: "Indeferir solicitação de APAC",
+      descricao: `Tem certeza que deseja indeferir e negar esta APAC para ${solicitacaoEmAnalise.paciente_nome}?`,
+      textoConfirmar: "Sim, Indeferir",
+      variante: "danger",
+    });
+    if (!ok) return;
 
     setSubmetendoAcao(true);
     setErroAnalise("");
@@ -289,7 +297,7 @@ export default function ApacRegulacao() {
   // Cadastrar nova faixa
   const salvarNovaFaixa = async () => {
     if (!inicioFaixa || !fimFaixa) {
-      alert("Preencha o início e fim da série numérica.");
+      setErroAnalise("Preencha o início e fim da série numérica.");
       return;
     }
     setSalvandoFaixa(true);
@@ -310,7 +318,7 @@ export default function ApacRegulacao() {
       setModalNovaFaixa(false);
       carregarFaixas();
     } catch (err: any) {
-      alert(err?.response?.data?.detail || "Erro ao salvar a faixa.");
+      setErroAnalise(err?.response?.data?.detail || "Erro ao salvar a faixa.");
     } finally {
       setSalvandoFaixa(false);
     }

@@ -1,9 +1,19 @@
 import { useEffect, useState } from "react";
-import { History, Upload } from "lucide-react";
+import {
+  AlertTriangle,
+  Download,
+  ExternalLink,
+  Globe,
+  History,
+  RefreshCw,
+  Sparkles,
+  Upload,
+} from "lucide-react";
 import {
   labSigtap,
   pagData,
   pagMeta,
+  sigtapBuscarAutomatico,
   sigtapImportar,
   sigtapVersoes,
   type SigtapImportOut,
@@ -37,6 +47,8 @@ export default function LabSigtap() {
     return d.toISOString().slice(0, 7);
   });
   const [importando, setImportando] = useState(false);
+  const [buscandoAuto, setBuscandoAuto] = useState(false);
+  const [avisoAuto, setAvisoAuto] = useState<{ mensagem: string; linkOficial?: string } | null>(null);
   const [preview, setPreview] = useState<SigtapImportOut | null>(null);
   const [versoes, setVersoes] = useState<SigtapVersao[]>([]);
   const [ok, setOk] = useState("");
@@ -68,6 +80,40 @@ export default function LabSigtap() {
   useEffect(() => {
     carregarVersoes();
   }, []);
+
+  async function buscarAutomatico(simular: boolean) {
+    if (!/^\d{4}-\d{2}$/.test(competencia)) {
+      setErro("Competência inválida (AAAA-MM).");
+      return;
+    }
+    setBuscandoAuto(true);
+    setErro("");
+    setOk("");
+    setAvisoAuto(null);
+    try {
+      const r = await sigtapBuscarAutomatico(competencia, simular);
+      setPreview(r);
+      if (!simular) {
+        setOk(
+          `Tabela do DATASUS (${competencia}) baixada e importada com sucesso: ${r.inseridos} inseridos, ${r.atualizados} atualizados.`,
+        );
+        carregarVersoes();
+        buscar(1);
+      } else {
+        setOk(`Simulação concluída com sucesso (${competencia}): ${r.processados} registros validados.`);
+      }
+    } catch (e: unknown) {
+      const detalhe =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        "O serviço de download automático do portal DATASUS/SIGTAP está temporariamente indisponível ou inacessível no momento. Por favor, acesse a fonte oficial do DATASUS (http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp), baixe o arquivo mensal compactado (.zip) da Tabela Unificada e utilize a importação manual de arquivo logo abaixo.";
+      setAvisoAuto({
+        mensagem: detalhe,
+        linkOficial: "http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp",
+      });
+    } finally {
+      setBuscandoAuto(false);
+    }
+  }
 
   async function importar(simular: boolean) {
     if (!arquivo) {
@@ -152,49 +198,175 @@ export default function LabSigtap() {
         <Paginacao page={page} pages={pages} total={total} onPage={(p) => buscar(p)} />
       </Card>
 
-      <Card className="mb-4 p-4">
-        <p className="mb-1 flex items-center gap-2 font-display text-base font-bold text-sus-950">
-          <Upload className="h-4 w-4" /> Importação da Tabela Unificada (SIGTAP/DATASUS)
-        </p>
-        <p className="mb-3 text-xs text-ink/55">
-          Envie o .zip mensal oficial ou .txt/.csv do layout (procedimentos com código de 10 dígitos, valores SA/SP/SH,
-          CBOs e CIDs compatíveis). Simule antes de aplicar. Fonte: sigtap.datasus.gov.br/tabela-unificada.
-        </p>
-        <div className="flex flex-wrap items-end gap-2">
-          <div>
-            <Label>Arquivo (.zip / .txt / .csv)</Label>
-            <Input type="file" accept=".zip,.txt,.csv,.dat" onChange={(e) => setArquivo(e.target.files?.[0] ?? null)} />
-          </div>
-          <div>
-            <Label>Competência (AAAA-MM)</Label>
-            <Input type="month" value={competencia} onChange={(e) => setCompetencia(e.target.value)} />
-          </div>
-          <Button onClick={() => importar(true)} disabled={importando || !arquivo}>
-            {importando ? "Processando…" : "Simular"}
-          </Button>
-          <Button onClick={() => importar(false)} disabled={importando || !arquivo} className="!bg-teal !text-sus-950">
-            Aplicar carga
-          </Button>
-          <a href="/api/lab/sigtap/modelo" className="inline-flex min-h-[44px] items-center rounded-xl px-3 py-2 text-xs font-bold text-sus-900 hover:bg-sus-900/5">
-            Baixar modelo CSV
-          </a>
+      <Card className="mb-4 p-5 space-y-5">
+        <div>
+          <p className="flex items-center gap-2 font-display text-base font-bold text-sus-950">
+            <Globe className="h-5 w-5 text-teal" /> Atualização e Carga da Tabela Unificada (SIGTAP / DATASUS)
+          </p>
+          <p className="mt-1 text-xs text-ink/65 leading-relaxed">
+            Mantenha o catálogo de procedimentos, valores ambulatoriais/hospitalares e compatibilidades de CBO/CID
+            atualizados com a competência oficial do Ministério da Saúde.
+          </p>
         </div>
-        {preview && (
-          <div className="mt-3 rounded-2xl bg-sand/60 p-4 text-xs">
-            <p className="font-bold text-sus-950">
-              {preview.simulacao ? "Simulação" : "Carga aplicada"} — {preview.arquivo} · competência {preview.competencia}
+
+        {/* Bloco 1: Integração de Download Automático */}
+        <div className="rounded-2xl border border-teal/25 bg-teal/5 p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="font-bold text-sm text-sus-950 flex items-center gap-1.5">
+                <Sparkles className="h-4 w-4 text-teal" /> Download Automático Direto do DATASUS
+              </p>
+              <p className="text-xs text-ink/65 mt-0.5">
+                Busca diretamente no portal oficial do SIGTAP a tabela unificada mensal da competência selecionada.
+              </p>
+            </div>
+            <a
+              href="http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-sus-900/15 bg-white px-3 py-1.5 text-xs font-semibold text-sus-900 hover:bg-sand transition"
+            >
+              <ExternalLink className="h-3.5 w-3.5 text-sus-900/60" />
+              Fonte Oficial: DATASUS (download.jsp)
+            </a>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-2.5 pt-1">
+            <div>
+              <Label className="text-xs">Competência (AAAA-MM)</Label>
+              <Input
+                type="month"
+                value={competencia}
+                onChange={(e) => setCompetencia(e.target.value)}
+                className="mt-1 bg-white"
+              />
+            </div>
+            <Button
+              type="button"
+              onClick={() => buscarAutomatico(false)}
+              disabled={buscandoAuto || importando}
+              className="!bg-teal !text-sus-950 font-bold flex items-center gap-1.5 !w-auto"
+            >
+              <Download className="h-4 w-4" />
+              {buscandoAuto ? "Conectando ao DATASUS…" : "Buscar Tabela Automática (SIGTAP/Datasus)"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => buscarAutomatico(true)}
+              disabled={buscandoAuto || importando}
+              className="!w-auto bg-white"
+            >
+              Simular Busca Automática
+            </Button>
+          </div>
+
+          {/* Aviso informativo e amigável em caso de indisponibilidade da fonte DATASUS */}
+          {avisoAuto && (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-950 space-y-2 mt-3 animate-in fade-in">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-1.5 flex-1">
+                  <p className="font-bold text-sm text-amber-950">
+                    Aviso de Conexão com o Portal DATASUS
+                  </p>
+                  <p className="leading-relaxed text-amber-900">
+                    {avisoAuto.mensagem}
+                  </p>
+                  <div className="pt-2 flex flex-wrap items-center gap-3">
+                    <a
+                      href={avisoAuto.linkOficial || "http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp"}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-amber-700 px-3 py-1.5 font-bold text-white hover:bg-amber-800 transition"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Acessar Portal Oficial SIGTAP (download.jsp)
+                    </a>
+                    <span className="text-[11px] font-medium text-amber-800">
+                      💡 <b>Como proceder:</b> Baixe o arquivo (.zip) mensal no link acima e faça o upload manual no formulário abaixo.
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Bloco 2: Importação Manual de Arquivo */}
+        <div className="rounded-2xl border border-sus-900/15 bg-white p-4 space-y-3">
+          <div>
+            <p className="font-bold text-sm text-sus-950 flex items-center gap-1.5">
+              <Upload className="h-4 w-4 text-sus-900" /> Importação Manual de Arquivo (.zip / .txt / .csv)
             </p>
-            <p className="mt-1 text-ink/70">
-              Processados: <b>{preview.processados}</b> · Inseridos: <b>{preview.inseridos}</b> ·
+            <p className="text-xs text-ink/65 mt-0.5">
+              Envie o pacote compactado (.zip oficial) do SIGTAP ou arquivos .txt/.csv avulsos do layout FTP do DATASUS.
+              A simulação permite auditar a quantidade de procedimentos, CBOs e CIDs antes de gravar no banco de dados.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-2.5">
+            <div className="flex-1 min-w-[240px]">
+              <Label className="text-xs">Arquivo da Tabela Unificada (.zip / .txt / .csv / .dat) *</Label>
+              <Input
+                type="file"
+                accept=".zip,.txt,.csv,.dat"
+                onChange={(e) => setArquivo(e.target.files?.[0] ?? null)}
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Competência</Label>
+              <Input
+                type="month"
+                value={competencia}
+                onChange={(e) => setCompetencia(e.target.value)}
+                className="mt-1"
+              />
+            </div>
+            <Button
+              onClick={() => importar(true)}
+              disabled={importando || !arquivo}
+              className="!w-auto"
+              variant="outline"
+            >
+              {importando ? "Processando…" : "Simular Carga"}
+            </Button>
+            <Button
+              onClick={() => importar(false)}
+              disabled={importando || !arquivo}
+              className="!bg-teal !text-sus-950 font-bold !w-auto"
+            >
+              Aplicar Carga Manual
+            </Button>
+            <a
+              href="/api/lab/sigtap/modelo"
+              className="inline-flex min-h-[44px] items-center rounded-xl px-3 py-2 text-xs font-bold text-sus-900 hover:bg-sus-900/5 transition"
+            >
+              Baixar modelo CSV
+            </a>
+          </div>
+        </div>
+
+        {preview && (
+          <div className="rounded-2xl bg-sand/60 p-4 text-xs border border-sus-900/10 space-y-1.5">
+            <p className="font-bold text-sus-950 text-sm">
+              {preview.simulacao ? "📊 Relatório de Simulação" : "✅ Carga Aplicada com Sucesso"} — {preview.arquivo} · Competência {preview.competencia}
+            </p>
+            <p className="text-ink/75">
+              Registros Processados: <b>{preview.processados}</b> · Inseridos: <b>{preview.inseridos}</b> ·
               Atualizados: <b>{preview.atualizados}</b> · Ignorados: <b>{preview.ignorados}</b> ·
-              CBOs: <b>{preview.cbo_total}</b> · CIDs: <b>{preview.cid_total}</b>
+              Compatibilidades CBO: <b>{preview.cbo_total}</b> · Compatibilidades CID: <b>{preview.cid_total}</b>
             </p>
             {preview.erros.length > 0 && (
-              <ul className="mt-2 space-y-1 text-ink/60">
-                {preview.erros.slice(0, 10).map((e, i) => (
-                  <li key={i}>· {e.arquivo} linha {e.linha}: {e.motivo}</li>
-                ))}
-              </ul>
+              <div className="mt-2 pt-2 border-t border-sus-900/10">
+                <p className="font-semibold text-red-700 mb-1">Avisos / Inconsistências na leitura:</p>
+                <ul className="space-y-1 text-ink/65 max-h-32 overflow-y-auto">
+                  {preview.erros.slice(0, 10).map((e, i) => (
+                    <li key={i}>· {e.arquivo} linha {e.linha}: {e.motivo}</li>
+                  ))}
+                </ul>
+              </div>
             )}
           </div>
         )}

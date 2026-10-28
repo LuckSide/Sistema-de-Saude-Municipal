@@ -29,8 +29,10 @@ import {
 } from "../../services/api";
 import { Button, Card, Input, Label, Badge } from "../../components/ui/primitives";
 import ExportarExcel from "../../components/ExportarExcel";
+import { useConfirm } from "../../components/ConfirmDialog";
 
 export default function ApacFaturamento() {
+  const { confirmar } = useConfirm();
   const mesAtual = useMemo(() => {
     const d = new Date();
     const ano = d.getFullYear();
@@ -59,24 +61,7 @@ export default function ApacFaturamento() {
       if (resLotes && resLotes.length > 0) {
         setLotes(resLotes);
       } else {
-        // Se ainda não houver lotes no backend, simula histórico
-        setLotes([
-          {
-            id: 101,
-            competencia: comp,
-            cnes_executante: cnesExecutante || "2156828",
-            nome_executante: "HOSPITAL REGIONAL DE PASSOS / REGULAÇÃO GUAPÉ",
-            numero_remessa: 1,
-            total_apacs: resResumo?.total_apacs_autorizadas || 14,
-            total_procedimentos: resResumo?.total_procedimentos || 84,
-            valor_total: resResumo?.valor_total || 42890.5,
-            status: "GERADO",
-            nome_arquivo: `APAC_MAG_${comp.replace("-", "")}_01.TXT`,
-            hash_arquivo: "E8F3C92B45A178D0",
-            gerado_por_nome: "Coordenação de Regulação",
-            criado_em: new Date().toISOString(),
-          },
-        ]);
+        setLotes([]);
       }
     } catch {
       setMsgErro("Erro ao carregar dados do faturamento.");
@@ -100,13 +85,13 @@ export default function ApacFaturamento() {
   // Ação: Gerar Remessa APAC-Mag
   const handleGerarRemessa = async () => {
     if (resumo?.validacoes?.total_inconsistencias && resumo.validacoes.total_inconsistencias > 0) {
-      if (
-        !confirm(
-          `Atenção: Existem ${resumo.validacoes.total_inconsistencias} inconsistência(s) pré-faturamento. Deseja prosseguir com a geração da remessa mesmo assim?`
-        )
-      ) {
-        return;
-      }
+      const ok = await confirmar({
+        titulo: "Inconsistências pré-faturamento",
+        descricao: `Atenção: Existem ${resumo.validacoes.total_inconsistencias} inconsistência(s) pré-faturamento detectadas. Deseja prosseguir com a geração da remessa mesmo assim?`,
+        textoConfirmar: "Sim, Gerar Remessa",
+        variante: "warning",
+      });
+      if (!ok) return;
     }
 
     setGerando(true);
@@ -119,24 +104,7 @@ export default function ApacFaturamento() {
       );
       carregarDados(competencia);
     } catch (err: any) {
-      // Se a rota falhar ou simulação
-      const loteMock: LoteFaturamentoApac = {
-        id: Date.now(),
-        competencia: competencia,
-        cnes_executante: cnesExecutante || "2156828",
-        nome_executante: "HOSPITAL REGIONAL DE PASSOS",
-        numero_remessa: lotes.length + 1,
-        total_apacs: resumo?.total_apacs_autorizadas || 14,
-        total_procedimentos: resumo?.total_procedimentos || 84,
-        valor_total: resumo?.valor_total || 42890.5,
-        status: "GERADO",
-        nome_arquivo: `APAC_MAG_${competencia.replace("-", "")}_0${lotes.length + 1}.TXT`,
-        hash_arquivo: "A3B918CF6D204E17",
-        gerado_por_nome: "Faturamento Municipal",
-        criado_em: new Date().toISOString(),
-      };
-      setLotes([loteMock, ...lotes]);
-      setMsgSucesso(`Remessa APAC-Mag gerada com sucesso! Arquivo ${loteMock.nome_arquivo} disponível.`);
+      setMsgErro(err?.response?.data?.detail || "Falha ao gerar remessa APAC-Mag no servidor. Verifique as solicitações autorizadas.");
     } finally {
       setGerando(false);
     }

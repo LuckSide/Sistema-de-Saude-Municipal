@@ -130,10 +130,22 @@ class VeiculoIn(BaseModel):
     tipo: str = Field(default="carro", pattern="^(carro|van|micro|amb)$")
     status: str = Field(default="disponivel", pattern="^(disponivel|manutencao)$")
     ativo: bool = True
+    manutencao_motivo: str = ""
+    manutencao_data_entrada: date | None = None
+    manutencao_previsao_retorno: date | None = None
+    manutencao_indefinida: bool = False
 
 
 class VeiculoOut(VeiculoIn):
     id: int
+
+
+class VeiculoManutencaoIn(BaseModel):
+    em_manutencao: bool = True
+    motivo: str = ""
+    data_entrada: date | None = None
+    previsao_retorno: date | None = None
+    indefinida: bool = False
 
 
 # ---------- Destinos ----------
@@ -161,6 +173,7 @@ class MotoristaBase(BaseModel):
     cnh_numero: str = Field(default="", max_length=20)
     cnh_categoria: str = Field(default="", max_length=5)
     cnh_validade: date | None = None
+    toxicologico_validade: date | None = None
     telefone: str = Field(default="", max_length=20)
     ativo: bool = True
 
@@ -358,6 +371,7 @@ class ExameBase(BaseModel):
     instrucoes_transporte: str = Field(default="", max_length=500)
     justificativa: str = Field(default="", max_length=500)
     resultado: str = Field(default="", max_length=2000)
+    criado_por: str = Field(default="", max_length=120)
     codigo_curto: str = Field(default="", max_length=20)  # ID único e imutável (ex: EX-000123)
     numero_pedido: str = Field(default="", max_length=30)  # identificação operacional
 
@@ -367,20 +381,23 @@ class ExameIn(ExameBase):
     prioridade: str = Field(default="rotina", pattern="^(rotina|urgente)$")
     status: str = Field(
         default="aguardando",
-        pattern="^(aguardando|agendado|recepcionado|realizado|faltou|cancelado)$",
+        pattern="^(aguardando|agendado|recepcionado|realizado|faltou|cancelado|desistiu)$",
     )
 
     @field_validator("justificativa")
     @classmethod
     def _valida_justificativa(cls, v: str) -> str:
-        return (v or "").strip()
+        s = (v or "").strip()
+        if len(s) < 12:
+            raise ValueError("Justificativa clínica obrigatória (mínimo 12 caracteres).")
+        return s
 
 
 class ExameLoteIn(BaseModel):
     """Atualização em lote: só campos enviados são aplicados."""
 
     ids: list[int] = Field(min_length=1, max_length=200)
-    status: str = Field(default="", pattern="^(|aguardando|agendado|recepcionado|realizado|faltou|cancelado)$")
+    status: str = Field(default="", pattern="^(|aguardando|agendado|recepcionado|realizado|faltou|cancelado|desistiu)$")
     data_agendada: date | None = None
     hora_agendada: str = Field(default="", max_length=5)
     medico_id: int | None = None

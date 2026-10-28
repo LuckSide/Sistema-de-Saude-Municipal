@@ -125,7 +125,9 @@ def criar_solicitacao_mestre(
 
     fila = None
     if origem_fila_id:
-        fila = db.get(FilaPsf, origem_fila_id)
+        fila = db.exec(
+            select(FilaPsf).where(FilaPsf.id == origem_fila_id).with_for_update()
+        ).first()
         if not fila:
             raise HTTPException(404, "Origem fila não encontrada")
         if fila.status != "na_fila":

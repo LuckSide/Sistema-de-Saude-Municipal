@@ -20,6 +20,7 @@ import { Button, Card, Input, Label, Select } from "../components/ui/primitives"
 import Paginacao from "../components/Paginacao";
 import ExportarExcel from "../components/ExportarExcel";
 import PermissoesTree from "../components/PermissoesTree";
+import { useConfirm } from "../components/ConfirmDialog";
 import { ACOES, type Acao } from "../permissoes";
 
 const ACAO_SET = new Set(ACOES.map((a) => a.id));
@@ -64,6 +65,7 @@ const vazio: Form = {
 };
 
 export default function Usuarios() {
+  const { confirmar } = useConfirm();
   const [lista, setLista] = useState<Usuario[]>([]);
   const [form, setForm] = useState<Form>(vazio);
   const [editId, setEditId] = useState<number | null>(null);
@@ -77,13 +79,14 @@ export default function Usuarios() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
   const [medicos, setMedicos] = useState<Medico[]>([]);
   const [unidades, setUnidades] = useState<UnidadeSaude[]>([]);
   const [labs, setLabs] = useState<Laboratorio[]>([]);
 
-  async function carregar(p = page) {
+  async function carregar(p = page, limite = pageSize) {
     try {
-      const r = await fetchUsuarios(p, 100);
+      const r = await fetchUsuarios(p, limite);
       setLista(pagData<Usuario>(r));
       const m = pagMeta(r);
       setTotal(m.total);
@@ -119,7 +122,7 @@ export default function Usuarios() {
           nome: form.nome,
           area: form.area,
           telas: form.telas,
-          acoes: form.acoes,
+          acoes: sanitizarAcoes(form.acoes),
           medico_id: form.medico_id ? Number(form.medico_id) : null,
           unidade_saude_id: form.unidade_saude_id ? Number(form.unidade_saude_id) : null,
           laboratorio_id: form.laboratorio_id ? Number(form.laboratorio_id) : null,
@@ -188,7 +191,13 @@ export default function Usuarios() {
   }
 
   async function resetar(u: Usuario) {
-    if (!confirm(`Resetar senha de ${u.username}? Nova temporária + troca obrigatória no próximo login.`)) return;
+    const ok = await confirmar({
+      titulo: `Resetar senha de ${u.username}`,
+      descricao: `Deseja gerar uma senha temporária para o usuário ${u.username}? O usuário deverá alterá-la no próximo login.`,
+      textoConfirmar: "Gerar Senha Temporária",
+      variante: "warning",
+    });
+    if (!ok) return;
     setResetando(u.id);
     setErro("");
     setOk("");
@@ -213,7 +222,14 @@ export default function Usuarios() {
   }
 
   async function excluir(id: number) {
-    if (!confirm("Excluir usuário?")) return;
+    const userObj = lista.find((x) => x.id === id);
+    const ok = await confirmar({
+      titulo: "Excluir usuário",
+      descricao: `Deseja realmente excluir permanentemente a conta de ${userObj?.username || "usuário"}?`,
+      textoConfirmar: "Sim, Excluir",
+      variante: "danger",
+    });
+    if (!ok) return;
     try {
       await deleteUsuario(id);
       if (editId === id) fecharModal();
@@ -353,7 +369,17 @@ export default function Usuarios() {
           </tbody>
         </table>
         </div>
-        <Paginacao page={page} pages={pages} total={total} onPage={(p) => carregar(p)} />
+        <Paginacao
+          page={page}
+          pages={pages}
+          total={total}
+          pageSize={pageSize}
+          onPageSize={(sz) => {
+            setPageSize(sz);
+            carregar(1, sz);
+          }}
+          onPage={(p) => carregar(p, pageSize)}
+        />
       </Card>
 
       {modal && (

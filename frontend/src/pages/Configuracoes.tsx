@@ -32,6 +32,7 @@ import {
 import { Badge, Button, Card, Input, Label, Select } from "../components/ui/primitives";
 import { useAuth } from "../hooks/useAuth";
 import { useUndo } from "../components/UndoToast";
+import { useConfirm } from "../components/ConfirmDialog";
 import Medicos from "./Medicos";
 import UnidadesSaude from "./UnidadesSaude";
 import {
@@ -95,7 +96,8 @@ function msgErro(e: unknown, padrao: string): string {
 }
 
 export default function Configuracoes() {
-  const { can } = useAuth();
+  const { user, can } = useAuth();
+  const { confirmar } = useConfirm();
   const [params, setParams] = useSearchParams();
   // Abas condicionais à matriz (pai "integracoes" implica as 4 via can()).
   // "usuarios" mantém acesso à Geral como antes da granularidade.
@@ -108,7 +110,7 @@ export default function Configuracoes() {
     if (a.id === "whatsapp") return can("cfg_geral") || can("usuarios") || can("cfg_pec");
     if (a.id === "exames") return can("cfg_geral") || can("usuarios") || can("tfd_procedimentos") || can("lab_vagas");
     if (a.id === "medicos" || a.id === "unidades" || a.id === "laboratorios") return can("usuarios") || can("lab_vagas");
-    if (a.id === "backup") return can("cfg_backup") || can("usuarios") || can("cfg_geral");
+    if (a.id === "backup") return !!user?.is_superuser;
     return can("cfg_rnds");
   });
   const pedida = (params.get("aba") as Aba) || "geral";
@@ -167,6 +169,7 @@ export default function Configuracoes() {
 
 // ---------- Geral: município + marca + versão ----------
 function AbaGeral() {
+  const { confirmar } = useConfirm();
   const [cidade, setCidade] = useState("Guapé");
   const [uf, setUf] = useState("MG");
   const [subtitulo, setSubtitulo] = useState("Secretaria Municipal");
@@ -318,7 +321,13 @@ function AbaGeral() {
               <Button
                 disabled={updBusy || !upd.tem_atualizacao}
                 onClick={async () => {
-                  if (!confirm("Atualizar agora? 1-3 min de indisponibilidade (rebuild Docker).")) return;
+                  const ok = await confirmar({
+                    titulo: "Atualizar sistema agora?",
+                    descricao: "Esta ação fará o rebuild dos containers Docker. O sistema terá uma indisponibilidade temporária estimada de 1 a 3 minutos.",
+                    textoConfirmar: "Sim, Atualizar Agora",
+                    variante: "warning",
+                  });
+                  if (!ok) return;
                   setUpdBusy(true);
                   setUpdMsg("");
                   try {
@@ -2209,6 +2218,7 @@ function AbaExamesPermitidos() {
 // ---------- Aba: Laboratórios ----------
 function AbaLaboratorios() {
   const { notificarUndo } = useUndo();
+  const { confirmar } = useConfirm();
   const [lista, setLista] = useState<{ id: number; nome: string; ativo: boolean }[]>([]);
   const [nome, setNome] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2264,7 +2274,13 @@ function AbaLaboratorios() {
 
   async function remover(id: number) {
     const alvo = lista.find((x) => x.id === id);
-    if (!confirm("Desativar/remover este laboratório? As vagas atuais serão preservadas no histórico.")) return;
+    const okConf = await confirmar({
+      titulo: `Desativar laboratório ${alvo?.nome ?? ""}`,
+      descricao: "Deseja realmente desativar este laboratório? As vagas e agendamentos atuais serão preservados no histórico.",
+      textoConfirmar: "Sim, Desativar",
+      variante: "danger",
+    });
+    if (!okConf) return;
     setBusy(true);
     setErro("");
     setOk("");

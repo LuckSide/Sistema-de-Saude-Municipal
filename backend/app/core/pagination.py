@@ -18,7 +18,7 @@ class Pagina(BaseModel, Generic[T]):
 
 def page_params(
     page: int = Query(default=1, ge=1, le=100000),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
 ) -> tuple[int, int]:
     return page, limit
 

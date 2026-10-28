@@ -62,7 +62,7 @@ def listar_logs(
     acao: str = Query(default="", max_length=60),
     entidade: str = Query(default="", max_length=40),
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
     user: User = Depends(require_superuser),
 ):
@@ -183,19 +183,37 @@ def timeline_paciente(
         raise HTTPException(status_code=404, detail="Paciente não encontrado")
     eventos: list[EventoOut] = []
     if pac.created_at:
+        from app.models.cadastros_saude import UnidadeSaude
+        uni_pac = (
+            pac.unidade_nome
+            or (db.get(UnidadeSaude, pac.unidade_saude_id).nome if pac.unidade_saude_id else "")
+            or "Recepção Geral"
+        )
         eventos.append(EventoOut(
             data=pac.created_at.date().isoformat(), tipo="cadastro",
-            titulo="Paciente cadastrado no sistema", detalhe=pac.nome, usuario="sistema",
+            titulo="Paciente cadastrado no sistema",
+            detalhe=f"{pac.nome} · Unidade de Cadastro: {uni_pac}",
+            usuario="sistema",
         ))
     exames = db.exec(
         select(ExameFila).where(ExameFila.paciente_id == pid).order_by(ExameFila.data_pedido)
     ).all()
     removidos = {e.id for e in exames if e.id and not e.ativo}
     for e in exames:
+        prof_nome = e.medico_nome or getattr(e, "criado_por", "") or "Regulação / Atendimento"
+        uni_origem = e.unidade_nome or "Unidade de Atendimento"
+        partes = [
+            f"Prioridade {e.prioridade}",
+            f"Tipo: {e.tipo_fila}" if e.tipo_fila else "",
+            f"Unidade: {uni_origem}",
+            f"Profissional Requisitante: {prof_nome}",
+        ]
+        detalhe_fila = " · ".join(p for p in partes if p)
         eventos.append(EventoOut(
             data=e.data_pedido.isoformat(), tipo="fila",
             titulo=f"Entrada na fila: {e.exame[:80]}",
-            detalhe=f"Prioridade {e.prioridade}" + (f" · {e.tipo_fila}" if e.tipo_fila else ""),
+            detalhe=detalhe_fila,
+            usuario=prof_nome,
             status="aguardando",
         ))
         if e.data_agendada:

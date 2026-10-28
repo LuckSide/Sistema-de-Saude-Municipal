@@ -25,11 +25,13 @@ import {
 import { Button, Card, Input, Label } from "../../components/ui/primitives";
 import GradeDias from "../../components/GradeDias";
 import MonthPicker from "../../components/MonthPicker";
+import { useConfirm } from "../../components/ConfirmDialog";
 
 type ItemLote = { sigtap: SigtapProc; quantidade: number };
 type ModoDia = "agendar" | "vaga";
 
 export default function VagasAgenda() {
+  const { confirmar } = useConfirm();
   const [labs, setLabs] = useState<Laboratorio[]>([]);
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [labId, setLabId] = useState("");
@@ -238,7 +240,15 @@ export default function VagasAgenda() {
   }
 
   async function excluirVagaDia() {
-    if (!vagaDiaSel || !confirm("Excluir vagas deste dia?")) return;
+    if (!vagaDiaSel) return;
+    const dataFmt = vagaDiaSel.data ? vagaDiaSel.data.split("-").reverse().join("/") : (diaSel || "");
+    const ok = await confirmar({
+      titulo: `Excluir vagas de ${dataFmt}`,
+      descricao: `Deseja realmente excluir as vagas configuradas para o dia ${dataFmt}?`,
+      textoConfirmar: "Sim, Excluir",
+      variante: "danger",
+    });
+    if (!ok) return;
     try {
       await vagasExcluir(vagaDiaSel.id);
       setOk("Vagas do dia excluídas.");

@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import type { ReactElement } from "react";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { UndoToastProvider } from "./components/UndoToast";
+import { ConfirmDialogProvider } from "./components/ConfirmDialog";
 import { useCidadeDinamica } from "./hooks/useCidade";
 import { Protected, Shell } from "./components/Layout";
 import Login from "./pages/Login";
@@ -106,8 +107,9 @@ export default function App() {
   return (
     <AuthProvider>
       <UndoToastProvider>
-      <AplicaCidade />
-      <BrowserRouter>
+        <ConfirmDialogProvider>
+          <AplicaCidade />
+          <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/alterar-senha-inicial" element={<AlterarSenhaInicial />} />
@@ -195,6 +197,18 @@ export default function App() {
             <Route path="sigtap" element={<LabGuard tela="lab_sigtap"><LabSigtap /></LabGuard>} />
           </Route>
           <Route
+            path="/sigtap"
+            element={
+              <Protected>
+                <GuardQualquer telas={["lab_sigtap", "tfd_catalogo", "tfd", "lab", "usuarios", "cfg_geral"]}>
+                  <Shell>
+                    <LabSigtap />
+                  </Shell>
+                </GuardQualquer>
+              </Protected>
+            }
+          />
+          <Route
             path="/aps"
             element={
               <Protected>
@@ -272,6 +286,7 @@ export default function App() {
           <Route path="/admin/psfs" element={<Navigate to="/configuracoes?aba=unidades" replace />} />
         </Routes>
       </BrowserRouter>
+        </ConfirmDialogProvider>
       </UndoToastProvider>
     </AuthProvider>
   );

@@ -6,9 +6,11 @@ import {
   type UpdateStatus,
 } from "../services/api";
 import { Button } from "../components/ui/primitives";
+import { useConfirm } from "./ConfirmDialog";
 
 /** Banner de update p/ admin — só versão. Detalhes GitHub ficam em Configurações. */
 export default function UpdateBanner() {
+  const { confirmar } = useConfirm();
   const [st, setSt] = useState<UpdateStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -29,7 +31,13 @@ export default function UpdateBanner() {
   if (dismiss || !st?.tem_atualizacao) return null;
 
   async function atualizar() {
-    if (!confirm("Atualizar sistema agora? Baixa código, rebuild Docker e reinicia containers. Indisponibilidade de 1-3 min.")) return;
+    const ok = await confirmar({
+      titulo: "Atualizar sistema agora?",
+      descricao: "Esta ação fará download da nova versão e reiniciará os containers. O sistema terá uma indisponibilidade temporária de 1 a 3 minutos.",
+      textoConfirmar: "Sim, Atualizar Agora",
+      variante: "warning",
+    });
+    if (!ok) return;
     setBusy(true);
     setMsg("");
     try {

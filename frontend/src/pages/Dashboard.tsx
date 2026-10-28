@@ -26,6 +26,7 @@ import { Link } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { Card } from "../components/ui/primitives";
+import { useConfirm } from "../components/ConfirmDialog";
 import UpdateBanner, { VersaoRodape } from "../components/UpdateBanner";
 import { fetchDashboard, saveDashboard, updateStatus, type DashboardItem, type UpdateStatus } from "../services/api";
 import { MODULOS, type NoPermissao } from "../permissoes";
@@ -68,6 +69,7 @@ function uid(ref: string) {
 
 export default function Dashboard() {
   const { user, can } = useAuth();
+  const { confirmar } = useConfirm();
   const [versao, setVersao] = useState<UpdateStatus | null>(null);
   const [items, setItems] = useState<DashboardItem[] | null>(null);
   const [salvos, setSalvos] = useState<DashboardItem[]>([]);
@@ -167,8 +169,14 @@ export default function Dashboard() {
     alterar(base);
   }
 
-  function restaurar() {
-    if (!confirm("Restaurar o painel padrão automático? Sua personalização atual será substituída.")) return;
+  async function restaurar() {
+    const ok = await confirmar({
+      titulo: "Restaurar painel padrão",
+      descricao: "Deseja realmente restaurar o painel padrão automático? Sua personalização atual será substituída.",
+      textoConfirmar: "Sim, Restaurar",
+      variante: "warning",
+    });
+    if (!ok) return;
     saveSeq.current++;
     if (timer.current) window.clearTimeout(timer.current);
     setSaveState("salvando");

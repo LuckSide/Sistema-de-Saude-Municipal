@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarClock, Filter, User } from "lucide-react";
+import { Building2, CalendarClock, Filter, Stethoscope, User } from "lucide-react";
 import { fetchTimeline, type TimelineEvento } from "../services/api";
 import { cn } from "./ui/primitives";
 
@@ -125,10 +125,57 @@ export default function Timeline({
               {e.data.split("-").reverse().join("/")}
             </p>
             <p className="text-sm font-bold text-sus-950">{e.titulo}</p>
-            {e.detalhe && <p className="mt-0.5 break-words text-xs text-ink/60">{e.detalhe}</p>}
+            {e.detalhe && (
+              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-ink/75">
+                {e.detalhe.split(" · ").map((part, idx) => {
+                  const p = part.trim();
+                  if (!p) return null;
+                  if (p.startsWith("Unidade:") || p.startsWith("Unidade de Cadastro:")) {
+                    return (
+                      <span
+                        key={idx}
+                        className="inline-flex items-center gap-1 rounded-md border border-teal/20 bg-teal/10 px-2 py-0.5 text-[11px] font-semibold text-teal-800"
+                      >
+                        <Building2 className="h-3 w-3 text-teal" />
+                        {p}
+                      </span>
+                    );
+                  }
+                  if (p.startsWith("Profissional Requisitante:") || p.startsWith("Médico:")) {
+                    return (
+                      <span
+                        key={idx}
+                        className="inline-flex items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-800"
+                      >
+                        <Stethoscope className="h-3 w-3 text-sky-600" />
+                        {p}
+                      </span>
+                    );
+                  }
+                  if (p.startsWith("Prioridade")) {
+                    return (
+                      <span
+                        key={idx}
+                        className="inline-flex items-center rounded-md border border-slate-200 bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700"
+                      >
+                        {p}
+                      </span>
+                    );
+                  }
+                  return (
+                    <span
+                      key={idx}
+                      className="inline-flex items-center rounded-md bg-sand/60 px-2 py-0.5 text-[11px] text-ink/70"
+                    >
+                      {p}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
             {e.usuario && (
-              <p className="mt-1 inline-flex items-center gap-1 rounded-full bg-sus-900/10 px-2 py-0.5 text-[11px] font-semibold text-sus-900">
-                <User className="h-3 w-3" /> {e.usuario}
+              <p className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-sus-900/10 px-2 py-0.5 text-[11px] font-semibold text-sus-900">
+                <User className="h-3 w-3" /> Responsável / Operador: {e.usuario}
               </p>
             )}
           </li>

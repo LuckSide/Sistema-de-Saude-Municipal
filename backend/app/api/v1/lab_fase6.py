@@ -171,7 +171,7 @@ def listar_vagas(
     ate: date | None = None,
     laboratorio_id: int | None = None,
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
     _=Depends(need_perm("lab_vagas")),
 ):
@@ -388,7 +388,7 @@ def listar_fila(
     data_ate: str | None = None,
     q: str = "",
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
     _=Depends(need_any_perm("lab_fila", "lab_agenda")),
 ):
@@ -639,7 +639,7 @@ def listar_mestre(
     data_de: date | None = None,
     data_ate: date | None = None,
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
     user=Depends(need_any_perm("lab_marcacao", "lab_agenda", "lab_recepcao")),
 ):
@@ -753,23 +753,36 @@ def obter_mestre(
 def cancelar_solicitacao(
     mid: int,
     db: Session = Depends(get_db),
-    user=Depends(need_any_perm("lab_marcacao", "usuarios")),
+    user=Depends(need_any_perm("lab_marcacao", "usuarios", acoes=("excluir",))),
 ):
     m = db.get(SolicitacaoMestre, mid)
     if not m:
         raise HTTPException(404, "Solicitação não encontrada")
-    if m.status != "cancelado":
-        vaga = db.exec(
-            select(VagaLab).where(
-                VagaLab.laboratorio_id == m.laboratorio_id,
-                VagaLab.data == m.data_agendada,
-            )
-        ).first()
-        if vaga and vaga.ocupadas > 0:
-            vaga.ocupadas -= 1
-            db.add(vaga)
-        m.status = "cancelado"
-        db.add(m)
+    if m.status in ("coletado", "realizado"):
+        raise HTTPException(400, f"Não é permitido cancelar solicitação com status '{m.status}'.")
+    if not bool(getattr(user, "is_superuser", False)) and getattr(user, "unidade_saude_id", None):
+        if m.unidade_saude_id and m.unidade_saude_id != user.unidade_saude_id:
+            raise HTTPException(403, "Sem permissão para cancelar solicitações originadas em outra unidade de saúde.")
+    from sqlalchemy import text
+
+    # Transição atômica de status no banco para evitar race condition / decremento duplo
+    res = db.exec(
+        text(
+            "UPDATE lab_solic_mestre "
+            "SET status = 'cancelado' "
+            "WHERE id = :mid AND status NOT IN ('cancelado', 'coletado', 'realizado')"
+        ).bindparams(mid=mid)
+    )
+    rowcount = getattr(res, "rowcount", 0)
+    if rowcount > 0:
+        # Se cancelou nesta chamada, abate atômica e seguramente a vaga ocupada
+        db.exec(
+            text(
+                "UPDATE lab_vagas "
+                "SET vagas_ocupadas = vagas_ocupadas - 1 "
+                "WHERE laboratorio_id = :lid AND data = :dt AND vagas_ocupadas > 0"
+            ).bindparams(lid=m.laboratorio_id, dt=m.data_agendada)
+        )
         db.commit()
     return None
 
@@ -972,7 +985,7 @@ def listar_auditoria(
     status_auditoria: str | None = None,
     laboratorio_id: int | None = None,
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
     user=Depends(need_any_perm("lab_audit", "lab_recepcao")),
 ):

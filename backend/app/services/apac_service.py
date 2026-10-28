@@ -68,6 +68,7 @@ def alocar_proximo_numero_apac(db: Session, tipo_procedimento: str = "TODOS") ->
             FaixaNumeracaoAPAC.proximo_numero <= FaixaNumeracaoAPAC.numero_final,
         )
         .order_by(FaixaNumeracaoAPAC.ano.asc(), FaixaNumeracaoAPAC.id.asc())
+        .with_for_update()
     )
     faixas = db.exec(stmt).all()
 
@@ -93,14 +94,32 @@ def alocar_proximo_numero_apac(db: Session, tipo_procedimento: str = "TODOS") ->
             detail="Não há faixa de numeração APAC ativa disponível com saldo. Cadastre uma nova faixa no SIA-SUS.",
         )
 
+    from sqlalchemy import text
+
     numero_alocado = faixa_escolhida.proximo_numero
-    faixa_escolhida.proximo_numero += 1
-    if faixa_escolhida.proximo_numero > faixa_escolhida.numero_final:
-        faixa_escolhida.ativo = False
+    proximo = numero_alocado + 1
+    desativar = proximo > faixa_escolhida.numero_final
 
-    db.add(faixa_escolhida)
-    db.flush()
+    res = db.exec(
+        text(
+            "UPDATE apac_faixas "
+            "SET proximo_numero = :prox, "
+            "    ativo = :novo_ativo "
+            "WHERE id = :fid AND proximo_numero = :num_esp AND proximo_numero <= numero_final AND ativo = true"
+        ).bindparams(
+            prox=proximo,
+            novo_ativo=False if desativar else True,
+            fid=faixa_escolhida.id,
+            num_esp=numero_alocado,
+        )
+    )
+    if getattr(res, "rowcount", 0) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Não há faixa de numeração APAC ativa disponível com saldo. Cadastre uma nova faixa no SIA-SUS.",
+        )
 
+    db.refresh(faixa_escolhida)
     return str(numero_alocado)
 
 
@@ -263,7 +282,11 @@ def autorizar_apac(
     validade_meses: int | None = None,
 ) -> SolicitacaoAPAC:
     """Executa a autorização técnica da APAC com validação de vínculo e numeração."""
-    sol = db.get(SolicitacaoAPAC, solicitacao_id)
+    sol = db.exec(
+        select(SolicitacaoAPAC)
+        .where(SolicitacaoAPAC.id == solicitacao_id)
+        .with_for_update()
+    ).first()
     if not sol:
         raise HTTPException(status_code=404, detail="Solicitação de APAC não encontrada.")
 

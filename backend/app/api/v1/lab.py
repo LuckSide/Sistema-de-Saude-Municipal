@@ -79,7 +79,7 @@ def listar_sigtap(
     instrumento: str | None = Query(default=None, pattern="^(BPA-C|BPA-I|BPA-F)?$"),
     apenas_laboratoriais: bool = Query(default=False),
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
     _=Depends(need_any_perm("lab_sigtap", "lab_fila", "lab_marcacao", "lab", "tfd_exames", "tfd_fila_lancamento", "tfd")),
 ):
@@ -149,36 +149,59 @@ def criar_sigtap(
 def listar_cbos_sigtap(
     procedimento_codigo: str = Query(default="", max_length=20),
     q: str = Query(default="", max_length=80),
-    limit: int = Query(default=200, ge=1, le=1000),
+    limit: int = Query(default=1000, ge=1, le=10000),
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
     """CBOs autorizados por procedimento (Tabela Unificada SIGTAP).
 
-    Leitura ampla (qualquer logado) p/ selects de médico/profissional.
-    Sem CBO importado p/ o procedimento, cai p/ catálogo local de
-    especialidades (tfd_especialidades) como fallback.
+    Suporta múltiplos CBOs por procedimento e busca universal de CBOs no sistema.
     """
     from app.models.tfd import Especialidade as _Esp
+    from app.api.v1.tfd import MAPA_ESPECIALIDADES_CANONICAS
 
     cod = "".join(c for c in (procedimento_codigo or "") if c.isdigit())
+    termo = (q or "").strip().lower()
     out: list[dict] = []
+
     if cod:
+        # Quando um procedimento é informado, traz TODOS os CBOs autorizados para ele no SIGTAP
         for c in db.exec(
             select(SigtapCbo).where(SigtapCbo.procedimento_codigo == cod).order_by(SigtapCbo.cbo)
         ).all():
             out.append({"cbo": c.cbo, "descricao": c.descricao or "", "origem": "sigtap"})
-    if not out:
-        base = select(_Esp).where(_Esp.ativo == True).order_by(_Esp.nome)  # noqa: E712
-        for e in db.exec(base.limit(500)).all():
-            out.append({"cbo": e.codigo_cbo, "descricao": e.nome or "", "origem": "catalogo"})
-    termo = (q or "").strip().lower()
+
+    if not out and not cod:
+        # Busca universal em TODOS os CBOs do SIGTAP
+        sigtap_query = select(SigtapCbo.cbo, SigtapCbo.descricao).distinct()
+        if termo:
+            sigtap_query = sigtap_query.where(
+                (SigtapCbo.cbo.ilike(f"%{termo}%")) | (SigtapCbo.descricao.ilike(f"%{termo}%"))
+            )
+        for cbo, desc in db.exec(sigtap_query.limit(limit)).all():
+            out.append({"cbo": cbo, "descricao": desc or "", "origem": "sigtap"})
+
+    # Incluir especialidades locais cadastradas e mapa canônico para cobertura completa
+    esp_query = select(_Esp).where(_Esp.ativo == True)
     if termo:
+        esp_query = esp_query.where((_Esp.codigo_cbo.ilike(f"%{termo}%")) | (_Esp.nome.ilike(f"%{termo}%")))
+    for e in db.exec(esp_query.limit(500)).all():
+        out.append({"cbo": e.codigo_cbo, "descricao": e.nome or "", "origem": "catalogo"})
+
+    for _, cbo_canon, nome_canon in MAPA_ESPECIALIDADES_CANONICAS:
+        if not termo or (termo in cbo_canon.lower() or termo in nome_canon.lower()):
+            out.append({"cbo": cbo_canon, "descricao": nome_canon, "origem": "canonico"})
+
+    if termo and out:
         out = [c for c in out if termo in (c["cbo"] or "").lower() or termo in (c["descricao"] or "").lower()]
+
     vistos: set[str] = set()
     unicos: list[dict] = []
     for c in out:
-        chave = f"{c['cbo']}|{c['descricao']}"
+        cbo_str = (c["cbo"] or "").strip()
+        if not cbo_str:
+            continue
+        chave = f"{cbo_str}|{c['descricao'].strip().lower()}"
         if chave in vistos:
             continue
         vistos.add(chave)
@@ -195,7 +218,7 @@ def listar_solicitacoes(
     ate: date | None = None,
     competencia: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
     _=Depends(need_perm("lab_marcacao")),
 ):
@@ -291,7 +314,7 @@ def excluir_solicitacao(sid: int, db: Session = Depends(get_db), _=Depends(need_
 def listar_prontos(
     competencia: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
     _=Depends(need_perm("lab_faturamento")),
 ):
@@ -478,7 +501,7 @@ def importar_sigtap(
     competencia: str = Query(pattern=r"^\d{4}-\d{2}$"),
     simular: bool = Query(default=True),
     db: Session = Depends(get_db),
-    ator=Depends(need_perm("lab_sigtap", "criar")),
+    ator=Depends(need_any_perm("lab_sigtap", "tfd_catalogo", "usuarios", "cfg_geral", "tfd")),
 ):
     """Carga mensal SIGTAP (.zip oficial ou .txt/.csv). Simula antes de aplicar."""
     from app.services.sigtap_import import importar_sigtap as _importar
@@ -494,3 +517,72 @@ def importar_sigtap(
     stats = _importar(db, [(file.filename or "arquivo", raw)], competencia,
                       getattr(ator, "nome", "") or getattr(ator, "username", ""), simular)
     return SigtapImportOut(**stats)
+
+
+@router.post("/sigtap/buscar-automatico", response_model=SigtapImportOut)
+def buscar_sigtap_automatico(
+    competencia: str = Query(pattern=r"^\d{4}-\d{2}$"),
+    simular: bool = Query(default=True),
+    db: Session = Depends(get_db),
+    ator=Depends(need_any_perm("lab_sigtap", "tfd_catalogo", "usuarios", "cfg_geral", "tfd")),
+):
+    """Tenta baixar automaticamente o arquivo mensal da Tabela Unificada do portal DATASUS/SIGTAP.
+
+    Caso o serviço do DATASUS esteja indisponível/desativado no momento do disparo,
+    retorna exceção amigável e informativa orientando o uso do upload manual como fallback.
+    Fonte oficial: http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp
+    """
+    import urllib.request
+    import urllib.error
+    import ssl
+    from app.services.sigtap_import import importar_sigtap as _importar
+
+    partes = competencia.split("-")
+    ano, mes = partes[0], partes[1]
+
+    urls_tentativas = [
+        f"http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp",
+        f"ftp://ftp.datasus.gov.br/dissemin/publicos/SIASUS/200801_/TabelaUnificada/TabelaUnificada_{ano}{mes}.zip",
+        f"http://ftp.datasus.gov.br/dissemin/publicos/SIASUS/200801_/TabelaUnificada/TabelaUnificada_{ano}{mes}.zip",
+    ]
+
+    raw_bytes = None
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    for url in urls_tentativas:
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            )
+            with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
+                conteudo = resp.read()
+                # Valida se é um arquivo compactado ZIP real
+                if conteudo and conteudo.startswith(b"PK"):
+                    raw_bytes = conteudo
+                    break
+        except Exception:
+            continue
+
+    if not raw_bytes:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "O serviço de download automático do portal DATASUS/SIGTAP está temporariamente "
+                "indisponível ou inacessível no momento. Por favor, acesse a fonte oficial do DATASUS "
+                "(http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp), baixe o arquivo mensal "
+                "compactado (.zip) da Tabela Unificada e utilize a importação manual de arquivo logo abaixo."
+            ),
+        )
+
+    stats = _importar(
+        db,
+        [(f"TabelaUnificada_{ano}{mes}.zip", raw_bytes)],
+        competencia,
+        getattr(ator, "nome", "") or getattr(ator, "username", ""),
+        simular,
+    )
+    return SigtapImportOut(**stats)
+

@@ -2,6 +2,7 @@ import json
 import secrets
 
 from sqlmodel import Session, select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.security import hash_password, verify_password
 from app.models.user import User
@@ -153,7 +154,11 @@ def create_user(db: Session, data: UserCreate) -> tuple[User, str | None]:
         must_change_password=True,
     )
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise ValueError("username já existe")
     db.refresh(user)
     try:
         from app.services.dashboard_default import criar_dashboard_padrao_se_ausente
@@ -184,7 +189,11 @@ def update_user(db: Session, user: User, data: UserUpdate) -> User:
         if v is not None and hasattr(user, k):
             setattr(user, k, v.strip() if isinstance(v, str) else v)
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise ValueError("username já existe")
     db.refresh(user)
     return user
 

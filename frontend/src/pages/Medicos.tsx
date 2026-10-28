@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Building2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import {
@@ -26,6 +26,7 @@ import {
 } from "../utils/validacoes";
 import { Button, Card, Input, Label } from "../components/ui/primitives";
 import { useUndo } from "../components/UndoToast";
+import { useConfirm } from "../components/ConfirmDialog";
 import ExportarExcel from "../components/ExportarExcel";
 import { useBackdropClose } from "../hooks/useBackdropClose";
 
@@ -44,6 +45,7 @@ const vazio = {
 
 export default function Medicos() {
   const { notificarUndo } = useUndo();
+  const { confirmar } = useConfirm();
   const [lista, setLista] = useState<Medico[]>([]);
   const [unidades, setUnidades] = useState<UnidadeSaude[]>([]);
   const [sp] = useSearchParams();
@@ -60,6 +62,25 @@ export default function Medicos() {
   const [buscaUnidade, setBuscaUnidade] = useState("");
   const [buscaEsp, setBuscaEsp] = useState("");
   const [especialidadesCadastradas, setEspecialidadesCadastradas] = useState<EspecialidadeCat[]>([]);
+
+  // Filtros de busca instantânea na listagem (Requisito 3)
+  const [buscaTabela, setBuscaTabela] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState<"todos" | "ativos" | "inativos">("todos");
+
+  const medicosFiltrados = useMemo(() => {
+    let res = lista;
+    if (filtroStatus === "ativos") res = res.filter((m) => m.ativo);
+    if (filtroStatus === "inativos") res = res.filter((m) => !m.ativo);
+    const termo = buscaTabela.trim().toLowerCase();
+    if (!termo) return res;
+    return res.filter((m) => {
+      const unis = (m.unidades_ids || [])
+        .map((uid) => unidades.find((u) => u.id === uid)?.nome || "")
+        .join(" ");
+      const texto = `${m.nome} ${m.crm || ""} ${m.cpf || ""} ${m.cbo_codigo || ""} ${m.cbo_descricao || ""} ${m.especialidades || ""} ${m.telefone || ""} ${m.email || ""} ${unis}`.toLowerCase();
+      return texto.includes(termo);
+    });
+  }, [lista, buscaTabela, filtroStatus, unidades]);
 
   const backdrop = useBackdropClose(fechar, modal);
 
@@ -183,7 +204,13 @@ export default function Medicos() {
     } finally { setSalvando(false); }
   }
   async function excluir(m: Medico) {
-    if (!confirm(`Inativar ${m.nome}?`)) return;
+    const ok = await confirmar({
+      titulo: `Inativar médico(a) ${m.nome}`,
+      descricao: `Deseja realmente inativar o cadastro de ${m.nome}? Você poderá reativá-lo a qualquer momento.`,
+      textoConfirmar: "Sim, Inativar",
+      variante: "danger",
+    });
+    if (!ok) return;
     const snap = { ...m };
     try {
       await deleteMedico(m.id);
@@ -216,6 +243,71 @@ export default function Medicos() {
       <p className="mb-4 mt-1 text-sm text-ink/55">Cadastro administrativo de médicos e profissionais de saúde.</p>
       {erro && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{erro}</p>}
       {ok && <p className="mb-3 rounded-xl bg-teal/10 px-3 py-2 text-sm font-medium text-teal">{ok}</p>}
+
+      {/* Barra de Filtro e Busca Instantânea (Requisito 3) */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sus-900/10 bg-white p-3.5 shadow-2xs">
+        <div className="relative min-w-[260px] flex-1 sm:max-w-md">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40" />
+          <Input
+            value={buscaTabela}
+            onChange={(e) => setBuscaTabela(e.target.value)}
+            placeholder="Pesquisar por nome, CRM, CBO, especialidade, unidade…"
+            className="pl-9 pr-8 text-xs"
+          />
+          {buscaTabela && (
+            <button
+              type="button"
+              onClick={() => setBuscaTabela("")}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink/40 hover:text-sus-950"
+              title="Limpar busca"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-xl border border-sus-900/10 bg-sand/40 p-0.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setFiltroStatus("todos")}
+              className={`rounded-lg px-2.5 py-1 font-semibold transition ${
+                filtroStatus === "todos"
+                  ? "bg-sus-900 text-white shadow-2xs"
+                  : "text-ink/65 hover:text-sus-950"
+              }`}
+            >
+              Todos ({lista.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFiltroStatus("ativos")}
+              className={`rounded-lg px-2.5 py-1 font-semibold transition ${
+                filtroStatus === "ativos"
+                  ? "bg-sus-900 text-white shadow-2xs"
+                  : "text-ink/65 hover:text-sus-950"
+              }`}
+            >
+              Ativos ({lista.filter((m) => m.ativo).length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFiltroStatus("inativos")}
+              className={`rounded-lg px-2.5 py-1 font-semibold transition ${
+                filtroStatus === "inativos"
+                  ? "bg-sus-900 text-white shadow-2xs"
+                  : "text-ink/65 hover:text-sus-950"
+              }`}
+            >
+              Inativos ({lista.filter((m) => !m.ativo).length})
+            </button>
+          </div>
+          <span className="text-xs text-ink/50 ml-1">
+            {medicosFiltrados.length} de {lista.length}
+          </span>
+        </div>
+      </div>
+
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
@@ -229,8 +321,8 @@ export default function Medicos() {
             <th className="px-4 py-3 text-right">Ações</th>
           </tr></thead>
           <tbody>
-            {lista.map((m) => (
-              <tr key={m.id} className="border-b border-sus-900/5 last:border-0">
+            {medicosFiltrados.map((m) => (
+              <tr key={m.id} className="border-b border-sus-900/5 last:border-0 hover:bg-sand/30 transition">
                 <td className="px-4 py-3"><p className="font-semibold text-sus-950">{m.nome}</p><p className="text-xs text-ink/50">{m.cpf || "—"}</p></td>
                 <td className="px-4 py-3">{m.crm || "—"}<p className="text-xs text-ink/50">{m.cbo_codigo ? `CBO ${m.cbo_codigo}` : ""}{m.cbo_descricao ? ` · ${m.cbo_descricao}` : ""}</p></td>
                 <td className="px-4 py-3">
@@ -251,14 +343,24 @@ export default function Medicos() {
                 </td>
                 <td className="px-4 py-3 text-xs text-ink/60">{m.especialidades || "—"}</td>
                 <td className="px-4 py-3 text-xs text-ink/60">{m.telefone || "—"} {m.email ? `· ${m.email}` : ""}</td>
-                <td className="px-4 py-3 text-xs">{m.ativo ? "ativo" : "inativo"}</td>
+                <td className="px-4 py-3 text-xs">
+                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${m.ativo ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-600"}`}>
+                    {m.ativo ? "ativo" : "inativo"}
+                  </span>
+                </td>
                 <td className="px-4 py-3"><div className="flex justify-end gap-1">
                   <button onClick={() => abrir(m)} className="rounded-lg p-2 text-sus-800 hover:bg-sus-100" title="Editar"><Pencil className="h-4 w-4" /></button>
                   <button onClick={() => excluir(m)} className="rounded-lg p-2 text-red-600 hover:bg-red-50" title="Inativar"><Trash2 className="h-4 w-4" /></button>
                 </div></td>
               </tr>
             ))}
-            {lista.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-ink/45">Nenhum médico.</td></tr>}
+            {medicosFiltrados.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-4 py-8 text-center text-ink/45">
+                  {buscaTabela ? `Nenhum profissional encontrado para “${buscaTabela}”.` : "Nenhum médico cadastrado."}
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
         </div>

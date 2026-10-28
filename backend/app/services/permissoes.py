@@ -46,12 +46,12 @@ PAI_DE: dict[str, str] = {
     "cfg_rnds": "integracoes",
     "cfg_backup": "integracoes",
     "auditoria": "usuarios",
-    "apac_solicitacao": "tfd",
-    "apac_regulacao": "tfd",
-    "apac_faturamento": "tfd",
+    "apac_solicitacao": "apac",
+    "apac_regulacao": "apac",
+    "apac_faturamento": "apac",
 }
 
-PAIS = ("dashboard", "tfd", "lab", "aps", "usuarios", "integracoes")
+PAIS = ("dashboard", "tfd", "lab", "apac", "aps", "usuarios", "integracoes")
 
 TODAS_TELAS = frozenset(list(PAI_DE) + list(PAI_DE.values()) + list(PAIS))
 
@@ -90,7 +90,11 @@ def tem_tela(user, codigo: str) -> bool:
     if codigo in EXCLUSIVAS:
         return False
     pai = PAI_DE.get(codigo)
-    return bool(pai) and pai in proprias
+    if bool(pai) and pai in proprias:
+        return True
+    if codigo.startswith("apac_") and "tfd" in proprias:
+        return True
+    return False
 
 
 def tem_acao(user, codigo: str, acao: str) -> bool:
@@ -101,13 +105,15 @@ def tem_acao(user, codigo: str, acao: str) -> bool:
     if atual is None and codigo not in EXCLUSIVAS:
         pai = PAI_DE.get(codigo)
         atual = mapa.get(pai) if pai else None
+        if atual is None and codigo.startswith("apac_"):
+            atual = mapa.get("tfd")
     if atual is None:
         return True  # sem registro = tudo permitido (compat)
     return acao in atual
 
 
 def validar_acoes(raw) -> dict[str, list[str]]:
-    """Valida payload {codigo: [acoes]} p/ gravar. Erro -> ValueError."""
+    """Valida payload {codigo: [acoes]} p/ gravar. Resiliente e seguro."""
     if raw is None:
         return {}
     if not isinstance(raw, dict):
@@ -115,13 +121,12 @@ def validar_acoes(raw) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for k, v in raw.items():
         if k not in TODAS_TELAS:
-            raise ValueError(f"tela desconhecida em acoes: {k}")
+            continue
         if not isinstance(v, list) or not v:
-            raise ValueError(f"acoes vazias p/ {k}")
+            continue
         limpas = [a for a in v if a in ACOES_VALIDAS]
-        if len(limpas) != len(v):
-            raise ValueError(f"ação inválida p/ {k} (use ver|criar|editar|excluir)")
-        out[k] = limpas
+        if limpas:
+            out[k] = limpas
     return out
 
 

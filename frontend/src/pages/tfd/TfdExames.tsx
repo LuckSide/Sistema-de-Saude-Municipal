@@ -15,6 +15,7 @@ import {
 } from "../../services/api";
 import { Button, Card, Input, Label } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
+import { useConfirm } from "../../components/ConfirmDialog";
 import { PRIO_ROTULO } from "../../utils/rotulos";
 
 const STATUS = ["aguardando", "agendado", "realizado", "cancelado"];
@@ -33,6 +34,7 @@ const vazio = {
 };
 
 export default function TfdExames() {
+  const { confirmar } = useConfirm();
   const [lista, setLista] = useState<Exame[]>([]);
   const [filtro, setFiltro] = useState("aguardando");
   const [modal, setModal] = useState(false);
@@ -188,7 +190,27 @@ export default function TfdExames() {
                 <td className="px-4 py-3 text-xs">{e.status}{e.data_agendada ? ` · ${e.data_agendada.split("-").reverse().join("/")}` : ""}</td>
                 <td className="px-4 py-3"><div className="flex justify-end gap-1">
                   <button onClick={() => abrirModal(e.id)} className="rounded-lg p-2 text-sus-800 hover:bg-sus-100"><Pencil className="h-4 w-4" /></button>
-                  <button onClick={async () => { if (confirm("Excluir da fila?")) { await tfdExcluirExame(e.id); carregar(); } }} className="rounded-lg p-2 text-red-600 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
+                  <button
+                    onClick={async () => {
+                      const ok = await confirmar({
+                        titulo: "Remover da fila",
+                        descricao: `Deseja realmente remover o pedido de ${e.paciente_nome} (${e.exame}) da fila?`,
+                        textoConfirmar: "Sim, Remover",
+                        variante: "danger",
+                      });
+                      if (ok) {
+                        try {
+                          await tfdExcluirExame(e.id);
+                          await carregar();
+                        } catch {
+                          setErro("Falha ao remover da fila.");
+                        }
+                      }
+                    }}
+                    className="rounded-lg p-2 text-red-600 hover:bg-red-50"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
                 </div></td>
               </tr>
             ))}
@@ -225,7 +247,7 @@ export default function TfdExames() {
                           key={`${p.origem}-${p.id || p.cns || p.cpf || p.nome}`}
                           onClick={() => {
                             if (p.origem === "pec" && p.id === null) {
-                              alert("Paciente do PEC: cadastre localmente primeiro ou selecione da lista local.");
+                              setErro("Paciente do PEC: cadastre localmente primeiro ou selecione da lista local.");
                               return;
                             }
                             setForm({ ...form, paciente_id: String(p.id!) });

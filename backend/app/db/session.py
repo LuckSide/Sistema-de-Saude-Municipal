@@ -213,6 +213,7 @@ def init_db() -> None:
             "resultado": "VARCHAR(2000) DEFAULT '' NOT NULL",
             "recepcionado_em": "TIMESTAMP",
             "recepcionado_por": "VARCHAR(120) DEFAULT '' NOT NULL",
+            "criado_por": "VARCHAR(120) DEFAULT '' NOT NULL",
             "status_anterior": "VARCHAR(20) DEFAULT '' NOT NULL",
         }.items():
             if col not in cols_ex2:
@@ -355,6 +356,17 @@ def init_db() -> None:
                 except Exception:
                     pass
 
+        # Motoristas: validade do exame toxicológico
+        try:
+            cols_mot = [c["name"] for c in inspect(conn).get_columns("tfd_motoristas")]
+        except Exception:
+            cols_mot = []
+        if "toxicologico_validade" not in cols_mot and cols_mot:
+            try:
+                conn.execute(text("ALTER TABLE tfd_motoristas ADD COLUMN toxicologico_validade DATE"))
+            except Exception:
+                pass
+
         # Auditoria: campo device, índices de alta performance e limpeza de ruído
         try:
             cols_audit = [c["name"] for c in inspect(conn).get_columns("audit_logs")]
@@ -435,16 +447,23 @@ def init_db() -> None:
                     conn.execute(text(f"ALTER TABLE sigtap_procedimentos ADD COLUMN {col} {ddl}"))
                 except Exception:
                     pass
-        # Frota/viagem: status do veículo, dados da ordem de circulação e snapshots do passageiro
+        # Frota/viagem: status do veículo, manutenção, dados da ordem de circulação e snapshots do passageiro
         try:
             cols_vei = [c["name"] for c in inspect(conn).get_columns("tfd_veiculos")]
         except Exception:
             cols_vei = []
-        if "status" not in cols_vei:
-            try:
-                conn.execute(text("ALTER TABLE tfd_veiculos ADD COLUMN status VARCHAR(20) DEFAULT 'disponivel' NOT NULL"))
-            except Exception:
-                pass
+        for col, ddl in {
+            "status": "VARCHAR(20) DEFAULT 'disponivel' NOT NULL",
+            "manutencao_motivo": "TEXT DEFAULT ''",
+            "manutencao_data_entrada": "DATE",
+            "manutencao_previsao_retorno": "DATE",
+            "manutencao_indefinida": "BOOLEAN DEFAULT FALSE NOT NULL",
+        }.items():
+            if col not in cols_vei:
+                try:
+                    conn.execute(text(f"ALTER TABLE tfd_veiculos ADD COLUMN {col} {ddl}"))
+                except Exception:
+                    pass
         try:
             cols_via = [c["name"] for c in inspect(conn).get_columns("tfd_viagens")]
         except Exception:
@@ -795,3 +814,17 @@ def init_db() -> None:
                 db.commit()
         except Exception:
             db.rollback()
+
+    # Garantia de índices únicos e constraints contra race conditions
+    with engine.begin() as conn:
+        for idx_sql in [
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_tfd_viagem_paciente ON tfd_viagem_pacientes (viagem_id, paciente_id)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_tfd_faturamento_viagem_pac_cod ON tfd_faturamento (viagem_id, paciente_id, codigo_sigtap) WHERE viagem_id IS NOT NULL",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_tfd_viagem_fila_exame_ativo ON tfd_viagem_fila (exame_fila_id) WHERE exame_fila_id IS NOT NULL AND status IN ('aguardando', 'alocado')",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_apac_solicitacoes_numero_apac ON apac_solicitacoes (numero_apac) WHERE numero_apac IS NOT NULL AND numero_apac != ''",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_lab_solic_mestre_origem_fila_ativa ON lab_solic_mestre (origem_fila_id) WHERE origem_fila_id IS NOT NULL AND status != 'cancelado'",
+        ]:
+            try:
+                conn.execute(text(idx_sql))
+            except Exception:
+                pass

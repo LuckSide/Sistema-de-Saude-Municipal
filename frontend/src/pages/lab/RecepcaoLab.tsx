@@ -20,12 +20,14 @@ import {
 import { Button, Card, Input, Label } from "../../components/ui/primitives";
 import ModalLeituraRapidaQR from "../../components/ModalLeituraRapidaQR";
 import { useAuth } from "../../hooks/useAuth";
+import { useConfirm } from "../../components/ConfirmDialog";
 
 function hojeISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
 export default function RecepcaoLab() {
+  const { confirmar } = useConfirm();
   const { user } = useAuth();
   const [lista, setLista] = useState<SolicMestre[]>([]);
   const [carregando, setCarregando] = useState(false);
@@ -81,7 +83,13 @@ export default function RecepcaoLab() {
   }, [termoBusca]);
 
   async function confirmarRecepcao(item: SolicMestre) {
-    if (!confirm(`Confirmar a recepção e coleta dos exames de ${item.paciente_nome}?`)) return;
+    const ok = await confirmar({
+      titulo: `Confirmar recepção e coleta`,
+      descricao: `Deseja registrar a recepção e coleta dos exames laboratoriais de ${item.paciente_nome}?`,
+      textoConfirmar: "Confirmar Coleta",
+      variante: "primary",
+    });
+    if (!ok) return;
     try {
       const atualizado = await labRecepcionarColeta(item.id);
       setOk(`Coleta de ${item.paciente_nome} confirmada com sucesso!`);
@@ -103,7 +111,7 @@ export default function RecepcaoLab() {
   async function submeterAjuste() {
     if (!itemAjuste) return;
     if (justificativaAjuste.trim().length < 8) {
-      alert("Por favor, preencha a justificativa detalhada da divergência (mínimo 8 caracteres).");
+      setErro("Por favor, preencha a justificativa detalhada da divergência (mínimo 8 caracteres).");
       return;
     }
 
@@ -116,7 +124,7 @@ export default function RecepcaoLab() {
       setModalAjuste(false);
       setOk(`Pedido de ajuste para ${itemAjuste.paciente_nome} enviado para a Secretaria com sucesso.`);
     } catch (e: any) {
-      alert(e?.response?.data?.detail || "Erro ao registrar pedido de ajuste.");
+      setErro(e?.response?.data?.detail || "Erro ao registrar pedido de ajuste.");
     } finally {
       setEnviandoAjuste(false);
     }

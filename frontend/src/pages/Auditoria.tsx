@@ -261,6 +261,7 @@ export default function Auditoria() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
   const [rawAberto, setRawAberto] = useState<AuditLog | null>(null);
   const [selecionado, setSelecionado] = useState<AuditLog | null>(null);
   const [rel, setRel] = useState<RegistroRelacionado | null>(null);
@@ -287,14 +288,14 @@ export default function Auditoria() {
     }
   }
 
-  async function carregar(p = 1) {
+  async function carregar(p = 1, limite = pageSize) {
     setLoading(true);
     setErro("");
     try {
       const r = await fetchAuditLogs({
         data_de: de || undefined, data_ate: ate || undefined,
         usuario: usuario.trim() || undefined, acao: acao || undefined,
-        entidade: entidade || undefined, page: p, limit: 100,
+        entidade: entidade || undefined, page: p, limit: limite,
       });
       setLista(pagData<AuditLog>(r));
       const m = pagMeta(r);
@@ -622,7 +623,17 @@ export default function Auditoria() {
             </tbody>
           </table>
         </div>
-        <Paginacao page={page} pages={pages} total={total} onPage={(p) => carregar(p)} />
+        <Paginacao
+          page={page}
+          pages={pages}
+          total={total}
+          pageSize={pageSize}
+          onPageSize={(sz) => {
+            setPageSize(sz);
+            carregar(1, sz);
+          }}
+          onPage={(p) => carregar(p, pageSize)}
+        />
       </Card>
 
       {/* Modal de Política de Retenção e Rotação de Logs */}

@@ -35,7 +35,6 @@ import {
   UserCheck,
   UserCog,
   Users,
-  Wrench,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
@@ -66,7 +65,6 @@ const MODULOS_NAV: ModuloNav[] = [
     itens: [
       { to: "/tfd/frota", label: "Veículos", icon: Car, tela: "tfd_frota", ou: ["tfd_frota_gestao", "tfd"] },
       { to: "/tfd/motoristas", label: "Motoristas", icon: UserCheck, tela: "tfd_frota", ou: ["tfd_frota_gestao", "tfd"] },
-      { to: "/tfd/frota?aba=manutencoes", label: "Manutenções", icon: Wrench, tela: "tfd_frota", ou: ["tfd_frota_gestao", "tfd"] },
     ],
   },
   {
@@ -116,7 +114,7 @@ const MODULOS_NAV: ModuloNav[] = [
       { to: "/lab/fila", label: "Fila de exames", icon: ListOrdered, tela: "lab_fila", ou: ["lab"] },
       { to: "/lab/agenda", label: "Vagas e Agenda", icon: CalendarDays, tela: "lab_agenda", ou: ["lab", "lab_vagas"] },
       { to: "/lab/faturamento", label: "Faturamento BPA", icon: ReceiptText, tela: "lab_faturamento", ou: ["lab"] },
-      { to: "/lab/sigtap", label: "SIGTAP BPA", icon: BookOpenText, tela: "lab_sigtap", ou: ["lab"] },
+      { to: "/lab/sigtap", label: "Tabela SIGTAP", icon: BookOpenText, tela: "lab_sigtap", ou: ["lab", "tfd", "usuarios"] },
     ],
   },
   {

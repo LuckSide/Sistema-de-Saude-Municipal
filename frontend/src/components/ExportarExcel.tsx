@@ -21,9 +21,11 @@ export default function ExportarExcel({
   className?: string;
 }) {
   const [baixando, setBaixando] = useState(false);
+  const [erro, setErro] = useState("");
 
   async function baixar() {
     setBaixando(true);
+    setErro("");
     try {
       const r = await api.get(url, { params, responseType: "blob" });
       const disp: string = r.headers?.["content-disposition"] ?? "";
@@ -40,24 +42,32 @@ export default function ExportarExcel({
       a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     } catch {
-      alert("Falha ao exportar. Tente novamente.");
+      setErro("Falha ao exportar.");
+      setTimeout(() => setErro(""), 3500);
     } finally {
       setBaixando(false);
     }
   }
 
   return (
-    <button
-      type="button"
-      onClick={baixar}
-      disabled={baixando}
-      title={titulo ?? "Exportar para Excel (.xlsx) com os filtros ativos"}
-      className={
-        className ??
-        "inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-sus-900/10 px-3 py-2 text-xs font-bold text-sus-900 hover:bg-sus-900/15 disabled:opacity-50"
-      }
-    >
-      <Download className="h-4 w-4" /> {baixando ? "Gerando…" : (rotulo ?? "Exportar Excel")}
-    </button>
+    <div className="relative inline-flex flex-col items-end">
+      <button
+        type="button"
+        onClick={baixar}
+        disabled={baixando}
+        title={titulo ?? "Exportar para Excel (.xlsx) com os filtros ativos"}
+        className={
+          className ??
+          "inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-sus-900/10 px-3 py-2 text-xs font-bold text-sus-900 hover:bg-sus-900/15 disabled:opacity-50"
+        }
+      >
+        <Download className="h-4 w-4" /> {baixando ? "Gerando…" : (rotulo ?? "Exportar Excel")}
+      </button>
+      {erro && (
+        <span className="absolute top-full mt-1 whitespace-nowrap rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-bold text-white shadow-md z-10 animate-in fade-in">
+          {erro}
+        </span>
+      )}
+    </div>
   );
 }

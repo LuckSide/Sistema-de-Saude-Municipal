@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Column, Date, DateTime, Numeric
+from sqlalchemy import Column, Date, DateTime, Numeric, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -57,6 +57,10 @@ class Veiculo(SQLModel, table=True):
     tipo: str = Field(default="carro", max_length=20)  # carro | van | micro | amb
     status: str = Field(default="disponivel", max_length=20)  # disponivel|manutencao
     ativo: bool = Field(default=True)
+    manutencao_motivo: str = Field(default="", sa_column=Column(Text, default=""))
+    manutencao_data_entrada: date | None = Field(default=None, sa_column=Column(Date))
+    manutencao_previsao_retorno: date | None = Field(default=None, sa_column=Column(Date))
+    manutencao_indefinida: bool = Field(default=False)
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=False)),
@@ -88,6 +92,7 @@ class Motorista(SQLModel, table=True):
     cnh_numero: str = Field(default="", max_length=20)
     cnh_categoria: str = Field(default="", max_length=5)
     cnh_validade: date | None = Field(default=None, sa_column=Column(Date))
+    toxicologico_validade: date | None = Field(default=None, sa_column=Column(Date))
     telefone: str = Field(default="", max_length=20)
     ativo: bool = Field(default=True, index=True)
     created_at: datetime = Field(
@@ -129,6 +134,7 @@ class Viagem(SQLModel, table=True):
 
 class ViagemPaciente(SQLModel, table=True):
     __tablename__ = "tfd_viagem_pacientes"
+    __table_args__ = (UniqueConstraint("viagem_id", "paciente_id", name="uq_tfd_viagem_paciente"),)
 
     id: int | None = Field(default=None, primary_key=True)
     viagem_id: int = Field(foreign_key="tfd_viagens.id", index=True)
@@ -236,6 +242,7 @@ class ExameFila(SQLModel, table=True):
     resultado: str = Field(default="", max_length=2000)  # resultado/laudo do exame realizado
     recepcionado_em: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=False)))
     recepcionado_por: str = Field(default="", max_length=120)
+    criado_por: str = Field(default="", max_length=120)
     status_anterior: str = Field(default="", max_length=20)  # p/ estornar recepção
     public_token: str = Field(default="", max_length=64, index=True)
     codigo_curto: str = Field(default="", max_length=20, index=True)  # ID único e imutável (ex: EX-000123)
@@ -280,6 +287,7 @@ class Especialidade(SQLModel, table=True):
 
 class Faturamento(SQLModel, table=True):
     __tablename__ = "tfd_faturamento"
+    __table_args__ = (UniqueConstraint("viagem_id", "paciente_id", "codigo_sigtap", name="uq_tfd_faturamento_viagem_pac_cod"),)
 
     id: int | None = Field(default=None, primary_key=True)
     viagem_id: int | None = Field(default=None, foreign_key="tfd_viagens.id")

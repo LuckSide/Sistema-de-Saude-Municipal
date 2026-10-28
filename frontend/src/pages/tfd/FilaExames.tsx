@@ -10,6 +10,7 @@ import {
   tfdCatalogoExames,
   tfdConsultarExamePublico,
   tfdCriarExame,
+  tfdEspecialidades,
   tfdExameDetalhe,
   tfdExames,
   tfdExcluirExame,
@@ -22,6 +23,7 @@ import {
   pagMeta,
   sigtapCbos,
   type CatalogoProc,
+  type EspecialidadeCat,
   type Exame,
   type FilaExamesParams,
   type OpcaoFiltro,
@@ -177,6 +179,9 @@ export default function FilaExames() {
   const [filtroUnidadeId, setFiltroUnidadeId] = useState("");
   const [de, setDe] = useState("");
   const [ate, setAte] = useState("");
+  const [filtroJustificativa, setFiltroJustificativa] = useState("");
+  const [pageSize, setPageSize] = useState(100);
+  const [modalConfirmacaoLancamento, setModalConfirmacaoLancamento] = useState(false);
   const [modal, setModal] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState(novoForm());
@@ -228,6 +233,7 @@ export default function FilaExames() {
   const [confirmandoLote, setConfirmandoLote] = useState(false);
   const [buscaCidModal, setBuscaCidModal] = useState("");
   const [cidsModal, setCidsModal] = useState<SigtapCidItem[]>([]);
+  const [listaEspecialidades, setListaEspecialidades] = useState<EspecialidadeCat[]>([]);
 
   useEffect(() => {
     if (!buscaCidModal || buscaCidModal.trim().length < 1) {
@@ -482,16 +488,19 @@ export default function FilaExames() {
     }
   }
 
-  async function carregar(p = page, over?: { tipo?: string; proc?: string; esp?: string; meus?: boolean; ordenacao?: string }) {
+  async function carregar(p = page, over?: { tipo?: string; proc?: string; esp?: string; meus?: boolean; ordenacao?: string; justificativa?: string; limit?: number }) {
     const tipoAtual = over?.tipo !== undefined ? over.tipo : tipoFila;
     const procAtual = over?.proc !== undefined ? over.proc : proc;
     const espAtual = over?.esp !== undefined ? over.esp : espCbo;
     const meusAtual = over?.meus !== undefined ? over.meus : soMeus;
     const ordAtual = over?.ordenacao !== undefined ? over.ordenacao : ordem;
+    const justAtual = over?.justificativa !== undefined ? over.justificativa : filtroJustificativa;
+    const limitAtual = over?.limit !== undefined ? over.limit : pageSize;
     const params: FilaExamesParams = {
       status: filtro || undefined,
       meus: meusAtual || undefined,
       q: q.trim() || undefined,
+      justificativa: justAtual.trim() || undefined,
       prioridade: prio || undefined,
       tipo_fila: tipoAtual.trim() || undefined,
       procedimento: procAtual.trim() || undefined,
@@ -502,7 +511,7 @@ export default function FilaExames() {
       data_ate: ate || undefined,
       ordenacao: ordAtual,
       page: p,
-      limit: 100,
+      limit: limitAtual,
     };
     setCarregando(true);
     setErro("");
@@ -741,6 +750,9 @@ export default function FilaExames() {
       .then((m) => { setMedicos(m); setMedicosErro(""); })
       .catch(() => { setMedicos([]); setMedicosErro("Falha ao carregar médicos. Confira o cadastro em Médicos/profissionais."); });
     fetchUnidadesSaude().then(setUnidades).catch(() => {});
+    tfdEspecialidades({ limit: 500, ativos: true })
+      .then((r) => setListaEspecialidades(pagData<EspecialidadeCat>(r)))
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -773,6 +785,11 @@ export default function FilaExames() {
 
   const especialidadesDoTipo = useMemo(() => {
     const mapa = new Map<string, { nome: string; cbo: string }>();
+    for (const e of listaEspecialidades) {
+      if (e.nome && !mapa.has(e.nome)) {
+        mapa.set(e.nome, { nome: e.nome, cbo: e.codigo_cbo || "" });
+      }
+    }
     for (const p of procsDoTipo) {
       const nome = p.nome_especialidade || p.especialidade;
       const cbo = p.codigo_especialidade || "";
@@ -780,8 +797,8 @@ export default function FilaExames() {
         mapa.set(nome, { nome, cbo });
       }
     }
-    return Array.from(mapa.values());
-  }, [procsDoTipo]);
+    return Array.from(mapa.values()).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  }, [procsDoTipo, listaEspecialidades]);
 
   function abrirModal(id?: number) {
     setErro("");
@@ -858,11 +875,56 @@ export default function FilaExames() {
     setBuscaCidModal("");
     setCidsModal([]);
     setErro("");
+    setModalConfirmacaoLancamento(false);
+  }
+
+  function iniciarSalvar() {
+    setErro("");
+    setOk("");
+    if (!form.paciente_id || !form.exame.trim() || !form.data_pedido) {
+      setErro("Paciente, exame e data do pedido são obrigatórios.");
+      return;
+    }
+    if (!form.justificativa || form.justificativa.trim().length < 12) {
+      setErro("A justificativa é obrigatória e deve ter pelo menos 12 caracteres.");
+      return;
+    }
+    if (mostrarAgendamento && (!form.data_agendada || !form.medico_id || !form.unidade_saude_id)) {
+      setErro("Agendamento exige data agendada, médico e unidade de atendimento.");
+      return;
+    }
+    const pid = Number(form.paciente_id);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      setErro("Paciente inválido.");
+      return;
+    }
+    const original = editId ? lista.find((x) => x.id === editId) : undefined;
+    if (retroativoBloqueado && ehRetroativa(form.data_pedido)) {
+      setErro(RETRO_MSG);
+      return;
+    }
+    const dataOriginal = (original?.data_agendada || "").slice(0, 10);
+    const novoAgendamento = !!form.data_agendada && form.data_agendada !== dataOriginal;
+    if (retroativoBloqueado && novoAgendamento && ehRetroativa(form.data_agendada)) {
+      setErro(RETRO_MSG);
+      return;
+    }
+    if (novoAgendamento && (!form.medico_id || !form.unidade_saude_id)) {
+      setErro("Agendamento exige médico e unidade de atendimento.");
+      return;
+    }
+
+    if (!editId) {
+      setModalConfirmacaoLancamento(true);
+      return;
+    }
+    salvar();
   }
 
   async function salvar() {
     setErro("");
     setOk("");
+    setModalConfirmacaoLancamento(false);
     if (!form.paciente_id || !form.exame.trim() || !form.data_pedido) {
       setErro("Paciente, exame e data do pedido são obrigatórios.");
       return;
@@ -1209,6 +1271,14 @@ export default function FilaExames() {
                   <Label>Até</Label>
                   <Input type="date" value={ate} onChange={(e) => setAte(e.target.value)} />
                 </div>
+                <div className="sm:col-span-2 md:col-span-4">
+                  <Label>Buscar por Justificativa Clínica / Médica</Label>
+                  <Input
+                    placeholder="Pesquise por termos na justificativa médica (ex: dor pré-cordial, suspeita, neoplasia, urgência...)"
+                    value={filtroJustificativa}
+                    onChange={(e) => setFiltroJustificativa(e.target.value)}
+                  />
+                </div>
               </div>
             )}
 
@@ -1467,7 +1537,21 @@ export default function FilaExames() {
         </table>
         </div>
         <p className="bg-sand/50 px-4 py-2 text-[11px] text-ink/50">* Posição na fila específica: por tipo de fila p/ exames, por especialidade p/ consultas especializadas.{total > 0 ? ` ${total} registro(s) no filtro.` : ""}{sel.length > 0 ? ` ${sel.length} selecionado(s) no total.` : ""}</p>
-        <Paginacao page={page} pages={pages} total={total} onPage={(p) => { setPage(p); carregar(p).catch(() => setErro("Falha ao carregar fila.")); }} />
+        <Paginacao
+          page={page}
+          pages={pages}
+          total={total}
+          pageSize={pageSize}
+          onPageSize={(sz) => {
+            setPageSize(sz);
+            setPage(1);
+            carregar(1, { limit: sz }).catch(() => setErro("Falha ao carregar fila."));
+          }}
+          onPage={(p) => {
+            setPage(p);
+            carregar(p).catch(() => setErro("Falha ao carregar fila."));
+          }}
+        />
       </Card>
 
       {loteModal && (
@@ -1696,7 +1780,15 @@ export default function FilaExames() {
       )}
       {modal && (
         <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-sus-950/50 p-4 print:hidden" {...modalBackdrop}>
-          <div className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-2xl bg-white p-6 shadow-card md:p-8" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="max-h-[90vh] w-full max-w-full sm:max-w-2xl md:max-w-4xl lg:max-w-5xl xl:max-w-6xl 2xl:max-w-[90vw] overflow-auto rounded-2xl bg-white p-6 shadow-card md:p-8 transition-all duration-200"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "TEXTAREA") {
+                e.preventDefault();
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="mb-5 flex items-center justify-between">
               <p className="font-display text-lg font-bold text-sus-950">{editId ? "Editar pedido" : "Novo pedido na fila"}</p>
               <button onClick={fecharModal} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar"><X className="h-4 w-4" /></button>
@@ -2360,7 +2452,78 @@ export default function FilaExames() {
                 </div>
               </section>
               {erro && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
-              <Button onClick={salvar} disabled={salvando} className="w-full"><Plus className="h-4 w-4" />{salvando ? "Salvando…" : editId ? "Atualizar" : "Entrar na fila"}</Button>
+              <Button onClick={iniciarSalvar} disabled={salvando} className="w-full"><Plus className="h-4 w-4" />{salvando ? "Salvando…" : editId ? "Atualizar" : "Entrar na fila"}</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmação de Lançamento / Prevenção de Envio Acidental (Requisito 4) */}
+      {modalConfirmacaoLancamento && (
+        <div className="fixed inset-0 z-[70] grid place-items-center bg-sus-950/60 p-4 print:hidden backdrop-blur-xs" onClick={() => setModalConfirmacaoLancamento(false)}>
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center gap-3 border-b border-sus-900/10 pb-3">
+              <div className="grid h-10 w-10 place-items-center rounded-xl bg-teal/10 text-teal">
+                <CheckCircle2 className="h-6 w-6" />
+              </div>
+              <div>
+                <p className="font-display text-base font-bold text-sus-950">Confirmar Inclusão na Fila</p>
+                <p className="text-xs text-ink/60">Revise os dados da solicitação antes de gravar definitivamente no banco.</p>
+              </div>
+            </div>
+
+            <div className="space-y-2.5 rounded-xl bg-slate-50 p-4 text-xs">
+              <div>
+                <span className="font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Paciente</span>
+                <p className="text-sm font-bold text-slate-900">{pacienteSelecionado?.nome || pacientesLocais.find((p) => String(p.id) === form.paciente_id)?.nome || buscaPac || "—"}</p>
+              </div>
+              <div>
+                <span className="font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Procedimento</span>
+                <p className="font-medium text-slate-800">{form.exame}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <span className="font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Prioridade</span>
+                  <p className="font-medium text-slate-800">{PRIO_ROTULO[form.prioridade] || form.prioridade}</p>
+                </div>
+                <div>
+                  <span className="font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Data do Pedido</span>
+                  <p className="font-medium text-slate-800">{fmtData(form.data_pedido)}</p>
+                </div>
+              </div>
+              {form.cid_codigo && (
+                <div>
+                  <span className="font-semibold text-slate-500 uppercase tracking-wide text-[10px]">CID-10</span>
+                  <p className="font-medium text-slate-800">{form.cid_codigo}{form.cid_descricao ? ` — ${form.cid_descricao}` : ""}</p>
+                </div>
+              )}
+              <div>
+                <span className="font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Justificativa Clínica</span>
+                <p className="text-slate-700 italic bg-white p-2 rounded border border-slate-200 mt-0.5 line-clamp-3">{form.justificativa}</p>
+              </div>
+            </div>
+
+            <div className="mt-5 flex gap-2.5">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setModalConfirmacaoLancamento(false)}
+                className="flex-1"
+                disabled={salvando}
+              >
+                Voltar e Corrigir
+              </Button>
+              <Button
+                type="button"
+                onClick={async () => {
+                  setModalConfirmacaoLancamento(false);
+                  await salvar();
+                }}
+                disabled={salvando}
+                className="flex-1 bg-teal text-white hover:brightness-110 font-bold"
+              >
+                {salvando ? "Gravando…" : "Confirmar e Gravar"}
+              </Button>
             </div>
           </div>
         </div>
@@ -2382,7 +2545,7 @@ export default function FilaExames() {
       )}
       {detalhe && (
         <div className="fixed inset-0 z-[70] grid place-items-center overflow-y-auto bg-sus-950/60 p-4 print:hidden" {...detalheBackdrop}>
-          <div className="max-h-[90vh] w-full max-w-5xl overflow-auto rounded-2xl bg-white p-6 shadow-card md:p-8" onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[90vh] w-full max-w-full sm:max-w-3xl md:max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[94vw] overflow-auto rounded-2xl bg-white p-6 shadow-card md:p-8 transition-all duration-200" onClick={(e) => e.stopPropagation()}>
             <div className="mb-5 flex items-center justify-between">
               <p className="flex items-center gap-2 font-display text-lg font-bold text-sus-950">
                 <Eye className="h-5 w-5 text-sus-900" /> Detalhes do pedido #{detalhe.id}
@@ -2531,7 +2694,7 @@ export default function FilaExames() {
       )}
       {perfilId !== null && (
         <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-sus-950/50 p-4 print:hidden" {...perfilBackdrop}>
-          <div className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-2xl bg-white p-6 shadow-card md:p-8" onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[90vh] w-full max-w-full sm:max-w-2xl md:max-w-4xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[94vw] overflow-auto rounded-2xl bg-white p-6 shadow-card md:p-8 transition-all duration-200" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
               <p className="font-display text-lg font-bold text-sus-950">Perfil do paciente</p>
               <button onClick={() => setPerfilId(null)} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar"><X className="h-4 w-4" /></button>

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.deps import get_current_user, get_db, require_superuser
 from app.core.pagination import Pagina, paginar
@@ -61,7 +62,7 @@ def resetar_senha(
 @router.get("/", response_model=Pagina[UserOut])
 def listar(
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
     _=Depends(require_superuser),
 ):
@@ -112,8 +113,12 @@ def criar(
     """Cria conta com temporária (hash) e devolve claro 1 vez p/ entrega."""
     try:
         user, temporaria = create_user(db, data)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except (ValueError, IntegrityError) as e:
+        db.rollback()
+        msg = str(e)
+        if isinstance(e, IntegrityError) or "duplicate" in msg.lower() or "unique" in msg.lower():
+            msg = "username já existe"
+        raise HTTPException(status_code=400, detail=msg)
     if not temporaria:
         raise HTTPException(status_code=400, detail="Falha ao gerar temporária")
     return ResetSenhaOut(
@@ -141,8 +146,12 @@ def atualizar(
             raise HTTPException(status_code=400, detail="Não pode inativar a si mesmo")
     try:
         return to_out(update_user(db, user, data), db)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except (ValueError, IntegrityError) as e:
+        db.rollback()
+        msg = str(e)
+        if isinstance(e, IntegrityError) or "duplicate" in msg.lower() or "unique" in msg.lower():
+            msg = "username já existe"
+        raise HTTPException(status_code=400, detail=msg)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

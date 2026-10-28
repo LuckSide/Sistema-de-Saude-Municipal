@@ -509,6 +509,18 @@ export type Veiculo = {
   tipo: string;
   status: string;
   ativo: boolean;
+  manutencao_motivo?: string;
+  manutencao_data_entrada?: string | null;
+  manutencao_previsao_retorno?: string | null;
+  manutencao_indefinida?: boolean;
+};
+
+export type VeiculoManutencaoPayload = {
+  em_manutencao: boolean;
+  motivo?: string;
+  data_entrada?: string | null;
+  previsao_retorno?: string | null;
+  indefinida?: boolean;
 };
 
 export type Viagem = {
@@ -829,12 +841,14 @@ export const tfdAtualizarPaciente = (id: number, p: Record<string, unknown>) =>
 export const tfdExcluirPaciente = (id: number) =>
   api.delete(`/api/tfd/pacientes/${id}`);
 
-export const tfdVeiculos = (page?: number, limit?: number) =>
-  api.get<Pagina<Veiculo> | Veiculo[]>("/api/tfd/veiculos", { params: { page, limit } }).then((r) => r.data);
+export const tfdVeiculos = (page?: number, limit?: number, q?: string, ativo?: boolean, status?: string) =>
+  api.get<Pagina<Veiculo> | Veiculo[]>("/api/tfd/veiculos", { params: { page, limit, q: q?.trim() || undefined, ativo, status } }).then((r) => r.data);
 export const tfdCriarVeiculo = (p: Record<string, unknown>) =>
   api.post<Veiculo>("/api/tfd/veiculos", p).then((r) => r.data);
 export const tfdAtualizarVeiculo = (id: number, p: Record<string, unknown>) =>
   api.put<Veiculo>(`/api/tfd/veiculos/${id}`, p).then((r) => r.data);
+export const tfdManutencaoVeiculo = (id: number, data: VeiculoManutencaoPayload) =>
+  api.post<Veiculo>(`/api/tfd/veiculos/${id}/manutencao`, data).then((r) => r.data);
 export const tfdExcluirVeiculo = (id: number) =>
   api.delete(`/api/tfd/veiculos/${id}`);
 
@@ -845,6 +859,7 @@ export type Motorista = {
   cnh_numero: string;
   cnh_categoria: string;
   cnh_validade: string | null;
+  toxicologico_validade?: string | null;
   telefone: string;
   ativo: boolean;
 };
@@ -961,6 +976,7 @@ export type FilaExamesParams = {
   tipo_fila?: string;
   procedimento?: string;
   codigo_especialidade?: string;
+  justificativa?: string;
   destino?: string;
   unidade_id?: number;
   unidade?: string;
@@ -1000,7 +1016,7 @@ export type ProcedimentoCat = {
 };
 export type EspecialidadeCat = { id: number; codigo_cbo: string; nome: string; ativo: boolean };
 
-export const tfdTipos = (params?: { q?: string; page?: number; limit?: number }) =>
+export const tfdTipos = (params?: { q?: string; ativos?: boolean; page?: number; limit?: number }) =>
   api.get<Pagina<TipoFila> | TipoFila[]>("/api/tfd/tipos", { params }).then((r) => r.data);
 export const tfdCriarTipo = (p: Record<string, unknown>) =>
   api.post<TipoFila>("/api/tfd/tipos", p).then((r) => r.data);
@@ -1008,7 +1024,7 @@ export const tfdAtualizarTipo = (id: number, p: Record<string, unknown>) =>
   api.put<TipoFila>(`/api/tfd/tipos/${id}`, p).then((r) => r.data);
 export const tfdExcluirTipo = (id: number) => api.delete(`/api/tfd/tipos/${id}`);
 
-export const tfdProcedimentos = (params?: { q?: string; tipo_fila?: string; page?: number; limit?: number }) =>
+export const tfdProcedimentos = (params?: { q?: string; tipo_fila?: string; ativos?: boolean; page?: number; limit?: number }) =>
   api.get<Pagina<ProcedimentoCat> | ProcedimentoCat[]>("/api/tfd/procedimentos", { params }).then((r) => r.data);
 export const tfdCriarProcedimento = (p: Record<string, unknown>) =>
   api.post<ProcedimentoCat>("/api/tfd/procedimentos", p).then((r) => r.data);
@@ -1016,7 +1032,7 @@ export const tfdAtualizarProcedimento = (id: number, p: Record<string, unknown>)
   api.put<ProcedimentoCat>(`/api/tfd/procedimentos/${id}`, p).then((r) => r.data);
 export const tfdExcluirProcedimento = (id: number) => api.delete(`/api/tfd/procedimentos/${id}`);
 
-export const tfdEspecialidades = (params?: { q?: string; page?: number; limit?: number }) =>
+export const tfdEspecialidades = (params?: { q?: string; ativos?: boolean; page?: number; limit?: number }) =>
   api.get<Pagina<EspecialidadeCat> | EspecialidadeCat[]>("/api/tfd/especialidades", { params }).then((r) => r.data);
 export const tfdCriarEspecialidade = (p: Record<string, unknown>) =>
   api.post<EspecialidadeCat>("/api/tfd/especialidades", p).then((r) => r.data);
@@ -1110,8 +1126,17 @@ export const validarCboProcedimento = (payload: {
 }) =>
   api.post<ValidarCboResult>("/api/tfd/procedimentos/validar-cbo", payload).then((r) => r.data);
 
-export const tfdCatalogoExames = (q?: string, tipo_fila?: string, apenas_laboratoriais?: boolean) =>
-  api.get<CatalogoProc[]>("/api/tfd/exames/catalogo", { params: { q, tipo_fila, apenas_laboratoriais } }).then((r) => r.data);
+export const tfdCatalogoExames = (
+  q?: string,
+  tipo_fila?: string,
+  apenas_laboratoriais?: boolean,
+  especialidade?: string,
+) =>
+  api
+    .get<CatalogoProc[]>("/api/tfd/exames/catalogo", {
+      params: { q, tipo_fila, apenas_laboratoriais, especialidade },
+    })
+    .then((r) => r.data);
 
 export type ExamePermitidoItem = {
   id: number;
@@ -1133,15 +1158,25 @@ export const salvarExamesPermitidos = (codigos: string[]) =>
   api.put<{ ok: boolean; total_habilitados: number; codigos_habilitados: string[] }>("/api/settings/exames-permitidos", { codigos }).then((r) => r.data);
 export const tfdRegenerarTokenExame = (id: number) =>
   api.post<Exame>(`/api/tfd/exames/${id}/regenerar-token`).then((r) => r.data);
-export const tfdRecepcionarExame = (id: number) =>
-  api.post<Exame>(`/api/tfd/exames/${id}/recepcionar`).then((r) => r.data);
+export const tfdRecepcionarExame = (id: number, cid_codigo?: string, cid_descricao?: string) =>
+  api.post<Exame>(`/api/tfd/exames/${id}/recepcionar`, { cid_codigo, cid_descricao }).then((r) => r.data);
 export const tfdEstornarRecepcaoExame = (id: number) =>
   api.post<Exame>(`/api/tfd/exames/${id}/estornar-recepcao`).then((r) => r.data);
-export const tfdAtendimentoStatus = (id: number, status: "faltou" | "realizado" | "cancelado", resultado?: string) =>
+export const tfdAtendimentoStatus = (id: number, status: "faltou" | "realizado" | "cancelado" | "desistiu", resultado?: string) =>
   api.post<Exame>(`/api/tfd/exames/${id}/atendimento-status`, { status, resultado: resultado ?? "" }).then((r) => r.data);
-export const tfdRecepcionarLote = (ids: number[]) =>
-  api.post<{ ok: boolean; atualizados: number; total: number }>("/api/tfd/exames/recepcionar-lote", { ids }).then((r) => r.data);
-export const tfdAtendimentoStatusLote = (ids: number[], status: "faltou" | "realizado" | "cancelado", resultado?: string) =>
+export const tfdRecepcionarLote = (
+  ids: number[],
+  itens?: { id: number; cid_codigo?: string; cid_descricao?: string }[],
+  cids?: Record<string, string>,
+) =>
+  api
+    .post<{ ok: boolean; atualizados: number; total: number }>("/api/tfd/exames/recepcionar-lote", {
+      ids,
+      itens: itens ?? [],
+      cids: cids ?? {},
+    })
+    .then((r) => r.data);
+export const tfdAtendimentoStatusLote = (ids: number[], status: "faltou" | "realizado" | "cancelado" | "desistiu", resultado?: string) =>
   api.post<{ ok: boolean; atualizados: number; total: number }>("/api/tfd/exames/atendimento-status-lote", { ids, status, resultado: resultado ?? "" }).then((r) => r.data);
 
 export interface MetricasAgendados {
@@ -1337,6 +1372,13 @@ export const sigtapImportar = (arquivo: File, competencia: string, simular: bool
     .post<SigtapImportOut>("/api/lab/sigtap/importar", form, { params: { competencia, simular } })
     .then((r) => r.data);
 };
+
+export const sigtapBuscarAutomatico = (competencia: string, simular: boolean) =>
+  api
+    .post<SigtapImportOut>("/api/lab/sigtap/buscar-automatico", null, {
+      params: { competencia, simular },
+    })
+    .then((r) => r.data);
 
 export type LabSol = {
   id: number;

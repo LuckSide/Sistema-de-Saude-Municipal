@@ -14,6 +14,7 @@ import {
 import { Button, Card, Input, Label } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
+import { useConfirm } from "../../components/ConfirmDialog";
 
 function brl(v: number) {
   return Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -33,6 +34,7 @@ const vazio = {
 };
 
 export default function TfdFaturamento() {
+  const { confirmar } = useConfirm();
   const [lista, setLista] = useState<Fatura[]>([]);
   const [comp, setComp] = useState(() => new Date().toISOString().slice(0, 7));
   const [modal, setModal] = useState(false);
@@ -142,7 +144,27 @@ export default function TfdFaturamento() {
                 <td className="px-4 py-3 font-bold">{brl(f.total)}</td>
                 <td className="px-4 py-3"><div className="flex justify-end gap-1">
                   <button onClick={() => abrirModal(f.id)} className="rounded-lg p-2 text-sus-800 hover:bg-sus-100"><Pencil className="h-4 w-4" /></button>
-                  <button onClick={async () => { if (confirm("Excluir lançamento?")) { await tfdExcluirFatura(f.id); carregar(); } }} className="rounded-lg p-2 text-red-600 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
+                  <button
+                    onClick={async () => {
+                      const ok = await confirmar({
+                        titulo: "Excluir lançamento de faturamento",
+                        descricao: `Deseja realmente excluir o lançamento de ${f.paciente_nome} (${f.procedimento}) no valor de ${brl(f.total)}?`,
+                        textoConfirmar: "Sim, Excluir",
+                        variante: "danger",
+                      });
+                      if (ok) {
+                        try {
+                          await tfdExcluirFatura(f.id);
+                          await carregar();
+                        } catch {
+                          setErro("Falha ao excluir fatura.");
+                        }
+                      }
+                    }}
+                    className="rounded-lg p-2 text-red-600 hover:bg-red-50"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
                 </div></td>
               </tr>
             ))}
