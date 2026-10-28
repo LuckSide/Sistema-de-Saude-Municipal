@@ -13,6 +13,8 @@
 *.bak
 *.dump
 *.sql
+!backend/migrations/*.sql
+!migrations/*.sql
 
 # Logs
 *.log

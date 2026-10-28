@@ -87,7 +87,10 @@ def escanear_arquivos(root_dir: str) -> list[tuple[str, str, str]]:
 
             # 1. Verifica extensão proibida
             _, ext = os.path.splitext(fname)
-            if ext.lower() in EXTENSOES_PROIBIDAS or fname.startswith(".env."):
+            eh_migration_sql = ext.lower() == ".sql" and any(
+                part in ("migrations", "migration") for part in relpath.split(os.sep)
+            )
+            if (ext.lower() in EXTENSOES_PROIBIDAS and not eh_migration_sql) or fname.startswith(".env."):
                 vulnerabilidades.append((relpath, f"Arquivo com extensão sensível restrita ({ext})", fname))
                 continue
 
