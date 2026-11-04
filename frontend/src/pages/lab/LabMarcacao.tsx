@@ -29,6 +29,7 @@ import {
   solicitarListar,
   mapMestre,
   labCancelarSolicitacao,
+  labVerificarDuplicidade,
   type Laboratorio,
   type Medico,
   type Paciente,
@@ -36,6 +37,7 @@ import {
   type UnidadeSaude,
   type VagaDia,
   type SolicMestre,
+  type PedidoDuplicadoLab,
 } from "../../services/api";
 import { Button, Card, Input, Label } from "../../components/ui/primitives";
 import GradeDias from "../../components/GradeDias";
@@ -43,6 +45,7 @@ import MonthPicker from "../../components/MonthPicker";
 import { Combobox, type ComboOption } from "../../components/ui/combobox";
 import BuscaPacienteAutocomplete from "../../components/BuscaPacienteAutocomplete";
 import ComprovanteExameModal from "../../components/ComprovanteExameModal";
+import AlertaPedidoDuplicado from "../../components/AlertaPedidoDuplicado";
 import { useAuth } from "../../hooks/useAuth";
 import { useConfirm } from "../../components/ConfirmDialog";
 
@@ -79,6 +82,44 @@ export default function LabMarcacao() {
   const [buscando, setBuscando] = useState(false);
   const [pedidosEncontrados, setPedidosEncontrados] = useState<SolicMestre[]>([]);
   const [comprovanteModalId, setComprovanteModalId] = useState<number | null>(null);
+
+  // Verificação de Pedidos Duplicados em Tempo Real (Exames Laboratoriais)
+  const [duplicidadeLab, setDuplicidadeLab] = useState<PedidoDuplicadoLab | null>(null);
+  const [verificandoDuplicidadeLab, setVerificandoDuplicidadeLab] = useState(false);
+  const [ignorarDuplicidadeLab, setIgnorarDuplicidadeLab] = useState(false);
+
+  useEffect(() => {
+    if (!pacienteId || itens.length === 0) {
+      setDuplicidadeLab(null);
+      return;
+    }
+
+    setIgnorarDuplicidadeLab(false);
+
+    const sigtapIds = itens.map((i) => i.sigtap.id).join(",");
+    const t = setTimeout(() => {
+      setVerificandoDuplicidadeLab(true);
+      labVerificarDuplicidade({
+        paciente_id: Number(pacienteId),
+        sigtap_ids: sigtapIds,
+      })
+        .then((res) => {
+          if (res.duplicado && res.pedido) {
+            setDuplicidadeLab(res.pedido);
+          } else {
+            setDuplicidadeLab(null);
+          }
+        })
+        .catch(() => {
+          setDuplicidadeLab(null);
+        })
+        .finally(() => {
+          setVerificandoDuplicidadeLab(false);
+        });
+    }, 250);
+
+    return () => clearTimeout(t);
+  }, [pacienteId, itens]);
 
   useEffect(() => {
     const q = termoBusca.trim();
@@ -283,6 +324,8 @@ export default function LabMarcacao() {
     setBuscaSig("");
     setDiaSel("");
     setErro("");
+    setDuplicidadeLab(null);
+    setIgnorarDuplicidadeLab(false);
   }
 
   async function salvar() {
@@ -290,6 +333,12 @@ export default function LabMarcacao() {
     setOk("");
     if (!pacienteId) {
       setErro("Selecione o paciente.");
+      return;
+    }
+    if (duplicidadeLab && !ignorarDuplicidadeLab) {
+      setErro(
+        "Atenção: Já existe um pedido ativo de exames de sangue para este paciente contendo os mesmos procedimentos. Avalie a situação no alerta em destaque ou clique em 'Prosseguir Mesmo com Duplicidade' para continuar."
+      );
       return;
     }
     if (itens.length === 0) {
@@ -825,6 +874,19 @@ export default function LabMarcacao() {
                     )}
                   </div>
                 </div>
+
+                {/* ALERTA DE DUPLICIDADE EM TEMPO REAL */}
+                {duplicidadeLab && !ignorarDuplicidadeLab && (
+                  <AlertaPedidoDuplicado
+                    pedido={duplicidadeLab}
+                    tipoModulo="lab"
+                    onProsseguir={() => setIgnorarDuplicidadeLab(true)}
+                    onCancelar={() => {
+                      setItens([]);
+                      setDuplicidadeLab(null);
+                    }}
+                  />
+                )}
 
                 {/* Justificativa do Pedido */}
                 <div className="rounded-2xl border border-sus-900/10 p-4">

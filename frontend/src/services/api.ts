@@ -491,6 +491,10 @@ export type DemandaItem = {
   status_rotulo: string;
   data_agendada: string | null;
   hora_agendada: string;
+  medico_nome?: string;
+  unidade_nome?: string;
+  resultado?: string;
+  realizado_em?: string | null;
 };
 
 export type PacientePerfil = {
@@ -1078,6 +1082,57 @@ export type ExameLotePayload = {
 };
 export const tfdAtualizarExamesLote = (p: ExameLotePayload) =>
   api.put<{ atualizados: number; nao_encontrados: number[] }>("/api/tfd/exames/lote", p).then((r) => r.data);
+
+export interface ExameLoteCriarItemIn {
+  paciente_id: number;
+  paciente_nome?: string;
+  justificativa?: string;
+  cid_codigo?: string;
+  cid_descricao?: string;
+  observacoes?: string;
+  numero_pedido?: string;
+  tipo_fila?: string;
+  exame?: string;
+  codigo_procedimento?: string;
+  especialidade?: string;
+  codigo_especialidade?: string;
+  unidade_saude_id?: number;
+  medico_id?: number;
+  prioridade?: string;
+  data_pedido?: string;
+  data_agendada?: string;
+  hora_agendada?: string;
+}
+
+export interface ExameLoteCriarIn {
+  tipo_fila: string;
+  exame: string;
+  codigo_procedimento?: string;
+  especialidade?: string;
+  codigo_especialidade?: string;
+  unidade_saude_id?: number;
+  medico_id?: number;
+  prioridade?: string;
+  data_pedido?: string;
+  justificativa_padrao?: string;
+  cid_codigo_padrao?: string;
+  cid_descricao_padrao?: string;
+  observacoes_padrao?: string;
+  agendamento_direto?: boolean;
+  data_agendada?: string;
+  hora_agendada?: string;
+  itens: ExameLoteCriarItemIn[];
+}
+
+export interface ExameLoteCriarOut {
+  total_criados: number;
+  agendados: number;
+  na_fila: number;
+  itens: Exame[];
+}
+
+export const tfdCriarExamesLote = (p: ExameLoteCriarIn) =>
+  api.post<ExameLoteCriarOut>("/api/tfd/exames/lote", p).then((r) => r.data);
 export const tfdExcluirExame = (id: number, motivo?: string) =>
   api.delete(`/api/tfd/exames/${id}`, { params: motivo ? { motivo } : undefined });
 export type CatalogoProc = {
@@ -2460,6 +2515,406 @@ export async function fetchCidsApac(q?: string): Promise<CidItem[]> {
   const qq = q.toLowerCase();
   return cidsPadrao.filter((c) => c.codigo.toLowerCase().includes(qq) || c.descricao.toLowerCase().includes(qq));
 }
+
+// ==========================================
+// MÓDULO: GESTÃO DE OXIGÊNIO E RESPIRATÓRIO
+// ==========================================
+
+export interface EmpresaOxigenio {
+  id: number;
+  razao_social: string;
+  nome_fantasia: string;
+  nome?: string;
+  cnpj: string;
+  telefone: string;
+  email: string;
+  contato_responsavel: string;
+  endereco: string;
+  servicos: string[];
+  observacoes: string;
+  ativo: boolean;
+  created_at: string;
+}
+
+export interface LicitacaoOxigenio {
+  id: number;
+  empresa_id: number;
+  empresa_nome: string;
+  numero_licitacao: string;
+  numero_contrato: string;
+  ano: number;
+  data_inicio: string;
+  data_fim: string;
+  objeto: string;
+  qtd_contratada_10m3: number;
+  qtd_contratada_3m3: number;
+  qtd_contratada_1m3: number;
+  valor_unitario_10m3: number;
+  valor_unitario_3m3: number;
+  valor_unitario_1m3: number;
+  valor_total_contrato: number;
+  saldo_alerta_minimo_pct: number;
+  ativo: boolean;
+  observacoes: string;
+  created_at: string;
+  qtd_comprada_10m3: number;
+  qtd_comprada_3m3: number;
+  qtd_comprada_1m3: number;
+  saldo_disponivel_10m3: number;
+  saldo_disponivel_3m3: number;
+  saldo_disponivel_1m3: number;
+  alerta_esgotando: boolean;
+}
+
+export interface EntradaCompraOxigenio {
+  id: number;
+  licitacao_id: number;
+  empresa_id: number;
+  empresa_nome: string;
+  data_compra: string;
+  numero_nf: string;
+  qtd_10m3: number;
+  qtd_3m3: number;
+  qtd_1m3: number;
+  valor_total: number;
+  responsavel_recebimento: string;
+  observacoes: string;
+  created_at: string;
+}
+
+export interface EquipamentoRespiratorio {
+  id: number;
+  tipo: "CPAP" | "BiPAP" | "CONCENTRADOR";
+  patrimonio: string;
+  numero_serie: string;
+  marca_modelo: string;
+  propriedade: "PROPRIO" | "LOCADO";
+  empresa_id?: number | null;
+  empresa_nome?: string;
+  status: "DISPONIVEL" | "EM_USO" | "MANUTENCAO" | "INATIVO_BAIXADO";
+  data_aquisicao?: string | null;
+  tensao_eletrica: string;
+  horas_uso: number;
+  observacoes: string;
+  ativo: boolean;
+  created_at: string;
+  paciente_atual_nome?: string | null;
+  emprestimo_id?: number | null;
+}
+
+export interface EmprestimoOxigenio {
+  id: number;
+  codigo_termo: string;
+  paciente_id: number;
+  paciente_nome: string;
+  paciente_cpf: string;
+  paciente_cns: string;
+  paciente_prontuario: string;
+  paciente_telefone: string;
+  paciente_endereco: string;
+  tipo_servico: "MAQUINA" | "OXIGENIO";
+  equipamento_id?: number | null;
+  tipo_equipamento?: "CPAP" | "BiPAP" | "CONCENTRADOR" | null;
+  equipamento_patrimonio?: string | null;
+  equipamento_serie?: string | null;
+  tipo_cilindro?: "10m3" | "3m3" | "1m3" | null;
+  finalidade_cilindro?: "FIXO_CONCENTRADOR" | "SEMANAL_CONCENTRADOR" | "TRANSPORTE_ESPECIAL" | "USO_CONTINUO" | "OUTRO" | null;
+  quantidade: number;
+  empresa_id?: number | null;
+  empresa_nome?: string | null;
+  licitacao_id?: number | null;
+  data_instalacao: string;
+  data_prevista_troca?: string | null;
+  data_ultima_troca?: string | null;
+  status: "ATIVO" | "INATIVO" | "DEVOLVIDO" | "CANCELADO";
+  data_devolucao?: string | null;
+  motivo_inativacao?: "OBITO" | "ALTA" | "TRANSFERENCIA" | "MELHORA_CLINICA" | "MUDANCA_TRATAMENTO" | "OUTRO" | null;
+  responsavel_retirada_nome: string;
+  responsavel_retirada_cpf: string;
+  responsavel_retirada_parentesco: string;
+  medico_prescritor: string;
+  cid_diagnostico: string;
+  fluxo_oxigenio_litros_min?: number | null;
+  pressao_cpap_bipap?: string | null;
+  termo_assinado: boolean;
+  observacoes: string;
+  created_at: string;
+  updated_at: string;
+  dias_para_troca?: number | null;
+  status_prazo?: "EM_DIA" | "TROCA_HOJE" | "ATRASADO" | "NAO_APLICAVEL" | null;
+}
+
+export interface TrocaCilindroHistorico {
+  id: number;
+  emprestimo_id: number;
+  paciente_id: number;
+  paciente_nome: string;
+  data_troca: string;
+  tipo_cilindro: string;
+  quantidade: number;
+  empresa_id?: number | null;
+  empresa_nome?: string | null;
+  responsavel_entrega: string;
+  observacoes: string;
+  created_at: string;
+}
+
+export interface SaldoCilindroTipo {
+  tipo: "10m3" | "3m3" | "1m3";
+  contratado: number;
+  comprado: number;
+  em_uso: number;
+  saldo_licitacao: number;
+  saldo_estoque_disponivel: number;
+  alerta_baixo: boolean;
+  pct_saldo_licitacao: number;
+}
+
+export interface EstoqueOxigenioResumo {
+  saldos_cilindros: SaldoCilindroTipo[];
+  total_pacientes_ativos: number;
+  pacientes_ativos_oxigenio: number;
+  pacientes_ativos_maquinas: number;
+  pacientes_ativos_concentrador: number;
+  pacientes_ativos_cpap: number;
+  pacientes_ativos_bipap: number;
+  total_pacientes_inativos: number;
+  total_equipamentos: number;
+  equipamentos_em_uso: number;
+  equipamentos_disponiveis: number;
+  equipamentos_manutencao: number;
+  trocas_pendentes_atrasadas: number;
+  trocas_pendentes_hoje: number;
+  trocas_proximos_7_dias: number;
+  consumo_mensal: {
+    mes: string;
+    cilindros_10m3: number;
+    cilindros_3m3: number;
+    cilindros_1m3: number;
+    total_geral: number;
+  }[];
+  consumo_por_empresa: {
+    empresa_id: number;
+    empresa_nome: string;
+    compras_10m3: number;
+    compras_3m3: number;
+    compras_1m3: number;
+    total_cilindros: number;
+    equipamentos_cadastrados: number;
+  }[];
+}
+
+export interface ItemRequisicaoAF {
+  tipo_cilindro: string;
+  descricao: string;
+  saldo_licitacao_atual: number;
+  consumo_medio_mensal: number;
+  previsao_dias_estoque: number;
+  quantidade_sugerida: number;
+  urgente: boolean;
+}
+
+export interface RequisicaoAF {
+  codigo_requisicao: string;
+  data_geracao: string;
+  secretaria: string;
+  setor: string;
+  pacientes_ativos_dependentes: number;
+  itens: ItemRequisicaoAF[];
+  justificativa_tecnica: string;
+  solicitante_nome: string;
+  solicitante_cargo: string;
+}
+
+export interface ComprovanteEmprestimoData {
+  codigo_termo: string;
+  data_emissao: string;
+  paciente: {
+    id: number;
+    nome: string;
+    cpf: string;
+    cns: string;
+    prontuario: string;
+    telefone: string;
+    endereco: string;
+  };
+  responsavel_retirada: {
+    nome: string;
+    cpf: string;
+    parentesco: string;
+  };
+  servico: {
+    tipo_servico: string;
+    tipo_equipamento?: string;
+    equipamento_patrimonio?: string;
+    equipamento_serie?: string;
+    tipo_cilindro?: string;
+    finalidade_cilindro?: string;
+    quantidade: number;
+    data_instalacao: string;
+    data_prevista_troca?: string;
+    fluxo_oxigenio?: string;
+    pressao_cpap_bipap?: string;
+    empresa_fornecedora?: string;
+  };
+  prescricao: {
+    medico: string;
+    cid: string;
+  };
+  observacoes: string;
+  declaracao_responsabilidade: string;
+}
+
+export const oxigenioEmpresas = (params?: { q?: string; servico?: string; apenas_ativas?: boolean }) =>
+  api.get<EmpresaOxigenio[]>("/api/oxigenio/empresas", { params }).then((r) => r.data);
+
+export const oxigenioCriarEmpresa = (data: Partial<EmpresaOxigenio>) =>
+  api.post<EmpresaOxigenio>("/api/oxigenio/empresas", data).then((r) => r.data);
+
+export const oxigenioAtualizarEmpresa = (id: number, data: Partial<EmpresaOxigenio>) =>
+  api.put<EmpresaOxigenio>(`/api/oxigenio/empresas/${id}`, data).then((r) => r.data);
+
+export const oxigenioExcluirEmpresa = (id: number) =>
+  api.delete(`/api/oxigenio/empresas/${id}`).then((r) => r.data);
+
+export const oxigenioLicitacoes = (params?: { empresa_id?: number; ano?: number; apenas_ativas?: boolean }) =>
+  api.get<LicitacaoOxigenio[]>("/api/oxigenio/licitacoes", { params }).then((r) => r.data);
+
+export const oxigenioCriarLicitacao = (data: any) =>
+  api.post<LicitacaoOxigenio>("/api/oxigenio/licitacoes", data).then((r) => r.data);
+
+export const oxigenioAtualizarLicitacao = (id: number, data: any) =>
+  api.put<LicitacaoOxigenio>(`/api/oxigenio/licitacoes/${id}`, data).then((r) => r.data);
+
+export const oxigenioExcluirLicitacao = (id: number) =>
+  api.delete(`/api/oxigenio/licitacoes/${id}`).then((r) => r.data);
+
+export const oxigenioCompras = (params?: { licitacao_id?: number; empresa_id?: number; de?: string; ate?: string }) =>
+  api.get<EntradaCompraOxigenio[]>("/api/oxigenio/compras", { params }).then((r) => r.data);
+
+export const oxigenioCriarCompra = (data: any) =>
+  api.post<EntradaCompraOxigenio>("/api/oxigenio/compras", data).then((r) => r.data);
+
+export const oxigenioExcluirCompra = (id: number) =>
+  api.delete(`/api/oxigenio/compras/${id}`).then((r) => r.data);
+
+export const oxigenioEquipamentos = (params?: { tipo?: string; status?: string; propriedade?: string; empresa_id?: number; q?: string }) =>
+  api.get<EquipamentoRespiratorio[]>("/api/oxigenio/equipamentos", { params }).then((r) => r.data);
+
+export const oxigenioCriarEquipamento = (data: any) =>
+  api.post<EquipamentoRespiratorio>("/api/oxigenio/equipamentos", data).then((r) => r.data);
+
+export const oxigenioAtualizarEquipamento = (id: number, data: any) =>
+  api.put<EquipamentoRespiratorio>(`/api/oxigenio/equipamentos/${id}`, data).then((r) => r.data);
+
+export const oxigenioExcluirEquipamento = (id: number) =>
+  api.delete(`/api/oxigenio/equipamentos/${id}`).then((r) => r.data);
+
+export const oxigenioEmprestimos = (params?: {
+  status?: string;
+  tipo_servico?: string;
+  tipo_equipamento?: string;
+  tipo_cilindro?: string;
+  empresa_id?: number;
+  paciente_id?: number;
+  apenas_trocas_proximas?: boolean;
+  q?: string;
+}) => api.get<EmprestimoOxigenio[]>("/api/oxigenio/emprestimos", { params }).then((r) => r.data);
+
+export const oxigenioCriarEmprestimo = (data: any) =>
+  api.post<EmprestimoOxigenio>("/api/oxigenio/emprestimos", data).then((r) => r.data);
+
+export const oxigenioEditarEmprestimo = (id: number, data: any) =>
+  api.put<EmprestimoOxigenio>(`/api/oxigenio/emprestimos/${id}`, data).then((r) => r.data);
+
+export const oxigenioInativarEmprestimo = (id: number, data: { data_devolucao: string; motivo_inativacao: string; observacoes?: string }) =>
+  api.post<EmprestimoOxigenio>(`/api/oxigenio/emprestimos/${id}/inativar`, data).then((r) => r.data);
+
+export const oxigenioRegistrarTroca = (id: number, data: { data_troca: string; tipo_cilindro: string; quantidade?: number; proxima_data_troca?: string; responsavel_entrega?: string; observacoes?: string }) =>
+  api.post<TrocaCilindroHistorico>(`/api/oxigenio/emprestimos/${id}/troca`, data).then((r) => r.data);
+
+export const oxigenioListarTrocas = (id: number) =>
+  api.get<TrocaCilindroHistorico[]>(`/api/oxigenio/emprestimos/${id}/trocas`).then((r) => r.data);
+
+export const oxigenioComprovante = (id: number) =>
+  api.get<ComprovanteEmprestimoData>(`/api/oxigenio/emprestimos/${id}/comprovante`).then((r) => r.data);
+
+export const oxigenioResumoEstoque = (params?: { empresa_id?: number }) =>
+  api.get<EstoqueOxigenioResumo>("/api/oxigenio/estoque/resumo", { params }).then((r) => r.data);
+
+export const oxigenioRequisicaoAF = () =>
+  api.get<RequisicaoAF>("/api/oxigenio/requisicao-af").then((r) => r.data);
+
+// ==========================================
+// VERIFICAÇÃO DE DUPLICIDADE (TFD & LAB)
+// ==========================================
+
+export interface PedidoDuplicadoTfd {
+  id: number;
+  codigo_curto: string;
+  numero_pedido: string;
+  data_pedido: string;
+  exame: string;
+  codigo_procedimento: string;
+  especialidade: string;
+  codigo_especialidade: string;
+  nome_especialidade: string;
+  tipo_fila: string;
+  status: string;
+  status_rotulo: string;
+  prioridade: string;
+  profissional: string;
+  unidade: string;
+  data_agendada?: string | null;
+  hora_agendada?: string | null;
+  destino?: string | null;
+  link_visualizacao: string;
+}
+
+export interface VerificarDuplicidadeTfdOut {
+  duplicado: boolean;
+  pedido: PedidoDuplicadoTfd | null;
+}
+
+export interface PedidoDuplicadoLab {
+  id: number;
+  tipo: "agendamento" | "fila_psf" | "solicitacao";
+  data: string;
+  hora: string;
+  status: string;
+  status_rotulo: string;
+  procedimento: string;
+  codigo_procedimento: string;
+  sigtap_id?: number | null;
+  profissional: string;
+  unidade: string;
+  laboratorio: string;
+  link_visualizacao: string;
+}
+
+export interface VerificarDuplicidadeLabOut {
+  duplicado: boolean;
+  pedido: PedidoDuplicadoLab | null;
+}
+
+export const tfdVerificarDuplicidade = (params: {
+  paciente_id: number;
+  codigo_procedimento?: string;
+  procedimento_nome?: string;
+  codigo_especialidade?: string;
+  especialidade_nome?: string;
+  tipo_fila?: string;
+}) =>
+  api.get<VerificarDuplicidadeTfdOut>("/api/tfd/exames/verificar-duplicidade", { params }).then((r) => r.data);
+
+export const labVerificarDuplicidade = (params: {
+  paciente_id: number;
+  sigtap_id?: number;
+  codigo_procedimento?: string;
+  procedimento_nome?: string;
+  sigtap_ids?: string;
+}) =>
+  api.get<VerificarDuplicidadeLabOut>("/api/exames/verificar-duplicidade", { params }).then((r) => r.data);
 
 export default api;
 

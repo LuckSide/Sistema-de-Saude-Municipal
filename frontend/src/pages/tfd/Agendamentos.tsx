@@ -43,7 +43,7 @@ import {
 } from "../../services/api";
 import { useAuth } from "../../hooks/useAuth";
 import { useUndo } from "../../components/UndoToast";
-import { Button, Card, Input, Label } from "../../components/ui/primitives";
+import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
 import { rotuloPrioridade } from "../../utils/rotulos";
 import ExportarExcel from "../../components/ExportarExcel";
 import BotaoWhatsApp from "../../components/BotaoWhatsApp";
@@ -796,10 +796,10 @@ export default function Agendamentos() {
           {/* Filtro de Unidade (Requisito 4) */}
           <div>
             <Label className="text-[11px] font-bold text-ink/70">Unidade de Saúde (PSF)</Label>
-            <select
+            <Select
               value={fUnidade}
               onChange={(e) => setFUnidade(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-xs font-medium outline-none transition focus:border-teal"
+              className="mt-1 !h-10 text-xs font-medium"
             >
               <option value="">Todas as unidades</option>
               {unidades.map((u) => (
@@ -807,15 +807,15 @@ export default function Agendamentos() {
                   {u.nome}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
 
           <div>
             <Label className="text-[11px] font-bold text-ink/70">Status do Atendimento</Label>
-            <select
+            <Select
               value={fStatus}
               onChange={(e) => setFStatus(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-xs font-medium outline-none transition focus:border-teal"
+              className="mt-1 !h-10 text-xs font-medium"
             >
               <option value="">Todos os status</option>
               {STATUS_AGENDA.map((s) => (
@@ -823,15 +823,15 @@ export default function Agendamentos() {
                   {ROTULO_STATUS[s]}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
 
           <div>
             <Label className="text-[11px] font-bold text-ink/70">Profissional / Médico</Label>
-            <select
+            <Select
               value={fMedico}
               onChange={(e) => setFMedico(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-xs font-medium outline-none transition focus:border-teal"
+              className="mt-1 !h-10 text-xs font-medium"
             >
               <option value="">Todos os profissionais</option>
               {medicos.map((m) => (
@@ -839,15 +839,15 @@ export default function Agendamentos() {
                   {m.nome}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
 
           <div>
             <Label className="text-[11px] font-bold text-ink/70">Tipo de Procedimento</Label>
-            <select
+            <Select
               value={fTipo}
               onChange={(e) => setFTipo(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-xs font-medium outline-none transition focus:border-teal"
+              className="mt-1 !h-10 text-xs font-medium"
             >
               <option value="">Todos os tipos</option>
               {tiposUnicos.map((t) => (
@@ -855,7 +855,7 @@ export default function Agendamentos() {
                   {t}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
 
           <div>
@@ -894,19 +894,20 @@ export default function Agendamentos() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                <Button
+                <button
+                  type="button"
                   onClick={iniciarRecepcaoLote}
                   disabled={recepcionandoLote}
-                  className="bg-teal text-white hover:brightness-110 text-xs font-bold shadow-xs py-1.5"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-teal px-3 text-xs font-bold text-white shadow-xs hover:brightness-110 transition disabled:opacity-50"
                 >
                   <UserCheck className="h-4 w-4" />
                   {recepcionandoLote ? "Recepcionando…" : "Recepcionar em Lote"}
-                </Button>
+                </button>
 
                 <button
                   type="button"
                   onClick={() => setModalLoteStatus("realizado")}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 transition"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-emerald-600 px-3 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 transition"
                 >
                   <CheckCircle2 className="h-4 w-4" /> Marcar Realizado
                 </button>
@@ -914,7 +915,7 @@ export default function Agendamentos() {
                 <button
                   type="button"
                   onClick={() => setModalLoteStatus("faltou")}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-amber-700 transition"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-amber-600 px-3 text-xs font-bold text-white shadow-xs hover:bg-amber-700 transition"
                 >
                   <UserX className="h-4 w-4" /> Marcar Faltou
                 </button>
@@ -922,7 +923,7 @@ export default function Agendamentos() {
                 <button
                   type="button"
                   onClick={() => setModalLoteStatus("desistiu")}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-purple-700 transition"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-purple-600 px-3 text-xs font-bold text-white shadow-xs hover:bg-purple-700 transition"
                 >
                   <UserMinus className="h-4 w-4" /> Desistência
                 </button>
@@ -1231,10 +1232,10 @@ export default function Agendamentos() {
                           ev.stopPropagation();
                           abrirAcao(e);
                         }}
-                        className="group block w-full rounded-xl border border-sus-900/15 bg-white p-3 text-left transition-all hover:border-teal hover:shadow-md hover:scale-[1.01]"
+                        className="group block w-full rounded-xl border border-sus-900/15 bg-white p-2.5 sm:p-3 text-left transition-all hover:border-teal hover:shadow-md"
                       >
                         <div className="flex items-start justify-between gap-1.5">
-                          <p className="flex items-center gap-2 min-w-0 text-sm font-bold text-sus-950">
+                          <p className="flex items-center gap-1.5 sm:gap-2 min-w-0 text-xs sm:text-sm font-bold text-sus-950">
                             <span className="shrink-0 text-sus-900 font-mono text-xs font-bold">
                               {e.hora_agendada || "--:--"}
                             </span>
@@ -1266,7 +1267,7 @@ export default function Agendamentos() {
                             </span>
                           )}
 
-                          <span className="truncate text-[11px] text-ink/60 font-medium max-w-[150px]">
+                          <span className="truncate text-[11px] text-ink/60 font-medium flex-1 min-w-0">
                             {e.unidade_nome || e.destino || "—"}
                           </span>
                         </div>
@@ -1567,7 +1568,7 @@ export default function Agendamentos() {
           {...agendarFilaBackdrop}
         >
           <div
-            className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto"
+            className="w-full max-w-full sm:max-w-lg md:max-w-xl rounded-2xl bg-white p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto"
             onClick={(ev) => ev.stopPropagation()}
           >
             <div className="flex items-start justify-between border-b border-sus-900/10 pb-3">
@@ -1680,10 +1681,10 @@ export default function Agendamentos() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs font-bold text-sus-950">Unidade (PSF)</Label>
-                <select
+                <Select
                   value={unidadeIdMarca}
                   onChange={(e) => setUnidadeIdMarca(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-xs font-medium text-sus-950 outline-none focus:border-teal"
+                  className="mt-1 !h-10 text-xs font-medium text-sus-950"
                   required
                 >
                   <option value="">Selecione a unidade…</option>
@@ -1692,15 +1693,15 @@ export default function Agendamentos() {
                       {u.nome}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               <div>
                 <Label className="text-xs font-bold text-sus-950">Médico(a)</Label>
-                <select
+                <Select
                   value={medicoIdMarca}
                   onChange={(e) => setMedicoIdMarca(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-xs font-medium text-sus-950 outline-none focus:border-teal"
+                  className="mt-1 !h-10 text-xs font-medium text-sus-950"
                   required
                 >
                   <option value="">Selecione o médico…</option>
@@ -1709,7 +1710,7 @@ export default function Agendamentos() {
                       {m.nome}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
             </div>
 

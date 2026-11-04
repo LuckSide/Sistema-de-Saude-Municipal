@@ -2,6 +2,7 @@ import pytest
 import asyncio
 from typing import AsyncGenerator, Generator
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.main import app
@@ -20,6 +21,38 @@ def db() -> Generator[Session, None, None]:
     """Sessão direta com o banco de teste PostgreSQL para consulta e verificação de estado."""
     with Session(engine) as session:
         yield session
+
+
+@pytest.fixture(autouse=True)
+def cleanup_test_artifacts(db: Session):
+    """Garante isolamento estrito: remove qualquer registro inserido pelos testes no banco."""
+    def get_max_id(table: str) -> int:
+        with engine.connect() as conn:
+            res = conn.execute(text(f"SELECT COALESCE(MAX(id), 0) FROM {table}")).scalar()
+            return int(res or 0)
+
+    max_fat = get_max_id("tfd_faturamento")
+    max_vp = get_max_id("tfd_viagem_pacientes")
+    max_v = get_max_id("tfd_viagens")
+    max_vf = get_max_id("tfd_viagem_fila")
+    max_ef = get_max_id("tfd_exames_fila")
+    max_item = get_max_id("lab_solic_itens")
+    max_sm = get_max_id("lab_solic_mestre")
+    max_apac = get_max_id("apac_solicitacoes")
+
+    yield
+
+    with engine.begin() as conn:
+        conn.execute(text(f"DELETE FROM tfd_faturamento WHERE id > {max_fat}"))
+        conn.execute(text(f"DELETE FROM tfd_viagem_pacientes WHERE id > {max_vp}"))
+        conn.execute(text(f"DELETE FROM tfd_viagens WHERE id > {max_v}"))
+        conn.execute(text(f"DELETE FROM tfd_viagem_fila WHERE id > {max_vf}"))
+        conn.execute(text(f"DELETE FROM tfd_exames_fila WHERE id > {max_ef}"))
+        conn.execute(text(f"DELETE FROM lab_solic_itens WHERE id > {max_item}"))
+        conn.execute(text(f"DELETE FROM lab_solic_mestre WHERE id > {max_sm}"))
+        conn.execute(text(f"DELETE FROM apac_solicitacoes WHERE id > {max_apac}"))
+        conn.execute(text("DELETE FROM lab_vagas WHERE data >= '2026-11-01'"))
+        conn.execute(text("DELETE FROM tfd_veiculos WHERE placa = 'RAC1A99'"))
 
 
 @pytest.fixture

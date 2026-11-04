@@ -33,6 +33,9 @@ from app.schemas.tfd import (
     EspecialidadeIn,
     EspecialidadeOut,
     ExameIn,
+    ExameLoteCriarIn,
+    ExameLoteCriarItemIn,
+    ExameLoteCriarOut,
     ExameLoteIn,
     ExameLoteOut,
     ExameOut,
@@ -46,6 +49,7 @@ from app.schemas.tfd import (
     PacienteIn,
     PacienteOut,
     PacientePerfilOut,
+    PedidoDuplicadoTfdOut,
     PrioridadeIn,
     ProcedimentoIn,
     ProcedimentoOut,
@@ -57,6 +61,7 @@ from app.schemas.tfd import (
     VeiculoIn,
     VeiculoOut,
     VeiculoManutencaoIn,
+    VerificarDuplicidadeTfdOut,
     ViagemIn,
     ViagemOut,
     ViagemFilaIn,
@@ -629,15 +634,26 @@ def perfil_paciente(
             .where(
                 ExameFila.paciente_id == pid,
                 ExameFila.ativo == True,  # noqa: E712
-                ExameFila.status.in_(["aguardando", "agendado"]),
             )
-            .order_by(ExameFila.created_at, ExameFila.data_pedido, ExameFila.id)
+            .order_by(ExameFila.created_at.desc(), ExameFila.data_pedido.desc(), ExameFila.id.desc())
         ).all()
     )
     demanda = []
     for e in itens:
-        pos, total_esp = rank.get(e.id, (None, None))
-        pos_g, total_g = rank_geral.get(e.id, (None, None))
+        st = (e.status or "").lower()
+        if st == "aguardando":
+            pos, total_esp = rank.get(e.id, (None, None))
+            pos_g, total_g = rank_geral.get(e.id, (None, None))
+        else:
+            pos, total_esp = None, None
+            pos_g, total_g = None, None
+
+        realizado_em = None
+        if e.recepcionado_em:
+            realizado_em = e.recepcionado_em.date()
+        elif e.data_agendada and st == "realizado":
+            realizado_em = e.data_agendada
+
         demanda.append(
             DemandaItemOut(
                 id=e.id or 0,
@@ -657,6 +673,10 @@ def perfil_paciente(
                 status_rotulo=_status_rotulo(e),
                 data_agendada=e.data_agendada,
                 hora_agendada=e.hora_agendada or "",
+                medico_nome=e.medico_nome or "",
+                unidade_nome=e.unidade_nome or "",
+                resultado=e.resultado or "",
+                realizado_em=realizado_em,
             )
         )
     return PacientePerfilOut(
@@ -1304,6 +1324,12 @@ def listar_passageiros(vid: int, db: Session = Depends(get_db), _=Depends(need_p
             vf = db.get(ViagemFila, vp.viagem_fila_id)
             if vf and vf.prioridade:
                 prio = vf.prioridade
+        if not getattr(vp, "token_confirmacao", ""):
+            import secrets
+            vp.token_confirmacao = secrets.token_urlsafe(24)
+            db.add(vp)
+            db.commit()
+            db.refresh(vp)
         link_conf = f"{app_url}/confirmar-presenca/{vp.token_confirmacao}" if getattr(vp, "token_confirmacao", "") else ""
         out.append(
             ViagemPacienteOut(
@@ -1617,6 +1643,14 @@ MAPA_ESPECIALIDADES_CANONICAS = [
     ("GERIATRA", "225180", "Médico Geriatra"),
     ("GERIATRI", "225180", "Médico Geriatra"),
     ("ALERG", "225110", "Médico Alergista e Imunologista"),
+    ("CIRURGIA PEDIATRICA", "225220", "Médico Cirurgião Pediátrico"),
+    ("CIRURGIAO PEDIATRICO", "225220", "Médico Cirurgião Pediátrico"),
+    ("CIRURGIA PLASTICA", "225230", "Médico Cirurgião Plástico"),
+    ("CIRURGIAO PLASTICO", "225230", "Médico Cirurgião Plástico"),
+    ("COLOPROCTOLOG", "225235", "Médico Coloproctologista"),
+    ("PROCTOLOG", "225235", "Médico Coloproctologista"),
+    ("NEUROCIRURG", "225260", "Médico Neurocirurgião"),
+    ("ANGIOLOGISTA", "225148", "Médico Angiologista"),
 ]
 
 CBO_PARA_NOME_CANONICO = {cbo: nome for _, cbo, nome in MAPA_ESPECIALIDADES_CANONICAS}
@@ -1728,10 +1762,10 @@ def _ordenar_regulacao(itens: list[ExameFila]) -> list[ExameFila]:
 
 
 def _rank_por_especialidade(db: Session) -> dict[int, tuple[int, int]]:
-    """Posição na fila global da especialidade. Retorna {id: (posicao, total)}."""
+    """Posição na fila global da especialidade (apenas pacientes aguardando regulação). Retorna {id: (posicao, total)}."""
     base = list(
         db.exec(
-            select(ExameFila).where(ExameFila.ativo == True, ExameFila.status.in_(["aguardando", "agendado"]))  # noqa: E712
+            select(ExameFila).where(ExameFila.ativo == True, ExameFila.status == "aguardando")  # noqa: E712
         ).all()
     )
     grupos: dict[str, list[ExameFila]] = {}
@@ -1746,10 +1780,10 @@ def _rank_por_especialidade(db: Session) -> dict[int, tuple[int, int]]:
 
 
 def _rank_fila_geral(db: Session) -> dict[int, tuple[int, int]]:
-    """Posição na fila geral de espera (todas as especialidades unificadas). Retorna {id: (posicao, total)}."""
+    """Posição na fila geral de espera (apenas pacientes aguardando regulação). Retorna {id: (posicao, total)}."""
     base = list(
         db.exec(
-            select(ExameFila).where(ExameFila.ativo == True, ExameFila.status.in_(["aguardando", "agendado"]))  # noqa: E712
+            select(ExameFila).where(ExameFila.ativo == True, ExameFila.status == "aguardando")  # noqa: E712
         ).all()
     )
     ordenados = _ordenar_regulacao(base)
@@ -2699,6 +2733,125 @@ def eh_tfd_central(ator: User) -> bool:
     return False
 
 
+@router.get("/exames/verificar-duplicidade", response_model=VerificarDuplicidadeTfdOut)
+def verificar_duplicidade_exame(
+    paciente_id: int = Query(...),
+    codigo_procedimento: str | None = Query(default=None),
+    procedimento_nome: str | None = Query(default=None),
+    codigo_especialidade: str | None = Query(default=None),
+    especialidade_nome: str | None = Query(default=None),
+    tipo_fila: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("tfd_exames", "tfd_fila_lancamento", "tfd_medico", "tfd_agenda", "tfd", "usuarios")),
+):
+    """Verifica em tempo real se já existe um pedido ativo/pendente para o mesmo paciente com o mesmo procedimento ou especialidade."""
+    _ = ator
+    cod_proc = (codigo_procedimento or "").strip()
+    proc_nome = (procedimento_nome or "").strip()
+    cbo = (codigo_especialidade or "").strip()
+    esp_nome = (especialidade_nome or "").strip()
+    tf = (tipo_fila or "").strip().upper()
+
+    if not cod_proc and not proc_nome and not cbo and not esp_nome:
+        return {"duplicado": False, "pedido": None}
+
+    stmt = (
+        select(ExameFila)
+        .where(
+            ExameFila.paciente_id == paciente_id,
+            ExameFila.ativo == True,
+            ExameFila.status.in_(["aguardando", "agendado", "recepcionado"])
+        )
+        .order_by(desc(ExameFila.data_pedido), desc(ExameFila.id))
+    )
+    pedidos_ativos = list(db.exec(stmt).all())
+    if not pedidos_ativos:
+        return {"duplicado": False, "pedido": None}
+
+    def _norm(s: str) -> str:
+        import unicodedata
+        s = unicodedata.normalize("NFKD", s or "").encode("ASCII", "ignore").decode("utf-8")
+        return s.strip().lower()
+
+    norm_proc = _norm(proc_nome)
+    norm_esp = _norm(esp_nome)
+
+    is_consulta = "CONSULTA" in tf or "CONSULTA" in norm_proc or cod_proc == "0301010072"
+
+    pedido_duplicado = None
+    for p in pedidos_ativos:
+        p_cod_proc = (p.codigo_procedimento or "").strip()
+        p_cbo = (p.codigo_especialidade or "").strip()
+        p_exame = _norm(p.exame)
+        p_esp = _norm(p.especialidade)
+        p_nome_esp = _norm(p.nome_especialidade)
+        p_is_consulta = "CONSULTA" in (p.tipo_fila or "").upper() or "CONSULTA" in p_exame or p_cod_proc == "0301010072"
+
+        match = False
+        # Caso 1: Ambos são consultas especializadas (ou mesmo CBO / especialidade)
+        if is_consulta and p_is_consulta:
+            if cbo and p_cbo and cbo == p_cbo:
+                match = True
+            elif norm_esp and (norm_esp == p_esp or norm_esp == p_nome_esp or (norm_esp in p_esp and len(norm_esp) > 4)):
+                match = True
+            elif cbo and not p_cbo and norm_esp and (norm_esp == p_esp or norm_esp == p_nome_esp):
+                match = True
+        # Caso 2: Procedimento específico (exames, cirurgias, etc.)
+        else:
+            if cod_proc and p_cod_proc and cod_proc == p_cod_proc:
+                match = True
+            elif norm_proc and (norm_proc == p_exame or (norm_proc in p_exame and len(norm_proc) > 5) or (p_exame in norm_proc and len(p_exame) > 5)):
+                if cod_proc and p_cod_proc and cod_proc != p_cod_proc:
+                    pass
+                else:
+                    match = True
+            elif not cod_proc and not norm_proc and cbo and p_cbo and cbo == p_cbo:
+                match = True
+
+        if match:
+            pedido_duplicado = p
+            break
+
+    if not pedido_duplicado:
+        return {"duplicado": False, "pedido": None}
+
+    p = pedido_duplicado
+    codigo_curto_final = p.codigo_curto or f"EX-{str(p.id).zfill(6)}"
+
+    rotulo_status = "Aguardando na Fila"
+    if p.status == "agendado":
+        dt_str = p.data_agendada.strftime("%d/%m/%Y") if p.data_agendada else ""
+        hr_str = f" às {p.hora_agendada}" if p.hora_agendada else ""
+        rotulo_status = f"Agendado p/ {dt_str}{hr_str}".strip()
+    elif p.status == "recepcionado":
+        rotulo_status = "Recepcionado na Unidade"
+
+    return {
+        "duplicado": True,
+        "pedido": {
+            "id": p.id,
+            "codigo_curto": codigo_curto_final,
+            "numero_pedido": p.numero_pedido or "",
+            "data_pedido": p.data_pedido.strftime("%d/%m/%Y") if p.data_pedido else "",
+            "exame": p.exame or "",
+            "codigo_procedimento": p.codigo_procedimento or "",
+            "especialidade": p.especialidade or "",
+            "codigo_especialidade": p.codigo_especialidade or "",
+            "nome_especialidade": p.nome_especialidade or "",
+            "tipo_fila": p.tipo_fila or "",
+            "status": p.status,
+            "status_rotulo": rotulo_status,
+            "prioridade": p.prioridade or "rotina",
+            "profissional": p.medico_nome or "Não especificado",
+            "unidade": p.unidade_nome or "Não especificada",
+            "data_agendada": p.data_agendada.strftime("%d/%m/%Y") if p.data_agendada else None,
+            "hora_agendada": p.hora_agendada or None,
+            "destino": p.destino or None,
+            "link_visualizacao": f"/tfd/exames?id={p.id}&q={codigo_curto_final}",
+        }
+    }
+
+
 @router.post("/exames", response_model=ExameOut, status_code=201)
 def criar_exame(data: ExameIn, db: Session = Depends(get_db), ator: User = Depends(need_any_perm("tfd_exames", "tfd_fila_lancamento", acoes=("criar",)))):
     if not db.get(Paciente, data.paciente_id):
@@ -2803,6 +2956,170 @@ def criar_exame(data: ExameIn, db: Session = Depends(get_db), ator: User = Depen
         pass
 
     return _com_posicao(db, [obj])[0]
+
+
+@router.post("/exames/lote", response_model=ExameLoteCriarOut, status_code=201)
+def criar_exames_lote(
+    data: ExameLoteCriarIn,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("tfd_exames", "tfd_fila_lancamento", acoes=("criar",))),
+):
+    """Cria múltiplas solicitações/exames na fila de espera em uma única operação atômica,
+
+    com suporte a agendamento automático em lote, snapshots clínicos e notificações.
+    """
+    if not data.itens:
+        raise HTTPException(400, "Nenhum paciente informado no lote.")
+
+    is_central = eh_tfd_central(ator)
+    hoje = date.today()
+
+    # Validações de perfil para o lote
+    if not is_central:
+        if data.agendamento_direto:
+            raise HTTPException(403, "Apenas a Central de Regulação/TFD pode realizar agendamento direto em lote.")
+        if data.data_pedido and data.data_pedido != hoje:
+            raise HTTPException(403, "Usuários do PSF só podem lançar solicitações para o dia atual.")
+        if ator.unidade_saude_id and data.unidade_saude_id and data.unidade_saude_id != ator.unidade_saude_id:
+            raise HTTPException(403, "Usuários do PSF só podem lançar pedidos vinculados à sua própria unidade.")
+
+    from app.services.permissoes import tem_tela
+    if not ator.is_superuser and tem_tela(ator, "tfd_fila_lancamento") and not tem_tela(ator, "tfd_exames") and not tem_tela(ator, "tfd_medico"):
+        if (data.prioridade or "").lower() == "urgente":
+            raise HTTPException(403, "Perfil de lançamento restrito não pode definir prioridade urgente.")
+        if data.agendamento_direto:
+            raise HTTPException(403, "Perfil de lançamento restrito não pode realizar agendamento direto.")
+
+    if data.agendamento_direto:
+        if not data.data_agendada:
+            raise HTTPException(400, "Data agendada é obrigatória para agendamento direto em lote.")
+        exige_sem_retroativo(ator, data.data_agendada, True)
+        if not data.medico_id or not data.unidade_saude_id:
+            raise HTTPException(400, "Agendamento direto exige médico e unidade de atendimento.")
+
+    # Resolver médico e unidade padrão do lote
+    med_padrao = db.get(Medico, data.medico_id) if data.medico_id else None
+    uni_padrao = db.get(UnidadeSaude, data.unidade_saude_id) if data.unidade_saude_id else None
+
+    if not is_central and ator.unidade_saude_id and not uni_padrao:
+        uni_padrao = db.get(UnidadeSaude, ator.unidade_saude_id)
+
+    criados: list[ExameFila] = []
+    total_agendados = 0
+    total_na_fila = 0
+
+    from app.services.whatsapp import notificar_paciente_evento
+
+    for idx, item in enumerate(data.itens):
+        pac = db.get(Paciente, item.paciente_id)
+        if not pac:
+            raise HTTPException(404, f"Paciente #{item.paciente_id} não encontrado.")
+
+        # Justificativa: item específico ou padrão do lote
+        just = (item.justificativa or "").strip() or (data.justificativa_padrao or "").strip()
+        if len(just) < 12:
+            raise HTTPException(
+                400,
+                f"Justificativa clínica obrigatória (mínimo 12 caracteres) para o paciente {pac.nome} (item {idx + 1}).",
+            )
+
+        tipo_fila_item = item.tipo_fila or data.tipo_fila or "ELETIVO"
+        exame_nome = item.exame or data.exame
+        cod_proc = item.codigo_procedimento if item.codigo_procedimento is not None else data.codigo_procedimento
+        esp_nome = item.especialidade if item.especialidade is not None else data.especialidade
+        esp_cod = item.codigo_especialidade if item.codigo_especialidade is not None else data.codigo_especialidade
+        prio_item = item.prioridade or data.prioridade or "rotina"
+        cid_cod = item.cid_codigo if item.cid_codigo is not None else data.cid_codigo_padrao
+        cid_desc = item.cid_descricao if item.cid_descricao is not None else data.cid_descricao_padrao
+        obs_item = item.observacoes if item.observacoes is not None else data.observacoes_padrao
+
+        uni_item = db.get(UnidadeSaude, item.unidade_saude_id) if item.unidade_saude_id else uni_padrao
+        med_item = db.get(Medico, item.medico_id) if item.medico_id else med_padrao
+
+        data_ped = item.data_pedido or data.data_pedido or hoje
+        if not is_central:
+            data_ped = hoje
+
+        num_pedido = item.numero_pedido
+        if not num_pedido:
+            import random
+            num_pedido = f"PED-{hoje.strftime('%Y%m%d')}-{random.randint(100000, 999999)}"
+
+        payload_obj = {
+            "paciente_id": pac.id,
+            "paciente_nome": pac.nome,
+            "tipo_fila": tipo_fila_item,
+            "exame": exame_nome,
+            "codigo_procedimento": cod_proc or "",
+            "especialidade": esp_nome or "",
+            "codigo_especialidade": esp_cod or "",
+            "prioridade": prio_item,
+            "justificativa": just,
+            "cid_codigo": cid_cod or "",
+            "cid_descricao": cid_desc or "",
+            "observacoes": obs_item or "",
+            "data_pedido": data_ped,
+            "numero_pedido": num_pedido,
+            "criado_por": (ator.nome or ator.username or "")[:120],
+        }
+
+        if uni_item:
+            payload_obj["unidade_saude_id"] = uni_item.id
+            payload_obj["unidade_nome"] = uni_item.nome or ""
+            payload_obj["unidade_cnes"] = uni_item.cnes or ""
+            payload_obj["unidade_endereco"] = uni_item.endereco or ""
+            payload_obj["unidade_numero"] = getattr(uni_item, "numero", "") or ""
+            payload_obj["unidade_bairro"] = uni_item.bairro or ""
+            payload_obj["unidade_municipio"] = getattr(uni_item, "municipio", "") or ""
+            payload_obj["unidade_cep"] = getattr(uni_item, "cep", "") or ""
+
+        if med_item:
+            payload_obj["medico_id"] = med_item.id
+            payload_obj["medico_nome"] = med_item.nome or ""
+            payload_obj["medico_cpf"] = med_item.cpf or ""
+            payload_obj["medico_cbo_codigo"] = getattr(med_item, "cbo_codigo", "") or ""
+            payload_obj["medico_cbo_descricao"] = getattr(med_item, "cbo_descricao", "") or ""
+
+        agendar_este = data.agendamento_direto or bool(item.data_agendada)
+        if agendar_este and is_central:
+            d_agendada = item.data_agendada or data.data_agendada
+            h_agendada = item.hora_agendada or data.hora_agendada or "08:00"
+            payload_obj["data_agendada"] = d_agendada
+            payload_obj["hora_agendada"] = h_agendada
+            payload_obj["status"] = "agendado"
+            total_agendados += 1
+        else:
+            payload_obj["status"] = "aguardando"
+            total_na_fila += 1
+
+        obj = ExameFila(**payload_obj)
+        _garantir_token(obj)
+        if not obj.codigo_curto:
+            obj.codigo_curto = gerar_exame_curto_aleatorio(db)
+        if not obj.numero_pedido:
+            obj.numero_pedido = gerar_numero_pedido_aleatorio(db)
+
+        db.add(obj)
+        criados.append(obj)
+
+    db.commit()
+
+    # Disparo de notificações WhatsApp em background seguro
+    for obj in criados:
+        db.refresh(obj)
+        try:
+            evento_whats = "agendamento" if obj.data_agendada else "entrada_fila"
+            notificar_paciente_evento(db, evento_whats, obj)
+        except Exception:
+            pass
+
+    itens_out = _com_posicao(db, criados)
+    return ExameLoteCriarOut(
+        total_criados=len(criados),
+        agendados=total_agendados,
+        na_fila=total_na_fila,
+        itens=itens_out,
+    )
 
 
 @router.put("/exames/lote", response_model=ExameLoteOut)
@@ -5162,6 +5479,10 @@ def _dia_payload(
                     if vf and vf.prioridade:
                         prio = vf.prioridade
                 import os
+                import secrets
+                if not getattr(p, "token_confirmacao", ""):
+                    p.token_confirmacao = secrets.token_urlsafe(24)
+                    db.add(p)
                 app_url = os.getenv("APP_URL", "http://localhost:5173").rstrip("/")
                 link_conf = f"{app_url}/confirmar-presenca/{p.token_confirmacao}" if getattr(p, "token_confirmacao", "") else ""
                 passageiros.append({
@@ -5481,11 +5802,18 @@ def disponibilidade_frota(
                 if _sobrepoe(janela, _janela(v.hora_saida, v.hora_retorno)):
                     ocupado_por = _nome_viagem(v.destino, v.hora_saida, v.id)
                     break
+        em_manutencao = (veh.status or "") == "manutencao"
+        if not em_manutencao and getattr(veh, "manutencao_data_entrada", None):
+            d_ent = str(veh.manutencao_data_entrada)
+            d_ret = str(veh.manutencao_previsao_retorno) if veh.manutencao_previsao_retorno else None
+            indef = getattr(veh, "manutencao_indefinida", False)
+            if d_ent <= data and (indef or not d_ret or d_ret >= data):
+                em_manutencao = True
         veiculos_out.append({
             "id": veh.id, "placa": veh.placa, "modelo": veh.modelo or "",
             "tipo": veh.tipo, "capacidade": veh.capacidade,
-            "status": veh.status or "disponivel",
-            "disponivel": ocupado_por is None and (veh.status or "") != "manutencao",
+            "status": "manutencao" if em_manutencao else (veh.status or "disponivel"),
+            "disponivel": ocupado_por is None and not em_manutencao,
             "ocupado_por": ocupado_por,
         })
     mots = list(db.exec(select(Motorista).where(

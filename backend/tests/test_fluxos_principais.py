@@ -20,7 +20,7 @@ from app.models.tfd import Motorista, Paciente, ExameFila, Viagem, ViagemPacient
 from app.models.lab_exames import SigtapProcedimento
 from app.models.lab_fase6 import FilaPsf
 from app.models.audit import AuditLog
-from app.schemas.tfd import MotoristaIn, PacienteIn, ExameIn
+from app.schemas.tfd import MotoristaIn, PacienteIn, ExameIn, ExameLoteCriarIn, ExameLoteCriarItemIn
 from app.schemas.cadastros_saude import MedicoIn
 from app.api.v1.tfd import (
     listar_motoristas,
@@ -29,6 +29,7 @@ from app.api.v1.tfd import (
     listar_pacientes,
     criar_paciente,
     criar_exame,
+    criar_exames_lote,
     atualizar_exame,
     listar_exames,
     resolver_medico_unidade,
@@ -869,6 +870,106 @@ def test_relatorio_agendados_metricas_e_desfechos(db):
     assert "absenteismo_pct" in metricas
     assert "comparecimento_pct" in metricas
     assert len(rel["itens"]) >= 3
+
+
+def test_lancamento_lote_fila_de_espera(db):
+    """Testa criação de múltiplas solicitações em lote para a Fila de Espera."""
+    uni = UnidadeSaude(nome="PSF Centro", cnes="1234567", ativo=True)
+    med = Medico(nome="Dr. Roberto Silva", crm="12345", ativo=True)
+    p1 = Paciente(nome="Paciente Lote 1", cpf="111.111.111-11", municipio="Guapé")
+    p2 = Paciente(nome="Paciente Lote 2", cpf="222.222.222-22", municipio="Guapé")
+    p3 = Paciente(nome="Paciente Lote 3", cpf="333.333.333-33", municipio="Guapé")
+    db.add_all([uni, med, p1, p2, p3])
+    db.commit()
+
+    ator = User(username="operador_central", telas="tfd,tfd_exames", is_superuser=True)
+
+    payload_lote = ExameLoteCriarIn(
+        tipo_fila="Ultrassonografia",
+        exame="ULTRASSONOGRAFIA DE ABDOME TOTAL",
+        codigo_procedimento="0205020186",
+        especialidade="Radiologia",
+        unidade_saude_id=uni.id,
+        medico_id=med.id,
+        prioridade="rotina",
+        justificativa_padrao="Dor abdominal crônica em investigação ambulatorial",
+        agendamento_direto=False,
+        itens=[
+            ExameLoteCriarItemIn(paciente_id=p1.id),
+            ExameLoteCriarItemIn(paciente_id=p2.id, justificativa="Suspeita de colelitíase com dor pós-prandial"),
+            ExameLoteCriarItemIn(paciente_id=p3.id),
+        ],
+    )
+
+    resultado = criar_exames_lote(payload_lote, db=db, ator=ator)
+
+    assert resultado.total_criados == 3
+    assert resultado.na_fila == 3
+    assert resultado.agendados == 0
+    assert len(resultado.itens) == 3
+
+    # Verifica os registros gravados no banco
+    for item in resultado.itens:
+        assert item.status == "aguardando"
+        assert item.codigo_curto is not None
+        assert item.numero_pedido is not None
+        assert item.unidade_saude_id == uni.id
+        assert item.medico_id == med.id
+        assert item.codigo_procedimento == "0205020186"
+
+
+def test_lancamento_lote_agendamento_direto_e_validacoes(db):
+    """Testa agendamento direto em lote e validação de justificativa mínima (12 chars)."""
+    uni = UnidadeSaude(nome="Policlínica Municipal", cnes="7654321", ativo=True)
+    med = Medico(nome="Dra. Camila Costa", crm="54321", ativo=True)
+    p1 = Paciente(nome="Paciente Agendado 1", cpf="444.444.444-44", municipio="Guapé")
+    p2 = Paciente(nome="Paciente Agendado 2", cpf="555.555.555-55", municipio="Guapé")
+    db.add_all([uni, med, p1, p2])
+    db.commit()
+
+    ator = User(username="operador_central", telas="tfd,tfd_exames", is_superuser=True)
+
+    # 1. Falha com justificativa curta (< 12 caracteres)
+    payload_invalido = ExameLoteCriarIn(
+        tipo_fila="Cardiologia",
+        exame="ELETROCARDIOGRAMA",
+        unidade_saude_id=uni.id,
+        medico_id=med.id,
+        justificativa_padrao="Curta",  # 5 caracteres
+        agendamento_direto=False,
+        itens=[ExameLoteCriarItemIn(paciente_id=p1.id)],
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        criar_exames_lote(payload_invalido, db=db, ator=ator)
+    assert exc_info.value.status_code == 400
+    assert "12" in exc_info.value.detail or "justificativa" in exc_info.value.detail.lower()
+
+    # 2. Agendamento direto com sucesso
+    data_futura = date.today() + timedelta(days=3)
+    payload_agendado = ExameLoteCriarIn(
+        tipo_fila="Cardiologia",
+        exame="ELETROCARDIOGRAMA",
+        unidade_saude_id=uni.id,
+        medico_id=med.id,
+        justificativa_padrao="Paciente hipertenso de alto risco para risco cirúrgico",
+        agendamento_direto=True,
+        data_agendada=data_futura,
+        hora_agendada="09:30",
+        itens=[
+            ExameLoteCriarItemIn(paciente_id=p1.id),
+            ExameLoteCriarItemIn(paciente_id=p2.id),
+        ],
+    )
+    resultado = criar_exames_lote(payload_agendado, db=db, ator=ator)
+    assert resultado.total_criados == 2
+    assert resultado.agendados == 2
+    assert resultado.na_fila == 0
+
+    for item in resultado.itens:
+        assert item.status == "agendado"
+        assert item.data_agendada == data_futura
+        assert item.hora_agendada == "09:30"
+
 
 
 

@@ -11,10 +11,12 @@ import {
   ChevronDown,
   ChevronRight,
   ClipboardCheck,
+  ClipboardList,
   Coins,
   Cross,
   Database,
   FileCheck,
+  FileText,
   FlaskConical,
   HeartPulse,
   History,
@@ -23,6 +25,7 @@ import {
   ListOrdered,
   LogOut,
   MapPin,
+  Package,
   PanelLeftClose,
   PanelLeftOpen,
   PlusCircle,
@@ -35,6 +38,7 @@ import {
   UserCheck,
   UserCog,
   Users,
+  Wind,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
@@ -125,6 +129,18 @@ const MODULOS_NAV: ModuloNav[] = [
       { to: "/apac/solicitacoes", label: "Laudos e Solicitações", icon: FileCheck, tela: "apac_solicitacao", ou: ["tfd", "usuarios"] },
       { to: "/apac/regulacao", label: "Regulação e Autorização", icon: Stethoscope, tela: "apac_regulacao", ou: ["usuarios"] },
       { to: "/apac/faturamento", label: "Faturamento APAC-Mag", icon: ReceiptText, tela: "apac_faturamento", ou: ["tfd", "usuarios"] },
+    ],
+  },
+  {
+    id: "oxigenio",
+    label: "Oxigênio & Equipamentos",
+    icon: Wind,
+    itens: [
+      { to: "/oxigenio", label: "Estoque e Licitações", icon: Package, tela: "oxigenio_estoque", ou: ["oxigenio", "usuarios"] },
+      { to: "/oxigenio/equipamentos", label: "Gestão de Equipamentos", icon: Stethoscope, tela: "oxigenio_equipamentos", ou: ["oxigenio", "usuarios"] },
+      { to: "/oxigenio/emprestimos", label: "Empréstimos e Saídas", icon: ClipboardList, tela: "oxigenio_emprestimos", ou: ["oxigenio", "usuarios"] },
+      { to: "/oxigenio/empresas", label: "Empresas e Fornecedores", icon: Building2, tela: "oxigenio_empresas", ou: ["oxigenio", "usuarios"] },
+      { to: "/oxigenio/relatorios", label: "Relatórios e Requisição AF", icon: FileText, tela: "oxigenio_relatorios", ou: ["oxigenio", "usuarios"] },
     ],
   },
   {

@@ -27,7 +27,7 @@ import {
   Timer,
   TriangleAlert,
 } from "lucide-react";
-import { Badge, Button, Card, Label } from "../components/ui/primitives";
+import { Badge, Button, Card, Label, Select } from "../components/ui/primitives";
 import MonthPicker from "../components/MonthPicker";
 import { cn } from "../components/ui/primitives";
 import {
@@ -348,20 +348,18 @@ export default function Indicadores() {
           </div>
           <div>
             <Label>Granularidade</Label>
-            <select
+            <Select
               value={gran}
               onChange={(e) => setGran(e.target.value)}
-              className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm"
             >
               <option value="mes">Mensal</option>
               <option value="semana">Semanal</option>
-            </select>
+            </Select>
             <div className="mt-3">
               <Label>Tipo de fila</Label>
-              <select
+              <Select
                 value={tipoFila}
                 onChange={(e) => setTipoFila(e.target.value)}
-                className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm"
               >
                 <option value="">Todas</option>
                 {tipos.map((t) => (
@@ -369,7 +367,7 @@ export default function Indicadores() {
                     {t.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           </div>
           <div className="flex items-end gap-2 md:col-span-2">
@@ -608,10 +606,10 @@ export default function Indicadores() {
           </div>
           <div className="flex items-center gap-2">
             <Label className="mb-0 whitespace-nowrap">Laboratório</Label>
-            <select
+            <Select
               value={labId}
               onChange={(e) => setLabId(e.target.value === "" ? "" : Number(e.target.value))}
-              className="w-auto min-w-[200px] rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm"
+              className="w-auto min-w-[200px]"
             >
               <option value="">Todos</option>
               {(agenda?.laboratorios ?? []).map((l: AgendaResp["laboratorios"][number]) => (
@@ -619,7 +617,7 @@ export default function Indicadores() {
                   {l.nome}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         </div>
         <div className="grid gap-3 lg:grid-cols-5">

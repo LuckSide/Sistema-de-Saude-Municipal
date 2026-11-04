@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { createPortal } from "react-dom";
-import { AlertTriangle, Building2, Bus, Calendar, CheckCircle2, ClipboardList, Copy, Download, Eye, MapPin, MessageSquare, Pencil, Plus, Printer, QrCode, RefreshCw, Search, Stethoscope, Trash2, X } from "lucide-react";
+import { AlertTriangle, Building2, Bus, Calendar, CheckCircle2, ClipboardList, Copy, Download, Eye, Layers, MapPin, MessageSquare, Pencil, Plus, Printer, QrCode, RefreshCw, Search, Stethoscope, Trash2, X } from "lucide-react";
 import {
   tfdAtualizarExame,
   tfdAtualizarExamesLote,
@@ -38,7 +38,7 @@ import {
 } from "../../services/api";
 import { useAuth } from "../../hooks/useAuth";
 import { useUndo } from "../../components/UndoToast";
-import { Button, Card, Input, Label } from "../../components/ui/primitives";
+import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
 import Timeline from "../../components/Timeline";
 import { Combobox, type ComboOption } from "../../components/ui/combobox";
 import Paginacao from "../../components/Paginacao";
@@ -1107,8 +1107,17 @@ export default function FilaExames() {
           >
             <QrCode className="h-4 w-4" /> Leitura Rápida QR
           </Button>
+          <Link to="/tfd/solicitacoes/nova?modo=lote">
+            <Button
+              type="button"
+              className="border border-teal/40 bg-teal/5 text-teal hover:bg-teal/15 text-xs font-bold flex items-center gap-1.5 !h-9 shadow-xs"
+              title="Lançamento múltiplo de pacientes em lote"
+            >
+              <Layers className="h-4 w-4" /> Lançamento em Lote
+            </Button>
+          </Link>
           <Link to="/tfd/solicitacoes/nova">
-            <Button className="bg-teal text-white hover:brightness-110 text-xs shadow-xs font-bold flex items-center gap-1.5">
+            <Button className="bg-teal text-white hover:brightness-110 text-xs shadow-xs font-bold flex items-center gap-1.5 !h-9">
               <Plus className="h-4 w-4" /> Nova Solicitação
             </Button>
           </Link>
@@ -1177,17 +1186,17 @@ export default function FilaExames() {
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
               <div>
                 <Label>Status</Label>
-                <select value={filtro} onChange={(e) => setFiltro(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                <Select value={filtro} onChange={(e) => setFiltro(e.target.value)}>
                   <option value="">Todos</option>
                   {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
+                </Select>
               </div>
               <div>
                 <Label>Prioridade</Label>
-                <select value={prio} onChange={(e) => setPrio(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                <Select value={prio} onChange={(e) => setPrio(e.target.value)}>
                   <option value="">Todas</option>
                   {PRIOS.map((p) => <option key={p} value={p}>{PRIO_ROTULO[p]}</option>)}
-                </select>
+                </Select>
               </div>
               <div>
                 <Label>Tipo de fila</Label>
@@ -1246,10 +1255,10 @@ export default function FilaExames() {
               <div className="grid gap-3 rounded-2xl bg-sand/50 p-3 sm:grid-cols-2 md:grid-cols-4">
                 <div>
                   <Label>Unidade de Saúde (PSF)</Label>
-                  <select
+                  <Select
                     value={filtroUnidadeId}
                     onChange={(e) => setFiltroUnidadeId(e.target.value)}
-                    className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-xs font-medium text-sus-950 outline-none transition focus:border-teal"
+                    className="!h-10 text-xs font-medium"
                   >
                     <option value="">Todas as unidades</option>
                     {unidades.map((u) => (
@@ -1257,7 +1266,7 @@ export default function FilaExames() {
                         {u.nome}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
                 <div>
                   <Label>Destino</Label>
@@ -1366,21 +1375,39 @@ export default function FilaExames() {
           <div className="flex flex-wrap items-center gap-2 border-b border-sus-900/10 bg-sus-900 px-4 py-2.5 text-sm text-white">
             <span className="font-semibold">{sel.length} selecionado(s)</span>
             <button onClick={() => setSel([])} className="rounded-lg px-2 py-1 text-xs text-white/70 hover:bg-white/10 hover:text-white">Limpar</button>
-            <div className="ml-auto flex flex-wrap gap-2">
+            <div className="ml-auto flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => {
                   setExportarApenasSel(true);
                   setExportModal(true);
                 }}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-white/20 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/30 transition shadow-xs"
+                className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-white/20 px-3 text-xs font-bold text-white hover:bg-white/30 transition shadow-xs"
                 title="Exportar apenas os pacientes selecionados para planilha Excel"
               >
                 <Download className="h-3.5 w-3.5" /> Exportar selecionados ({sel.length})
               </button>
-              <button onClick={() => abrirLote("agendar")} className="rounded-xl bg-teal px-3 py-1.5 text-xs font-bold text-white hover:brightness-110">Agendar em lote</button>
-              <button onClick={() => abrirLote("status")} className="rounded-xl bg-white/15 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/25">Alterar status em lote</button>
-              <button onClick={() => abrirLote("editar")} className="rounded-xl bg-white/15 px-3 py-1.5 text-xs font-bold text-white hover:bg-white/25">Modificar em conjunto</button>
+              <button
+                type="button"
+                onClick={() => abrirLote("agendar")}
+                className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-teal px-3 text-xs font-bold text-white shadow-xs hover:brightness-110 transition"
+              >
+                Agendar em lote
+              </button>
+              <button
+                type="button"
+                onClick={() => abrirLote("status")}
+                className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-white/15 px-3 text-xs font-bold text-white shadow-xs hover:bg-white/25 transition"
+              >
+                Alterar status em lote
+              </button>
+              <button
+                type="button"
+                onClick={() => abrirLote("editar")}
+                className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-white/15 px-3 text-xs font-bold text-white shadow-xs hover:bg-white/25 transition"
+              >
+                Modificar em conjunto
+              </button>
             </div>
           </div>
         )}
@@ -1556,7 +1583,7 @@ export default function FilaExames() {
 
       {loteModal && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4 print:hidden" onClick={() => { setConfirmandoLote(false); setLoteModal(null); }}>
-          <div className="max-h-[90vh] w-full max-w-lg overflow-auto rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[90vh] w-full max-w-full sm:max-w-xl md:max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-card" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
               <p className="font-display text-base font-bold text-sus-950">
                 {loteModal === "agendar" ? `Agendar ${sel.length} pedido(s)` : loteModal === "status" ? `Alterar status de ${sel.length} pedido(s)` : `Modificar ${sel.length} pedido(s)`}
@@ -1659,26 +1686,25 @@ export default function FilaExames() {
               {loteModal === "status" && (
                 <div>
                   <Label>Novo status</Label>
-                  <select value={loteForm.status} onChange={(e) => setLoteForm({ ...loteForm, status: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                  <Select value={loteForm.status} onChange={(e) => setLoteForm({ ...loteForm, status: e.target.value })}>
                     <option value="">Escolher…</option>
                     {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
+                  </Select>
                 </div>
               )}
               {loteModal === "editar" && (
                 <>
                   <div>
                     <Label>Prioridade{!isMedico ? " (somente perfil Médico)" : ""}</Label>
-                    <select
+                    <Select
                       value={loteForm.prioridade}
                       disabled={!isMedico}
                       onChange={(e) => setLoteForm({ ...loteForm, prioridade: e.target.value })}
-                      className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm disabled:bg-sand disabled:text-ink/50"
                       title={!isMedico ? "Somente o perfil Médico altera prioridade" : "O backend exige vínculo com cada pedido"}
                     >
                       <option value="">Manter atual</option>
                       {PRIOS.map((p) => <option key={p} value={p}>{PRIO_ROTULO[p]}</option>)}
-                    </select>
+                    </Select>
                   </div>
                   {loteForm.prioridade && (
                     <div>
@@ -2301,22 +2327,21 @@ export default function FilaExames() {
                 <div className="grid gap-4 md:grid-cols-4">
                   <div>
                     <Label>Prioridade{(editId && !podeEditarPrio) || isLancamentoRestrito ? " (somente leitura)" : ""}</Label>
-                    <select
+                    <Select
                       value={form.prioridade}
                       disabled={(!!editId && !podeEditarPrio) || isLancamentoRestrito}
                       onChange={(e) => setForm({ ...form, prioridade: e.target.value })}
-                      className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm disabled:bg-sand disabled:text-ink/50"
                       title={(editId && !podeEditarPrio) ? "Somente o médico envolvido altera a prioridade" : isLancamentoRestrito ? "Seu perfil não permite definir urgência" : undefined}
                     >
                       {PRIOS.filter((p) => !isLancamentoRestrito || p === "rotina").map((p) => <option key={p} value={p}>{PRIO_ROTULO[p]}</option>)}
-                    </select>
+                    </Select>
                     {isLancamentoRestrito && <p className="mt-1 text-xs text-amber-700">Seu perfil permite apenas lançamentos com prioridade Rotina.</p>}
                   </div>
                   <div>
                     <Label>Status</Label>
-                    <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                    <Select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
                       {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
-                    </select>
+                    </Select>
                   </div>
                   <div><Label>Data pedido *</Label><Input type="date" value={form.data_pedido} min={retroativoBloqueado ? hojeISO() : undefined} onChange={(e) => setForm({ ...form, data_pedido: e.target.value })} /></div>
                   <div><Label>Data agendada</Label><Input type="date" value={form.data_agendada} min={retroativoBloqueado ? hojeISO() : undefined} onChange={(e) => setForm({ ...form, data_agendada: e.target.value })} /></div>

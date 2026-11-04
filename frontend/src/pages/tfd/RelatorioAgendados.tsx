@@ -239,7 +239,7 @@ export default function RelatorioAgendados() {
   }
 
   return (
-    <div className="w-full max-w-[1720px] mx-auto space-y-6 px-3 sm:px-6 pb-16">
+    <div className="w-full space-y-6">
       {/* Cabeçalho */}
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <div>

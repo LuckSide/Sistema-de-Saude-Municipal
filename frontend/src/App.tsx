@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import type { ReactElement } from "react";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
@@ -5,43 +6,62 @@ import { UndoToastProvider } from "./components/UndoToast";
 import { ConfirmDialogProvider } from "./components/ConfirmDialog";
 import { useCidadeDinamica } from "./hooks/useCidade";
 import { Protected, Shell } from "./components/Layout";
-import Login from "./pages/Login";
-import Dashboard from "./pages/Dashboard";
-import Usuarios from "./pages/Usuarios";
-import TfdLayout from "./pages/tfd/TfdLayout";
-import TfdResumo from "./pages/tfd/TfdResumo";
-import TfdViagens from "./pages/tfd/TfdViagens";
-import TfdPacientes from "./pages/tfd/TfdPacientes";
-import AgendaTfd from "./pages/tfd/AgendaTfd";
-import Agendamentos from "./pages/tfd/Agendamentos";
-import QuadroViagens from "./pages/tfd/QuadroViagens";
-import TfdDestinos from "./pages/tfd/TfdDestinos";
-import CatalogoExames from "./pages/tfd/CatalogoExames";
-import TfdFrota from "./pages/tfd/TfdFrota";
-import TfdMotoristas from "./pages/tfd/TfdMotoristas";
-import TfdFaturamento from "./pages/tfd/TfdFaturamento";
-import AlterarSenhaInicial from "./pages/AlterarSenhaInicial";
-import LabLayout from "./pages/lab/LabLayout";
-import LabMarcacao from "./pages/lab/LabMarcacao";
-import RecepcaoLab from "./pages/lab/RecepcaoLab";
-import FilaPsf from "./pages/lab/FilaPsf";
-import VagasAgenda from "./pages/lab/VagasAgenda";
-import AuditLab from "./pages/lab/AuditLab";
-import LabFaturamento from "./pages/lab/LabFaturamento";
-import LabSigtap from "./pages/lab/LabSigtap";
-import AcompanharExame from "./pages/AcompanharExame";
-import ConfirmarPresencaViagem from "./pages/ConfirmarPresencaViagem";
-import Auditoria from "./pages/Auditoria";
-import FilaExames from "./pages/tfd/FilaExames";
-import NovaSolicitacao from "./pages/tfd/NovaSolicitacao";
-import RelatorioAgendados from "./pages/tfd/RelatorioAgendados";
-import Indicadores from "./pages/Indicadores";
-import ApsPainel from "./pages/aps/ApsPainel";
-import Configuracoes from "./pages/Configuracoes";
-import PainelMedico from "./pages/PainelMedico";
-import ApacSolicitacao from "./pages/apac/ApacSolicitacao";
-import ApacRegulacao from "./pages/apac/ApacRegulacao";
-import ApacFaturamento from "./pages/apac/ApacFaturamento";
+
+// Loading Fallback para transição suave de módulos
+function PageLoader() {
+  return (
+    <div className="flex min-h-[40vh] items-center justify-center p-8">
+      <div className="flex flex-col items-center gap-3 text-sus-900/60">
+        <div className="h-8 w-8 animate-spin rounded-full border-3 border-teal border-t-transparent" />
+        <span className="text-xs font-medium">Carregando módulo…</span>
+      </div>
+    </div>
+  );
+}
+
+// Code Splitting sob demanda com React.lazy
+const Login = lazy(() => import("./pages/Login"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Usuarios = lazy(() => import("./pages/Usuarios"));
+const TfdLayout = lazy(() => import("./pages/tfd/TfdLayout"));
+const TfdResumo = lazy(() => import("./pages/tfd/TfdResumo"));
+const TfdViagens = lazy(() => import("./pages/tfd/TfdViagens"));
+const TfdPacientes = lazy(() => import("./pages/tfd/TfdPacientes"));
+const AgendaTfd = lazy(() => import("./pages/tfd/AgendaTfd"));
+const Agendamentos = lazy(() => import("./pages/tfd/Agendamentos"));
+const QuadroViagens = lazy(() => import("./pages/tfd/QuadroViagens"));
+const TfdDestinos = lazy(() => import("./pages/tfd/TfdDestinos"));
+const CatalogoExames = lazy(() => import("./pages/tfd/CatalogoExames"));
+const TfdFrota = lazy(() => import("./pages/tfd/TfdFrota"));
+const TfdMotoristas = lazy(() => import("./pages/tfd/TfdMotoristas"));
+const TfdFaturamento = lazy(() => import("./pages/tfd/TfdFaturamento"));
+const AlterarSenhaInicial = lazy(() => import("./pages/AlterarSenhaInicial"));
+const LabLayout = lazy(() => import("./pages/lab/LabLayout"));
+const LabMarcacao = lazy(() => import("./pages/lab/LabMarcacao"));
+const RecepcaoLab = lazy(() => import("./pages/lab/RecepcaoLab"));
+const FilaPsf = lazy(() => import("./pages/lab/FilaPsf"));
+const VagasAgenda = lazy(() => import("./pages/lab/VagasAgenda"));
+const AuditLab = lazy(() => import("./pages/lab/AuditLab"));
+const LabFaturamento = lazy(() => import("./pages/lab/LabFaturamento"));
+const LabSigtap = lazy(() => import("./pages/lab/LabSigtap"));
+const AcompanharExame = lazy(() => import("./pages/AcompanharExame"));
+const ConfirmarPresencaViagem = lazy(() => import("./pages/ConfirmarPresencaViagem"));
+const Auditoria = lazy(() => import("./pages/Auditoria"));
+const FilaExames = lazy(() => import("./pages/tfd/FilaExames"));
+const NovaSolicitacao = lazy(() => import("./pages/tfd/NovaSolicitacao"));
+const RelatorioAgendados = lazy(() => import("./pages/tfd/RelatorioAgendados"));
+const Indicadores = lazy(() => import("./pages/Indicadores"));
+const ApsPainel = lazy(() => import("./pages/aps/ApsPainel"));
+const Configuracoes = lazy(() => import("./pages/Configuracoes"));
+const PainelMedico = lazy(() => import("./pages/PainelMedico"));
+const ApacSolicitacao = lazy(() => import("./pages/apac/ApacSolicitacao"));
+const ApacRegulacao = lazy(() => import("./pages/apac/ApacRegulacao"));
+const ApacFaturamento = lazy(() => import("./pages/apac/ApacFaturamento"));
+const OxigenioPainelEstoque = lazy(() => import("./pages/oxigenio/OxigenioPainelEstoque"));
+const OxigenioEquipamentos = lazy(() => import("./pages/oxigenio/OxigenioEquipamentos"));
+const OxigenioEmprestimos = lazy(() => import("./pages/oxigenio/OxigenioEmprestimos"));
+const OxigenioEmpresas = lazy(() => import("./pages/oxigenio/OxigenioEmpresas"));
+const OxigenioRequisicaoAF = lazy(() => import("./pages/oxigenio/OxigenioRequisicaoAF"));
 
 function Guard({ tela, children }: { tela: string; children: ReactElement }) {
   const { can, loading } = useAuth();
@@ -110,7 +130,8 @@ export default function App() {
         <ConfirmDialogProvider>
           <AplicaCidade />
           <BrowserRouter>
-        <Routes>
+            <Suspense fallback={<PageLoader />}>
+              <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/alterar-senha-inicial" element={<AlterarSenhaInicial />} />
           <Route path="/acompanhar/:token" element={<AcompanharExame />} />
@@ -256,6 +277,66 @@ export default function App() {
               </Protected>
             }
           />
+          <Route
+            path="/oxigenio"
+            element={
+              <Protected>
+                <GuardQualquer telas={["oxigenio_estoque", "oxigenio", "usuarios"]}>
+                  <Shell>
+                    <OxigenioPainelEstoque />
+                  </Shell>
+                </GuardQualquer>
+              </Protected>
+            }
+          />
+          <Route
+            path="/oxigenio/equipamentos"
+            element={
+              <Protected>
+                <GuardQualquer telas={["oxigenio_equipamentos", "oxigenio", "usuarios"]}>
+                  <Shell>
+                    <OxigenioEquipamentos />
+                  </Shell>
+                </GuardQualquer>
+              </Protected>
+            }
+          />
+          <Route
+            path="/oxigenio/emprestimos"
+            element={
+              <Protected>
+                <GuardQualquer telas={["oxigenio_emprestimos", "oxigenio", "usuarios"]}>
+                  <Shell>
+                    <OxigenioEmprestimos />
+                  </Shell>
+                </GuardQualquer>
+              </Protected>
+            }
+          />
+          <Route
+            path="/oxigenio/empresas"
+            element={
+              <Protected>
+                <GuardQualquer telas={["oxigenio_empresas", "oxigenio", "usuarios"]}>
+                  <Shell>
+                    <OxigenioEmpresas />
+                  </Shell>
+                </GuardQualquer>
+              </Protected>
+            }
+          />
+          <Route
+            path="/oxigenio/relatorios"
+            element={
+              <Protected>
+                <GuardQualquer telas={["oxigenio_relatorios", "oxigenio", "usuarios"]}>
+                  <Shell>
+                    <OxigenioRequisicaoAF />
+                  </Shell>
+                </GuardQualquer>
+              </Protected>
+            }
+          />
           <Route path="/integracoes" element={<Navigate to="/configuracoes" replace />} />
           <Route
             path="/auditoria"
@@ -281,11 +362,12 @@ export default function App() {
               </Protected>
             }
           />
-          {/* Rotas legadas: redirecionam p/ as abas em Configurações. */}
-          <Route path="/admin/medicos" element={<Navigate to="/configuracoes?aba=medicos" replace />} />
-          <Route path="/admin/psfs" element={<Navigate to="/configuracoes?aba=unidades" replace />} />
-        </Routes>
-      </BrowserRouter>
+              {/* Rotas legadas: redirecionam p/ as abas em Configurações. */}
+              <Route path="/admin/medicos" element={<Navigate to="/configuracoes?aba=medicos" replace />} />
+              <Route path="/admin/psfs" element={<Navigate to="/configuracoes?aba=unidades" replace />} />
+            </Routes>
+          </Suspense>
+        </BrowserRouter>
         </ConfirmDialogProvider>
       </UndoToastProvider>
     </AuthProvider>

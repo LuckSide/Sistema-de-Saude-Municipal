@@ -49,9 +49,14 @@ PAI_DE: dict[str, str] = {
     "apac_solicitacao": "apac",
     "apac_regulacao": "apac",
     "apac_faturamento": "apac",
+    "oxigenio_estoque": "oxigenio",
+    "oxigenio_equipamentos": "oxigenio",
+    "oxigenio_emprestimos": "oxigenio",
+    "oxigenio_empresas": "oxigenio",
+    "oxigenio_relatorios": "oxigenio",
 }
 
-PAIS = ("dashboard", "tfd", "lab", "apac", "aps", "usuarios", "integracoes")
+PAIS = ("dashboard", "tfd", "lab", "apac", "aps", "oxigenio", "usuarios", "integracoes")
 
 TODAS_TELAS = frozenset(list(PAI_DE) + list(PAI_DE.values()) + list(PAIS))
 

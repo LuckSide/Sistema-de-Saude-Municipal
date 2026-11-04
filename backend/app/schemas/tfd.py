@@ -112,6 +112,10 @@ class DemandaItemOut(BaseModel):
     status_rotulo: str = ""
     data_agendada: date | None = None
     hora_agendada: str = ""
+    medico_nome: str = ""
+    unidade_nome: str = ""
+    resultado: str = ""
+    realizado_em: date | None = None
 
 
 class PacientePerfilOut(BaseModel):
@@ -454,6 +458,54 @@ class ExameOut(ExameBase):
     unidade_cep: str = ""
 
 
+class ExameLoteCriarItemIn(BaseModel):
+    paciente_id: int
+    paciente_nome: str | None = None
+    justificativa: str | None = None
+    cid_codigo: str | None = None
+    cid_descricao: str | None = None
+    observacoes: str | None = None
+    numero_pedido: str | None = None
+    tipo_fila: str | None = None
+    exame: str | None = None
+    codigo_procedimento: str | None = None
+    especialidade: str | None = None
+    codigo_especialidade: str | None = None
+    unidade_saude_id: int | None = None
+    medico_id: int | None = None
+    prioridade: str | None = None
+    data_pedido: date | None = None
+    data_agendada: date | None = None
+    hora_agendada: str | None = None
+
+
+class ExameLoteCriarIn(BaseModel):
+    tipo_fila: str = Field(min_length=1, max_length=80)
+    exame: str = Field(min_length=2, max_length=120)
+    codigo_procedimento: str = Field(default="", max_length=20)
+    especialidade: str = Field(default="", max_length=80)
+    codigo_especialidade: str = Field(default="", max_length=10)
+    unidade_saude_id: int | None = None
+    medico_id: int | None = None
+    prioridade: str = Field(default="rotina", pattern="^(rotina|urgente)$")
+    data_pedido: date | None = None
+    justificativa_padrao: str = Field(default="", max_length=500)
+    cid_codigo_padrao: str = Field(default="", max_length=10)
+    cid_descricao_padrao: str = Field(default="", max_length=255)
+    observacoes_padrao: str = Field(default="", max_length=500)
+    agendamento_direto: bool = False
+    data_agendada: date | None = None
+    hora_agendada: str = Field(default="08:00", max_length=5)
+    itens: list[ExameLoteCriarItemIn] = Field(min_length=1, max_length=200)
+
+
+class ExameLoteCriarOut(BaseModel):
+    total_criados: int
+    agendados: int
+    na_fila: int
+    itens: list[ExameOut]
+
+
 class PrioridadeIn(BaseModel):
     """Alteração de prioridade pelo médico envolvido (justificativa obrigatória)."""
 
@@ -580,4 +632,32 @@ class ValidarCboOut(BaseModel):
     alerta: str | None = None
     permite_responsavel_tecnico: bool = True
     cbos_autorizados: list[CboAutorizadoItem] = []
+
+
+class PedidoDuplicadoTfdOut(BaseModel):
+    id: int
+    codigo_curto: str
+    numero_pedido: str = ""
+    data_pedido: str
+    exame: str
+    codigo_procedimento: str = ""
+    especialidade: str = ""
+    codigo_especialidade: str = ""
+    nome_especialidade: str = ""
+    tipo_fila: str = ""
+    status: str
+    status_rotulo: str
+    prioridade: str = "rotina"
+    profissional: str = ""
+    unidade: str = ""
+    data_agendada: str | None = None
+    hora_agendada: str | None = None
+    destino: str | None = None
+    link_visualizacao: str
+
+
+class VerificarDuplicidadeTfdOut(BaseModel):
+    duplicado: bool
+    pedido: PedidoDuplicadoTfdOut | None = None
+
 

@@ -167,7 +167,7 @@ export default function BuscaPacienteAutocomplete({
             onFocus={() => {
               if (sugestoes.length > 0) setAberto(true);
             }}
-            className="w-full h-11 rounded-xl border border-sus-900/15 bg-white pl-10 pr-10 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink/35 focus:border-sus-700 focus:ring-2 focus:ring-sus-700/20"
+            className="w-full h-11 rounded-xl border border-sus-900/15 bg-white pl-10 pr-10 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink/60 focus:border-sus-700 focus-visible:ring-2 focus-visible:ring-sus-700/20"
             autoComplete="off"
           />
           {buscando && (

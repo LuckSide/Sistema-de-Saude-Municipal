@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Pencil, Plus, Trash2, UserPlus, X, Search, Check, Clock, MessageCircle, XCircle } from "lucide-react";
+import { AlertTriangle, Check, Clock, Copy, MessageCircle, Pencil, Plus, Search, Sparkles, Trash2, UserPlus, X, XCircle } from "lucide-react";
 import {
   tfdAddPassageiro,
   tfdAtualizarViagem,
@@ -27,10 +27,11 @@ import {
 } from "../../services/api";
 import { useAuth } from "../../hooks/useAuth";
 import { retornoAutomatico, useDisponibilidade } from "../../hooks/useDisponibilidade";
-import { Button, Card, Input, Label, Badge } from "../../components/ui/primitives";
+import { Button, Card, Input, Label, Badge, Select } from "../../components/ui/primitives";
 import { useConfirm } from "../../components/ConfirmDialog";
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
+import { copiarTextoClipboard } from "../../utils/clipboard";
 
 const STATUS = ["agendada", "andamento", "concluida", "cancelada"];
 
@@ -81,17 +82,44 @@ export default function TfdViagens() {
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
   const [pageSize, setPageSize] = useState(100);
-  const { disp } = useDisponibilidade(
+  const { disp, carregando: carregandoDisp } = useDisponibilidade(
     form.data_viagem, form.hora_saida, form.hora_retorno, editId, modal,
   );
-  const veiculosLivres = (disp
-    ? disp.veiculos.filter((f) => (editId && String(f.id) === String(form.veiculo_id)) || (f.disponivel && f.status !== "manutencao"))
-    : veiculos.filter((v) => (editId && String(v.id) === String(form.veiculo_id)) || (v.status !== "manutencao" && v.ativo !== false))
-  );
-  const motoristasLivres = disp
-    ? motoristas.filter((m) => disp.motoristas.find((d) => d.id === m.id)?.disponivel !== false
-      || String(m.id) === String(form.motorista_id))
-    : motoristas;
+  const veiculosLivres = useMemo(() => {
+    if (!form.data_viagem) return [];
+    if (disp) {
+      return disp.veiculos.filter((f) =>
+        (editId && String(f.id) === String(form.veiculo_id)) ||
+        (f.disponivel && f.status !== "manutencao" && !f.ocupado_por)
+      );
+    }
+    return veiculos.filter((v) =>
+      (editId && String(v.id) === String(form.veiculo_id)) ||
+      (v.status !== "manutencao" && v.ativo !== false)
+    );
+  }, [form.data_viagem, disp, editId, form.veiculo_id, veiculos]);
+
+  const motoristasLivres = useMemo(() => {
+    if (disp) {
+      return motoristas.filter((m) =>
+        disp.motoristas.find((d) => d.id === m.id)?.disponivel !== false ||
+        String(m.id) === String(form.motorista_id)
+      );
+    }
+    return motoristas;
+  }, [disp, motoristas, form.motorista_id]);
+
+  const viagemExistenteMesmoDestino = useMemo(() => {
+    if (!form.data_viagem || !form.destino || form.destino === "__outro__") return null;
+    const destNorm = form.destino.trim().toUpperCase();
+    return lista.find(
+      (v) =>
+        v.id !== editId &&
+        v.data_viagem === form.data_viagem &&
+        v.destino.trim().toUpperCase() === destNorm &&
+        v.status !== "cancelada"
+    );
+  }, [form.data_viagem, form.destino, editId, lista]);
 
   async function carregar(p = page, limite = pageSize) {
     const params: Record<string, string | number> = { page: p, limit: limite };
@@ -236,16 +264,16 @@ export default function TfdViagens() {
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <h2 className="font-display text-lg font-bold text-sus-950">Viagens</h2>
         <div className="ml-auto flex items-center gap-2 flex-wrap">
-          <select
+          <Select
             value={statusFiltro}
             onChange={(e) => setStatusFiltro(e.target.value)}
-            className="rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm"
+            className="w-auto min-w-[140px]"
           >
             <option value="">Todos status</option>
             {STATUS.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
-          </select>
+          </Select>
           <div className="flex items-center gap-2">
             <Label className="text-xs text-ink/50">Mês</Label>
             <Input
@@ -259,20 +287,20 @@ export default function TfdViagens() {
               className="w-40"
             />
             <Label className="text-xs text-ink/50">Ano</Label>
-            <select
+            <Select
               value={anoFiltro}
               onChange={(e) => {
                 const v = e.target.value;
                 setAnoFiltro(v);
                 if (v) setMesFiltro("");
               }}
-              className="rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm w-28"
+              className="w-28"
             >
               <option value="">—</option>
               {anos.map((a) => (
                 <option key={a} value={a}>{a}</option>
               ))}
-            </select>
+            </Select>
           </div>
           <ExportarExcel url="/api/tfd/viagens/exportar" arquivo="viagens_tfd" params={{ status: statusFiltro || undefined, mes: mesFiltro || undefined, ano: anoFiltro || undefined }} />
           <Button onClick={() => abrirModal()}><Plus className="h-4 w-4" /> Nova viagem</Button>
@@ -422,6 +450,31 @@ export default function TfdViagens() {
                   </div>
                   <div className="flex items-center gap-1">
                     <button
+                      type="button"
+                      onClick={async () => {
+                        const url = p.token_confirmacao
+                          ? `${window.location.origin}/confirmar-presenca/${p.token_confirmacao}`
+                          : (p.link_confirmacao || "");
+                        if (url) {
+                          const copiou = await copiarTextoClipboard(url);
+                          if (copiou) setOk("Link de confirmação do paciente copiado!");
+                          else setErro("Não foi possível copiar automaticamente para a área de transferência.");
+                        } else {
+                          const res = await tfdEnviarWhatsAppConfirmacaoPassageiro(sel.id, p.id);
+                          const linkGerado = res.link_confirmacao || (res.telefone ? `${window.location.origin}/confirmar-presenca/${p.token_confirmacao}` : "");
+                          if (linkGerado) {
+                            await copiarTextoClipboard(linkGerado);
+                            setOk("Link de confirmação gerado e copiado!");
+                          }
+                          setPass(await tfdPassageiros(sel.id));
+                        }
+                      }}
+                      className="rounded-lg p-1.5 text-sus-800 hover:bg-sand"
+                      title="Copiar link de confirmação do passageiro"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </button>
+                    <button
                       onClick={async () => {
                         const res = await tfdEnviarWhatsAppConfirmacaoPassageiro(sel.id, p.id);
                         if (res.whatsapp_link) window.open(res.whatsapp_link, "_blank");
@@ -432,7 +485,7 @@ export default function TfdViagens() {
                     >
                       <MessageCircle className="h-4 w-4" />
                     </button>
-                    <button onClick={async () => { await tfdRemoverPassageiro(sel.id, p.id); setPass(await tfdPassageiros(sel.id)); carregar(); }} className="rounded-lg p-1.5 text-red-600 hover:bg-red-50"><X className="h-4 w-4" /></button>
+                    <button onClick={async () => { await tfdRemoverPassageiro(sel.id, p.id); setPass(await tfdPassageiros(sel.id)); carregar(); }} className="rounded-lg p-1.5 text-red-600 hover:bg-red-50" title="Remover passageiro"><X className="h-4 w-4" /></button>
                   </div>
                 </div>
               ))}
@@ -449,100 +502,294 @@ export default function TfdViagens() {
               <p className="font-display text-base font-bold text-sus-950">{editId ? "Editar viagem" : "Nova viagem"}</p>
               <button onClick={fecharModal} className="rounded-lg p-2 text-ink/50 hover:bg-sand"><X className="h-4 w-4" /></button>
             </div>
-            <div className="space-y-3">
-              <div className="grid gap-3 md:grid-cols-4">
-                <div className="md:col-span-2">
-                  <Label>Destino *</Label>
-                  <select
-                    value={form.destino}
-                    onChange={(e) => setForm({ ...form, destino: e.target.value })}
-                    className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm"
-                  >
-                    <option value="">Selecionar destino cadastrado…</option>
-                    {destinos.filter((d) => d.ativo).map((d) => (
-                      <option key={d.id} value={d.nome_destino}>
-                        {d.nome_destino}{d.hospital_referencia ? ` · ${d.hospital_referencia}` : ""}
-                      </option>
-                    ))}
-                    <option value="__outro__">Outro (digitar)</option>
-                  </select>
-                  {form.destino === "__outro__" && (
+            <div className="space-y-4">
+              {/* 1. SELEÇÃO PRÉVIA OBRIGATÓRIA: DATA E HORÁRIOS DA VIAGEM */}
+              <div className="rounded-xl border border-teal/20 bg-teal/5 p-3.5 space-y-2">
+                <div className="flex items-center justify-between border-b border-teal/15 pb-1.5">
+                  <span className="text-xs font-bold text-teal-950 uppercase tracking-wider flex items-center gap-1.5">
+                    <Clock className="h-3.5 w-3.5 text-teal" /> 1. Data e Horário da Viagem (Início Obrigatório)
+                  </span>
+                  <span className="text-[10px] font-bold text-teal bg-teal/15 px-2 py-0.5 rounded">
+                    Define a frota disponível
+                  </span>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+                  <div>
+                    <Label className="text-xs font-bold">Data da Viagem *</Label>
                     <Input
-                      value={form.destino === "__outro__" ? "" : form.destino}
-                      onChange={(e) => setForm({ ...form, destino: e.target.value })}
-                      placeholder="Digite o destino"
-                      className="mt-1"
+                      type="date"
+                      value={form.data_viagem}
+                      min={retroativoBloqueado ? hojeISO : undefined}
+                      onChange={(e) => setForm({ ...form, data_viagem: e.target.value })}
+                      required
+                      className="mt-1 text-xs"
                     />
-                  )}
-                </div>
-                <div><Label>Unidade</Label><Input value={form.unidade} onChange={(e) => setForm({ ...form, unidade: e.target.value })} placeholder="Hospital / clínica" /></div>
-                <div><Label>Data *</Label><Input type="date" value={form.data_viagem} min={retroativoBloqueado ? hojeISO : undefined} onChange={(e) => setForm({ ...form, data_viagem: e.target.value })} /></div>
-                <div><Label>Hora saída</Label><Input type="time" value={form.hora_saida} onChange={(e) => { const h = e.target.value; setForm({ ...form, hora_saida: h, hora_retorno: form.hora_retorno || retornoAutomatico(h) }); }} /></div>
-                <div>
-                  <Label>Veículo</Label>
-                  <select value={form.veiculo_id} onChange={(e) => setForm({ ...form, veiculo_id: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
-                    <option value="">A definir</option>
-                    {veiculosLivres.filter((v) => (v as Veiculo).ativo !== false).map((v) => (
-                      <option key={v.id} value={v.id}>{v.placa} · {v.modelo} ({v.capacidade} pax)</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <Label>Motorista</Label>
-                  {form.motorista_id === "__manual__" ? (
-                    <div className="flex gap-1">
-                      <Input value={form.motorista} onChange={(e) => setForm({ ...form, motorista: e.target.value })} placeholder="Nome do motorista" />
-                      <button onClick={() => setForm({ ...form, motorista_id: "", motorista: "" })} className="rounded-xl border border-sus-900/15 px-2 text-xs font-bold" title="Voltar à lista">Lista</button>
-                    </div>
-                  ) : (
-                    <select
-                      value={form.motorista_id}
+                  </div>
+                  <div>
+                    <Label className="text-xs font-bold">Hora Saída</Label>
+                    <Input
+                      type="time"
+                      value={form.hora_saida}
                       onChange={(e) => {
-                        const v = e.target.value;
-                        if (v === "__manual__") {
-                          setForm({ ...form, motorista_id: v });
-                          return;
-                        }
-                        const m = motoristas.find((x) => String(x.id) === v);
-                        setForm({ ...form, motorista_id: v, motorista: m ? m.nome : "" });
+                        const h = e.target.value;
+                        setForm({
+                          ...form,
+                          hora_saida: h,
+                          hora_retorno: form.hora_retorno || retornoAutomatico(h),
+                        });
                       }}
-                      className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm"
-                    >
-                      <option value="">A definir</option>
-                      {motoristasLivres.filter((m) => (m as Motorista).ativo !== false).map((m) => (
-                        <option key={m.id} value={m.id}>{m.nome}</option>
-                      ))}
-                      <option value="__manual__">Outro (digitar)…</option>
-                    </select>
-                  )}
-                </div>
-                <div><Label>Departamento</Label><Input value={form.departamento} onChange={(e) => setForm({ ...form, departamento: e.target.value })} placeholder="Ex: Saúde" /></div>
-                <div><Label>Data retorno</Label><Input type="date" value={form.data_retorno} onChange={(e) => setForm({ ...form, data_retorno: e.target.value })} /></div>
-                <div><Label>Hora retorno (auto +9h)</Label><Input type="time" value={form.hora_retorno} onChange={(e) => setForm({ ...form, hora_retorno: e.target.value })} placeholder={retornoAutomatico(form.hora_saida || "05:00")} /></div>
-                <div><Label>Km inicial</Label><Input type="number" min={0} value={form.km_inicial} onChange={(e) => setForm({ ...form, km_inicial: e.target.value })} /></div>
-                <div><Label>Km final</Label><Input type="number" min={0} value={form.km_final} onChange={(e) => setForm({ ...form, km_final: e.target.value })} /></div>
-                <div><Label>Adiantamento (R$)</Label><Input inputMode="decimal" value={form.adiantamento} onChange={(e) => setForm({ ...form, adiantamento: e.target.value })} placeholder="0,00" /></div>
-                <div>
-                  <Label>Finalidade</Label>
-                  <select value={form.finalidade} onChange={(e) => setForm({ ...form, finalidade: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
-                    {["consulta", "exame", "cirurgia", "retorno"].map((f) => <option key={f} value={f}>{f}</option>)}
-                  </select>
-                </div>
-                {disp && (
-                  <p className="text-xs text-ink/55 md:col-span-2">
-                    Janela {form.hora_saida || "—"}→{form.hora_retorno || retornoAutomatico(form.hora_saida || "05:00")}: {veiculosLivres.length} veículo(s) e {motoristasLivres.length} motorista(s) livre(s) — a lista mostra só disponíveis.
-                  </p>
-                )}
-                <div>
-                  <Label>Status</Label>
-                  <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
-                    {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
+                      className="mt-1 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs font-bold">Hora Retorno (auto +9h)</Label>
+                    <Input
+                      type="time"
+                      value={form.hora_retorno}
+                      onChange={(e) => setForm({ ...form, hora_retorno: e.target.value })}
+                      placeholder={retornoAutomatico(form.hora_saida || "05:00")}
+                      className="mt-1 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs font-bold">Data Retorno</Label>
+                    <Input
+                      type="date"
+                      value={form.data_retorno}
+                      min={form.data_viagem || hojeISO}
+                      onChange={(e) => setForm({ ...form, data_retorno: e.target.value })}
+                      className="mt-1 text-xs"
+                    />
+                  </div>
                 </div>
               </div>
-              <div><Label>Observações</Label><Input value={form.observacoes} onChange={(e) => setForm({ ...form, observacoes: e.target.value })} /></div>
+
+              {/* 2. DESTINO E FINALIDADE */}
+              <div className="rounded-xl border border-sus-900/10 bg-sand/20 p-3.5 space-y-2">
+                <span className="text-xs font-bold text-sus-950 uppercase tracking-wider block border-b border-sus-900/10 pb-1.5">
+                  2. Destino e Unidade de Atendimento
+                </span>
+                <div className="grid gap-3 md:grid-cols-4">
+                  <div className="md:col-span-2">
+                    <Label className="text-xs font-bold">Cidade de Destino *</Label>
+                    <Select
+                      value={form.destino}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const destSel = destinos.find((d) => d.nome_destino === val);
+                        setForm({
+                          ...form,
+                          destino: val,
+                          unidade: (!form.unidade && destSel?.hospital_referencia) ? destSel.hospital_referencia : form.unidade,
+                        });
+                      }}
+                      className="mt-1 text-xs"
+                    >
+                      <option value="">Selecionar destino cadastrado…</option>
+                      {destinos.filter((d) => d.ativo).map((d) => (
+                        <option key={d.id} value={d.nome_destino}>
+                          {d.nome_destino}{d.hospital_referencia ? ` · ${d.hospital_referencia}` : ""}
+                        </option>
+                      ))}
+                      <option value="__outro__">Outro (digitar livremente)</option>
+                    </Select>
+                    {form.destino === "__outro__" && (
+                      <Input
+                        value={form.destino === "__outro__" ? "" : form.destino}
+                        onChange={(e) => setForm({ ...form, destino: e.target.value.toUpperCase() })}
+                        placeholder="Digite o nome da cidade de destino"
+                        className="mt-1.5 text-xs"
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <Label className="text-xs font-bold">Unidade / Hospital</Label>
+                    <Input
+                      value={form.unidade}
+                      onChange={(e) => setForm({ ...form, unidade: e.target.value })}
+                      placeholder="Hospital ou clínica"
+                      className="mt-1 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs font-bold">Finalidade</Label>
+                    <Select
+                      value={form.finalidade}
+                      onChange={(e) => setForm({ ...form, finalidade: e.target.value })}
+                      className="mt-1 text-xs"
+                    >
+                      {["consulta", "exame", "cirurgia", "retorno"].map((f) => (
+                        <option key={f} value={f}>{f}</option>
+                      ))}
+                    </Select>
+                  </div>
+                </div>
+              </div>
+
+              {/* ALERTA DE CRUZA DE DEMANDAS / VIAGEM EXISTENTE */}
+              {viagemExistenteMesmoDestino && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950 flex items-start gap-2.5">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold text-amber-900">Atenção — Viagem existente detectada:</span>
+                    <p className="mt-0.5">
+                      Já existe uma viagem agendada para <strong>{viagemExistenteMesmoDestino.destino}</strong> nesta data ({viagemExistenteMesmoDestino.data_viagem.split("-").reverse().join("/")} às {viagemExistenteMesmoDestino.hora_saida}), com {viagemExistenteMesmoDestino.passageiros} passageiro(s) (Veículo: {viagemExistenteMesmoDestino.veiculo_modelo || "A definir"}). Verifique se não se trata de duplicidade antes de criar uma nova.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* 3. ALOCAÇÃO DE VEÍCULO E MOTORISTA (FILTRADO EM TEMPO REAL) */}
+              <div className="rounded-xl border border-sus-900/10 bg-white p-3.5 space-y-2">
+                <span className="text-xs font-bold text-sus-950 uppercase tracking-wider block border-b border-sus-900/10 pb-1.5">
+                  3. Veículo e Motorista (Frota Disponível)
+                </span>
+
+                {!form.data_viagem ? (
+                  <div className="rounded-lg border border-dashed border-sus-900/20 bg-sand/30 p-3 text-xs text-ink/60 text-center">
+                    Selecione primeiro a <strong>Data da Viagem</strong> e o <strong>Horário</strong> na seção 1 acima para consultar quais veículos e motoristas estão livres.
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <Label className="text-xs font-bold">Veículo Disponível</Label>
+                        <Select
+                          value={form.veiculo_id}
+                          onChange={(e) => setForm({ ...form, veiculo_id: e.target.value })}
+                          className="mt-1 text-xs"
+                        >
+                          <option value="">A definir carro</option>
+                          {veiculosLivres.map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.placa} · {v.modelo} ({v.capacidade} assentos) — Livre
+                            </option>
+                          ))}
+                        </Select>
+                      </div>
+
+                      <div>
+                        <Label className="text-xs font-bold">Motorista Disponível</Label>
+                        {form.motorista_id === "__manual__" ? (
+                          <div className="mt-1 flex gap-1">
+                            <Input
+                              value={form.motorista}
+                              onChange={(e) => setForm({ ...form, motorista: e.target.value })}
+                              placeholder="Nome do motorista"
+                              className="text-xs"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setForm({ ...form, motorista_id: "", motorista: "" })}
+                              className="rounded-xl border border-sus-900/15 px-2 text-xs font-bold hover:bg-sand"
+                              title="Voltar à lista"
+                            >
+                              Lista
+                            </button>
+                          </div>
+                        ) : (
+                          <Select
+                            value={form.motorista_id}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (v === "__manual__") {
+                                setForm({ ...form, motorista_id: v });
+                                return;
+                              }
+                              const m = motoristas.find((x) => String(x.id) === v);
+                              setForm({ ...form, motorista_id: v, motorista: m ? m.nome : "" });
+                            }}
+                            className="mt-1 text-xs"
+                          >
+                            <option value="">A definir motorista</option>
+                            {motoristasLivres.map((m) => (
+                              <option key={m.id} value={m.id}>{m.nome}</option>
+                            ))}
+                            <option value="__manual__">Outro (digitar nome)…</option>
+                          </Select>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="text-[11px] text-teal font-medium mt-1">
+                      {carregandoDisp ? (
+                        <span>Consultando disponibilidade em tempo real…</span>
+                      ) : (
+                        <span>
+                          ✓ {veiculosLivres.length} veículo(s) e {motoristasLivres.length} motorista(s) livres na janela ({form.hora_saida || "05:00"}→{form.hora_retorno || retornoAutomatico(form.hora_saida || "05:00")}). Veículos em manutenção ou alocados em outras viagens foram excluídos.
+                        </span>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* 4. CONTROLE OPERACIONAL E OBSERVAÇÕES */}
+              <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+                <div>
+                  <Label className="text-xs">Departamento</Label>
+                  <Input
+                    value={form.departamento}
+                    onChange={(e) => setForm({ ...form, departamento: e.target.value })}
+                    placeholder="Ex: Saúde"
+                    className="mt-1 text-xs"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Km Inicial</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={form.km_inicial}
+                    onChange={(e) => setForm({ ...form, km_inicial: e.target.value })}
+                    className="mt-1 text-xs"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Km Final</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={form.km_final}
+                    onChange={(e) => setForm({ ...form, km_final: e.target.value })}
+                    className="mt-1 text-xs"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Adiantamento (R$)</Label>
+                  <Input
+                    inputMode="decimal"
+                    value={form.adiantamento}
+                    onChange={(e) => setForm({ ...form, adiantamento: e.target.value })}
+                    placeholder="0,00"
+                    className="mt-1 text-xs"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <Label className="text-xs">Status da Viagem</Label>
+                  <Select
+                    value={form.status}
+                    onChange={(e) => setForm({ ...form, status: e.target.value })}
+                    className="mt-1 text-xs"
+                  >
+                    {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </Select>
+                </div>
+                <div className="md:col-span-2">
+                  <Label className="text-xs">Observações / Ponto de Embarque</Label>
+                  <Input
+                    value={form.observacoes}
+                    onChange={(e) => setForm({ ...form, observacoes: e.target.value })}
+                    placeholder="Ex: Ponto de encontro Prefeitura às 04:30"
+                    className="mt-1 text-xs"
+                  />
+                </div>
+              </div>
+
               {erro && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
-              <Button onClick={salvar} className="w-full"><Plus className="h-4 w-4" />{editId ? "Atualizar" : "Criar viagem"}</Button>
+              <Button onClick={salvar} className="w-full text-xs font-bold py-2.5 bg-teal text-white hover:brightness-110">
+                <Plus className="h-4 w-4" />{editId ? "Atualizar Viagem" : "Confirmar e Agendar Viagem"}
+              </Button>
             </div>
           </div>
         </div>

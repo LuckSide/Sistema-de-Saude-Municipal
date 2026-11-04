@@ -1141,16 +1141,16 @@ function AbaPec() {
 
         <div className="flex items-center gap-2">
           <Label className="text-xs text-ink/70">Intervalo:</Label>
-          <select
+          <Select
             value={syncIntervalo}
             onChange={(e) => setSyncIntervalo(Number(e.target.value))}
-            className="rounded-lg border border-sus-900/20 bg-white px-2.5 py-1.5 text-xs font-semibold text-sus-950 outline-none"
+            className="w-auto min-w-[190px] !h-9 text-xs font-semibold text-sus-950"
           >
             <option value={1}>A cada 1 hora</option>
             <option value={6}>A cada 6 horas (Recomendado)</option>
             <option value={12}>A cada 12 horas</option>
             <option value={24}>Diariamente (24 horas)</option>
-          </select>
+          </Select>
             <button
               type="button"
               onClick={salvarConfigSync}

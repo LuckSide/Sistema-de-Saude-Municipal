@@ -468,15 +468,18 @@ class AuditMiddleware:
         except Exception:
             pass
 
-        with Session(engine) as db:
-            db.add(AuditLog(
-                user_id=user_id,
-                user_name=user_name,
-                action=action[:60],
-                entity=entidade[:40],
-                entity_id=entity_id,
-                device=device[:150],
-                details=json.dumps(details, ensure_ascii=False)[:MAX_DETAILS],
-                timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
-            ))
-            db.commit()
+        try:
+            with Session(engine) as db:
+                db.add(AuditLog(
+                    user_id=user_id,
+                    user_name=user_name,
+                    action=action[:60],
+                    entity=entidade[:40],
+                    entity_id=entity_id,
+                    device=device[:150],
+                    details=json.dumps(details, ensure_ascii=False)[:MAX_DETAILS],
+                    timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
+                ))
+                db.commit()
+        except Exception:
+            pass

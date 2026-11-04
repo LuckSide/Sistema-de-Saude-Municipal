@@ -40,7 +40,7 @@ import {
   type UnidadeSaude,
   type Paciente,
 } from "../../services/api";
-import { Button, Card, Input, Label, Badge } from "../../components/ui/primitives";
+import { Button, Card, Input, Label, Badge, Select } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
 import LaudoApacPrint from "./LaudoApacPrint";
@@ -524,8 +524,7 @@ export default function ApacSolicitacao() {
 
           <div className="md:col-span-3">
             <Label>Status da Solicitação</Label>
-            <select
-              className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sus-700 focus:ring-2 focus:ring-sus-700/20"
+            <Select
               value={statusFiltro}
               onChange={(e) => setStatusFiltro(e.target.value)}
             >
@@ -536,20 +535,19 @@ export default function ApacSolicitacao() {
               <option value="AUTORIZADO">Autorizado / Deferido</option>
               <option value="INDEFERIDO">Indeferido / Negado</option>
               <option value="CANCELADO">Cancelado</option>
-            </select>
+            </Select>
           </div>
 
           <div className="md:col-span-2">
             <Label>Tipo de Laudo</Label>
-            <select
-              className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm text-ink outline-none focus:border-sus-700 focus:ring-2 focus:ring-sus-700/20"
+            <Select
               value={tipoFiltro}
               onChange={(e) => setTipoFiltro(e.target.value)}
             >
               <option value="TODOS">Todos os Tipos</option>
               <option value="inicial">Inicial</option>
               <option value="continuidade">Continuidade</option>
-            </select>
+            </Select>
           </div>
 
           <div className="md:col-span-2 flex gap-2">
@@ -830,14 +828,13 @@ export default function ApacSolicitacao() {
                   </div>
                   <div className="sm:col-span-2">
                     <Label>Sexo</Label>
-                    <select
-                      className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm"
+                    <Select
                       value={pacienteSexo}
                       onChange={(e) => setPacienteSexo(e.target.value)}
                     >
                       <option value="F">Feminino</option>
                       <option value="M">Masculino</option>
-                    </select>
+                    </Select>
                   </div>
                   <div className="sm:col-span-7">
                     <Label>Nome da Mãe</Label>
@@ -884,8 +881,7 @@ export default function ApacSolicitacao() {
                 <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
                   <div className="sm:col-span-4">
                     <Label>Médico Solicitante *</Label>
-                    <select
-                      className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm"
+                    <Select
                       value={medicoSolicitanteId}
                       onChange={(e) => setMedicoSolicitanteId(Number(e.target.value) || "")}
                     >
@@ -895,13 +891,12 @@ export default function ApacSolicitacao() {
                           {m.nome} (CRM: {m.crm} | {m.cbo_codigo || "2251-25"})
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </div>
 
                   <div className="sm:col-span-4">
                     <Label>Unidade Solicitante (Origem Guapé) *</Label>
-                    <select
-                      className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm"
+                    <Select
                       value={unidadeSolicitanteId}
                       onChange={(e) => setUnidadeSolicitanteId(Number(e.target.value) || "")}
                     >
@@ -911,13 +906,12 @@ export default function ApacSolicitacao() {
                           {u.nome} (CNES: {u.cnes})
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </div>
 
                   <div className="sm:col-span-4">
                     <Label>Unidade Executante (Hospital/Clínica)</Label>
-                    <select
-                      className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm"
+                    <Select
                       value={unidadeExecutanteId}
                       onChange={(e) => setUnidadeExecutanteId(Number(e.target.value) || "")}
                     >
@@ -927,7 +921,7 @@ export default function ApacSolicitacao() {
                           {u.nome} (CNES: {u.cnes})
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </div>
                 </div>
               </div>
@@ -942,8 +936,8 @@ export default function ApacSolicitacao() {
                 <div className="space-y-3">
                   <div>
                     <Label>Selecione o Procedimento Principal (10 dígitos) *</Label>
-                    <select
-                      className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm font-mono font-medium"
+                    <Select
+                      className="font-mono font-medium"
                       value={sigtapSelecionado?.codigo || ""}
                       onChange={(e) => {
                         const item = listaSigtap.find((s) => s.codigo === e.target.value);
@@ -956,7 +950,7 @@ export default function ApacSolicitacao() {
                           {proc.codigo} - {proc.descricao} (R$ {((proc.valor_total || 0)).toFixed(2)})
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </div>
 
                   {sigtapSelecionado && (
@@ -1035,8 +1029,8 @@ export default function ApacSolicitacao() {
                 </div>
 
                 <div className="flex gap-2 mb-3">
-                  <select
-                    className="flex-1 rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm"
+                  <Select
+                    className="flex-1"
                     value={filtroSecundario}
                     onChange={(e) => setFiltroSecundario(e.target.value)}
                   >
@@ -1048,7 +1042,7 @@ export default function ApacSolicitacao() {
                           {p.codigo} - {p.descricao}
                         </option>
                       ))}
-                  </select>
+                  </Select>
                   <Button
                     type="button"
                     disabled={!filtroSecundario}
@@ -1109,8 +1103,8 @@ export default function ApacSolicitacao() {
                 <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 mb-3">
                   <div className="sm:col-span-6">
                     <Label>CID-10 Principal (Diagnóstico) *</Label>
-                    <select
-                      className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm font-mono"
+                    <Select
+                      className="font-mono"
                       value={cidPrincipal?.codigo || ""}
                       onChange={(e) => {
                         const item = listaCids.find((c) => c.codigo === e.target.value);
@@ -1123,13 +1117,13 @@ export default function ApacSolicitacao() {
                           {c.codigo} - {c.descricao}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </div>
 
                   <div className="sm:col-span-6">
                     <Label>CID-10 Secundário / Causas Associadas</Label>
-                    <select
-                      className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm font-mono"
+                    <Select
+                      className="font-mono"
                       value={cidSecundario?.codigo || ""}
                       onChange={(e) => {
                         const item = listaCids.find((c) => c.codigo === e.target.value);
@@ -1142,7 +1136,7 @@ export default function ApacSolicitacao() {
                           {c.codigo} - {c.descricao}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </div>
 
                   <div className="sm:col-span-12">
@@ -1195,8 +1189,7 @@ export default function ApacSolicitacao() {
                 <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
                   <div className="sm:col-span-4">
                     <Label>Tipo de Documento</Label>
-                    <select
-                      className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm"
+                    <Select
                       value={tipoAnexo}
                       onChange={(e) => setTipoAnexo(e.target.value)}
                     >
@@ -1204,7 +1197,7 @@ export default function ApacSolicitacao() {
                       <option value="exame_imagem">Exame de Imagem (RM / TC / USG)</option>
                       <option value="termo_consentimento">Termo de Consentimento Informado</option>
                       <option value="outro">Outro Documento Clínico</option>
-                    </select>
+                    </Select>
                   </div>
 
                   <div className="sm:col-span-8">

@@ -22,7 +22,7 @@ import {
   type Vaga,
   type VagaDia,
 } from "../../services/api";
-import { Button, Card, Input, Label } from "../../components/ui/primitives";
+import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
 import GradeDias from "../../components/GradeDias";
 import MonthPicker from "../../components/MonthPicker";
 import { useConfirm } from "../../components/ConfirmDialog";
@@ -314,10 +314,10 @@ export default function VagasAgenda() {
           </div>
           <div>
             <Label>Laboratório</Label>
-            <select value={labId} onChange={(e) => setLabId(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+            <Select value={labId} onChange={(e) => setLabId(e.target.value)}>
               <option value="">Selecionar…</option>
               {labs.filter((l) => l.ativo).map((l) => <option key={l.id} value={l.id}>{l.nome}</option>)}
-            </select>
+            </Select>
           </div>
           <div className="flex items-end gap-2">
             <div className="grid flex-1 grid-cols-3 gap-2 text-center">
@@ -393,18 +393,18 @@ export default function VagasAgenda() {
               <div className="space-y-3">
                 <div>
                   <Label>Converter da fila do PSF (opcional)</Label>
-                  <select value={origemFilaId} onChange={(e) => usarFila(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                  <Select value={origemFilaId} onChange={(e) => usarFila(e.target.value)}>
                     <option value="">Agendamento direto…</option>
                     {fila.slice(0, 50).map((f) => <option key={f.id} value={f.id}>#{f.id} · {f.paciente_nome} · {f.unidade_psf}</option>)}
-                  </select>
+                  </Select>
                 </div>
                 <div>
                   <Label>Paciente *</Label>
                   <Input placeholder="Buscar paciente…" value={buscaPac} onChange={(e) => setBuscaPac(e.target.value)} />
-                  <select value={pacienteId} onChange={(e) => setPacienteId(e.target.value)} className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                  <Select value={pacienteId} onChange={(e) => setPacienteId(e.target.value)} className="mt-1">
                     <option value="">Selecionar…</option>
                     {pacientes.slice(0, 15).map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
-                  </select>
+                  </Select>
                 </div>
                 <div>
                   <Label>Exames SIGTAP * (buscar código ou descrição)</Label>
@@ -479,10 +479,10 @@ export default function VagasAgenda() {
             <div className="space-y-3">
               <div>
                 <Label>Laboratório *</Label>
-                <select value={loteLab} onChange={(e) => setLoteLab(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                <Select value={loteLab} onChange={(e) => setLoteLab(e.target.value)}>
                   <option value="">Selecionar…</option>
                   {labs.map((l) => <option key={l.id} value={l.id}>{l.nome}</option>)}
-                </select>
+                </Select>
               </div>
               <div>
                 <Label>Mês/ano de referência *</Label>

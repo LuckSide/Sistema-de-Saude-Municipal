@@ -8,7 +8,7 @@ import {
   pagMeta,
   type Exame,
 } from "../services/api";
-import { Button, Card, Input, Label } from "../components/ui/primitives";
+import { Button, Card, Input, Label, Select } from "../components/ui/primitives";
 import Paginacao from "../components/Paginacao";
 import { rotuloPrioridade } from "../utils/rotulos";
 import ExportarExcel from "../components/ExportarExcel";
@@ -115,11 +115,11 @@ export default function PainelMedico() {
           </div>
           <div>
             <Label>Status</Label>
-            <select value={statusFiltro} onChange={(e) => setStatusFiltro(e.target.value)} className="min-h-[44px] rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm">
+            <Select value={statusFiltro} onChange={(e) => setStatusFiltro(e.target.value)} className="w-auto min-w-[130px]">
               <option value="">Todos</option>
               <option value="aguardando">Aguardando</option>
               <option value="agendado">Marcado</option>
-            </select>
+            </Select>
           </div>
           <div className="flex gap-2">
             <button
@@ -203,9 +203,9 @@ export default function PainelMedico() {
             <div className="space-y-3">
               <div>
                 <Label>Prioridade</Label>
-                <select value={prio} onChange={(e) => setPrio(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                <Select value={prio} onChange={(e) => setPrio(e.target.value)}>
                   {PRIOS.map((p) => <option key={p.value} value={p.value}>{p.rotulo}</option>)}
-                </select>
+                </Select>
               </div>
               <div>
                 <Label>Justificativa técnica * (mín. 12 caracteres)</Label>

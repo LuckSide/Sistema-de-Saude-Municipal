@@ -27,7 +27,7 @@ import {
   type LoteFaturamentoApac,
   type UnidadeSaude,
 } from "../../services/api";
-import { Button, Card, Input, Label, Badge } from "../../components/ui/primitives";
+import { Button, Card, Input, Label, Badge, Select } from "../../components/ui/primitives";
 import ExportarExcel from "../../components/ExportarExcel";
 import { useConfirm } from "../../components/ConfirmDialog";
 
@@ -227,8 +227,8 @@ export default function ApacFaturamento() {
             <Label>Estabelecimento de Saúde Executante</Label>
             <div className="relative">
               <Building className="w-4 h-4 absolute left-3 top-3 text-ink/40" />
-              <select
-                className="w-full rounded-xl border border-sus-900/15 bg-white pl-9 pr-3 py-2 text-sm text-ink outline-none focus:border-sus-700"
+              <Select
+                className="pl-9"
                 value={cnesExecutante}
                 onChange={(e) => setCnesExecutante(e.target.value)}
               >
@@ -238,7 +238,7 @@ export default function ApacFaturamento() {
                     {u.nome} (CNES: {u.cnes})
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           </div>
 

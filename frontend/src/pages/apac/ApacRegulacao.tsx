@@ -30,7 +30,7 @@ import {
   type FaixaNumeracaoApac,
   type Medico,
 } from "../../services/api";
-import { Button, Card, Input, Label, Badge } from "../../components/ui/primitives";
+import { Button, Card, Input, Label, Badge, Select } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
 import { useAuth } from "../../hooks/useAuth";
@@ -809,8 +809,7 @@ export default function ApacRegulacao() {
               <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
                 <div className="sm:col-span-8">
                   <Label>Médico Regulador / Autorizador *</Label>
-                  <select
-                    className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm"
+                  <Select
                     value={medicoAutorizadorId}
                     onChange={(e) => setMedicoAutorizadorId(Number(e.target.value) || "")}
                   >
@@ -820,19 +819,18 @@ export default function ApacRegulacao() {
                         {m.nome} (CRM: {m.crm})
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
 
                 <div className="sm:col-span-4">
                   <Label>Vigência do Tratamento</Label>
-                  <select
-                    className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-sm"
+                  <Select
                     value={mesesVigencia}
                     onChange={(e) => setMesesVigencia(Number(e.target.value))}
                   >
                     <option value={3}>3 meses (Procedimento Pontual / Diagnóstico)</option>
                     <option value={6}>6 meses (Contínuo: Hemodiálise / Oncologia)</option>
-                  </select>
+                  </Select>
                 </div>
               </div>
 

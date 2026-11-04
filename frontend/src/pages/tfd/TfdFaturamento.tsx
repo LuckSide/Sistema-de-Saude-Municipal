@@ -11,7 +11,7 @@ import {
   type Fatura,
   type Paciente,
 } from "../../services/api";
-import { Button, Card, Input, Label } from "../../components/ui/primitives";
+import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
 import { useConfirm } from "../../components/ConfirmDialog";
@@ -187,10 +187,10 @@ export default function TfdFaturamento() {
                 <div className="md:col-span-2">
                   <Label>Paciente *</Label>
                   <Input placeholder="Buscar paciente…" value={busca} onChange={(e) => setBusca(e.target.value)} />
-                  <select value={form.paciente_id} onChange={(e) => setForm({ ...form, paciente_id: e.target.value })} className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                  <Select value={form.paciente_id} onChange={(e) => setForm({ ...form, paciente_id: e.target.value })} className="mt-1">
                     <option value="">Selecionar…</option>
                     {pacientes.slice(0, 15).map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
-                  </select>
+                  </Select>
                 </div>
                 <div className="md:col-span-2"><Label>Procedimento *</Label><Input value={form.procedimento} onChange={(e) => setForm({ ...form, procedimento: e.target.value })} placeholder="Ex: Consulta especializada" /></div>
                 <div><Label>Código SIGTAP</Label><Input value={form.codigo_sigtap} onChange={(e) => setForm({ ...form, codigo_sigtap: e.target.value })} placeholder="Ex: 0301010072" /></div>
@@ -199,16 +199,16 @@ export default function TfdFaturamento() {
                 <div><Label>Valor unit. R$</Label><Input type="number" min={0} step="0.01" value={form.valor} onChange={(e) => setForm({ ...form, valor: e.target.value })} /></div>
                 <div>
                   <Label>Tipo</Label>
-                  <select value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                  <Select value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
                     <option value="BPA">BPA</option>
                     <option value="APAC">APAC</option>
-                  </select>
+                  </Select>
                 </div>
                 <div>
                   <Label>Status</Label>
-                  <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                  <Select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
                     {["pendente", "aprovado", "rejeitado"].map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
+                  </Select>
                 </div>
                 <div className="md:col-span-2"><Label>Observações</Label><Input value={form.observacoes} onChange={(e) => setForm({ ...form, observacoes: e.target.value })} /></div>
               </div>

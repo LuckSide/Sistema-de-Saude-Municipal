@@ -165,11 +165,26 @@ def listar_cbos_sigtap(
     out: list[dict] = []
 
     if cod:
-        # Quando um procedimento é informado, traz TODOS os CBOs autorizados para ele no SIGTAP
+        # Quando um procedimento é informado, traz estritamente os CBOs autorizados para ele no SIGTAP
         for c in db.exec(
             select(SigtapCbo).where(SigtapCbo.procedimento_codigo == cod).order_by(SigtapCbo.cbo)
         ).all():
             out.append({"cbo": c.cbo, "descricao": c.descricao or "", "origem": "sigtap"})
+
+        if out:
+            if termo:
+                out = [c for c in out if termo in (c["cbo"] or "").lower() or termo in (c["descricao"] or "").lower()]
+            vistos: set[str] = set()
+            unicos: list[dict] = []
+            for c in out:
+                cbo_str = (c["cbo"] or "").strip()
+                if not cbo_str:
+                    continue
+                chave = f"{cbo_str}|{c['descricao'].strip().lower()}"
+                if chave not in vistos:
+                    vistos.add(chave)
+                    unicos.append(c)
+            return unicos[:limit]
 
     if not out and not cod:
         # Busca universal em TODOS os CBOs do SIGTAP

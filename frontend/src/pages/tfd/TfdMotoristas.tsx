@@ -9,7 +9,7 @@ import {
   pagMeta,
   type Motorista,
 } from "../../services/api";
-import { Button, Card, Input, Label } from "../../components/ui/primitives";
+import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
 import { useUndo } from "../../components/UndoToast";
 import { useConfirm } from "../../components/ConfirmDialog";
 import {
@@ -556,9 +556,9 @@ export default function TfdMotoristas() {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <Label>Categoria</Label>
-                  <select value={form.cnh_categoria} onChange={(e) => setForm({ ...form, cnh_categoria: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                  <Select value={form.cnh_categoria} onChange={(e) => setForm({ ...form, cnh_categoria: e.target.value })}>
                     {CATEGORIAS.map((c) => <option key={c} value={c}>{c || "—"}</option>)}
-                  </select>
+                  </Select>
                 </div>
                 <div><Label>Validade CNH *</Label><Input type="date" value={form.cnh_validade} onChange={(e) => setForm({ ...form, cnh_validade: e.target.value })} className={borda("cnh_validade")} />{campoMsg("cnh_validade")}</div>
               </div>

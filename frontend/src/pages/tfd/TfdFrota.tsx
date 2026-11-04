@@ -12,7 +12,7 @@ import {
   type RelatorioFrota,
   type Veiculo,
 } from "../../services/api";
-import { Button, Card, Input, Label } from "../../components/ui/primitives";
+import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
 import { useConfirm } from "../../components/ConfirmDialog";
@@ -615,19 +615,19 @@ export default function TfdFrota() {
                 <div><Label>Capacidade</Label><Input type="number" min={1} max={60} value={form.capacidade} onChange={(e) => setForm({ ...form, capacidade: e.target.value })} /></div>
                 <div>
                   <Label>Status</Label>
-                  <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                  <Select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
                     <option value="disponivel">Disponível</option>
                     <option value="manutencao">Em manutenção</option>
-                  </select>
+                  </Select>
                 </div>
                 <div>
                   <Label>Tipo</Label>
-                  <select value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                  <Select value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
                     <option value="carro">carro</option>
                     <option value="van">van</option>
                     <option value="micro">micro</option>
                     <option value="amb">ambulância</option>
-                  </select>
+                  </Select>
                 </div>
               </div>
               <div className="flex items-center gap-2">

@@ -294,3 +294,26 @@ class AuditoriaIn(BaseModel):
     )
     observacao: str = Field(default="", max_length=500)
     itens: list[AuditoriaItemIn] = []
+
+
+# ---------- Verificação de Duplicidade de Exames de Sangue ----------
+class PedidoDuplicadoLabOut(BaseModel):
+    id: int
+    tipo: str  # "agendamento" ou "fila_psf" ou "solicitacao"
+    data: str
+    hora: str = ""
+    status: str
+    status_rotulo: str
+    procedimento: str
+    codigo_procedimento: str = ""
+    sigtap_id: int | None = None
+    profissional: str = ""
+    unidade: str = ""
+    laboratorio: str = ""
+    link_visualizacao: str
+
+
+class VerificarDuplicidadeLabOut(BaseModel):
+    duplicado: bool
+    pedido: PedidoDuplicadoLabOut | None = None
+

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Activity, CircleAlert, CircleCheck, Download, RefreshCw, ShieldCheck, TriangleAlert } from "lucide-react";
-import { Badge, Button, Card, Label, cn } from "../../components/ui/primitives";
+import { Badge, Button, Card, Label, Select, cn } from "../../components/ui/primitives";
 import IndicadorDetalhe from "../../components/IndicadorDetalhe";
 import {
   fonteBadge,
@@ -171,41 +171,41 @@ export default function ApsPainel() {
         <div className="grid gap-3 md:grid-cols-5">
           <div>
             <Label>Período</Label>
-            <select value={periodo} onChange={(e) => setPeriodo(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+            <Select value={periodo} onChange={(e) => setPeriodo(e.target.value)}>
               {periodos.length === 0 && <option value={periodo}>{periodo}</option>}
               {periodos.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select>
+            </Select>
           </div>
           <div>
             <Label>UBS (CNES)</Label>
-            <select value={ubs} onChange={(e) => setUbs(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+            <Select value={ubs} onChange={(e) => setUbs(e.target.value)}>
               <option value="">Todas</option>
               {unidades.map((u) => (
                 <option key={u.codigo} value={u.cnes || u.codigo}>
                   {u.codigo}{u.cnes ? ` · ${u.cnes}` : ""}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <div>
             <Label>Equipe (eSF/eSB)</Label>
-            <select value={equipe} onChange={(e) => setEquipe(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+            <Select value={equipe} onChange={(e) => setEquipe(e.target.value)}>
               <option value="">Todas</option>
               {equipes.map((q) => (
                 <option key={q.codigo} value={q.codigo}>
                   {q.codigo}{q.tipo ? ` · ${q.tipo}` : ""}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <div>
             <Label>Bloco</Label>
-            <select value={bloco} onChange={(e) => setBloco(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+            <Select value={bloco} onChange={(e) => setBloco(e.target.value)}>
               <option value="todos">Todos</option>
               <option value="cuidado">Cuidado APS</option>
               <option value="bucal">Saúde Bucal</option>
               <option value="emulti">eMulti</option>
-            </select>
+            </Select>
           </div>
           <div className="flex flex-wrap items-end gap-2">
             <Button onClick={carregar} disabled={carregando}>

@@ -8,6 +8,7 @@ from app.core.deps import get_current_user_senha_ok as get_current_user, get_db
 from app.models.lab_exames import SigtapProcedimento
 from app.models.lab_fase6 import (
     FilaPsf,
+    ItemSolic,
     Laboratorio,
     LabPedidoAjuste,
     SolicitacaoMestre,
@@ -29,6 +30,7 @@ from app.schemas.lab_fase6 import (
     LaboratorioOut,
     PedidoAjusteIn,
     PedidoAjusteOut,
+    PedidoDuplicadoLabOut,
     RespostaAjusteIn,
     SolicMestreIn,
     SolicMestreOut,
@@ -36,6 +38,7 @@ from app.schemas.lab_fase6 import (
     VagaLoteMesIn,
     VagaLoteMesOut,
     VagaOut,
+    VerificarDuplicidadeLabOut,
 )
 from app.services.lab_fase6 import (
     agendar_lote_fila,
@@ -703,6 +706,152 @@ def listar_mestre(
         "page": meta["page"],
         "pages": meta["pages"],
     }
+
+
+@router.get("/exames/verificar-duplicidade", response_model=VerificarDuplicidadeLabOut)
+def verificar_duplicidade_lab(
+    paciente_id: int = Query(...),
+    sigtap_id: int | None = Query(default=None),
+    codigo_procedimento: str | None = Query(default=None),
+    procedimento_nome: str | None = Query(default=None),
+    sigtap_ids: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user=Depends(need_any_perm("lab_marcacao", "lab_agenda", "lab_fila", "lab", "usuarios")),
+):
+    """Verifica em tempo real se já existe um pedido de exame de sangue ativo/pendente para o paciente com o mesmo procedimento SIGTAP."""
+    _ = user
+    ids_busca: set[int] = set()
+    if sigtap_id:
+        ids_busca.add(sigtap_id)
+    if sigtap_ids:
+        for sid in sigtap_ids.split(","):
+            s_clean = sid.strip()
+            if s_clean.isdigit():
+                ids_busca.add(int(s_clean))
+
+    cod_proc = (codigo_procedimento or "").strip()
+    proc_nome = (procedimento_nome or "").strip()
+
+    if not ids_busca and (cod_proc or proc_nome):
+        sig_stmt = select(SigtapProcedimento)
+        if cod_proc:
+            sig_stmt = sig_stmt.where(SigtapProcedimento.codigo == cod_proc)
+        elif proc_nome:
+            sig_stmt = sig_stmt.where(SigtapProcedimento.descricao.ilike(f"%{proc_nome}%"))
+        sig_procs = db.exec(sig_stmt).all()
+        for sp in sig_procs:
+            if sp.id:
+                ids_busca.add(sp.id)
+
+    if not ids_busca and not cod_proc and not proc_nome:
+        return {"duplicado": False, "pedido": None}
+
+    # 1. Verificar em SolicitacaoMestre (agendado / coletado)
+    stmt_mestre = (
+        select(SolicitacaoMestre, ItemSolic, SigtapProcedimento)
+        .join(ItemSolic, ItemSolic.solicitacao_id == SolicitacaoMestre.id)
+        .join(SigtapProcedimento, SigtapProcedimento.id == ItemSolic.sigtap_id)
+        .where(
+            SolicitacaoMestre.paciente_id == paciente_id,
+            SolicitacaoMestre.status.in_(["agendado", "coletado"])
+        )
+    )
+    if ids_busca:
+        stmt_mestre = stmt_mestre.where(ItemSolic.sigtap_id.in_(list(ids_busca)))
+    elif cod_proc:
+        stmt_mestre = stmt_mestre.where(SigtapProcedimento.codigo == cod_proc)
+
+    mestre_match = db.exec(stmt_mestre).first()
+    if mestre_match:
+        m, item, sig = mestre_match
+        lab = db.get(Laboratorio, m.laboratorio_id) if m.laboratorio_id else None
+        dt_str = m.data_agendada.strftime("%d/%m/%Y") if m.data_agendada else ""
+        hr_str = f" às {m.hora_agendada}" if m.hora_agendada else ""
+        rotulo = f"Agendado p/ {dt_str}{hr_str}".strip() if m.status == "agendado" else f"Coletado em {dt_str} (Em análise)"
+
+        return {
+            "duplicado": True,
+            "pedido": {
+                "id": m.id,
+                "tipo": "agendamento",
+                "data": dt_str,
+                "hora": m.hora_agendada or "07:00",
+                "status": m.status,
+                "status_rotulo": rotulo,
+                "procedimento": f"{sig.codigo} - {sig.descricao}" if sig else "Exame Laboratorial",
+                "codigo_procedimento": sig.codigo if sig else "",
+                "sigtap_id": sig.id if sig else None,
+                "profissional": m.medico_solicitante or "Médico da Unidade",
+                "unidade": m.unidade_psf or "Unidade de Saúde",
+                "laboratorio": lab.nome if lab else "Laboratório Municipal",
+                "link_visualizacao": f"/lab/marcacao?id={m.id}",
+            }
+        }
+
+    # 2. Verificar em FilaPsf (status == 'na_fila')
+    stmt_fila = (
+        select(FilaPsf)
+        .where(
+            FilaPsf.paciente_id == paciente_id,
+            FilaPsf.status == "na_fila"
+        )
+    )
+    filas = list(db.exec(stmt_fila).all())
+    for f in filas:
+        match_fila = False
+        obs = f.observacoes or ""
+        # Verifica se o ID do SIGTAP consta em formato JSON ou texto
+        if "SIGTAP_IDS:" in obs:
+            try:
+                import json
+                trecho = obs.split("SIGTAP_IDS:")[1].split("|")[0].strip()
+                p_ids = json.loads(trecho)
+                if isinstance(p_ids, list):
+                    for bid in ids_busca:
+                        if bid in p_ids:
+                            match_fila = True
+                            break
+            except Exception:
+                pass
+
+        if not match_fila:
+            for bid in ids_busca:
+                if f"[{bid}]" in obs or f"[{bid}," in obs or f", {bid}]" in obs or f",{bid}," in obs or f":{bid}" in obs or f'"{bid}"' in obs or f":[{bid}]" in obs or str(bid) in obs:
+                    match_fila = True
+                    break
+        if not match_fila and cod_proc and cod_proc in obs:
+            match_fila = True
+        if not match_fila and proc_nome and proc_nome.lower() in obs.lower():
+            match_fila = True
+
+        if match_fila:
+            sig_info = None
+            if ids_busca:
+                sig_info = db.get(SigtapProcedimento, list(ids_busca)[0])
+            elif cod_proc:
+                sig_info = db.exec(select(SigtapProcedimento).where(SigtapProcedimento.codigo == cod_proc)).first()
+
+            dt_fila = f.data_solicitacao.strftime("%d/%m/%Y") if f.data_solicitacao else ""
+            return {
+                "duplicado": True,
+                "pedido": {
+                    "id": f.id,
+                    "tipo": "fila_psf",
+                    "data": dt_fila,
+                    "hora": "",
+                    "status": f.status,
+                    "status_rotulo": f"Na Fila de Espera PSF (Solicitado em {dt_fila})",
+                    "procedimento": f"{sig_info.codigo} - {sig_info.descricao}" if sig_info else (f.observacoes or "Exames de Sangue (Fila PSF)"),
+                    "codigo_procedimento": sig_info.codigo if sig_info else "",
+                    "sigtap_id": sig_info.id if sig_info else None,
+                    "profissional": f.medico_solicitante or "Médico da Unidade",
+                    "unidade": f.unidade_psf or "Unidade PSF",
+                    "laboratorio": "Laboratório Municipal",
+                    "link_visualizacao": f"/lab/fila?q={f.id}",
+                }
+            }
+
+    return {"duplicado": False, "pedido": None}
 
 
 @router.post("/exames/solicitacoes", response_model=SolicMestreOut, status_code=201)

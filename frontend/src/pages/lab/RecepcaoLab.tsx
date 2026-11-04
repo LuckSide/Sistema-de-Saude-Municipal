@@ -17,7 +17,7 @@ import {
   pagData,
   type SolicMestre,
 } from "../../services/api";
-import { Button, Card, Input, Label } from "../../components/ui/primitives";
+import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
 import ModalLeituraRapidaQR from "../../components/ModalLeituraRapidaQR";
 import { useAuth } from "../../hooks/useAuth";
 import { useConfirm } from "../../components/ConfirmDialog";
@@ -226,15 +226,15 @@ export default function RecepcaoLab() {
 
           {/* Filtro por Status */}
           <div className="md:col-span-3">
-            <select
+            <Select
               value={filtroStatus}
               onChange={(e) => setFiltroStatus(e.target.value)}
-              className="w-full h-10 rounded-xl border border-sus-900/15 bg-white px-3 text-xs outline-none focus:border-teal"
+              className="!h-10 text-xs"
             >
               <option value="todos">Todos os status</option>
               <option value="agendado">Aguardando Coleta (Agendados)</option>
               <option value="coletado">Coleta Realizada (Recepcionados)</option>
-            </select>
+            </Select>
           </div>
         </div>
       </Card>
@@ -426,10 +426,9 @@ export default function RecepcaoLab() {
             <div className="space-y-4 text-xs">
               <div>
                 <Label>Motivo / Tipo de Divergência *</Label>
-                <select
+                <Select
                   value={tipoAjuste}
                   onChange={(e) => setTipoAjuste(e.target.value)}
-                  className="w-full h-11 rounded-xl border border-sus-900/15 bg-white px-3.5 text-sm outline-none focus:border-teal"
                 >
                   <option value="divergencia_pedido">
                     Divergência entre o pedido físico e os procedimentos cadastrados
@@ -444,7 +443,7 @@ export default function RecepcaoLab() {
                     Divergência de dados cadastrais (CPF, CNS ou data de nascimento)
                   </option>
                   <option value="outro">Outro motivo clínico / técnico</option>
-                </select>
+                </Select>
               </div>
 
               <div>

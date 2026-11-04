@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from "react";
+import React, { forwardRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -8,13 +8,21 @@ export function cn(...inputs: (string | undefined | false)[]) {
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: "default" | "outline" | "ghost" | "danger" | "secondary";
+  size?: "sm" | "md" | "lg";
 }
 
 export function Button({
   className,
   variant = "default",
+  size = "md",
   ...props
 }: ButtonProps) {
+  const sizeStyles = {
+    sm: "h-8 min-h-[32px] px-3 py-1 text-xs",
+    md: "h-11 min-h-[44px] px-4 py-2.5 text-sm",
+    lg: "h-12 min-h-[48px] px-5 py-3 text-base",
+  }[size] || "h-11 min-h-[44px] px-4 py-2.5 text-sm";
+
   const variantStyles = {
     default: "bg-sus-900 text-white hover:bg-sus-800",
     outline: "border border-sus-900/20 bg-white text-sus-900 hover:bg-sus-50",
@@ -27,7 +35,8 @@ export function Button({
     <button
       {...props}
       className={cn(
-        "inline-flex h-11 min-h-[44px] items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-display text-sm font-semibold transition active:scale-[.99] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sus-700",
+        "inline-flex items-center justify-center gap-2 rounded-xl font-display font-semibold transition active:scale-[.99] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sus-700",
+        sizeStyles,
         variantStyles,
         className
       )}
@@ -35,38 +44,47 @@ export function Button({
   );
 }
 
-export function Input({
-  className,
-  ...props
-}: InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      {...props}
-      className={cn(
-        "w-full h-11 rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink/60 focus:border-sus-700 focus-visible:ring-2 focus-visible:ring-sus-700/20",
-        className
-      )}
-    />
-  );
-}
+export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
+  ({ className, ...props }, ref) => {
+    return (
+      <input
+        ref={ref}
+        {...props}
+        className={cn(
+          "w-full h-11 rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink/60 focus:border-sus-700 focus-visible:ring-2 focus-visible:ring-sus-700/20",
+          className
+        )}
+      />
+    );
+  }
+);
+Input.displayName = "Input";
 
-export function Select({
-  className,
-  children,
-  ...props
-}: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return (
-    <select
-      {...props}
-      className={cn(
-        "w-full h-11 rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition focus:border-sus-700 focus-visible:ring-2 focus-visible:ring-sus-700/20 disabled:cursor-not-allowed disabled:bg-sand/30 disabled:opacity-60",
-        className
-      )}
-    >
-      {children}
-    </select>
-  );
-}
+const SELECT_CHEVRON_SVG = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%230A3D62' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`;
+
+export interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {}
+
+export const Select = forwardRef<HTMLSelectElement, SelectProps>(
+  ({ className, children, style, ...props }, ref) => {
+    return (
+      <select
+        ref={ref}
+        {...props}
+        style={{
+          backgroundImage: SELECT_CHEVRON_SVG,
+          ...style,
+        }}
+        className={cn(
+          "w-full h-11 appearance-none rounded-xl border border-sus-900/15 bg-white bg-[position:right_0.875rem_center] bg-[size:1rem_1rem] bg-no-repeat pl-3.5 pr-9 py-2.5 text-sm text-ink outline-none transition focus:border-sus-700 focus-visible:ring-2 focus-visible:ring-sus-700/20 disabled:cursor-not-allowed disabled:bg-sand/30 disabled:opacity-60 cursor-pointer",
+          className
+        )}
+      >
+        {children}
+      </select>
+    );
+  }
+);
+Select.displayName = "Select";
 
 export function Label({ children, className }: { children: ReactNode; className?: string }) {
   return (

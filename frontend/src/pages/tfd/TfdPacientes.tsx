@@ -12,7 +12,7 @@ import {
   type Paciente,
   type UnidadeSaude,
 } from "../../services/api";
-import { Button, Card, Input, Label } from "../../components/ui/primitives";
+import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
 import PerfilPaciente from "../../components/PerfilPaciente";
@@ -416,10 +416,10 @@ export default function TfdPacientes() {
                 <div><Label>CEP</Label><Input value={form.cep} onChange={(e) => setForm({ ...form, cep: e.target.value })} placeholder="00000-000" /></div>
                 <div className="md:col-span-2">
                   <Label>Unidade de Saúde (PSF/USF)</Label>
-                  <select value={form.unidade_saude_id} onChange={(e) => setForm({ ...form, unidade_saude_id: e.target.value })} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+                  <Select value={form.unidade_saude_id} onChange={(e) => setForm({ ...form, unidade_saude_id: e.target.value })}>
                     <option value="">Selecionar…</option>
                     {unidades.filter((u) => u.ativo).map((u) => <option key={u.id} value={u.id}>{u.nome}</option>)}
-                  </select>
+                  </Select>
                 </div>
                 <div><Label>Equipe (eSF)</Label><Input value={form.equipe_esf} onChange={(e) => setForm({ ...form, equipe_esf: e.target.value })} placeholder="Ex: eSF-01" /></div>
                 <div><Label>ACS</Label><Input value={form.acs_nome} onChange={(e) => setForm({ ...form, acs_nome: e.target.value })} placeholder="Nome do agente" /></div>

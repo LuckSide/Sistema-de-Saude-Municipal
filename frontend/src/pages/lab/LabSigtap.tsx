@@ -20,7 +20,7 @@ import {
   type SigtapProc,
   type SigtapVersao,
 } from "../../services/api";
-import { Button, Card, Input, Label } from "../../components/ui/primitives";
+import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
 
@@ -158,10 +158,10 @@ export default function LabSigtap() {
           </div>
           <div>
             <Label>Instrumento</Label>
-            <select value={inst} onChange={(e) => setInst(e.target.value)} className="w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-sm">
+            <Select value={inst} onChange={(e) => setInst(e.target.value)}>
               <option value="">Todos</option>
               {INSTRUMENTOS.map((i) => <option key={i} value={i}>{i}</option>)}
-            </select>
+            </Select>
           </div>
         </div>
       </Card>

@@ -59,6 +59,14 @@ def init_db() -> None:
         ProcedimentoSecundarioAPAC,
         SolicitacaoAPAC,
     )
+    from app.models.oxigenio import (  # noqa: F401
+        EmpresaOxigenio,
+        LicitacaoContratoOxigenio,
+        EntradaCompraOxigenio,
+        EquipamentoRespiratorio,
+        EmprestimoOxigenio,
+        TrocaCilindroHistorico,
+    )
 
     # create_all com checkfirst ainda tem janela de corrida entre workers
     # (2x uvicorn no lifespan) — ignora erro de "já existe" e segue.

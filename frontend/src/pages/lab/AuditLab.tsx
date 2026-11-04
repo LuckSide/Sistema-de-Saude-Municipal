@@ -21,7 +21,7 @@ import {
   type AuditItem,
   type PedidoAjuste,
 } from "../../services/api";
-import { Button, Card, Label } from "../../components/ui/primitives";
+import { Button, Card, Label, Select } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
 
 const STATUS = ["pendente_conferencia", "aprovado", "divergente", "aguardando_autorizacao_sec"];
@@ -219,14 +219,14 @@ export default function AuditLab() {
       {/* ABA 1: CONFERÊNCIA DE EXAMES (AUDITORIA) */}
       {aba === "auditoria" && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-semibold text-ink/65">
               Filtrar por status de auditoria:
             </span>
-            <select
+            <Select
               value={status}
               onChange={(e) => setStatus(e.target.value)}
-              className="rounded-xl border border-sus-900/15 bg-white px-3 py-1.5 text-xs outline-none focus:border-teal"
+              className="w-auto min-w-[180px] !h-9 text-xs"
             >
               <option value="">Todos os status</option>
               {STATUS.map((s) => (
@@ -234,7 +234,7 @@ export default function AuditLab() {
                   {s}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
 
           <Card className="overflow-hidden border-sus-900/10 shadow-xs">
@@ -306,20 +306,20 @@ export default function AuditLab() {
       {/* ABA 2: PEDIDOS DE AJUSTE DO LABORATÓRIO */}
       {aba === "ajustes" && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-semibold text-ink/65">
               Filtrar pedidos de ajuste:
             </span>
-            <select
+            <Select
               value={filtroStatusAjuste}
               onChange={(e) => setFiltroStatusAjuste(e.target.value)}
-              className="rounded-xl border border-sus-900/15 bg-white px-3 py-1.5 text-xs outline-none focus:border-teal"
+              className="w-auto min-w-[200px] !h-9 text-xs"
             >
               <option value="todos">Todos</option>
               <option value="pendente">Apenas Pendentes de Análise</option>
               <option value="aprovado">Aprovados</option>
               <option value="rejeitado">Rejeitados</option>
-            </select>
+            </Select>
           </div>
 
           <Card className="overflow-hidden border-sus-900/10 shadow-xs">

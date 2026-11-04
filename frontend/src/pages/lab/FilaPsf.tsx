@@ -28,6 +28,7 @@ import {
   fetchUnidadesSaude,
   labsListar,
   labSigtap,
+  labVerificarDuplicidade,
   pagData,
   pagMeta,
   type FilaPsfItem,
@@ -36,12 +37,14 @@ import {
   type Paciente,
   type SigtapProc,
   type UnidadeSaude,
+  type PedidoDuplicadoLab,
 } from "../../services/api";
-import { Button, Card, Input, Label } from "../../components/ui/primitives";
+import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
 import { Combobox, type ComboOption } from "../../components/ui/combobox";
 import BuscaPacienteAutocomplete from "../../components/BuscaPacienteAutocomplete";
+import AlertaPedidoDuplicado from "../../components/AlertaPedidoDuplicado";
 import { useAuth } from "../../hooks/useAuth";
 import { useConfirm } from "../../components/ConfirmDialog";
 
@@ -93,6 +96,44 @@ export default function FilaPsf() {
   const [buscaSig, setBuscaSig] = useState("");
   const [sigtap, setSigtap] = useState<SigtapProc[]>([]);
   const [itens, setItens] = useState<{ sigtap: SigtapProc; quantidade: number }[]>([]);
+
+  // Verificação de Pedidos Duplicados em Tempo Real (Fila de Exames PSF)
+  const [duplicidadeFila, setDuplicidadeFila] = useState<PedidoDuplicadoLab | null>(null);
+  const [verificandoDuplicidadeFila, setVerificandoDuplicidadeFila] = useState(false);
+  const [ignorarDuplicidadeFila, setIgnorarDuplicidadeFila] = useState(false);
+
+  useEffect(() => {
+    if (itemEditando || !form.paciente_id || itens.length === 0) {
+      setDuplicidadeFila(null);
+      return;
+    }
+
+    setIgnorarDuplicidadeFila(false);
+
+    const sigtapIds = itens.map((i) => i.sigtap.id).join(",");
+    const t = setTimeout(() => {
+      setVerificandoDuplicidadeFila(true);
+      labVerificarDuplicidade({
+        paciente_id: Number(form.paciente_id),
+        sigtap_ids: sigtapIds,
+      })
+        .then((res) => {
+          if (res.duplicado && res.pedido) {
+            setDuplicidadeFila(res.pedido);
+          } else {
+            setDuplicidadeFila(null);
+          }
+        })
+        .catch(() => {
+          setDuplicidadeFila(null);
+        })
+        .finally(() => {
+          setVerificandoDuplicidadeFila(false);
+        });
+    }, 250);
+
+    return () => clearTimeout(t);
+  }, [itemEditando, form.paciente_id, itens]);
 
   useEffect(() => {
     if (!modalAberto) return;
@@ -235,6 +276,8 @@ export default function FilaPsf() {
       obs: "",
     });
     setErro("");
+    setDuplicidadeFila(null);
+    setIgnorarDuplicidadeFila(false);
     setModalAberto(true);
   }
 
@@ -267,12 +310,16 @@ export default function FilaPsf() {
       obs: item.obs || "",
     });
     setErro("");
+    setDuplicidadeFila(null);
+    setIgnorarDuplicidadeFila(false);
     setModalAberto(true);
   }
 
   function fecharModal() {
     setModalAberto(false);
     setItemEditando(null);
+    setDuplicidadeFila(null);
+    setIgnorarDuplicidadeFila(false);
   }
 
   // Opções para o Combobox de Filtro de Unidades (inclui "Todas")
@@ -322,6 +369,12 @@ export default function FilaPsf() {
     setOk("");
     if (!form.paciente_id) {
       setErro("Selecione o paciente através da busca inteligente.");
+      return;
+    }
+    if (!itemEditando && duplicidadeFila && !ignorarDuplicidadeFila) {
+      setErro(
+        "Atenção: Já existe um pedido ativo de exames de sangue para este paciente contendo os mesmos procedimentos. Avalie a situação no alerta em destaque ou clique em 'Prosseguir Mesmo com Duplicidade' para continuar."
+      );
       return;
     }
     if (!form.data_solicitacao) {
@@ -594,15 +647,15 @@ export default function FilaPsf() {
               <Label className="text-xs font-bold text-sus-950 mb-1.5 block">
                 Status
               </Label>
-              <select
+              <Select
                 value={filtroStatus}
                 onChange={(e) => setFiltroStatus(e.target.value)}
-                className="h-10 w-full rounded-xl border border-sus-900/15 bg-white px-2.5 text-xs font-medium text-sus-950 outline-none transition focus:border-teal"
+                className="!h-10 text-xs font-medium text-sus-950"
               >
                 <option value="todos">Todos</option>
                 <option value="na_fila">Na Fila (Aguardando)</option>
                 <option value="agendado">Agendado</option>
-              </select>
+              </Select>
             </div>
 
             {temFiltroAtivo && (
@@ -1019,6 +1072,19 @@ export default function FilaPsf() {
                 </div>
               </div>
 
+              {/* ALERTA DE DUPLICIDADE EM TEMPO REAL */}
+              {duplicidadeFila && !ignorarDuplicidadeFila && (
+                <AlertaPedidoDuplicado
+                  pedido={duplicidadeFila}
+                  tipoModulo="lab"
+                  onProsseguir={() => setIgnorarDuplicidadeFila(true)}
+                  onCancelar={() => {
+                    setItens([]);
+                    setDuplicidadeFila(null);
+                  }}
+                />
+              )}
+
               {/* Seção 3: Justificativa Clínica e Observações */}
               <div className="rounded-2xl border border-sus-900/10 p-4 space-y-3">
                 <div>
@@ -1122,17 +1188,16 @@ export default function FilaPsf() {
             <div className="space-y-4 text-xs">
               <div>
                 <Label>Laboratório Conveniado *</Label>
-                <select
+                <Select
                   value={loteLabId}
                   onChange={(e) => setLoteLabId(e.target.value)}
-                  className="w-full h-11 rounded-xl border border-sus-900/15 bg-white px-3.5 text-sm outline-none focus:border-teal"
                 >
                   {labs.map((l) => (
                     <option key={l.id} value={l.id}>
                       {l.nome} {l.cnes ? `(CNES: ${l.cnes})` : ""}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               <div className="grid grid-cols-2 gap-3">

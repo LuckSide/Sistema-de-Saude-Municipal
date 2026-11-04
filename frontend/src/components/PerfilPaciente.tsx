@@ -1,6 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CalendarDays, ExternalLink, Layers, ListOrdered, MapPin, User } from "lucide-react";
+import {
+  CalendarDays,
+  CheckCircle2,
+  Clock,
+  ExternalLink,
+  Layers,
+  ListOrdered,
+  MapPin,
+  Stethoscope,
+  User,
+} from "lucide-react";
 import { tfdPerfilPaciente, type PacientePerfil } from "../services/api";
 import ExportarExcel from "./ExportarExcel";
 
@@ -38,7 +48,16 @@ export default function PerfilPaciente({
   const navigate = useNavigate();
   const [perfil, setPerfil] = useState<PacientePerfil | null>(null);
   const [erro, setErro] = useState("");
+  const [abaDemanda, setAbaDemanda] = useState<"espera" | "realizados">("espera");
   const [modoVisao, setModoVisao] = useState<"geral" | "procedimento">("geral");
+
+  const itensEspera = useMemo(() => {
+    return (perfil?.demanda || []).filter((d) => (d.status || "").toLowerCase() === "aguardando");
+  }, [perfil]);
+
+  const itensRealizados = useMemo(() => {
+    return (perfil?.demanda || []).filter((d) => (d.status || "").toLowerCase() !== "aguardando");
+  }, [perfil]);
 
   const abrirExame = (id: number) => {
     if (onVerExame) {
@@ -94,43 +113,77 @@ export default function PerfilPaciente({
         </dl>
       </section>
 
-      {/* Painel de demanda reprimida (Item 6: Inclusão da Fila Geral Unificada) */}
+      {/* Painel de demanda reprimida e histórico de procedimentos */}
       <section className="rounded-2xl border border-sus-900/10 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-sus-900/10 pb-3">
-          <div className="flex items-center gap-2">
-            <p className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-sus-900/70">
-              <ListOrdered className="h-4 w-4 text-teal" /> Demanda Reprimida · {perfil.demanda.length} solicitação(ões) ativa(s)
-            </p>
+        {/* Cabeçalho com Abas Principais: Fila de Espera vs Procedimentos Já Realizados */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sus-900/10 pb-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setAbaDemanda("espera")}
+              className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition shadow-xs ${
+                abaDemanda === "espera"
+                  ? "bg-teal text-white shadow-teal/20"
+                  : "bg-sand/60 text-sus-900/70 hover:bg-sand hover:text-sus-950 border border-sus-900/10"
+              }`}
+            >
+              <Clock className="h-4 w-4" />
+              <span>Fila de Espera</span>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                abaDemanda === "espera" ? "bg-white/20 text-white" : "bg-teal/10 text-teal"
+              }`}>
+                {itensEspera.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAbaDemanda("realizados")}
+              className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition shadow-xs ${
+                abaDemanda === "realizados"
+                  ? "bg-emerald-600 text-white shadow-emerald-600/20"
+                  : "bg-sand/60 text-sus-900/70 hover:bg-sand hover:text-sus-950 border border-sus-900/10"
+              }`}
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              <span>Procedimentos Já Realizados</span>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                abaDemanda === "realizados" ? "bg-white/20 text-white" : "bg-emerald-600/10 text-emerald-700"
+              }`}>
+                {itensRealizados.length}
+              </span>
+            </button>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* Seletor de Modo de Visualização */}
-            <div className="flex items-center gap-1 rounded-xl bg-sand/60 p-1 border border-sus-900/10">
-              <button
-                type="button"
-                onClick={() => setModoVisao("geral")}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold transition ${
-                  modoVisao === "geral"
-                    ? "bg-sus-900 text-white shadow-2xs"
-                    : "text-sus-900/70 hover:text-sus-950"
-                }`}
-                title="Visualizar todas as solicitações do paciente na Fila Geral de forma unificada"
-              >
-                <Layers className="h-3.5 w-3.5" /> Fila Geral (Unificada)
-              </button>
-              <button
-                type="button"
-                onClick={() => setModoVisao("procedimento")}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold transition ${
-                  modoVisao === "procedimento"
-                    ? "bg-sus-900 text-white shadow-2xs"
-                    : "text-sus-900/70 hover:text-sus-950"
-                }`}
-                title="Visualizar solicitações agrupadas por procedimento"
-              >
-                <ListOrdered className="h-3.5 w-3.5" /> Por Procedimento
-              </button>
-            </div>
+            {abaDemanda === "espera" && itensEspera.length > 0 && (
+              <div className="flex items-center gap-1 rounded-xl bg-sand/60 p-1 border border-sus-900/10">
+                <button
+                  type="button"
+                  onClick={() => setModoVisao("geral")}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+                    modoVisao === "geral"
+                      ? "bg-sus-900 text-white shadow-2xs"
+                      : "text-sus-900/70 hover:text-sus-950"
+                  }`}
+                  title="Visualizar todas as solicitações do paciente na Fila Geral de forma unificada"
+                >
+                  <Layers className="h-3.5 w-3.5" /> Fila Geral (Unificada)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModoVisao("procedimento")}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+                    modoVisao === "procedimento"
+                      ? "bg-sus-900 text-white shadow-2xs"
+                      : "text-sus-900/70 hover:text-sus-950"
+                  }`}
+                  title="Visualizar solicitações agrupadas por procedimento"
+                >
+                  <ListOrdered className="h-3.5 w-3.5" /> Por Procedimento
+                </button>
+              </div>
+            )}
 
             {perfil.demanda.length > 0 && (
               <ExportarExcel url={`/api/tfd/pacientes/${pid}/demanda/exportar`} arquivo="demanda_reprimida" />
@@ -138,102 +191,331 @@ export default function PerfilPaciente({
           </div>
         </div>
 
-        {perfil.demanda.length === 0 ? (
-          <p className="mt-3 rounded-xl bg-sand/60 px-3 py-4 text-center text-xs text-ink/55">
-            Nenhuma solicitação pendente ou ativa para este paciente na regulação.
-          </p>
-        ) : (
-          <div className="mt-4 space-y-4">
-            {(() => {
-              // Ordenação estritamente cronológica por tempo de espera (data do pedido / inclusão mais antiga primeiro)
-              const ordenados = [...perfil.demanda].sort((a, b) => {
-                const da = a.data_pedido || a.data_inclusao || "";
-                const db = b.data_pedido || b.data_inclusao || "";
-                return da.localeCompare(db);
-              });
+        {/* Conteúdo da Aba 1: Fila de Espera */}
+        {abaDemanda === "espera" && (
+          <div>
+            {itensEspera.length === 0 ? (
+              <p className="mt-3 rounded-xl bg-sand/60 px-3 py-4 text-center text-xs text-ink/55">
+                Nenhuma solicitação aguardando na fila de espera para este paciente na regulação.
+              </p>
+            ) : (
+              <div className="mt-4 space-y-4">
+                {(() => {
+                  const ordenados = [...itensEspera].sort((a, b) => {
+                    const da = a.data_pedido || a.data_inclusao || "";
+                    const db = b.data_pedido || b.data_inclusao || "";
+                    return da.localeCompare(db);
+                  });
 
-              if (modoVisao === "geral") {
-                // VISÃO DA FILA GERAL: Listagem unificada de todas as solicitações ativas
-                return (
-                  <div className="overflow-hidden rounded-xl border border-sus-900/10 bg-white">
-                    <div className="flex items-center justify-between border-b border-sus-900/10 bg-sus-900/5 px-4 py-2.5">
-                      <div className="flex items-center gap-2">
-                        <Layers className="h-4 w-4 text-teal" />
-                        <h4 className="font-display text-xs font-bold uppercase tracking-wide text-sus-950">
-                          Visão Unificada da Fila Geral de Regulação
-                        </h4>
+                  if (modoVisao === "geral") {
+                    return (
+                      <div className="overflow-hidden rounded-xl border border-sus-900/10 bg-white">
+                        <div className="flex items-center justify-between border-b border-sus-900/10 bg-sus-900/5 px-4 py-2.5">
+                          <div className="flex items-center gap-2">
+                            <Layers className="h-4 w-4 text-teal" />
+                            <h4 className="font-display text-xs font-bold uppercase tracking-wide text-sus-950">
+                              Visão Unificada da Fila Geral de Regulação
+                            </h4>
+                          </div>
+                          <span className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-semibold text-sus-900 shadow-xs">
+                            {ordenados.length} {ordenados.length === 1 ? "solicitação pendente" : "solicitações pendentes"}
+                          </span>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full min-w-[800px] text-left text-xs">
+                            <thead>
+                              <tr className="border-b border-sus-900/10 bg-sand/50 text-[11px] uppercase text-sus-900/60">
+                                <th className="px-3 py-2.5">Data Pedido</th>
+                                <th className="px-3 py-2.5">Procedimento / Exame</th>
+                                <th className="px-3 py-2.5">Especialidade / Fila</th>
+                                <th className="px-3 py-2.5">Risco</th>
+                                <th className="px-3 py-2.5">Posição Fila Geral</th>
+                                <th className="px-3 py-2.5">Posição Especialidade</th>
+                                <th className="px-3 py-2.5">Status</th>
+                                <th className="px-3 py-2.5 text-right">Ação</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {ordenados.map((d) => (
+                                <tr
+                                  key={d.id}
+                                  onClick={() => abrirExame(d.id)}
+                                  className="group cursor-pointer border-b border-sus-900/5 transition-colors last:border-0 hover:bg-teal/10"
+                                  title="Clique para abrir e gerenciar na Fila de Exames"
+                                >
+                                  <td className="px-3 py-2 font-semibold text-sus-950">
+                                    {d.data_pedido ? d.data_pedido.split("-").reverse().join("/") : (d.data_inclusao || "—")}
+                                  </td>
+                                  <td className="px-3 py-2 font-bold text-sus-950">
+                                    {d.exame || "—"}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <p className="font-semibold text-sus-900">
+                                      {d.nome_especialidade || d.especialidade || d.tipo_fila || "—"}
+                                    </p>
+                                    {d.tipo_fila && d.tipo_fila !== (d.nome_especialidade || d.especialidade) && (
+                                      <span className="text-[10px] text-ink/50 block">{d.tipo_fila}</span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${RISCO_COR[d.classificacao_risco] ?? "bg-sand"}`}>
+                                      {d.classificacao_risco}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-2 font-semibold">
+                                    {d.posicao_fila_geral ? (
+                                      <span className="text-teal font-extrabold">{d.posicao_fila_geral}º da Fila Geral</span>
+                                    ) : (
+                                      <span className="text-ink/40">—</span>
+                                    )}
+                                    {d.total_fila_geral ? (
+                                      <span className="block text-[10px] font-normal text-ink/50">de {d.total_fila_geral} total</span>
+                                    ) : null}
+                                  </td>
+                                  <td className="px-3 py-2 font-semibold">
+                                    {d.posicao_especialidade ? `${d.posicao_especialidade}º da fila` : "—"}
+                                    {d.total_fila_especialidade ? (
+                                      <span className="block text-[10px] font-normal text-ink/50">de {d.total_fila_especialidade} na área</span>
+                                    ) : null}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <span className="font-semibold">{d.status_rotulo}</span>
+                                    {d.data_agendada && (
+                                      <span className="mt-0.5 flex items-center gap-1 text-[11px] text-ink/50">
+                                        <CalendarDays className="h-3 w-3" />
+                                        {d.data_agendada.slice(0, 10).split("-").reverse().join("/")}{d.hora_agendada ? ` · ${d.hora_agendada}` : ""}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2 text-right">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        abrirExame(d.id);
+                                      }}
+                                      className="inline-flex items-center gap-1 rounded-lg border border-sus-900/15 bg-white px-2 py-1 text-[11px] font-bold text-sus-900 shadow-2xs transition-colors hover:bg-sus-900 hover:text-white"
+                                      title="Abrir solicitação na fila"
+                                    >
+                                      <ExternalLink className="h-3.5 w-3.5" />
+                                      <span>Ver na fila</span>
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
-                      <span className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-semibold text-sus-900 shadow-xs">
-                        {ordenados.length} {ordenados.length === 1 ? "solicitação no total" : "solicitações no total"}
-                      </span>
+                    );
+                  }
+
+                  const grupos = new Map<string, typeof itensEspera>();
+                  for (const item of ordenados) {
+                    const proc = item.exame?.trim() || "Procedimento não especificado";
+                    if (!grupos.has(proc)) grupos.set(proc, []);
+                    grupos.get(proc)!.push(item);
+                  }
+
+                  return Array.from(grupos.entries()).map(([proc, itens]) => (
+                    <div key={proc} className="overflow-hidden rounded-xl border border-sus-900/10 bg-white">
+                      <div className="flex items-center justify-between border-b border-sus-900/10 bg-sus-900/5 px-4 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <span className="h-2 w-2 rounded-full bg-teal" />
+                          <h4 className="font-display text-xs font-bold uppercase tracking-wide text-sus-950">{proc}</h4>
+                        </div>
+                        <span className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-semibold text-sus-900 shadow-xs">
+                          {itens.length} {itens.length === 1 ? "solicitação" : "solicitações"}
+                        </span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full min-w-[750px] text-left text-xs">
+                          <thead>
+                            <tr className="border-b border-sus-900/10 bg-sand/50 text-[11px] uppercase text-sus-900/60">
+                              <th className="px-3 py-2">Data do Pedido</th>
+                              <th className="px-3 py-2">Especialidade</th>
+                              <th className="px-3 py-2">Classificação de risco</th>
+                              <th className="px-3 py-2">Posição na Fila Geral</th>
+                              <th className="px-3 py-2">Posição na Especialidade</th>
+                              <th className="px-3 py-2">Status</th>
+                              <th className="px-3 py-2 text-right">Ação</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {itens.map((d) => (
+                              <tr
+                                key={d.id}
+                                onClick={() => abrirExame(d.id)}
+                                className="group cursor-pointer border-b border-sus-900/5 transition-colors last:border-0 hover:bg-teal/10"
+                                title="Clique para visualizar e gerenciar esta solicitação na Fila de Exames"
+                              >
+                                <td className="px-3 py-2 font-semibold">
+                                  {d.data_pedido ? d.data_pedido.split("-").reverse().join("/") : (d.data_inclusao || "—")}
+                                </td>
+                                <td className="px-3 py-2">
+                                  <p className="font-semibold text-sus-950">{d.nome_especialidade || d.especialidade || d.tipo_fila || "—"}</p>
+                                </td>
+                                <td className="px-3 py-2">
+                                  <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${RISCO_COR[d.classificacao_risco] ?? "bg-sand"}`}>
+                                    {d.classificacao_risco}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 font-semibold">
+                                  {d.posicao_fila_geral ? (
+                                    <span className="text-teal font-extrabold">{d.posicao_fila_geral}º Fila Geral</span>
+                                  ) : "—"}
+                                  {d.total_fila_geral ? <span className="block font-normal text-ink/45">de {d.total_fila_geral} total</span> : null}
+                                </td>
+                                <td className="px-3 py-2 font-semibold">
+                                  {d.posicao_especialidade ? `${d.posicao_especialidade}º da fila` : "—"}
+                                  {d.total_fila_especialidade ? <span className="block font-normal text-ink/45">de {d.total_fila_especialidade} na especialidade</span> : null}
+                                </td>
+                                <td className="px-3 py-2">
+                                  <span className="font-semibold">{d.status_rotulo}</span>
+                                  {d.data_agendada && (
+                                    <span className="mt-1 flex items-center gap-1 text-ink/50">
+                                      <CalendarDays className="h-3 w-3" />
+                                      {d.data_agendada.slice(0, 10).split("-").reverse().join("/")}{d.hora_agendada ? ` · ${d.hora_agendada}` : ""}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      abrirExame(d.id);
+                                    }}
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-sus-900/15 bg-white px-2.5 py-1 text-[11px] font-bold text-sus-900 shadow-2xs transition-colors hover:bg-sus-900 hover:text-white"
+                                    title="Abrir solicitação na fila"
+                                  >
+                                    <ExternalLink className="h-3.5 w-3.5" />
+                                    <span>Ver na fila</span>
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[800px] text-left text-xs">
-                        <thead>
-                          <tr className="border-b border-sus-900/10 bg-sand/50 text-[11px] uppercase text-sus-900/60">
-                            <th className="px-3 py-2.5">Data Pedido</th>
-                            <th className="px-3 py-2.5">Procedimento / Exame</th>
-                            <th className="px-3 py-2.5">Especialidade / Fila</th>
-                            <th className="px-3 py-2.5">Risco</th>
-                            <th className="px-3 py-2.5">Posição Fila Geral</th>
-                            <th className="px-3 py-2.5">Posição Especialidade</th>
-                            <th className="px-3 py-2.5">Status</th>
-                            <th className="px-3 py-2.5 text-right">Ação</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {ordenados.map((d) => (
+                  ));
+                })()}
+              </div>
+            )}
+            <p className="mt-3 text-[11px] text-ink/45">
+              {modoVisao === "geral"
+                ? "Fila de Espera (Visão Geral): exibe todas as solicitações pendentes de agendamento em ordem cronológica de inclusão."
+                : "Fila de Espera (Por Procedimento): solicitações pendentes agrupadas pelo tipo de procedimento."}
+            </p>
+          </div>
+        )}
+
+        {/* Conteúdo da Aba 2: Procedimentos Já Realizados / Histórico de Execução */}
+        {abaDemanda === "realizados" && (
+          <div>
+            {itensRealizados.length === 0 ? (
+              <p className="mt-3 rounded-xl bg-sand/60 px-3 py-4 text-center text-xs text-ink/55">
+                Nenhum procedimento com agendamento ou execução registrada no histórico deste paciente.
+              </p>
+            ) : (
+              <div className="mt-4 overflow-hidden rounded-xl border border-sus-900/10 bg-white">
+                <div className="flex items-center justify-between border-b border-sus-900/10 bg-emerald-50 px-4 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+                    <h4 className="font-display text-xs font-bold uppercase tracking-wide text-emerald-950">
+                      Histórico de Execuções e Procedimentos Marcados
+                    </h4>
+                  </div>
+                  <span className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-bold text-emerald-800 shadow-xs">
+                    {itensRealizados.length} {itensRealizados.length === 1 ? "registro" : "registros"}
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[850px] text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-sus-900/10 bg-sand/50 text-[11px] uppercase text-sus-900/60">
+                        <th className="px-3 py-2.5">Data Execução / Agendamento</th>
+                        <th className="px-3 py-2.5">Procedimento / Exame</th>
+                        <th className="px-3 py-2.5">Especialidade / CBO</th>
+                        <th className="px-3 py-2.5">Profissional Responsável</th>
+                        <th className="px-3 py-2.5">Unidade de Saúde</th>
+                        <th className="px-3 py-2.5">Status</th>
+                        <th className="px-3 py-2.5">Resultado / Laudo</th>
+                        <th className="px-3 py-2.5 text-right">Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {itensRealizados
+                        .slice()
+                        .sort((a, b) => {
+                          const da = a.realizado_em || a.data_agendada || a.data_pedido || "";
+                          const db = b.realizado_em || b.data_agendada || b.data_pedido || "";
+                          return db.localeCompare(da); // Mais recente primeiro
+                        })
+                        .map((d) => {
+                          const dataRef = d.realizado_em || d.data_agendada || d.data_pedido || "";
+                          const dataFmt = dataRef ? dataRef.slice(0, 10).split("-").reverse().join("/") : "—";
+                          const horaFmt = d.hora_agendada ? ` · ${d.hora_agendada}` : "";
+
+                          return (
                             <tr
                               key={d.id}
                               onClick={() => abrirExame(d.id)}
-                              className="group cursor-pointer border-b border-sus-900/5 transition-colors last:border-0 hover:bg-teal/10"
-                              title="Clique para abrir e gerenciar na Fila de Exames"
+                              className="group cursor-pointer border-b border-sus-900/5 transition-colors last:border-0 hover:bg-emerald-50/50"
+                              title="Clique para abrir detalhes do registro"
                             >
-                              <td className="px-3 py-2 font-semibold text-sus-950">
-                                {d.data_pedido ? d.data_pedido.split("-").reverse().join("/") : (d.data_inclusao || "—")}
-                              </td>
-                              <td className="px-3 py-2 font-bold text-sus-950">
-                                {d.exame || "—"}
-                              </td>
-                              <td className="px-3 py-2">
-                                <p className="font-semibold text-sus-900">
-                                  {d.nome_especialidade || d.especialidade || d.tipo_fila || "—"}
-                                </p>
-                                {d.tipo_fila && d.tipo_fila !== (d.nome_especialidade || d.especialidade) && (
-                                  <span className="text-[10px] text-ink/50 block">{d.tipo_fila}</span>
+                              <td className="px-3 py-2.5 font-semibold text-sus-950">
+                                <div>{dataFmt}{horaFmt}</div>
+                                {d.realizado_em && (
+                                  <span className="text-[10px] text-emerald-700 font-normal">Realizado</span>
+                                )}
+                                {!d.realizado_em && d.data_agendada && (
+                                  <span className="text-[10px] text-blue-700 font-normal">Agendado</span>
                                 )}
                               </td>
-                              <td className="px-3 py-2">
-                                <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${RISCO_COR[d.classificacao_risco] ?? "bg-sand"}`}>
-                                  {d.classificacao_risco}
+                              <td className="px-3 py-2.5 font-bold text-sus-950">
+                                {d.exame || "—"}
+                              </td>
+                              <td className="px-3 py-2.5">
+                                <span className="font-semibold text-sus-900">
+                                  {d.nome_especialidade || d.especialidade || d.tipo_fila || "—"}
                                 </span>
                               </td>
-                              <td className="px-3 py-2 font-semibold">
-                                {d.posicao_fila_geral ? (
-                                  <span className="text-teal font-extrabold">{d.posicao_fila_geral}º da Fila Geral</span>
+                              <td className="px-3 py-2.5 text-ink/75">
+                                {d.medico_nome ? (
+                                  <span className="inline-flex items-center gap-1 font-medium">
+                                    <Stethoscope className="h-3 w-3 text-sus-900/40" />
+                                    {d.medico_nome}
+                                  </span>
                                 ) : (
                                   <span className="text-ink/40">—</span>
                                 )}
-                                {d.total_fila_geral ? (
-                                  <span className="block text-[10px] font-normal text-ink/50">de {d.total_fila_geral} total</span>
-                                ) : null}
                               </td>
-                              <td className="px-3 py-2 font-semibold">
-                                {d.posicao_especialidade ? `${d.posicao_especialidade}º da fila` : "—"}
-                                {d.total_fila_especialidade ? (
-                                  <span className="block text-[10px] font-normal text-ink/50">de {d.total_fila_especialidade} na área</span>
-                                ) : null}
+                              <td className="px-3 py-2.5 text-ink/75">
+                                {d.unidade_nome || "—"}
                               </td>
-                              <td className="px-3 py-2">
-                                <span className="font-semibold">{d.status_rotulo}</span>
-                                {d.data_agendada && (
-                                  <span className="mt-0.5 flex items-center gap-1 text-[11px] text-ink/50">
-                                    <CalendarDays className="h-3 w-3" />
-                                    {d.data_agendada.slice(0, 10).split("-").reverse().join("/")}{d.hora_agendada ? ` · ${d.hora_agendada}` : ""}
+                              <td className="px-3 py-2.5">
+                                <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-bold ${
+                                  (d.status || "").toLowerCase() === "realizado"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : (d.status || "").toLowerCase() === "agendado"
+                                    ? "bg-blue-100 text-blue-800"
+                                    : "bg-sand text-ink/75"
+                                }`}>
+                                  {d.status_rotulo || d.status}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2.5 text-ink/70">
+                                {d.resultado ? (
+                                  <span className="font-medium text-emerald-900 bg-emerald-50 px-1.5 py-0.5 rounded text-[11px]">
+                                    {d.resultado}
                                   </span>
+                                ) : (
+                                  <span className="text-ink/40 text-[11px] italic">Sem laudo anexo</span>
                                 )}
                               </td>
-                              <td className="px-3 py-2 text-right">
+                              <td className="px-3 py-2.5 text-right">
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -241,120 +523,25 @@ export default function PerfilPaciente({
                                     abrirExame(d.id);
                                   }}
                                   className="inline-flex items-center gap-1 rounded-lg border border-sus-900/15 bg-white px-2 py-1 text-[11px] font-bold text-sus-900 shadow-2xs transition-colors hover:bg-sus-900 hover:text-white"
-                                  title="Abrir solicitação na fila"
+                                  title="Ver detalhes da solicitação"
                                 >
                                   <ExternalLink className="h-3.5 w-3.5" />
-                                  <span>Ver na fila</span>
+                                  <span>Ver detalhes</span>
                                 </button>
                               </td>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                );
-              }
-
-              // VISÃO POR PROCEDIMENTO: Agrupado por tipo de exame
-              const grupos = new Map<string, typeof perfil.demanda>();
-              for (const item of ordenados) {
-                const proc = item.exame?.trim() || "Procedimento não especificado";
-                if (!grupos.has(proc)) grupos.set(proc, []);
-                grupos.get(proc)!.push(item);
-              }
-
-              return Array.from(grupos.entries()).map(([proc, itens]) => (
-                <div key={proc} className="overflow-hidden rounded-xl border border-sus-900/10 bg-white">
-                  <div className="flex items-center justify-between border-b border-sus-900/10 bg-sus-900/5 px-4 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <span className="h-2 w-2 rounded-full bg-teal" />
-                      <h4 className="font-display text-xs font-bold uppercase tracking-wide text-sus-950">{proc}</h4>
-                    </div>
-                    <span className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-semibold text-sus-900 shadow-xs">
-                      {itens.length} {itens.length === 1 ? "solicitação" : "solicitações"}
-                    </span>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[750px] text-left text-xs">
-                      <thead>
-                        <tr className="border-b border-sus-900/10 bg-sand/50 text-[11px] uppercase text-sus-900/60">
-                          <th className="px-3 py-2">Data do Pedido / Inclusão</th>
-                          <th className="px-3 py-2">Especialidade</th>
-                          <th className="px-3 py-2">Classificação de risco</th>
-                          <th className="px-3 py-2">Posição na Fila Geral</th>
-                          <th className="px-3 py-2">Posição na Especialidade</th>
-                          <th className="px-3 py-2">Status</th>
-                          <th className="px-3 py-2 text-right">Ação</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {itens.map((d) => (
-                          <tr
-                            key={d.id}
-                            onClick={() => abrirExame(d.id)}
-                            className="group cursor-pointer border-b border-sus-900/5 transition-colors last:border-0 hover:bg-teal/10"
-                            title="Clique para visualizar e gerenciar esta solicitação na Fila de Exames"
-                          >
-                            <td className="px-3 py-2 font-semibold">
-                              {d.data_pedido ? d.data_pedido.split("-").reverse().join("/") : (d.data_inclusao || "—")}
-                            </td>
-                            <td className="px-3 py-2">
-                              <p className="font-semibold text-sus-950">{d.nome_especialidade || d.especialidade || d.tipo_fila || "—"}</p>
-                            </td>
-                            <td className="px-3 py-2">
-                              <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${RISCO_COR[d.classificacao_risco] ?? "bg-sand"}`}>
-                                {d.classificacao_risco}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2 font-semibold">
-                              {d.posicao_fila_geral ? (
-                                <span className="text-teal font-extrabold">{d.posicao_fila_geral}º Fila Geral</span>
-                              ) : "—"}
-                              {d.total_fila_geral ? <span className="block font-normal text-ink/45">de {d.total_fila_geral} total</span> : null}
-                            </td>
-                            <td className="px-3 py-2 font-semibold">
-                              {d.posicao_especialidade ? `${d.posicao_especialidade}º da fila` : "—"}
-                              {d.total_fila_especialidade ? <span className="block font-normal text-ink/45">de {d.total_fila_especialidade} na especialidade</span> : null}
-                            </td>
-                            <td className="px-3 py-2">
-                              <span className="font-semibold">{d.status_rotulo}</span>
-                              {d.data_agendada && (
-                                <span className="mt-1 flex items-center gap-1 text-ink/50">
-                                  <CalendarDays className="h-3 w-3" />
-                                  {d.data_agendada.slice(0, 10).split("-").reverse().join("/")}{d.hora_agendada ? ` · ${d.hora_agendada}` : ""}
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-3 py-2 text-right">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  abrirExame(d.id);
-                                }}
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-sus-900/15 bg-white px-2.5 py-1 text-[11px] font-bold text-sus-900 shadow-2xs transition-colors hover:bg-sus-900 hover:text-white"
-                                title="Abrir solicitação na fila"
-                              >
-                                <ExternalLink className="h-3.5 w-3.5" />
-                                <span>Ver na fila</span>
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                          );
+                        })}
+                    </tbody>
+                  </table>
                 </div>
-              ));
-            })()}
+              </div>
+            )}
+            <p className="mt-3 text-[11px] text-ink/45">
+              Histórico de Procedimentos: exibe procedimentos já realizados ou marcados pelo paciente com baixa automática na fila de espera.
+            </p>
           </div>
         )}
-        <p className="mt-3 text-[11px] text-ink/45">
-          {modoVisao === "geral"
-            ? "Visão Unificada da Fila Geral: exibe todas as solicitações pendentes e ativas do paciente em ordem cronológica de inclusão."
-            : "Listagem agrupada por Procedimento e ordenada estritamente por ordem cronológica (tempo de espera)."}
-        </p>
       </section>
     </div>
   );

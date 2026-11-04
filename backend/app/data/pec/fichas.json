@@ -3,31 +3,31 @@
   "funil": [
     {
       "etapa": "Cidadãos Cadastrados no e-SUS",
-      "total": 31880
+      "total": 35029
     },
     {
       "etapa": "Visitas ACS/Domiciliar",
-      "total": 60913
+      "total": 59489
     },
     {
       "etapa": "Atend. individual",
-      "total": 32856
+      "total": 32712
     },
     {
       "etapa": "Procedimentos",
-      "total": 10229
+      "total": 10443
     },
     {
       "etapa": "Vacinas aplicadas",
-      "total": 7162
+      "total": 7161
     },
     {
       "etapa": "Odonto",
-      "total": 2986
+      "total": 2984
     },
     {
       "etapa": "Ativ. coletiva",
-      "total": 997
+      "total": 981
     }
   ]
 }

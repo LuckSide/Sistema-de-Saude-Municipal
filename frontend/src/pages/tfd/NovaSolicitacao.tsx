@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
   AlertTriangle,
+  ArrowRight,
   Building2,
   Calendar,
   Check,
+  CheckCheck,
   CheckCircle2,
   ChevronRight,
   ClipboardList,
   Clock,
+  FileSpreadsheet,
+  FileText,
   FlaskConical,
   Layers,
   ListOrdered,
@@ -17,10 +21,12 @@ import {
   Printer,
   RotateCcw,
   Search,
+  Send,
   Sparkles,
   Stethoscope,
   Trash2,
   User,
+  Users,
   X,
 } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
@@ -29,26 +35,33 @@ import {
   fetchUnidadesSaude,
   tfdCatalogoExames,
   tfdCriarExame,
+  tfdCriarExamesLote,
   tfdTipos,
   tfdEspecialidades,
   tfdBuscarCids,
   labSigtap,
+  sigtapCbos,
   pagData,
   type CatalogoProc,
   type EspecialidadeCat,
   type Exame,
+  type ExameLoteCriarOut,
   type Medico,
   type Paciente,
+  type SigtapCbo,
   type SigtapCidItem,
   type SigtapProc,
   type TipoFila,
   type UnidadeSaude,
+  tfdVerificarDuplicidade,
+  type PedidoDuplicadoTfd,
 } from "../../services/api";
-import { Button, Card, Input, Label } from "../../components/ui/primitives";
+import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
 import { Combobox } from "../../components/ui/combobox";
 import BuscaPacienteAutocomplete from "../../components/BuscaPacienteAutocomplete";
 import BotaoWhatsApp from "../../components/BotaoWhatsApp";
 import ComprovanteExameModal from "../../components/ComprovanteExameModal";
+import AlertaPedidoDuplicado from "../../components/AlertaPedidoDuplicado";
 
 function hojeISO(): string {
   return new Date().toISOString().slice(0, 10);
@@ -72,8 +85,13 @@ export default function NovaSolicitacao() {
   // Seleções do Formulário
   const [pacienteSelecionado, setPacienteSelecionado] = useState<Paciente | null>(null);
 
-  // Hierarquia: 1º Tipo de Serviço -> 2º Procedimento
+  // Hierarquia: 1º Tipo de Serviço -> 2º Procedimento ou CBO (Consultas vs Exames/Cirurgias)
   const [tipoServico, setTipoServico] = useState("");
+  const isConsulta = useMemo(() => {
+    const t = (tipoServico || "").toUpperCase();
+    return t.includes("CONSULTA");
+  }, [tipoServico]);
+
   const [procedimentoSel, setProcedimentoSel] = useState<CatalogoProc | null>(null);
   const [procTexto, setProcTexto] = useState("");
   const [buscaProc, setBuscaProc] = useState("");
@@ -81,6 +99,8 @@ export default function NovaSolicitacao() {
   const [codigoProcedimento, setCodigoProcedimento] = useState("");
   const [especialidade, setEspecialidade] = useState("");
   const [codigoEspecialidade, setCodigoEspecialidade] = useState("");
+  const [cbosAutorizados, setCbosAutorizados] = useState<SigtapCbo[]>([]);
+  const [carregandoCbos, setCarregandoCbos] = useState(false);
 
   // Origem e Data
   const [unidadeId, setUnidadeId] = useState<string>("");
@@ -135,6 +155,308 @@ export default function NovaSolicitacao() {
   const [especialidadesCadastradas, setEspecialidadesCadastradas] = useState<EspecialidadeCat[]>([]);
   const [procedimentosDinamicos, setProcedimentosDinamicos] = useState<CatalogoProc[]>([]);
   const [buscandoProc, setBuscandoProc] = useState(false);
+
+  // Modo de Lançamento: Individual vs Lote
+  const [searchParams, setSearchParams] = useSearchParams();
+  const modoParam = searchParams.get("modo");
+  const [modo, setModo] = useState<"individual" | "lote">(modoParam === "lote" ? "lote" : "individual");
+
+  useEffect(() => {
+    if (modoParam === "lote" && modo !== "lote") {
+      setModo("lote");
+    } else if (!modoParam && modo !== "individual") {
+      setModo("individual");
+    }
+  }, [modoParam]);
+
+  function alternarModo(novoModo: "individual" | "lote") {
+    setModo(novoModo);
+    setSearchParams(novoModo === "lote" ? { modo: "lote" } : {});
+    setErro("");
+  }
+
+  // Estados do Modo Lançamento em Lote
+  interface ItemPacienteLote {
+    uid: string;
+    paciente: Paciente;
+    justificativa?: string;
+    cid_codigo?: string;
+    cid_descricao?: string;
+    observacoes?: string;
+    duplicadoInfo?: PedidoDuplicadoTfd;
+  }
+
+  // Verificação de Pedidos Duplicados em Tempo Real
+  const [duplicidadeAtiva, setDuplicidadeAtiva] = useState<PedidoDuplicadoTfd | null>(null);
+  const [verificandoDuplicidade, setVerificandoDuplicidade] = useState(false);
+  const [ignorarDuplicidade, setIgnorarDuplicidade] = useState(false);
+
+  const [pacientesLote, setPacientesLote] = useState<ItemPacienteLote[]>([]);
+  const [pacienteLoteBusca, setPacienteLoteBusca] = useState<Paciente | null>(null);
+  const [agendamentoDiretoLote, setAgendamentoDiretoLote] = useState(false);
+  const [dataAgendadaLote, setDataAgendadaLote] = useState("");
+  const [horaAgendadaLote, setHoraAgendadaLote] = useState("08:00");
+  const [justificativaLotePadrao, setJustificativaLotePadrao] = useState("");
+  const [cidCodigoLotePadrao, setCidCodigoLotePadrao] = useState("");
+  const [cidDescricaoLotePadrao, setCidDescricaoLotePadrao] = useState("");
+  const [buscaCidLote, setBuscaCidLote] = useState("");
+  const [cidsSugeridosLote, setCidsSugeridosLote] = useState<SigtapCidItem[]>([]);
+  const [buscandoCidLote, setBuscandoCidLote] = useState(false);
+  const [observacoesLotePadrao, setObservacoesLotePadrao] = useState("");
+
+  const [modalConfirmacaoLote, setModalConfirmacaoLote] = useState(false);
+  const [loteProcessado, setLoteProcessado] = useState<ExameLoteCriarOut | null>(null);
+  const [salvandoLote, setSalvandoLote] = useState(false);
+  const [comprovanteLoteModal, setComprovanteLoteModal] = useState<Exame | null>(null);
+
+  useEffect(() => {
+    if (!buscaCidLote || buscaCidLote.trim().length < 1) {
+      setCidsSugeridosLote([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      setBuscandoCidLote(true);
+      tfdBuscarCids(buscaCidLote.trim())
+        .then(setCidsSugeridosLote)
+        .catch(() => setCidsSugeridosLote([]))
+        .finally(() => setBuscandoCidLote(false));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [buscaCidLote]);
+
+  // Verificação em Tempo Real de Duplicidade Ativa (Fila de Solicitações)
+  useEffect(() => {
+    if (!pacienteSelecionado?.id) {
+      setDuplicidadeAtiva(null);
+      return;
+    }
+
+    const codProc = (codigoProcedimento || procedimentoSel?.codigo_procedimento || "").trim();
+    const nomeProc = (procTexto || procedimentoSel?.exame || "").trim();
+    const cbo = (codigoEspecialidade || "").trim();
+    const esp = (especialidade || "").trim();
+
+    if (!codProc && !nomeProc && !cbo && !esp) {
+      setDuplicidadeAtiva(null);
+      return;
+    }
+
+    setIgnorarDuplicidade(false);
+
+    const t = setTimeout(() => {
+      setVerificandoDuplicidade(true);
+      tfdVerificarDuplicidade({
+        paciente_id: pacienteSelecionado.id,
+        codigo_procedimento: codProc || undefined,
+        procedimento_nome: nomeProc || undefined,
+        codigo_especialidade: cbo || undefined,
+        especialidade_nome: esp || undefined,
+        tipo_fila: tipoServico || undefined,
+      })
+        .then((res) => {
+          if (res.duplicado && res.pedido) {
+            setDuplicidadeAtiva(res.pedido);
+          } else {
+            setDuplicidadeAtiva(null);
+          }
+        })
+        .catch(() => {
+          setDuplicidadeAtiva(null);
+        })
+        .finally(() => {
+          setVerificandoDuplicidade(false);
+        });
+    }, 250);
+
+    return () => clearTimeout(t);
+  }, [
+    pacienteSelecionado?.id,
+    codigoProcedimento,
+    procedimentoSel,
+    procTexto,
+    codigoEspecialidade,
+    especialidade,
+    tipoServico,
+  ]);
+
+  async function adicionarPacienteAoLote(pac: Paciente | null) {
+    if (!pac?.id) return;
+    if (pacientesLote.some((p) => p.paciente.id === pac.id)) {
+      setErro(`O paciente "${pac.nome}" já está incluído na lista deste lote.`);
+      return;
+    }
+    setErro("");
+
+    const codProc = (codigoProcedimento || procedimentoSel?.codigo_procedimento || "").trim();
+    const nomeProc = (procTexto || procedimentoSel?.exame || "").trim();
+    const cbo = (codigoEspecialidade || "").trim();
+    const esp = (especialidade || "").trim();
+
+    let duplicadoInfo: PedidoDuplicadoTfd | undefined = undefined;
+    if (codProc || nomeProc || cbo || esp) {
+      try {
+        const dup = await tfdVerificarDuplicidade({
+          paciente_id: pac.id,
+          codigo_procedimento: codProc || undefined,
+          procedimento_nome: nomeProc || undefined,
+          codigo_especialidade: cbo || undefined,
+          especialidade_nome: esp || undefined,
+          tipo_fila: tipoServico || undefined,
+        });
+        if (dup.duplicado && dup.pedido) {
+          duplicadoInfo = dup.pedido;
+        }
+      } catch {
+        // Ignora erro de rede na verificação
+      }
+    }
+
+    setPacientesLote((prev) => [
+      ...prev,
+      {
+        uid: Math.random().toString(36).slice(2, 9),
+        paciente: pac,
+        justificativa: justificativaLotePadrao || "",
+        cid_codigo: cidCodigoLotePadrao || "",
+        cid_descricao: cidDescricaoLotePadrao || "",
+        observacoes: observacoesLotePadrao || "",
+        duplicadoInfo,
+      },
+    ]);
+    setPacienteLoteBusca(null);
+  }
+
+  function removerPacienteDoLote(uid: string) {
+    setPacientesLote((prev) => prev.filter((p) => p.uid !== uid));
+  }
+
+  function atualizarItemLote(
+    uid: string,
+    campo: "justificativa" | "cid_codigo" | "cid_descricao" | "observacoes",
+    valor: string,
+  ) {
+    setPacientesLote((prev) =>
+      prev.map((item) => (item.uid === uid ? { ...item, [campo]: valor } : item)),
+    );
+  }
+
+  function limparLote() {
+    setPacientesLote([]);
+    setPacienteLoteBusca(null);
+    setJustificativaLotePadrao("");
+    setCidCodigoLotePadrao("");
+    setCidDescricaoLotePadrao("");
+    setBuscaCidLote("");
+    setCidsSugeridosLote([]);
+    setObservacoesLotePadrao("");
+    setAgendamentoDiretoLote(false);
+    setDataAgendadaLote("");
+    setHoraAgendadaLote("08:00");
+    setLoteProcessado(null);
+    setErro("");
+  }
+
+  function submeterLote(e: React.FormEvent) {
+    e.preventDefault();
+    setErro("");
+    setLoteProcessado(null);
+
+    if (pacientesLote.length === 0) {
+      setErro("Adicione pelo menos 1 paciente à lista para realizar o lançamento em lote.");
+      return;
+    }
+    if (!tipoServico) {
+      setErro("Selecione o Tipo de Serviço a ser aplicado ao lote.");
+      return;
+    }
+    if (isConsulta && !especialidade.trim()) {
+      setErro("Para consultas especializadas em lote, selecione o CBO / Especialidade Médica correspondente.");
+      return;
+    }
+    const nomeProcAtual = procTexto.trim() || procedimentoSel?.exame || "";
+    if (nomeProcAtual.length < 2) {
+      setErro("Informe o procedimento ou exame correspondente a ser aplicado ao lote.");
+      return;
+    }
+    if (!unidadeId) {
+      setErro("Selecione a Unidade Solicitante / PSF.");
+      return;
+    }
+    if (!medicoId) {
+      setErro("Selecione o(a) Médico(a) Requisitante / Profissional Responsável.");
+      return;
+    }
+
+    // Validação da Justificativa para cada paciente
+    const justPadrao = justificativaLotePadrao.trim();
+    for (let i = 0; i < pacientesLote.length; i++) {
+      const item = pacientesLote[i];
+      const justEfetiva = (item.justificativa || "").trim() || justPadrao;
+      if (justEfetiva.length < JUST_MIN) {
+        setErro(
+          `O paciente "${item.paciente.nome}" (linha ${i + 1}) não possui justificativa válida. ` +
+            `Defina uma Justificativa Padrão para o lote (mínimo ${JUST_MIN} caracteres) ou preencha a justificativa específica do paciente.`,
+        );
+        return;
+      }
+    }
+
+    if (agendamentoDiretoLote && isTfdCentral) {
+      if (!dataAgendadaLote) {
+        setErro("Para agendamento direto em lote, informe a Data do Agendamento.");
+        return;
+      }
+    }
+
+    setModalConfirmacaoLote(true);
+  }
+
+  async function confirmarGravacaoLote() {
+    setSalvandoLote(true);
+    setErro("");
+    try {
+      const nomeProcAtual = procTexto.trim() || procedimentoSel?.exame || "";
+      const res = await tfdCriarExamesLote({
+        tipo_fila: tipoServico,
+        exame: codigoProcedimento ? `${codigoProcedimento} · ${nomeProcAtual}` : nomeProcAtual,
+        codigo_procedimento: codigoProcedimento || undefined,
+        especialidade: especialidade.trim() || undefined,
+        codigo_especialidade: codigoEspecialidade.trim() || undefined,
+        unidade_saude_id: unidadeId ? Number(unidadeId) : undefined,
+        medico_id: medicoId ? Number(medicoId) : undefined,
+        prioridade: isLancamentoRestrito ? "rotina" : prioridade,
+        data_pedido: isTfdCentral ? dataPedido : hojeISO(),
+        justificativa_padrao: justificativaLotePadrao.trim(),
+        cid_codigo_padrao: cidCodigoLotePadrao.trim() || undefined,
+        cid_descricao_padrao: cidDescricaoLotePadrao.trim() || undefined,
+        observacoes_padrao: observacoesLotePadrao.trim() || undefined,
+        agendamento_direto: agendamentoDiretoLote && isTfdCentral,
+        data_agendada: agendamentoDiretoLote && isTfdCentral ? dataAgendadaLote : undefined,
+        hora_agendada: agendamentoDiretoLote && isTfdCentral ? horaAgendadaLote : undefined,
+        itens: pacientesLote.map((item) => ({
+          paciente_id: item.paciente.id,
+          paciente_nome: item.paciente.nome,
+          justificativa: item.justificativa?.trim() || undefined,
+          cid_codigo: item.cid_codigo?.trim() || undefined,
+          cid_descricao: item.cid_descricao?.trim() || undefined,
+          observacoes: item.observacoes?.trim() || undefined,
+        })),
+      });
+
+      setModalConfirmacaoLote(false);
+      setLoteProcessado(res);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (err: unknown) {
+      const msg =
+        err && typeof err === "object" && "response" in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null;
+      setErro(msg || "Falha ao gravar lote de solicitações. Verifique os dados informados.");
+      setModalConfirmacaoLote(false);
+    } finally {
+      setSalvandoLote(false);
+    }
+  }
 
   // Inicializa dados e permissões padrão
   useEffect(() => {
@@ -202,13 +524,91 @@ export default function NovaSolicitacao() {
     );
     setProcedimentosFiltrados(filtrados.length > 0 ? filtrados : procedimentosTodos);
 
-    // Se o procedimento atual não pertencer ao novo serviço selecionado, limpa-o
-    if (procedimentoSel && (procedimentoSel.tipo_fila || "").toLowerCase() !== tNorm) {
+    // Se o procedimento atual não pertencer ao novo serviço selecionado e não for consulta, limpa-o
+    if (!isConsulta && procedimentoSel && (procedimentoSel.tipo_fila || "").toLowerCase() !== tNorm) {
       setProcedimentoSel(null);
       setProcTexto("");
       setCodigoProcedimento("");
     }
-  }, [tipoServico, procedimentosTodos, procedimentoSel]);
+  }, [tipoServico, procedimentosTodos, procedimentoSel, isConsulta]);
+
+  // Regra Dinâmica: Consultas vs Exames e Cirurgias
+  // 1. Consultas Médicas Especializadas: define automaticamente o procedimento padrão 0301010072
+  useEffect(() => {
+    if (isConsulta) {
+      setCodigoProcedimento("0301010072");
+      setProcTexto("CONSULTA MEDICA EM ATENCAO ESPECIALIZADA");
+      setProcedimentoSel({
+        codigo_procedimento: "0301010072",
+        exame: "CONSULTA MEDICA EM ATENCAO ESPECIALIZADA",
+        especialidade: especialidade || "CONSULTAS ESPECIALIZADAS",
+        tipo_fila: tipoServico || "CONSULTAS ESPECIALIZADAS",
+        codigo_curto: "0301010072",
+        rotulo: "CONSULTA MEDICA EM ATENCAO ESPECIALIZADA",
+        usos: 0,
+      });
+      setCbosAutorizados([]);
+    } else if (codigoProcedimento === "0301010072") {
+      setCodigoProcedimento("");
+      setProcTexto("");
+      setProcedimentoSel(null);
+      setCbosAutorizados([]);
+    }
+  }, [isConsulta, tipoServico]);
+
+  // 2. Exames e Cirurgias: busca estrita de CBOs autorizados no SIGTAP para o procedimento selecionado
+  useEffect(() => {
+    if (isConsulta || !codigoProcedimento) {
+      setCbosAutorizados([]);
+      return;
+    }
+    const codLimpo = codigoProcedimento.replace(/\D/g, "");
+    if (codLimpo.length < 8) {
+      setCbosAutorizados([]);
+      return;
+    }
+    let cancel = false;
+    setCarregandoCbos(true);
+    sigtapCbos(codLimpo)
+      .then((cbos) => {
+        if (!cancel) {
+          const lista = cbos || [];
+          setCbosAutorizados(lista);
+          // Se houver apenas 1 CBO autorizado no SIGTAP para este procedimento, seleciona-o
+          if (lista.length === 1) {
+            setEspecialidade(lista[0].descricao || `CBO ${lista[0].cbo}`);
+            setCodigoEspecialidade(lista[0].cbo);
+          } else if (lista.length > 1) {
+            const jaAutorizado = lista.some(
+              (c) =>
+                c.cbo === codigoEspecialidade ||
+                (c.descricao && c.descricao.toLowerCase() === especialidade.toLowerCase()),
+            );
+            if (!jaAutorizado) {
+              const match = lista.find((c) =>
+                especialidade ? c.descricao?.toLowerCase().includes(especialidade.toLowerCase()) : false,
+              );
+              if (match) {
+                setEspecialidade(match.descricao || `CBO ${match.cbo}`);
+                setCodigoEspecialidade(match.cbo);
+              } else {
+                setEspecialidade("");
+                setCodigoEspecialidade("");
+              }
+            }
+          }
+        }
+      })
+      .catch(() => {
+        if (!cancel) setCbosAutorizados([]);
+      })
+      .finally(() => {
+        if (!cancel) setCarregandoCbos(false);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [codigoProcedimento, isConsulta]);
 
   // Busca inteligente via API quando o operador digita no campo de procedimento
   useEffect(() => {
@@ -414,8 +814,18 @@ export default function NovaSolicitacao() {
       setErro("Selecione um paciente para a solicitação.");
       return;
     }
+    if (duplicidadeAtiva && !ignorarDuplicidade) {
+      setErro(
+        "Atenção: Já existe um pedido idêntico ativo para este paciente. Avalie a situação no alerta em destaque ou clique em 'Prosseguir Mesmo com Duplicidade' para continuar."
+      );
+      return;
+    }
     if (!tipoServico) {
       setErro("Selecione o Tipo de Serviço da solicitação.");
+      return;
+    }
+    if (isConsulta && !especialidade.trim()) {
+      setErro("Para consultas especializadas, selecione o CBO / Especialidade Médica desejada.");
       return;
     }
 
@@ -530,6 +940,16 @@ export default function NovaSolicitacao() {
   );
 
   const opcoesEspecialidades = useMemo(() => {
+    // Se não é consulta e há CBOs autorizados pelo SIGTAP para o procedimento selecionado:
+    if (!isConsulta && cbosAutorizados.length > 0) {
+      return cbosAutorizados.map((c) => ({
+        value: c.descricao || `CBO ${c.cbo}`,
+        label: c.descricao || `CBO ${c.cbo}`,
+        sub: `CBO ${c.cbo} (Autorizado SIGTAP)`,
+        keywords: `${c.descricao} ${c.cbo}`,
+      }));
+    }
+
     const mapa = new Map<string, { nome: string; cbo?: string }>();
     // 1. Especialidades cadastradas e oficiais na base
     for (const e of especialidadesCadastradas) {
@@ -553,7 +973,7 @@ export default function NovaSolicitacao() {
         sub: e.cbo ? `CBO ${e.cbo}` : undefined,
         keywords: `${e.nome} ${e.cbo || ""}`,
       }));
-  }, [especialidadesCadastradas, procedimentosTodos]);
+  }, [isConsulta, cbosAutorizados, especialidadesCadastradas, procedimentosTodos]);
 
   const unidNomeAtual = useMemo(() => {
     const u = unidades.find((x) => String(x.id) === String(unidadeId));
@@ -600,66 +1020,54 @@ export default function NovaSolicitacao() {
         </div>
       </div>
 
-      {/* Banner de Sucesso pós-criação */}
-      {criado && (
-        <Card className="border-2 border-emerald-500 bg-emerald-50/60 p-5 shadow-sm">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <CheckCircle2 className="h-7 w-7 text-emerald-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-display text-base font-bold text-emerald-950">
-                  Solicitação cadastrada com sucesso!
-                </p>
-                <p className="text-xs text-emerald-800 mt-0.5">
-                  Identificador do pedido:{" "}
-                  <strong className="font-mono bg-emerald-200/70 px-1.5 py-0.5 rounded text-emerald-950">
-                    {criado.codigo_curto || `EX-${criado.id}`}
-                  </strong>{" "}
-                  · Paciente: <strong>{criado.paciente_nome}</strong>
-                </p>
-                <p className="text-xs text-emerald-700 mt-1">
-                  Status atual:{" "}
-                  <span className="font-bold uppercase tracking-wider text-[11px] bg-white px-2 py-0.5 rounded border border-emerald-300">
-                    {criado.status === "agendado" ? "📅 Agendado Direto" : "⏳ Na Fila de Espera"}
-                  </span>
-                </p>
-              </div>
-            </div>
+      {/* Seletor de Modo: Individual vs. Lançamento em Lote */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sus-900/10 bg-white p-2.5 shadow-xs">
+        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-sand/60">
+          <button
+            type="button"
+            onClick={() => alternarModo("individual")}
+            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold transition ${
+              modo === "individual"
+                ? "bg-white text-sus-950 shadow-xs"
+                : "text-ink/60 hover:text-sus-950 hover:bg-white/40"
+            }`}
+          >
+            <User className="h-4 w-4 text-teal" />
+            Lançamento Individual
+          </button>
+          <button
+            type="button"
+            onClick={() => alternarModo("lote")}
+            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold transition ${
+              modo === "lote"
+                ? "bg-teal text-white shadow-xs"
+                : "text-ink/60 hover:text-sus-950 hover:bg-white/40"
+            }`}
+          >
+            <Layers className="h-4 w-4" />
+            Lançamento em Lote
+            <span
+              className={`rounded-full px-1.5 py-0.2 text-[10px] font-black ${
+                modo === "lote" ? "bg-white/20 text-white" : "bg-teal/15 text-teal"
+              }`}
+            >
+              Novo
+            </span>
+          </button>
+        </div>
 
-            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-              <BotaoWhatsApp
-                exameId={criado.id}
-                exame={criado}
-                tipo={criado.status === "agendado" ? "agendamento" : "entrada_fila"}
-                variante="completo"
-              />
-              <Button
-                type="button"
-                onClick={() => setAbrirComprovante(true)}
-                variant="outline"
-                className="border-emerald-600 text-emerald-800 hover:bg-emerald-100 text-xs font-semibold flex items-center gap-1.5 !h-9"
-              >
-                <Printer className="h-4 w-4" /> Comprovante com QR Code
-              </Button>
-              <Button
-                onClick={limparFormulario}
-                className="bg-emerald-700 hover:bg-emerald-800 text-white text-xs"
-              >
-                <Plus className="h-4 w-4" /> Lançar Outra Solicitação
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => navigate("/fila-exames")}
-                className="border-emerald-600 text-emerald-800 hover:bg-emerald-100 text-xs"
-              >
-                Ir para Fila
-              </Button>
-            </div>
-          </div>
-        </Card>
-      )}
+        <div className="text-xs text-ink/60 px-2">
+          {modo === "lote" ? (
+            <span className="flex items-center gap-1.5 text-teal font-semibold">
+              <Users className="h-4 w-4" /> Modo Lote: adicione múltiplos pacientes rapidamente com o mesmo procedimento e agendamento direto.
+            </span>
+          ) : (
+            <span>Modo Individual: preenchimento completo de um paciente por solicitação.</span>
+          )}
+        </div>
+      </div>
 
-      {/* Alerta de Erro */}
+      {/* Alerta de Erro Global */}
       {erro && (
         <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 p-4 text-xs font-semibold text-red-800">
           <AlertCircle className="h-5 w-5 shrink-0 text-red-600" />
@@ -667,16 +1075,80 @@ export default function NovaSolicitacao() {
         </div>
       )}
 
-      {/* Formulário Principal com Prevenção de Enter */}
-      <form
-        onSubmit={submeter}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "TEXTAREA") {
-            e.preventDefault();
-          }
-        }}
-        className="space-y-6"
-      >
+      {/* ============================================================== */}
+      {/* MODO 1: LANÇAMENTO INDIVIDUAL                                  */}
+      {/* ============================================================== */}
+      {modo === "individual" && (
+        <>
+          {/* Banner de Sucesso pós-criação */}
+          {criado && (
+            <Card className="border-2 border-emerald-500 bg-emerald-50/60 p-5 shadow-sm">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 className="h-7 w-7 text-emerald-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-display text-base font-bold text-emerald-950">
+                      Solicitação cadastrada com sucesso!
+                    </p>
+                    <p className="text-xs text-emerald-800 mt-0.5">
+                      Identificador do pedido:{" "}
+                      <strong className="font-mono bg-emerald-200/70 px-1.5 py-0.5 rounded text-emerald-950">
+                        {criado.codigo_curto || `EX-${criado.id}`}
+                      </strong>{" "}
+                      · Paciente: <strong>{criado.paciente_nome}</strong>
+                    </p>
+                    <p className="text-xs text-emerald-700 mt-1">
+                      Status atual:{" "}
+                      <span className="font-bold uppercase tracking-wider text-[11px] bg-white px-2 py-0.5 rounded border border-emerald-300">
+                        {criado.status === "agendado" ? "📅 Agendado Direto" : "⏳ Na Fila de Espera"}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                  <BotaoWhatsApp
+                    exameId={criado.id}
+                    exame={criado}
+                    tipo={criado.status === "agendado" ? "agendamento" : "entrada_fila"}
+                    variante="completo"
+                  />
+                  <Button
+                    type="button"
+                    onClick={() => setAbrirComprovante(true)}
+                    variant="outline"
+                    className="border-emerald-600 text-emerald-800 hover:bg-emerald-100 text-xs font-semibold flex items-center gap-1.5 !h-9"
+                  >
+                    <Printer className="h-4 w-4" /> Comprovante com QR Code
+                  </Button>
+                  <Button
+                    onClick={limparFormulario}
+                    className="bg-emerald-700 hover:bg-emerald-800 text-white text-xs"
+                  >
+                    <Plus className="h-4 w-4" /> Lançar Outra Solicitação
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => navigate("/fila-exames")}
+                    className="border-emerald-600 text-emerald-800 hover:bg-emerald-100 text-xs"
+                  >
+                    Ir para Fila
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {/* Formulário Principal com Prevenção de Enter */}
+          <form
+            onSubmit={submeter}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "TEXTAREA") {
+                e.preventDefault();
+              }
+            }}
+            className="space-y-6"
+          >
         {/* Bloco 1: Identificação do Paciente (Primeiro Campo) */}
         <Card className="p-5 shadow-xs">
           <div className="flex items-center justify-between border-b border-sus-900/10 pb-3 mb-4">
@@ -785,10 +1257,10 @@ export default function NovaSolicitacao() {
               <Label className="text-xs font-bold text-sus-950">
                 Tipo de Serviço <span className="text-red-500">*</span>
               </Label>
-              <select
+              <Select
                 value={tipoServico}
                 onChange={(e) => setTipoServico(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white px-3 py-2.5 text-xs font-semibold text-sus-950 outline-none transition focus:border-teal focus:ring-2 focus:ring-teal/20"
+                className="mt-1 text-xs font-semibold text-sus-950"
                 required
               >
                 <option value="">Selecione o Tipo de Serviço…</option>
@@ -806,18 +1278,25 @@ export default function NovaSolicitacao() {
                 {!tiposFila.some((t) => t.nome === "EXAMES LABORATORIAIS") && (
                   <option value="EXAMES LABORATORIAIS">EXAMES LABORATORIAIS</option>
                 )}
-              </select>
+              </Select>
               <p className="mt-1 text-[11px] text-ink/60">
-                Filtra automaticamente o catálogo de procedimentos e exames correspondentes.
+                {isConsulta
+                  ? "Consulta médica especializada: requer apenas a definição do CBO/especialidade."
+                  : "Filtra automaticamente o catálogo de procedimentos e exames correspondentes."}
               </p>
             </div>
 
-            {/* Especialidade Médica */}
+            {/* Especialidade Médica / CBO */}
             <div>
               <div className="flex items-center justify-between">
                 <Label className="text-xs font-bold text-sus-950">
-                  Especialidade Médica
+                  {isConsulta ? "CBO / Especialidade Médica *" : "CBO / Especialidade Autorizada"}
                 </Label>
+                {cbosAutorizados.length > 0 && !isConsulta && (
+                  <span className="text-[10px] font-bold text-teal bg-teal/10 px-2 py-0.5 rounded">
+                    {cbosAutorizados.length} CBO(s) no SIGTAP
+                  </span>
+                )}
                 {especialidade && (
                   <button
                     type="button"
@@ -836,6 +1315,13 @@ export default function NovaSolicitacao() {
                   value={especialidade}
                   onChange={(v) => {
                     setEspecialidade(v);
+                    const cboItem = cbosAutorizados.find(
+                      (c) => (c.descricao || `CBO ${c.cbo}`) === v || c.descricao === v,
+                    );
+                    if (cboItem) {
+                      setCodigoEspecialidade(cboItem.cbo);
+                      return;
+                    }
                     const opt = opcoesEspecialidades.find((o) => o.value === v);
                     if (opt?.sub) {
                       const cboMatch = opt.sub.match(/\d+/);
@@ -845,19 +1331,62 @@ export default function NovaSolicitacao() {
                     if (it?.codigo_especialidade) setCodigoEspecialidade(it.codigo_especialidade);
                   }}
                   options={opcoesEspecialidades}
-                  placeholder="Buscar ou selecionar especialidade médica…"
+                  placeholder={
+                    isConsulta
+                      ? "Buscar CBO ou especialidade médica (ex: Cardiologia, Ortopedia)…"
+                      : !codigoProcedimento
+                      ? "Selecione o procedimento primeiro para carregar os CBOs autorizados…"
+                      : carregandoCbos
+                      ? "Consultando CBOs autorizados no SIGTAP…"
+                      : "Buscar especialidade médica ou CBO autorizado…"
+                  }
                   searchPlaceholder="Digite o nome da especialidade ou CBO…"
-                  emptyText="Nenhuma especialidade encontrada"
+                  emptyText={
+                    !isConsulta && codigoProcedimento && cbosAutorizados.length > 0
+                      ? "Nenhum CBO autorizado correspondente"
+                      : "Nenhuma especialidade encontrada"
+                  }
                   showAll={false}
                 />
               </div>
               <p className="mt-1 text-[11px] text-ink/60">
-                Preenchida automaticamente ao selecionar o procedimento correspondente.
+                {isConsulta
+                  ? "Para consultas, o direcionamento é determinado exclusivamente pelo CBO selecionado."
+                  : cbosAutorizados.length > 0
+                  ? "CBOs restritos estritamente aos autorizados no SIGTAP para o procedimento selecionado."
+                  : "Preenchida automaticamente ao selecionar o procedimento ou escolhida conforme autorização SIGTAP."}
               </p>
             </div>
           </div>
 
-          {/* Passo 2: Procedimento Correspondente com Busca Inteligente */}
+          {/* Se for Consulta Especializada: exibe o banner de procedimento padrão SUS 0301010072 */}
+          {isConsulta ? (
+            <div className="mt-4 rounded-xl border border-teal/20 bg-teal/5 p-4 flex items-start gap-3">
+              <CheckCircle2 className="h-5 w-5 text-teal shrink-0 mt-0.5" />
+              <div className="text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-bold text-sm text-sus-950 font-mono">0301010072</span>
+                  <span className="font-bold text-sus-950">CONSULTA MEDICA EM ATENCAO ESPECIALIZADA</span>
+                  <span className="rounded bg-teal/15 px-2 py-0.5 text-[10px] font-bold text-teal uppercase">
+                    Padrão SUS / Vivver
+                  </span>
+                </div>
+                <p className="mt-1 text-ink/65 text-[11px]">
+                  No SUS e Vivver, consultas médicas especializadas utilizam o procedimento padronizado <strong>0301010072</strong>. O direcionamento clínico é definido exclusivamente pelo <strong>CBO da especialidade</strong> selecionado acima.
+                </p>
+                {especialidade ? (
+                  <p className="mt-1.5 font-bold text-teal-900">
+                    ✓ Especialidade vinculada: {especialidade} {codigoEspecialidade ? `(CBO: ${codigoEspecialidade})` : ""}
+                  </p>
+                ) : (
+                  <p className="mt-1.5 font-medium text-amber-700">
+                    Aguardando a seleção do CBO / Especialidade Médica acima.
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : (
+          /* Passo 2: Procedimento Correspondente com Busca Inteligente (Exames e Cirurgias) */
           <div className="mt-4 pt-4 border-t border-sus-900/10">
             <Label className="text-xs font-bold text-sus-950 flex items-center justify-between">
               <span>Procedimento Correspondente <span className="text-red-500">*</span></span>
@@ -1064,16 +1593,25 @@ export default function NovaSolicitacao() {
               </div>
             )}
           </div>
+          )}
 
           {/* Dados Complementares do Procedimento */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4 pt-3 border-t border-sus-900/10">
             <div>
-              <Label className="text-[11px] text-ink/70">Código SIGTAP</Label>
+              <div className="flex items-center justify-between">
+                <Label className="text-[11px] text-ink/70">Código SIGTAP</Label>
+                {isConsulta && (
+                  <span className="text-[10px] text-teal font-semibold font-mono">
+                    Fixado pelo SUS
+                  </span>
+                )}
+              </div>
               <Input
                 value={codigoProcedimento}
+                disabled={isConsulta}
                 onChange={(e) => setCodigoProcedimento(e.target.value)}
                 placeholder="Ex: 0205020186"
-                className="mt-1 text-xs font-mono"
+                className={`mt-1 text-xs font-mono ${isConsulta ? "bg-sand/40 font-bold text-teal" : ""}`}
               />
             </div>
             <div>
@@ -1088,6 +1626,25 @@ export default function NovaSolicitacao() {
               />
             </div>
           </div>
+
+          {/* ALERTA DE DUPLICIDADE EM TEMPO REAL */}
+          {duplicidadeAtiva && !ignorarDuplicidade && (
+            <div className="mt-4 pt-3 border-t border-sus-900/10">
+              <AlertaPedidoDuplicado
+                pedido={duplicidadeAtiva}
+                tipoModulo="tfd"
+                onProsseguir={() => setIgnorarDuplicidade(true)}
+                onCancelar={() => {
+                  setProcedimentoSel(null);
+                  setProcTexto("");
+                  setCodigoProcedimento("");
+                  setEspecialidade("");
+                  setCodigoEspecialidade("");
+                  setDuplicidadeAtiva(null);
+                }}
+              />
+            </div>
+          )}
         </Card>
 
         {/* Bloco 3: Origem do Pedido, Unidade e Médico */}
@@ -1557,6 +2114,1047 @@ export default function NovaSolicitacao() {
           numeroPedido={criado.numero_pedido}
           onClose={() => setAbrirComprovante(false)}
         />
+      )}
+        </>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODO 2: LANÇAMENTO EM LOTE                                     */}
+      {/* ============================================================== */}
+      {modo === "lote" && (
+        <>
+          {/* Banner de Sucesso do Lote pós-criação */}
+          {loteProcessado && (
+            <Card className="border-2 border-emerald-500 bg-emerald-50/70 p-5 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 className="h-7 w-7 text-emerald-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-display text-base font-bold text-emerald-950">
+                      Lote processado e cadastrado com sucesso!
+                    </p>
+                    <p className="text-xs text-emerald-800 mt-0.5">
+                      Total de solicitações cadastradas:{" "}
+                      <strong className="font-mono bg-emerald-200/70 px-2 py-0.5 rounded text-emerald-950">
+                        {loteProcessado.total_criados}
+                      </strong>
+                      {loteProcessado.agendados > 0 && (
+                        <span className="text-teal-800 ml-2 font-bold">
+                          ({loteProcessado.agendados} agendado(s) direto)
+                        </span>
+                      )}
+                      {loteProcessado.na_fila > 0 && (
+                        <span className="text-amber-800 ml-2 font-bold">
+                          ({loteProcessado.na_fila} na fila de espera)
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-xs text-emerald-700 mt-1">
+                      Status das solicitações:{" "}
+                      <span className="font-bold uppercase tracking-wider text-[11px] bg-white px-2 py-0.5 rounded border border-emerald-300">
+                        {agendamentoDiretoLote && isTfdCentral
+                          ? `📅 Agendados Direto (${dataAgendadaLote.split("-").reverse().join("/")} às ${horaAgendadaLote})`
+                          : "⏳ Inseridos na Fila de Espera"}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    onClick={limparLote}
+                    className="bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold"
+                  >
+                    <Plus className="h-4 w-4" /> Cadastrar Outro Lote
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => navigate("/fila-exames")}
+                    className="border-emerald-600 text-emerald-800 hover:bg-emerald-100 text-xs font-semibold"
+                  >
+                    Ir para Fila de Espera
+                  </Button>
+                </div>
+              </div>
+
+              {/* Tabela de comprovantes e ações do lote processado */}
+              {loteProcessado.itens && loteProcessado.itens.length > 0 && (
+                <div className="mt-3 overflow-x-auto rounded-xl border border-emerald-200 bg-white">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-emerald-100/60 text-emerald-950 font-bold uppercase tracking-wider text-[10px]">
+                      <tr>
+                        <th className="py-2.5 px-3">Pedido</th>
+                        <th className="py-2.5 px-3">Paciente</th>
+                        <th className="py-2.5 px-3">Procedimento</th>
+                        <th className="py-2.5 px-3">Status</th>
+                        <th className="py-2.5 px-3 text-right">Ações / Comprovante</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-emerald-100">
+                      {loteProcessado.itens.map((item) => (
+                        <tr key={item.id} className="hover:bg-emerald-50/40">
+                          <td className="py-2.5 px-3 font-mono font-bold text-sus-950">
+                            {item.codigo_curto || item.numero_pedido || `EX-${item.id}`}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <p className="font-bold text-sus-950">{item.paciente_nome}</p>
+                            {item.paciente_cpf && (
+                              <span className="font-mono text-[10px] text-ink/60">{item.paciente_cpf}</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 font-medium text-sus-900">
+                            {item.exame}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-bold uppercase ${
+                              item.status === "agendado" ? "bg-teal/15 text-teal" : "bg-amber-100 text-amber-900"
+                            }`}>
+                              {item.status === "agendado" ? "Agendado" : "Aguardando"}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <BotaoWhatsApp
+                                exameId={item.id}
+                                exame={item}
+                                tipo={item.status === "agendado" ? "agendamento" : "entrada_fila"}
+                                variante="compacto"
+                              />
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => setComprovanteLoteModal(item)}
+                                className="border-emerald-600 text-emerald-800 hover:bg-emerald-100 text-xs font-semibold h-8 px-2 flex items-center gap-1"
+                                title="Ver Comprovante com QR Code"
+                              >
+                                <Printer className="h-3.5 w-3.5" />
+                                <span className="hidden sm:inline">Comprovante</span>
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          )}
+
+          {/* Formulário Principal de Lançamento em Lote */}
+          <form
+            onSubmit={submeterLote}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "TEXTAREA") {
+                e.preventDefault();
+              }
+            }}
+            className="space-y-6"
+          >
+            {/* Bloco 1: Procedimento e Unidade de Atendimento (Comum ao Lote) */}
+            <Card className="p-5 shadow-xs">
+              <div className="flex items-center justify-between border-b border-sus-900/10 pb-3 mb-4">
+                <div className="flex items-center gap-2">
+                  <Stethoscope className="h-4 w-4 text-teal" />
+                  <h2 className="font-display text-sm font-bold text-sus-950">
+                    1. Procedimento e Unidade Solicitante (Comum ao Lote)
+                  </h2>
+                </div>
+                <span className="text-[11px] font-semibold text-teal bg-teal/10 px-2.5 py-0.5 rounded-full">
+                  Aplicado a todos os pacientes do lote
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Tipo de Serviço */}
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">
+                    Tipo de Serviço <span className="text-red-500">*</span>
+                  </Label>
+                  <Select
+                    value={tipoServico}
+                    onChange={(e) => setTipoServico(e.target.value)}
+                    className="mt-1 text-xs font-semibold text-sus-950"
+                    required
+                  >
+                    <option value="">Selecione o Tipo de Serviço…</option>
+                    {tiposFila.map((tf) => (
+                      <option key={tf.id} value={tf.nome}>
+                        {tf.nome}
+                      </option>
+                    ))}
+                    {!tiposFila.some((t) => t.nome === "CONSULTAS ESPECIALIZADAS") && (
+                      <option value="CONSULTAS ESPECIALIZADAS">CONSULTAS ESPECIALIZADAS</option>
+                    )}
+                    {!tiposFila.some((t) => t.nome === "ULTRASSONOGRAFIA") && (
+                      <option value="ULTRASSONOGRAFIA">ULTRASSONOGRAFIA</option>
+                    )}
+                    {!tiposFila.some((t) => t.nome === "EXAMES LABORATORIAIS") && (
+                      <option value="EXAMES LABORATORIAIS">EXAMES LABORATORIAIS</option>
+                    )}
+                  </Select>
+                  <p className="mt-1 text-[11px] text-ink/60">
+                    {isConsulta
+                      ? "Consulta médica especializada em lote: requer apenas a definição do CBO/especialidade."
+                      : "Filtra automaticamente o catálogo de procedimentos correspondentes."}
+                  </p>
+                </div>
+
+                {/* Especialidade Médica / CBO */}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-bold text-sus-950">
+                      {isConsulta ? "CBO / Especialidade Médica *" : "CBO / Especialidade Autorizada"}
+                    </Label>
+                    {cbosAutorizados.length > 0 && !isConsulta && (
+                      <span className="text-[10px] font-bold text-teal bg-teal/10 px-2 py-0.5 rounded">
+                        {cbosAutorizados.length} CBO(s) no SIGTAP
+                      </span>
+                    )}
+                    {especialidade && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEspecialidade("");
+                          setCodigoEspecialidade("");
+                        }}
+                        className="text-[10px] text-red-600 font-semibold hover:underline"
+                      >
+                        Limpar
+                      </button>
+                    )}
+                  </div>
+                  <div className="mt-1">
+                    <Combobox
+                      value={especialidade}
+                      onChange={(v) => {
+                        setEspecialidade(v);
+                        const cboItem = cbosAutorizados.find(
+                          (c) => (c.descricao || `CBO ${c.cbo}`) === v || c.descricao === v,
+                        );
+                        if (cboItem) {
+                          setCodigoEspecialidade(cboItem.cbo);
+                          return;
+                        }
+                        const opt = opcoesEspecialidades.find((o) => o.value === v);
+                        if (opt?.sub) {
+                          const cboMatch = opt.sub.match(/\d+/);
+                          if (cboMatch) setCodigoEspecialidade(cboMatch[0]);
+                        }
+                        const it = procedimentosTodos.find((p) => (p.especialidade || p.nome_especialidade) === v);
+                        if (it?.codigo_especialidade) setCodigoEspecialidade(it.codigo_especialidade);
+                      }}
+                      options={opcoesEspecialidades}
+                      placeholder={
+                        isConsulta
+                          ? "Buscar CBO ou especialidade médica para o lote…"
+                          : !codigoProcedimento
+                          ? "Selecione o procedimento primeiro para carregar os CBOs autorizados…"
+                          : carregandoCbos
+                          ? "Consultando CBOs autorizados no SIGTAP…"
+                          : "Buscar especialidade médica ou CBO autorizado…"
+                      }
+                      searchPlaceholder="Digite o nome da especialidade ou CBO…"
+                      emptyText={
+                        !isConsulta && codigoProcedimento && cbosAutorizados.length > 0
+                          ? "Nenhum CBO autorizado correspondente"
+                          : "Nenhuma especialidade encontrada"
+                      }
+                      showAll={false}
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-ink/60">
+                    {isConsulta
+                      ? "Para consultas especializadas no lote, o direcionamento é determinado exclusivamente pelo CBO selecionado."
+                      : cbosAutorizados.length > 0
+                      ? "CBOs restritos estritamente aos autorizados no SIGTAP para o procedimento selecionado."
+                      : "Preenchida automaticamente ao selecionar o procedimento ou escolhida conforme autorização SIGTAP."}
+                  </p>
+                </div>
+              </div>
+
+              {/* Se for Consulta Especializada no Lote: banner padronizado */}
+              {isConsulta ? (
+                <div className="mt-4 rounded-xl border border-teal/20 bg-teal/5 p-4 flex items-start gap-3">
+                  <CheckCircle2 className="h-5 w-5 text-teal shrink-0 mt-0.5" />
+                  <div className="text-xs">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-bold text-sm text-sus-950 font-mono">0301010072</span>
+                      <span className="font-bold text-sus-950">CONSULTA MEDICA EM ATENCAO ESPECIALIZADA</span>
+                      <span className="rounded bg-teal/15 px-2 py-0.5 text-[10px] font-bold text-teal uppercase">
+                        Padrão SUS / Vivver
+                      </span>
+                    </div>
+                    <p className="mt-1 text-ink/65 text-[11px]">
+                      Consultas médicas especializadas do lote utilizarão o procedimento padronizado <strong>0301010072</strong>. O direcionamento clínico é definido pelo <strong>CBO da especialidade</strong> selecionado acima.
+                    </p>
+                    {especialidade && (
+                      <p className="mt-1.5 font-bold text-teal-900">
+                        ✓ Especialidade vinculada ao lote: {especialidade} {codigoEspecialidade ? `(CBO: ${codigoEspecialidade})` : ""}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                /* Procedimento Correspondente (Exames e Cirurgias no Lote) */
+                <div className="mt-4 pt-4 border-t border-sus-900/10">
+                  <Label className="text-xs font-bold text-sus-950 flex items-center justify-between">
+                    <span>Procedimento Correspondente <span className="text-red-500">*</span></span>
+                    {codigoProcedimento && (
+                      <span className="text-[10px] text-ink/60 font-mono">
+                        Cód. SIGTAP: {codigoProcedimento}
+                      </span>
+                    )}
+                  </Label>
+
+                  <div className="relative mt-1">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-ink/40 pointer-events-none" />
+                      <Input
+                        placeholder={
+                          tipoServico
+                            ? `Buscar procedimento em ${tipoServico} por nome, código SIGTAP ou sigla…`
+                            : "Buscar procedimento por código SIGTAP, sigla ou nome…"
+                        }
+                        value={buscaProc}
+                        onChange={(e) => {
+                          setBuscaProc(e.target.value);
+                          setProcFoco(true);
+                        }}
+                        onFocus={() => setProcFoco(true)}
+                        onBlur={() => setTimeout(() => setProcFoco(false), 250)}
+                        className="pl-9 pr-9 text-xs"
+                        autoComplete="off"
+                      />
+                      {(buscaProc || procedimentoSel || procTexto) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBuscaProc("");
+                            handleSelecionarProcedimento(null);
+                            setProcFoco(false);
+                          }}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink transition"
+                          title="Limpar procedimento"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Procedimento Selecionado Badge */}
+                    {(procedimentoSel || procTexto) && (
+                      <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1.5 rounded-xl border border-teal/20 bg-teal/5 px-3 py-2 text-xs">
+                        <div className="flex items-center gap-2">
+                          <Check className="h-4 w-4 text-teal shrink-0" />
+                          <div>
+                            <p className="font-bold text-sus-950">
+                              {codigoProcedimento ? `${codigoProcedimento} · ` : ""}
+                              {procTexto || procedimentoSel?.exame}
+                            </p>
+                            <p className="text-[11px] text-ink/60">
+                              {tipoServico ? `${tipoServico} · ` : ""}
+                              {especialidade ? `Especialidade: ${especialidade}` : ""}
+                            </p>
+                          </div>
+                        </div>
+                        <span className="text-[10px] font-bold text-teal bg-teal/10 px-2 py-0.5 rounded uppercase">
+                          Selecionado para o Lote
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Dropdown de sugestões de procedimentos */}
+                    {procFoco && opcoesProcFiltradas.length > 0 && (
+                      <div className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-xl border border-sus-900/15 bg-white shadow-xl">
+                        <div className="p-1 space-y-0.5">
+                          {opcoesProcFiltradas.map((p, idx) => {
+                            const nome = p.exame || p.nome_procedimento || "";
+                            const cod = p.codigo_curto || p.codigo_procedimento;
+                            const esp = p.especialidade || p.nome_especialidade;
+                            return (
+                              <button
+                                key={`${cod || ""}-${nome}-${idx}`}
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  escolherProcedimento(p);
+                                }}
+                                className="w-full text-left px-3 py-2 rounded-lg text-xs hover:bg-teal/10 transition flex items-start justify-between gap-2"
+                              >
+                                <div>
+                                  <div className="font-bold text-sus-950">
+                                    {cod ? <span className="font-mono text-teal mr-1.5">[{cod}]</span> : null}
+                                    {nome}
+                                  </div>
+                                  <div className="text-[10px] text-ink/50 flex gap-2">
+                                    {p.tipo_fila && <span>Tipo: {p.tipo_fila}</span>}
+                                    {esp && <span>· Especialidade: {esp}</span>}
+                                  </div>
+                                </div>
+                                <Plus className="h-3.5 w-3.5 text-teal shrink-0 mt-0.5" />
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Unidade e Médico Responsável */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-sus-900/10">
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">
+                    Unidade Solicitante / PSF <span className="text-red-500">*</span>
+                  </Label>
+                  <Select
+                    value={unidadeId}
+                    onChange={(e) => setUnidadeId(e.target.value)}
+                    disabled={isLancamentoRestrito && !!user?.unidade_saude_id}
+                    className="mt-1 text-xs"
+                    required
+                  >
+                    <option value="">Selecione a Unidade Solicitante…</option>
+                    {unidades.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.nome} {u.cnes ? `(CNES: ${u.cnes})` : ""}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">
+                    Médico(a) Requisitante / Responsável <span className="text-red-500">*</span>
+                  </Label>
+                  <Select
+                    value={medicoId}
+                    onChange={(e) => setMedicoId(e.target.value)}
+                    className="mt-1 text-xs"
+                    required
+                  >
+                    <option value="">Selecione o(a) Profissional…</option>
+                    {medicos.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.nome} {m.crm ? `(CRM: ${m.crm})` : ""}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+
+              {/* Data do Pedido e Prioridade */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-sus-900/10">
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">
+                    Data do Pedido
+                  </Label>
+                  <Input
+                    type="date"
+                    value={dataPedido}
+                    onChange={(e) => setDataPedido(e.target.value)}
+                    disabled={!isTfdCentral}
+                    max={hojeISO()}
+                    className="mt-1 text-xs"
+                  />
+                  <p className="mt-1 text-[11px] text-ink/60">
+                    {isTfdCentral
+                      ? "Operadores da Central podem registrar pedidos retroativos."
+                      : "Fixada na data de hoje para unidades solicitantes."}
+                  </p>
+                </div>
+
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">
+                    Classificação de Prioridade
+                  </Label>
+                  <Select
+                    value={prioridade}
+                    onChange={(e) => setPrioridade(e.target.value as "rotina" | "urgente")}
+                    disabled={isLancamentoRestrito}
+                    className="mt-1 text-xs font-semibold"
+                  >
+                    <option value="rotina">Rotina / Eletivo (Padrão)</option>
+                    <option value="urgente">Urgência / Prioritário</option>
+                  </Select>
+                  <p className="mt-1 text-[11px] text-ink/60">
+                    {isLancamentoRestrito
+                      ? "Apenas a Central de Regulação pode classificar diretamente como urgente."
+                      : "Define a ordenação na fila de regulação para o lote."}
+                  </p>
+                </div>
+              </div>
+            </Card>
+
+            {/* Bloco 2: Justificativa Clínica e Diagnóstico (Padrão do Lote) */}
+            <Card className="p-5 shadow-xs">
+              <div className="flex items-center justify-between border-b border-sus-900/10 pb-3 mb-4">
+                <div className="flex items-center gap-2">
+                  <ClipboardList className="h-4 w-4 text-teal" />
+                  <h2 className="font-display text-sm font-bold text-sus-950">
+                    2. Justificativa Clínica e CID Padrão do Lote
+                  </h2>
+                </div>
+                <span className="text-[11px] font-semibold text-ink/60 bg-sand/80 px-2.5 py-0.5 rounded-full">
+                  Pode ser ajustado por paciente na tabela
+                </span>
+              </div>
+
+              <div className="rounded-xl border border-teal/20 bg-teal/5 p-3 text-xs text-teal-900 mb-4 flex items-start gap-2.5">
+                <Sparkles className="h-4 w-4 text-teal shrink-0 mt-0.5" />
+                <p>
+                  A justificativa e o CID configurados aqui serão herdados automaticamente por todos os pacientes adicionados no lote. Caso algum paciente possua particularidade clínica, você poderá sobrescrever na tabela abaixo.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                {/* Justificativa Padrão */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <Label className="text-xs font-bold text-sus-950">
+                      Justificativa Clínica Padrão <span className="text-red-500">*</span>
+                    </Label>
+                    <span
+                      className={`text-[11px] font-bold ${
+                        justificativaLotePadrao.trim().length >= JUST_MIN
+                          ? "text-emerald-700"
+                          : "text-amber-700"
+                      }`}
+                    >
+                      {justificativaLotePadrao.trim().length}/{JUST_MIN} caracteres mínimos
+                    </span>
+                  </div>
+                  <textarea
+                    value={justificativaLotePadrao}
+                    onChange={(e) => setJustificativaLotePadrao(e.target.value)}
+                    placeholder="Descreva a indicação clínica compartilhada deste grupo de pacientes (mínimo 12 caracteres)…"
+                    rows={3}
+                    className="w-full rounded-xl border border-sus-900/20 bg-white p-3 text-xs focus:border-teal focus:ring-1 focus:ring-teal outline-none"
+                    required={pacientesLote.some((p) => !(p.justificativa && p.justificativa.trim().length >= JUST_MIN))}
+                  />
+                </div>
+
+                {/* CID Padrão e Observações */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Busca CID */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <Label className="text-xs font-bold text-sus-950">
+                        Diagnóstico / CID-10 Padrão (Opcional)
+                      </Label>
+                      {cidCodigoLotePadrao && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCidCodigoLotePadrao("");
+                            setCidDescricaoLotePadrao("");
+                            setBuscaCidLote("");
+                          }}
+                          className="text-[10px] text-red-600 hover:underline font-semibold"
+                        >
+                          Limpar CID
+                        </button>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <Input
+                        placeholder="Buscar por código CID ou patologia (ex: I10, diabetes)…"
+                        value={buscaCidLote}
+                        onChange={(e) => setBuscaCidLote(e.target.value)}
+                        className="text-xs"
+                      />
+                      {buscandoCidLote && (
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-ink/40">
+                          Buscando…
+                        </span>
+                      )}
+                      {cidsSugeridosLote.length > 0 && (
+                        <div className="absolute z-20 mt-1 max-h-48 w-full overflow-auto rounded-xl border border-sus-900/15 bg-white shadow-lg p-1">
+                          {cidsSugeridosLote.map((c) => (
+                            <button
+                              key={c.codigo}
+                              type="button"
+                              onClick={() => {
+                                setCidCodigoLotePadrao(c.codigo);
+                                setCidDescricaoLotePadrao(c.descricao);
+                                setBuscaCidLote(`${c.codigo} · ${c.descricao}`);
+                                setCidsSugeridosLote([]);
+                              }}
+                              className="w-full text-left px-2.5 py-1.5 text-xs hover:bg-teal/10 rounded flex justify-between gap-2"
+                            >
+                              <span className="font-bold font-mono text-teal">{c.codigo}</span>
+                              <span className="truncate text-ink/80 flex-1">{c.descricao}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {cidCodigoLotePadrao && (
+                      <p className="mt-1 text-[11px] text-emerald-800 font-medium">
+                        CID selecionado: <strong>{cidCodigoLotePadrao}</strong> — {cidDescricaoLotePadrao}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Observações Gerais */}
+                  <div>
+                    <Label className="text-xs font-bold text-sus-950">
+                      Observações / Preparo Geral (Opcional)
+                    </Label>
+                    <Input
+                      placeholder="Ex: Jejum obrigatório de 8h, trazer exames anteriores..."
+                      value={observacoesLotePadrao}
+                      onChange={(e) => setObservacoesLotePadrao(e.target.value)}
+                      className="mt-1 text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+            </Card>
+
+            {/* Bloco 3: Opção de Agendamento Direto em Lote */}
+            <Card className="p-5 shadow-xs border-l-4 border-l-teal">
+              <div className="flex items-center justify-between border-b border-sus-900/10 pb-3 mb-4">
+                <div className="flex items-center gap-2">
+                  <Calendar className="h-4 w-4 text-teal" />
+                  <h2 className="font-display text-sm font-bold text-sus-950">
+                    3. Agendamento Direto em Lote
+                  </h2>
+                </div>
+                <span className="text-[11px] font-semibold text-teal bg-teal/10 px-2.5 py-0.5 rounded-full">
+                  Central de Regulação
+                </span>
+              </div>
+
+              {isTfdCentral ? (
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-sus-900/10 bg-sand/30 p-4">
+                    <label className="flex items-start gap-3 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={agendamentoDiretoLote}
+                        onChange={(e) => setAgendamentoDiretoLote(e.target.checked)}
+                        className="mt-1 h-4 w-4 rounded border-sus-900/20 text-teal focus:ring-teal cursor-pointer"
+                      />
+                      <div>
+                        <span className="text-xs font-bold text-sus-950">
+                          Adicionar à fila e agendar imediatamente
+                        </span>
+                        <p className="text-[11px] text-ink/70 mt-0.5">
+                          Ao marcar esta opção, todos os pacientes adicionados no lote serão processados e gravados com status <strong>"Agendado"</strong> diretamente para a data e hora selecionadas abaixo, permitindo emissão imediata dos comprovantes e envio de notificações.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+
+                  {agendamentoDiretoLote && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-xl border border-teal/20 bg-teal/5 p-4 animate-fadeIn">
+                      <div>
+                        <Label className="text-xs font-bold text-teal-950">
+                          Data do Agendamento <span className="text-red-500">*</span>
+                        </Label>
+                        <Input
+                          type="date"
+                          value={dataAgendadaLote}
+                          onChange={(e) => setDataAgendadaLote(e.target.value)}
+                          min={hojeISO()}
+                          className="mt-1 text-xs"
+                          required={agendamentoDiretoLote}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs font-bold text-teal-950">
+                          Horário Previsto
+                        </Label>
+                        <Input
+                          type="time"
+                          value={horaAgendadaLote}
+                          onChange={(e) => setHoraAgendadaLote(e.target.value)}
+                          className="mt-1 text-xs"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 text-amber-700 shrink-0" />
+                  <span>
+                    O agendamento direto é restrito à Central Municipal de Regulação. Os pedidos incluídos por unidades solicitantes entrarão na <strong>Fila de Espera</strong> para regulação e agendamento.
+                  </span>
+                </div>
+              )}
+            </Card>
+
+            {/* Bloco 4: Pacientes do Lote (Lista Dinâmica) */}
+            <Card className="p-5 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-sus-900/10 pb-3 mb-4">
+                <div className="flex items-center gap-2">
+                  <Users className="h-4 w-4 text-teal" />
+                  <h2 className="font-display text-sm font-bold text-sus-950">
+                    4. Pacientes do Lote ({pacientesLote.length} adicionado{pacientesLote.length === 1 ? "" : "s"})
+                  </h2>
+                </div>
+                <span className="text-[11px] font-bold text-teal bg-teal/10 px-2.5 py-0.5 rounded-full self-start sm:self-auto">
+                  {pacientesLote.length === 0
+                    ? "Aguardando pacientes"
+                    : `${pacientesLote.length} paciente(s) pronto(s) para gravação`}
+                </span>
+              </div>
+
+              {/* Barra de Pesquisa Rápida para Adicionar Paciente */}
+              <div className="rounded-xl border border-sus-900/15 bg-sand/20 p-4 mb-4">
+                <BuscaPacienteAutocomplete
+                  pacienteId={pacienteLoteBusca?.id || ""}
+                  pacienteInicial={pacienteLoteBusca}
+                  onSelect={(pac) => {
+                    if (pac) {
+                      adicionarPacienteAoLote(pac);
+                    }
+                  }}
+                  label="Adicionar Paciente ao Lote"
+                  placeholder="Pesquise por nome, CPF, CNS ou prontuário e selecione para adicionar imediatamente…"
+                />
+                <p className="mt-2 text-[11px] text-ink/60">
+                  Dica: basta pesquisar e clicar no paciente para inseri-lo instantaneamente na lista abaixo. Você pode adicionar quantos pacientes precisar.
+                </p>
+              </div>
+
+              {/* Estado Vazio ou Tabela de Pacientes */}
+              {pacientesLote.length === 0 ? (
+                <div className="rounded-xl border-2 border-dashed border-sus-900/15 p-8 text-center bg-sand/10">
+                  <Users className="mx-auto h-8 w-8 text-ink/30 mb-2" />
+                  <p className="text-xs font-bold text-sus-950">
+                    Nenhum paciente adicionado ao lote até o momento.
+                  </p>
+                  <p className="text-[11px] text-ink/60 mt-1 max-w-md mx-auto">
+                    Utilize o campo de busca acima para pesquisar os pacientes por nome, CPF ou cartão SUS e adicioná-los à lista deste lote.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {pacientesLote.some((p) => p.duplicadoInfo) && (
+                    <div className="rounded-xl border border-amber-400 bg-amber-50/90 p-3 text-xs text-amber-900 flex items-start gap-2.5 shadow-xs">
+                      <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-bold">Atenção: Paciente(s) com pedido idêntico ativo detectado(s)!</p>
+                        <p className="mt-0.5 text-ink/75 leading-relaxed">
+                          Identificamos que um ou mais pacientes desta lista já possuem solicitações ativas pendentes para este mesmo procedimento ou especialidade. Verifique as linhas destacadas na tabela abaixo antes de confirmar a inclusão em lote.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="overflow-x-auto rounded-xl border border-sus-900/10 bg-white">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-sand/40 text-sus-950 font-bold uppercase tracking-wider text-[10px] border-b border-sus-900/10">
+                        <tr>
+                          <th className="py-2.5 px-3 w-10 text-center">#</th>
+                          <th className="py-2.5 px-3 min-w-[200px]">Paciente</th>
+                          <th className="py-2.5 px-3 min-w-[220px]">
+                            Justificativa Específica
+                            <span className="block text-[9px] font-normal lowercase text-ink/50">
+                              deixe em branco p/ usar a padrão
+                            </span>
+                          </th>
+                          <th className="py-2.5 px-3 min-w-[130px]">
+                            CID Específico
+                            <span className="block text-[9px] font-normal lowercase text-ink/50">
+                              opcional
+                            </span>
+                          </th>
+                          <th className="py-2.5 px-3 min-w-[150px]">Observações</th>
+                          <th className="py-2.5 px-3 w-12 text-center">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-sus-900/5">
+                        {pacientesLote.map((item, idx) => {
+                          const justEfetiva = (item.justificativa || "").trim() || justificativaLotePadrao.trim();
+                          const justValida = justEfetiva.length >= JUST_MIN;
+
+                          return (
+                            <tr key={item.uid} className={`hover:bg-sand/10 ${item.duplicadoInfo ? "bg-amber-50/40" : ""}`}>
+                              <td className="py-2.5 px-3 text-center font-bold text-ink/60">
+                                {idx + 1}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <p className="font-bold text-sus-950">{item.paciente.nome}</p>
+                                <div className="text-[10px] text-ink/60 space-x-2 font-mono mt-0.5">
+                                  {item.paciente.cpf && <span>CPF: {item.paciente.cpf}</span>}
+                                  {item.paciente.cns && <span>CNS: {item.paciente.cns}</span>}
+                                  {item.paciente.codigo_prontuario && (
+                                    <span>Pront: {item.paciente.codigo_prontuario}</span>
+                                  )}
+                                </div>
+                                {item.duplicadoInfo && (
+                                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5 rounded-md bg-amber-500/10 border border-amber-500/30 px-2 py-1 text-[11px] text-amber-900">
+                                    <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                                    <span className="font-semibold">Pedido ativo existente:</span>
+                                    <span className="font-mono font-medium">{item.duplicadoInfo.codigo_curto || `#${item.duplicadoInfo.id}`}</span>
+                                    <span className="text-[10px] uppercase font-bold bg-amber-200/60 px-1 py-0.5 rounded">
+                                      {item.duplicadoInfo.status}
+                                    </span>
+                                    {item.duplicadoInfo.link_visualizacao && (
+                                      <button
+                                        type="button"
+                                        onClick={() => window.open(item.duplicadoInfo!.link_visualizacao, "_blank")}
+                                        className="ml-auto underline hover:text-amber-950 font-medium text-[10px]"
+                                      >
+                                        Visualizar Pedido
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <div className="space-y-1">
+                                  <textarea
+                                    value={item.justificativa || ""}
+                                    onChange={(e) =>
+                                      atualizarItemLote(item.uid, "justificativa", e.target.value)
+                                    }
+                                    placeholder={
+                                      justificativaLotePadrao.trim()
+                                        ? `Herdar padrão: "${justificativaLotePadrao.slice(0, 30)}…"`
+                                        : "Justificativa específica (min 12 chars)…"
+                                    }
+                                    rows={2}
+                                    className={`w-full rounded-lg border p-1.5 text-xs outline-none transition ${
+                                      justValida
+                                        ? "border-sus-900/15 focus:border-teal"
+                                        : "border-red-300 bg-red-50/30 focus:border-red-500"
+                                    }`}
+                                  />
+                                  <div className="flex items-center justify-between text-[10px]">
+                                    {item.justificativa?.trim() ? (
+                                      <span className={item.justificativa.trim().length >= JUST_MIN ? "text-emerald-700 font-semibold" : "text-amber-700 font-semibold"}>
+                                        Específica: {item.justificativa.trim().length}/{JUST_MIN}
+                                      </span>
+                                    ) : (
+                                      <span className={justValida ? "text-teal font-medium" : "text-amber-600 font-medium"}>
+                                        {justificativaLotePadrao.trim() ? "✓ Usando justificativa padrão" : "⚠ Requer justificativa"}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <Input
+                                  value={item.cid_codigo || ""}
+                                  onChange={(e) =>
+                                    atualizarItemLote(item.uid, "cid_codigo", e.target.value.toUpperCase())
+                                  }
+                                  placeholder={
+                                    cidCodigoLotePadrao
+                                      ? `Padrão: ${cidCodigoLotePadrao}`
+                                      : "CID (ex: I10)"
+                                  }
+                                  className="text-xs uppercase h-8"
+                                />
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <Input
+                                  value={item.observacoes || ""}
+                                  onChange={(e) =>
+                                    atualizarItemLote(item.uid, "observacoes", e.target.value)
+                                  }
+                                  placeholder="Obs específica..."
+                                  className="text-xs h-8"
+                                />
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => removerPacienteDoLote(item.uid)}
+                                  className="rounded-lg p-1.5 text-red-500 hover:bg-red-50 hover:text-red-700 transition"
+                                  title={`Remover ${item.paciente.nome} do lote`}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs text-ink/70 px-1 pt-1">
+                    <span>
+                      Total no lote: <strong>{pacientesLote.length} paciente(s)</strong>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPacientesLote([])}
+                      className="text-[11px] text-red-600 hover:underline font-semibold"
+                    >
+                      Remover todos os pacientes
+                    </button>
+                  </div>
+                </div>
+              )}
+            </Card>
+
+            {/* Barra de Ações Inferior do Lote */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={limparLote}
+                disabled={salvandoLote}
+                className="text-xs font-semibold"
+              >
+                <RotateCcw className="h-4 w-4" /> Limpar Formulário
+              </Button>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  type="submit"
+                  disabled={salvandoLote || pacientesLote.length === 0}
+                  className="bg-teal text-white hover:brightness-110 shadow-sm text-xs font-bold px-6 py-2.5"
+                >
+                  {salvandoLote ? (
+                    "Processando Lote…"
+                  ) : agendamentoDiretoLote && isTfdCentral ? (
+                    <>
+                      <Calendar className="h-4 w-4" /> Confirmar e Agendar Lote ({pacientesLote.length})
+                    </>
+                  ) : (
+                    <>
+                      <Layers className="h-4 w-4" /> Incluir Lote na Fila ({pacientesLote.length})
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </form>
+
+          {/* Modal de Confirmação do Lote */}
+          {modalConfirmacaoLote && (
+            <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4">
+              <div
+                className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-start justify-between border-b border-sus-900/10 pb-3">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-5 w-5 text-teal" />
+                    <h3 className="font-display text-base font-bold text-sus-950">
+                      Confirmar Lançamento em Lote
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setModalConfirmacaoLote(false)}
+                    className="rounded-lg p-1 text-ink/50 hover:bg-sand"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <p className="text-xs text-ink/70">
+                  Revise atentamente os dados do lote antes de confirmar a inclusão no banco de dados:
+                </p>
+
+                <div className="rounded-xl border border-sus-900/10 bg-sand/20 p-4 text-xs space-y-2.5">
+                  <div className="flex justify-between border-b border-sus-900/5 pb-2">
+                    <span className="text-ink/60 font-medium">Tipo de Serviço:</span>
+                    <span className="font-semibold text-teal">{tipoServico}</span>
+                  </div>
+                  <div className="flex justify-between border-b border-sus-900/5 pb-2">
+                    <span className="text-ink/60 font-medium">Procedimento:</span>
+                    <span className="font-bold text-sus-950 text-right">
+                      {codigoProcedimento ? `${codigoProcedimento} · ` : ""}
+                      {procTexto.trim() || procedimentoSel?.exame}
+                    </span>
+                  </div>
+                  {especialidade && (
+                    <div className="flex justify-between border-b border-sus-900/5 pb-2">
+                      <span className="text-ink/60 font-medium">Especialidade:</span>
+                      <span className="font-semibold text-sus-950">{especialidade}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between border-b border-sus-900/5 pb-2">
+                    <span className="text-ink/60 font-medium">PSF / Unidade:</span>
+                    <span className="font-medium text-sus-950 text-right">{unidNomeAtual}</span>
+                  </div>
+                  <div className="flex justify-between border-b border-sus-900/5 pb-2">
+                    <span className="text-ink/60 font-medium">Médico(a) Responsável:</span>
+                    <span className="font-medium text-sus-950 text-right">{medNomeAtual}</span>
+                  </div>
+                  <div className="flex justify-between border-b border-sus-900/5 pb-2">
+                    <span className="text-ink/60 font-medium">Ação / Destino:</span>
+                    <span className="font-bold text-teal">
+                      {agendamentoDiretoLote && isTfdCentral
+                        ? `📅 Agendamento Direto para ${dataAgendadaLote.split("-").reverse().join("/")} às ${horaAgendadaLote}`
+                        : "⏳ Inclusão na Fila de Espera"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between pt-1">
+                    <span className="text-ink/60 font-medium">Total de Pacientes:</span>
+                    <span className="font-bold text-sus-950 text-base">{pacientesLote.length}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <span className="text-xs font-bold text-sus-950">
+                    Relação de Pacientes ({pacientesLote.length}):
+                  </span>
+                  <div className="max-h-40 overflow-y-auto rounded-xl border border-sus-900/10 bg-white p-2 divide-y divide-sus-900/5 text-xs">
+                    {pacientesLote.map((item, i) => (
+                      <div key={item.uid} className="py-1.5 flex items-center justify-between gap-2">
+                        <div>
+                          <span className="font-bold text-sus-950">
+                            {i + 1}. {item.paciente.nome}
+                          </span>
+                          {item.paciente.cpf && (
+                            <span className="ml-2 font-mono text-[10px] text-ink/60">
+                              CPF: {item.paciente.cpf}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-emerald-800 font-medium">
+                          {item.justificativa?.trim() ? "Justificativa individual" : "Justificativa padrão"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => setModalConfirmacaoLote(false)}
+                    disabled={salvandoLote}
+                    className="text-xs"
+                  >
+                    Voltar e Corrigir
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={confirmarGravacaoLote}
+                    disabled={salvandoLote}
+                    className="bg-teal text-white hover:brightness-110 text-xs font-bold shadow-sm"
+                  >
+                    {salvandoLote ? "Gravando no Banco…" : "Confirmar e Gravar Lote"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal de Comprovante Individual do Lote */}
+          {comprovanteLoteModal && (
+            <ComprovanteExameModal
+              exameId={comprovanteLoteModal.id}
+              numeroPedido={comprovanteLoteModal.numero_pedido}
+              onClose={() => setComprovanteLoteModal(null)}
+            />
+          )}
+        </>
       )}
     </div>
   );

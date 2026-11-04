@@ -14,6 +14,7 @@ from app.api.v1.indicadores import router as indicadores_router
 from app.api.v1.integracoes import router as integracoes_router
 from app.api.v1.lab import router as lab_router
 from app.api.v1.lab_fase6 import router as lab_fase6_router
+from app.api.v1.oxigenio import router as oxigenio_router
 from app.api.v1.pec import router as pec_router
 from app.api.v1.settings import router as settings_router
 from app.api.v1.tfd import router as tfd_router
@@ -98,6 +99,7 @@ app.include_router(dashboard_router, prefix="/api", tags=["dashboard"])
 app.include_router(users_router, prefix="/api/usuarios", tags=["usuarios"])
 app.include_router(tfd_router, prefix="/api/tfd", tags=["tfd"])
 app.include_router(apac_router, prefix="/api/apac", tags=["apac"])
+app.include_router(oxigenio_router, prefix="/api/oxigenio", tags=["oxigenio"])
 app.include_router(lab_router, prefix="/api/lab", tags=["lab"])
 app.include_router(lab_fase6_router, prefix="/api", tags=["fase6"])
 app.include_router(indicadores_router, prefix="/api", tags=["indicadores"])
