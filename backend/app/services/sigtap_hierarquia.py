@@ -172,9 +172,9 @@ def obter_filtro_sigtap_por_tipo(tipo_fila: str | None) -> dict:
         }
 
     # 7. Exames Cardiológicos
-    if "CARDIO" in tf or "ECG" in tf:
+    if "CARDIO" in tf or "ECG" in tf or "CORACAO" in tf or "CORAÇÃO" in tf:
         return {
-            "prefixos": ["021102", "020501", "021001"],
+            "prefixos": ["021102", "020501", "021001", "0406"],
             "excluir_prefixos": ["0202"],
             "categoria": "CARDIOLOGIA",
             "apenas_laboratoriais": False,
@@ -192,7 +192,7 @@ def obter_filtro_sigtap_por_tipo(tipo_fila: str | None) -> dict:
     # 9. Exames Neurológicos
     if "NEURO" in tf or "EEG" in tf:
         return {
-            "prefixos": ["021105", "0210010010"],
+            "prefixos": ["021105", "020601", "020701", "0210010010"],
             "excluir_prefixos": ["0202"],
             "categoria": "NEUROLOGIA",
             "apenas_laboratoriais": False,
@@ -261,13 +261,146 @@ def obter_filtro_sigtap_por_tipo(tipo_fila: str | None) -> dict:
             "apenas_laboratoriais": False,
         }
 
-    # 17. Outros procedimentos especializados
+    # 17. Macro-categoria: Exames Especializados / Diagnósticos Gerais
+    if "EXAME" in tf or "ESPECIALIZ" in tf or "DIAGN" in tf:
+        return {
+            "prefixos": ["02"],  # Todo o grupo 02 de exames diagnósticos
+            "excluir_prefixos": ["0202"],  # Filas de exames especializados não trazem exames laboratoriais simples
+            "categoria": "EXAMES_ESPECIALIZADOS",
+            "apenas_laboratoriais": False,
+        }
+
+    # 18. Outros procedimentos especializados
     return {
         "prefixos": [],
         "excluir_prefixos": ["0202"],  # Filas especializadas não trazem exame de sangue
         "categoria": "ESPECIALIZADOS",
         "apenas_laboratoriais": False,
     }
+
+
+import unicodedata
+
+def _remover_acentos(texto: str) -> str:
+    if not texto:
+        return ""
+    nfkd = unicodedata.normalize("NFKD", texto)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+MAPA_ESPECIALIDADE_PREFIXOS: dict[str, list[str]] = {
+    "cardio": ["021102", "020501", "021001", "0406", "0301"],
+    "neuro": ["021105", "0403", "020601", "020701", "0301"],
+    "oftalmo": ["021106", "0405", "030305", "0301"],
+    "otorrino": ["021107", "0404", "0301"],
+    "gastro": ["0209", "0407", "0201010216", "0301"],
+    "uro": ["021109", "0409", "020902", "020502", "0301"],
+    "ortop": ["0408", "0204", "0205", "0207", "020405", "0301"],
+    "traumato": ["0408", "0204", "0205", "0207", "020405", "0301"],
+    "pneumo": ["021108", "0204", "0206", "0412", "0301"],
+    "masto": ["020403", "0410", "0201010585", "0205", "0301"],
+    "gineco": ["0409", "0411", "020403", "020502", "0301"],
+    "obstetr": ["0411", "020502", "0301"],
+    "cirurg": ["04", "0201", "0301"],
+    "dermato": ["0401", "0201", "0301"],
+    "endocrino": ["0402", "020405", "0205", "0301"],
+    "vascular": ["0406", "020501", "021001", "0301"],
+    "angiolog": ["0406", "020501", "021001", "0301"],
+    "radio": ["0204", "0205", "0206", "0207", "0208", "0301"],
+    "pediatr": ["0204", "0205", "0206", "0211", "04", "0301"],
+    "clinica": ["0204", "0205", "0206", "0207", "0209", "0211", "0301"],
+    "clinico": ["0204", "0205", "0206", "0207", "0209", "0211", "0301"],
+    "reumato": ["020405", "0204", "0205", "0207", "0301"],
+    "nefro": ["0205", "021109", "0304", "0301"],
+    "oncol": ["0201", "0206", "0207", "0208", "0416", "0308", "0309", "0301"],
+    "cancerol": ["0201", "0206", "0207", "0208", "0416", "0308", "0309", "0301"],
+    "hematol": ["0201", "0301"],
+    "infecto": ["0204", "0205", "0206", "0301"],
+    "geriatr": ["0204", "0205", "0206", "0211", "0301"],
+    "psiquiatr": ["021105", "0301"],
+    "alerg": ["0211", "0301"],
+    "imuno": ["0211", "0301"],
+    "coloprocto": ["0209", "0407", "0301"],
+    "procto": ["0209", "0407", "0301"],
+    "nutrol": ["020405", "0205", "0301"],
+    "anestesiolog": ["0301"],
+    "fisiatri": ["0302", "0301"],
+    "familia": ["0204", "0205", "0211", "0301"],
+    "comunidade": ["0204", "0205", "0211", "0301"],
+}
+
+
+def expandir_aliases_busca(termo: str) -> list[str]:
+    """Expande siglas e termos comuns para nomes e códigos de procedimentos SUS correspondentes."""
+    if not termo:
+        return []
+    t = termo.strip().lower()
+    mapa = {
+        "ecg": ["eletrocardiograma", "eletrocardiografia", "ecg com laudo"],
+        "eletrocardiograma": ["ecg", "0211020036"],
+        "holter": ["holter", "sistema holter", "0211020044"],
+        "mapa": ["mapa", "monitorizacao ambulatorial", "pressao arterial", "0211020052"],
+        "eco": ["ecocardiograma", "ecocardiografia", "doppler"],
+        "ecocardiograma": ["eco", "ecocardiografia", "doppler", "0205010040", "0205010032"],
+        "ecocardiograma com doppler": ["ecocardiografia", "doppler", "0205010040", "0205010059"],
+        "ergometrico": ["teste de esforco", "teste ergometrico", "0211020060"],
+        "teste ergometrico": ["ergometrico", "teste de esforco", "0211020060"],
+        "cateterismo": ["cateterismo", "hemodinamica", "cineangiocoronariografia", "021001"],
+        "eeg": ["eletroencefalograma", "eletroencefalografia", "021105"],
+        "usg": ["ultrassonografia", "ecografia", "0205"],
+        "ultrassom": ["ultrassonografia", "ecografia", "0205"],
+        "tc": ["tomografia", "0206"],
+        "rm": ["ressonancia", "0207"],
+        "rnm": ["ressonancia", "0207"],
+        "rx": ["radiografia", "raio", "0204"],
+        "raio-x": ["radiografia", "raio", "0204"],
+        "eda": ["endoscopia", "endoscopia digestiva alta", "020901"],
+        "colonoscopia": ["colono", "colonoscopia", "020901"],
+        "audiometria": ["audio", "audiometria", "021107"],
+        "bera": ["potencial evocado", "bera", "021107"],
+        "densitometria": ["densitometria ossea", "020405"],
+        "artroplastia": ["artroplastia", "protese de quadril", "protese de joelho", "0408"],
+        "catarata": ["facoemulsificacao", "cirurgia de catarata", "040505"],
+    }
+    resultados = []
+    for chave, sinonimos in mapa.items():
+        if chave == t or chave in t or t in chave:
+            resultados.extend(sinonimos)
+    return list(dict.fromkeys(resultados))
+
+
+def corresponde_especialidade_sigtap(codigo: str, nome_proc: str, especialidade_filtro: str, subgrupo_nome: str = "") -> bool:
+    """Verifica se um procedimento SIGTAP corresponde contextualmente à especialidade selecionada."""
+    if not especialidade_filtro:
+        return True
+
+    cod_str = str(codigo or "").strip()
+    # 1. Qualquer consulta médica (0301) é compatível com qualquer especialidade médica
+    if cod_str.startswith("0301"):
+        return True
+
+    ef = _remover_acentos(especialidade_filtro).strip().lower()
+    sn = _remover_acentos(subgrupo_nome or "").strip().lower()
+    np = _remover_acentos(nome_proc or "").strip().lower()
+
+    # Se o nome da especialidade ou CBO bate diretamente no subgrupo ou descrição
+    if ef in sn or ef in np:
+        return True
+
+    # Verifica mapeamento semântico de especialidades
+    for chave, prefixos in MAPA_ESPECIALIDADE_PREFIXOS.items():
+        if chave in ef:
+            if any(cod_str.startswith(p) for p in prefixos):
+                return True
+            if chave in sn or chave in np:
+                return True
+
+    # Se a especialidade for clínica geral / medicina de família / geriatria / pediatria (ambulatorial geral)
+    # e o procedimento for um método diagnóstico geral do grupo 02 (não laboratorial):
+    if any(k in ef for k in ("clinica", "geriatr", "familia", "comunidade")) and cod_str.startswith("02") and not cod_str.startswith("0202"):
+        return True
+
+    return False
 
 
 def validar_cbo_procedimento(
@@ -492,6 +625,128 @@ MAPA_TIPO_ESPECIALIDADE: dict[str, tuple[str, str]] = {
     "RETORNO CONSULTA ESPECIALIZADA": ("Clínica Médica / Especializada", "225125"),
 }
 
+TIPOS_SERVICO_VIVVER: list[dict] = [
+    {"id": 22, "nome": "AVALIAÇÃO CIRURGIA", "sigla": "AVPC", "especializada": True, "cirurgico": "N"},
+    {"id": 48, "nome": "BIOPSIA", "sigla": "BIO", "especializada": True, "cirurgico": "N"},
+    {"id": 36, "nome": "CINTILOGRAFIA", "sigla": "CINT", "especializada": True, "cirurgico": "N"},
+    {"id": 9, "nome": "CIRURGIAS", "sigla": "CIR", "especializada": True, "cirurgico": "S"},
+    {"id": 2, "nome": "CONSULTAS ESPECIALIZADAS", "sigla": "CES", "especializada": True, "cirurgico": "N"},
+    {"id": 39, "nome": "DENSITOMETRIA OSSEA", "sigla": "DEOS", "especializada": True, "cirurgico": "N"},
+    {"id": 42, "nome": "ESPIROMETRIA", "sigla": "ESPM", "especializada": True, "cirurgico": "N"},
+    {"id": 47, "nome": "EXAME RADIOLOGICO CONTRASTADO E TFD", "sigla": "RXCTS", "especializada": True, "cirurgico": "N"},
+    {"id": 35, "nome": "EXAMES CARDIOLOGICOS", "sigla": "CARD", "especializada": True, "cirurgico": "N"},
+    {"id": 41, "nome": "EXAMES GASTROENTEROLOGIA", "sigla": "EXGAS", "especializada": True, "cirurgico": "N"},
+    {"id": 37, "nome": "EXAMES NEUROLOGICOS", "sigla": "NEU", "especializada": True, "cirurgico": "N"},
+    {"id": 38, "nome": "EXAMES OTORRINOLARINGOLOGIA", "sigla": "ORL", "especializada": True, "cirurgico": "N"},
+    {"id": 40, "nome": "EXAMES UROLOGICOS", "sigla": "EXURO", "especializada": True, "cirurgico": "N"},
+    {"id": 28, "nome": "EX. LAB. GINECOLOGIA", "sigla": "EXGO", "especializada": False, "cirurgico": "N"},
+    {"id": 26, "nome": "EX. LAB. HIPERDIA", "sigla": "EXHD", "especializada": False, "cirurgico": "N"},
+    {"id": 27, "nome": "EX. LAB. PEDIATRIA", "sigla": "EXPED", "especializada": False, "cirurgico": "N"},
+    {"id": 44, "nome": "EX. LAB. PRÉ-NATAL", "sigla": "EXPN", "especializada": False, "cirurgico": "N"},
+    {"id": 25, "nome": "EX. LAB. PSF ROTINA", "sigla": "EXPSF", "especializada": False, "cirurgico": "N"},
+    {"id": 29, "nome": "EX. LAB. SECRETARIA", "sigla": "EXSEC", "especializada": False, "cirurgico": "N"},
+    {"id": 33, "nome": "MAMOGRAFIA E MASTOLOGIA", "sigla": "MAMO", "especializada": False, "cirurgico": "N"},
+    {"id": 23, "nome": "PEQUENA CIRURGIA", "sigla": "PCIR", "especializada": True, "cirurgico": "S"},
+    {"id": 43, "nome": "PROCEDIMENTOS OFTALMOLOGICOS", "sigla": "POF", "especializada": True, "cirurgico": "N"},
+    {"id": 32, "nome": "RESSONÂNCIA MAGNÉTICA", "sigla": "RNM", "especializada": False, "cirurgico": "N"},
+    {"id": 30, "nome": "RETORNO CONSULTA ESPECIALIZADA", "sigla": "RCES", "especializada": True, "cirurgico": "N"},
+    {"id": 34, "nome": "TOMOGRAFIA", "sigla": "TOMO", "especializada": False, "cirurgico": "N"},
+    {"id": 31, "nome": "ULTRASSONOGRAFIA", "sigla": "USG", "especializada": True, "cirurgico": "N"},
+]
+
+MAPA_TIPO_SIGLA: dict[str, str] = {t["nome"]: t["sigla"] for t in TIPOS_SERVICO_VIVVER}
+MAPA_SIGLA_TIPO: dict[str, str] = {t["sigla"]: t["nome"] for t in TIPOS_SERVICO_VIVVER}
+
+
+def normalizar_tipo_fila(tipo: str | None) -> tuple[str, str]:
+    """
+    Retorna a tupla (tipo_canonico, sigla) a partir de qualquer termo, sigla ou variante.
+    Ex: 'USG' -> ('ULTRASSONOGRAFIA', 'USG')
+        'TC' -> ('TOMOGRAFIA', 'TOMO')
+        'Cardiologia' -> ('EXAMES CARDIOLOGICOS', 'CARD')
+    """
+    if not tipo:
+        return ("", "")
+    t = _remover_acentos(tipo).strip().upper()
+    if t in MAPA_SIGLA_TIPO:
+        nome_c = MAPA_SIGLA_TIPO[t]
+        return (nome_c, t)
+
+    sinonimos: dict[str, tuple[str, str]] = {
+        "TC": ("TOMOGRAFIA", "TOMO"),
+        "RM": ("RESSONÂNCIA MAGNÉTICA", "RNM"),
+        "RNM": ("RESSONÂNCIA MAGNÉTICA", "RNM"),
+        "RESSONANCIA": ("RESSONÂNCIA MAGNÉTICA", "RNM"),
+        "RESSONANCIA MAGNETICA": ("RESSONÂNCIA MAGNÉTICA", "RNM"),
+        "USG": ("ULTRASSONOGRAFIA", "USG"),
+        "ULTRA": ("ULTRASSONOGRAFIA", "USG"),
+        "ULTRASSOM": ("ULTRASSONOGRAFIA", "USG"),
+        "ULTRASSONOGRAFIA": ("ULTRASSONOGRAFIA", "USG"),
+        "TOMO": ("TOMOGRAFIA", "TOMO"),
+        "TOMOGRAFIA": ("TOMOGRAFIA", "TOMO"),
+        "CARD": ("EXAMES CARDIOLOGICOS", "CARD"),
+        "CARDIO": ("EXAMES CARDIOLOGICOS", "CARD"),
+        "CARDIOLOGIA": ("EXAMES CARDIOLOGICOS", "CARD"),
+        "EXAMES CARDIOLOGICOS": ("EXAMES CARDIOLOGICOS", "CARD"),
+        "MAMO": ("MAMOGRAFIA E MASTOLOGIA", "MAMO"),
+        "MASTO": ("MAMOGRAFIA E MASTOLOGIA", "MAMO"),
+        "MAMOGRAFIA": ("MAMOGRAFIA E MASTOLOGIA", "MAMO"),
+        "MAMOGRAFIA E MASTOLOGIA": ("MAMOGRAFIA E MASTOLOGIA", "MAMO"),
+        "BIO": ("BIOPSIA", "BIO"),
+        "BIOPSIA": ("BIOPSIA", "BIO"),
+        "CIR": ("CIRURGIAS", "CIR"),
+        "CIRURGIA": ("CIRURGIAS", "CIR"),
+        "CIRURGIAS": ("CIRURGIAS", "CIR"),
+        "PCIR": ("PEQUENA CIRURGIA", "PCIR"),
+        "PEQUENA CIRURGIA": ("PEQUENA CIRURGIA", "PCIR"),
+        "AVPC": ("AVALIAÇÃO CIRURGIA", "AVPC"),
+        "AVALIACAO CIRURGIA": ("AVALIAÇÃO CIRURGIA", "AVPC"),
+        "CES": ("CONSULTAS ESPECIALIZADAS", "CES"),
+        "CONSULTA": ("CONSULTAS ESPECIALIZADAS", "CES"),
+        "CONSULTAS": ("CONSULTAS ESPECIALIZADAS", "CES"),
+        "DEOS": ("DENSITOMETRIA OSSEA", "DEOS"),
+        "DENSITOMETRIA": ("DENSITOMETRIA OSSEA", "DEOS"),
+        "DENSITOMETRIA OSSEA": ("DENSITOMETRIA OSSEA", "DEOS"),
+        "ESPM": ("ESPIROMETRIA", "ESPM"),
+        "ESPIROMETRIA": ("ESPIROMETRIA", "ESPM"),
+        "RX": ("EXAME RADIOLOGICO CONTRASTADO E TFD", "RXCTS"),
+        "RAIO-X": ("EXAME RADIOLOGICO CONTRASTADO E TFD", "RXCTS"),
+        "RAIO X": ("EXAME RADIOLOGICO CONTRASTADO E TFD", "RXCTS"),
+        "RXCTS": ("EXAME RADIOLOGICO CONTRASTADO E TFD", "RXCTS"),
+        "EXAME RADIOLOGICO CONTRASTADO E TFD": ("EXAME RADIOLOGICO CONTRASTADO E TFD", "RXCTS"),
+        "CINT": ("CINTILOGRAFIA", "CINT"),
+        "CINTILOGRAFIA": ("CINTILOGRAFIA", "CINT"),
+        "EXGAS": ("EXAMES GASTROENTEROLOGIA", "EXGAS"),
+        "GASTRO": ("EXAMES GASTROENTEROLOGIA", "EXGAS"),
+        "ENDOSCOPIA": ("EXAMES GASTROENTEROLOGIA", "EXGAS"),
+        "EXAMES GASTROENTEROLOGIA": ("EXAMES GASTROENTEROLOGIA", "EXGAS"),
+        "NEU": ("EXAMES NEUROLOGICOS", "NEU"),
+        "NEURO": ("EXAMES NEUROLOGICOS", "NEU"),
+        "NEUROLOGIA": ("EXAMES NEUROLOGICOS", "NEU"),
+        "EXAMES NEUROLOGICOS": ("EXAMES NEUROLOGICOS", "NEU"),
+        "ORL": ("EXAMES OTORRINOLARINGOLOGIA", "ORL"),
+        "OTORRINO": ("EXAMES OTORRINOLARINGOLOGIA", "ORL"),
+        "AUDIOMETRIA": ("EXAMES OTORRINOLARINGOLOGIA", "ORL"),
+        "EXAMES OTORRINOLARINGOLOGIA": ("EXAMES OTORRINOLARINGOLOGIA", "ORL"),
+        "EXURO": ("EXAMES UROLOGICOS", "EXURO"),
+        "URO": ("EXAMES UROLOGICOS", "EXURO"),
+        "UROLOGIA": ("EXAMES UROLOGICOS", "EXURO"),
+        "EXAMES UROLOGICOS": ("EXAMES UROLOGICOS", "EXURO"),
+        "POF": ("PROCEDIMENTOS OFTALMOLOGICOS", "POF"),
+        "OFTALMO": ("PROCEDIMENTOS OFTALMOLOGICOS", "POF"),
+        "OFTALMOLOGIA": ("PROCEDIMENTOS OFTALMOLOGICOS", "POF"),
+        "PROCEDIMENTOS OFTALMOLOGICOS": ("PROCEDIMENTOS OFTALMOLOGICOS", "POF"),
+    }
+    if t in sinonimos:
+        return sinonimos[t]
+    for k, v in sinonimos.items():
+        if k in t or t in k:
+            return v
+    for nome_p, sigla_p in MAPA_TIPO_SIGLA.items():
+        if _remover_acentos(nome_p).upper() == t:
+            return (nome_p, sigla_p)
+    return (tipo, "")
+
 
 def seed_especialidades(db: Session) -> int:
     """Garante que a tabela tfd_especialidades contenha todas as especialidades médicas padrão."""
@@ -520,11 +775,13 @@ def seed_especialidades(db: Session) -> int:
 def seed_vivver_procedimentos(db: Session, caminho_csv: str | None = None) -> dict:
     """
     Importa procedimentos categorizados a partir das exportações do sistema Vivver
-    para alimentar o catálogo dinâmico de procedimentos e tipos de fila.
+    para alimentar o catálogo dinâmico de procedimentos e tipos de fila, cruzando
+    com os dados oficiais do SIGTAP (códigos, CBOs autorizados e siglas).
     """
     import os
     import csv
     from app.models.tfd import ProcedimentoCatalogo, TipoFila
+    from app.models.lab_exames import SigtapProcedimento, SigtapCbo
 
     # Garante primeiro que as especialidades médicas estejam na base
     try:
@@ -535,7 +792,10 @@ def seed_vivver_procedimentos(db: Session, caminho_csv: str | None = None) -> di
     caminhos_tentativas = [
         caminho_csv,
         os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data", "vivver", "procedimentos.csv")),
+        os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data", "vivver", "procedimentos_por_tipo.csv")),
         os.path.join(os.getcwd(), "backend", "app", "data", "vivver", "procedimentos.csv"),
+        os.path.join(os.getcwd(), "backend", "app", "data", "vivver", "procedimentos_por_tipo.csv"),
+        "/Users/mateusluck/Documents/ESUS-exportacoes/vivver_procedimentos_por_tipo_2026-11-06/procedimentos_por_tipo.csv",
         "/Users/mateusluck/Documents/ESUS-exportacoes/vivver_procedimentos_por_tipo/procedimentos.csv",
         os.path.join(os.getcwd(), "data", "vivver_procedimentos.csv"),
     ]
@@ -548,13 +808,44 @@ def seed_vivver_procedimentos(db: Session, caminho_csv: str | None = None) -> di
     if not arquivo_encontrado:
         return {"ok": False, "mensagem": "Arquivo CSV do Vivver não encontrado.", "inseridos": 0}
 
+    # 1. Garante o cadastro prévio de todos os 26 Tipos de Serviço do Vivver com siglas oficiais
+    tipos_existentes = {t.nome.strip().upper(): t for t in db.exec(select(TipoFila)).all()}
+    caminho_tipos = os.path.join(os.path.dirname(arquivo_encontrado), "tipos_servico.csv")
+    if os.path.exists(caminho_tipos):
+        try:
+            with open(caminho_tipos, "r", encoding="utf-8") as ft:
+                for row_t in csv.DictReader(ft):
+                    t_id = (row_t.get("servico_tipo_id") or "").strip()
+                    t_nome = (row_t.get("nome") or "").strip().upper()
+                    if t_nome and t_nome not in tipos_existentes:
+                        novo_tipo = TipoFila(codigo=t_id, nome=t_nome, ativo=True)
+                        db.add(novo_tipo)
+                        tipos_existentes[t_nome] = novo_tipo
+        except Exception:
+            pass
+    # Garante via lista estática TIPOS_SERVICO_VIVVER se faltar algum
+    for t_info in TIPOS_SERVICO_VIVVER:
+        t_nome = t_info["nome"]
+        if t_nome not in tipos_existentes:
+            novo_tipo = TipoFila(codigo=str(t_info["id"]), nome=t_nome, ativo=True)
+            db.add(novo_tipo)
+            tipos_existentes[t_nome] = novo_tipo
+
+    # 2. Pré-carrega mapa de CBOs médicos oficiais do SIGTAP para enriquecer especialidades
+    todos_cbos_db = db.exec(select(SigtapCbo)).all()
+    cbos_por_proc: dict[str, list[tuple[str, str]]] = {}
+    for c in todos_cbos_db:
+        cod_p = c.procedimento_codigo.strip()
+        if cod_p not in cbos_por_proc:
+            cbos_por_proc[cod_p] = []
+        cbos_por_proc[cod_p].append((c.cbo.strip(), c.descricao.strip()))
+
     # Carrega existentes
     existentes = {
         (p.codigo.strip(), (p.tipo_fila or "").strip().upper())
         for p in db.exec(select(ProcedimentoCatalogo)).all()
         if p.codigo
     }
-    tipos_existentes = {t.nome.strip().upper(): t for t in db.exec(select(TipoFila)).all()}
 
     inseridos = 0
     with open(arquivo_encontrado, "r", encoding="utf-8") as f:
@@ -575,33 +866,56 @@ def seed_vivver_procedimentos(db: Session, caminho_csv: str | None = None) -> di
                 tipos_existentes[tipo_nome] = novo_tipo
 
             chave = (cod, tipo_nome)
+            sigla_tipo = MAPA_TIPO_SIGLA.get(tipo_nome, "")
+
+            # Cruzamento de especialidade médica:
+            esp_nome, esp_cbo = MAPA_TIPO_ESPECIALIDADE.get(tipo_nome, ("", ""))
+            # Se houver CBOs específicos do SIGTAP para este procedimento, busca o primeiro médico
+            if cod in cbos_por_proc:
+                cbos_cand = cbos_por_proc[cod]
+                # Prefere médico (família 225)
+                med_cbo = next((item for item in cbos_cand if item[0].startswith("225")), None)
+                if med_cbo:
+                    esp_cbo = med_cbo[0]
+                    if not esp_nome:
+                        esp_nome = med_cbo[1]
+
             if chave not in existentes:
-                esp_par = MAPA_TIPO_ESPECIALIDADE.get(tipo_nome, ("", ""))
                 proc = ProcedimentoCatalogo(
                     codigo=cod,
                     nome=nome[:150],
                     tipo_fila=tipo_nome[:80],
-                    nome_especialidade=esp_par[0][:120],
-                    codigo_especialidade=esp_par[1][:10],
+                    nome_especialidade=esp_nome[:120],
+                    codigo_especialidade=esp_cbo[:10],
+                    codigo_curto=sigla_tipo[:12],
                     ativo=True,
                 )
                 db.add(proc)
                 existentes.add(chave)
                 inseridos += 1
 
-    # Atualiza procedimentos que existiam sem especialidade preenchida
-    atualizados_esp = 0
+    # 3. Atualiza procedimentos existentes sem sigla/código curto ou especialidade
+    atualizados = 0
     todos_procs = db.exec(select(ProcedimentoCatalogo)).all()
     for p in todos_procs:
         tf = (p.tipo_fila or "").strip().upper()
+        sigla_esperada = MAPA_TIPO_SIGLA.get(tf, "")
+        alterou = False
+        if sigla_esperada and not p.codigo_curto:
+            p.codigo_curto = sigla_esperada[:12]
+            alterou = True
         if (not p.nome_especialidade or not p.codigo_especialidade) and tf in MAPA_TIPO_ESPECIALIDADE:
             esp_nome, esp_cbo = MAPA_TIPO_ESPECIALIDADE[tf]
-            p.nome_especialidade = esp_nome
-            p.codigo_especialidade = esp_cbo
+            if not p.nome_especialidade:
+                p.nome_especialidade = esp_nome
+            if not p.codigo_especialidade:
+                p.codigo_especialidade = esp_cbo
+            alterou = True
+        if alterou:
             db.add(p)
-            atualizados_esp += 1
+            atualizados += 1
 
-    if inseridos > 0 or atualizados_esp > 0:
+    if inseridos > 0 or atualizados > 0:
         db.commit()
 
-    return {"ok": True, "arquivo": arquivo_encontrado, "inseridos": inseridos, "especialidades_vinculadas": atualizados_esp}
+    return {"ok": True, "arquivo": arquivo_encontrado, "inseridos": inseridos, "atualizados": atualizados}

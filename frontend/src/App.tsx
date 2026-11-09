@@ -62,6 +62,11 @@ const OxigenioEquipamentos = lazy(() => import("./pages/oxigenio/OxigenioEquipam
 const OxigenioEmprestimos = lazy(() => import("./pages/oxigenio/OxigenioEmprestimos"));
 const OxigenioEmpresas = lazy(() => import("./pages/oxigenio/OxigenioEmpresas"));
 const OxigenioRequisicaoAF = lazy(() => import("./pages/oxigenio/OxigenioRequisicaoAF"));
+const FarmaciaEstoque = lazy(() => import("./pages/farmacia/FarmaciaEstoque"));
+const FarmaciaValidade = lazy(() => import("./pages/farmacia/FarmaciaValidade"));
+const FarmaciaLinks = lazy(() => import("./pages/farmacia/FarmaciaLinks"));
+const FarmaciaInsumos = lazy(() => import("./pages/farmacia/FarmaciaInsumos"));
+const FarmaciaPainelPublico = lazy(() => import("./pages/farmacia/FarmaciaPainelPublico"));
 
 function Guard({ tela, children }: { tela: string; children: ReactElement }) {
   const { can, loading } = useAuth();
@@ -136,6 +141,8 @@ export default function App() {
           <Route path="/alterar-senha-inicial" element={<AlterarSenhaInicial />} />
           <Route path="/acompanhar/:token" element={<AcompanharExame />} />
           <Route path="/confirmar-presenca/:token" element={<ConfirmarPresencaViagem />} />
+          <Route path="/farmacia/publico/:token" element={<FarmaciaPainelPublico />} />
+          <Route path="/farmacia/painel-tv/:token" element={<FarmaciaPainelPublico />} />
           <Route path="/fila-exames" element={
             <Protected>
               <GuardQualquer telas={["tfd_exames", "tfd_fila_lancamento", "tfd_medico", "tfd"]}>
@@ -332,6 +339,54 @@ export default function App() {
                 <GuardQualquer telas={["oxigenio_relatorios", "oxigenio", "usuarios"]}>
                   <Shell>
                     <OxigenioRequisicaoAF />
+                  </Shell>
+                </GuardQualquer>
+              </Protected>
+            }
+          />
+          <Route
+            path="/farmacia"
+            element={
+              <Protected>
+                <GuardQualquer telas={["farmacia_estoque", "farmacia", "usuarios"]}>
+                  <Shell>
+                    <FarmaciaEstoque />
+                  </Shell>
+                </GuardQualquer>
+              </Protected>
+            }
+          />
+          <Route
+            path="/farmacia/validade"
+            element={
+              <Protected>
+                <GuardQualquer telas={["farmacia_validade", "farmacia", "usuarios"]}>
+                  <Shell>
+                    <FarmaciaValidade />
+                  </Shell>
+                </GuardQualquer>
+              </Protected>
+            }
+          />
+          <Route
+            path="/farmacia/links"
+            element={
+              <Protected>
+                <GuardQualquer telas={["farmacia_links", "farmacia", "usuarios"]}>
+                  <Shell>
+                    <FarmaciaLinks />
+                  </Shell>
+                </GuardQualquer>
+              </Protected>
+            }
+          />
+          <Route
+            path="/farmacia/insumos"
+            element={
+              <Protected>
+                <GuardQualquer telas={["farmacia_insumos", "farmacia", "usuarios"]}>
+                  <Shell>
+                    <FarmaciaInsumos />
                   </Shell>
                 </GuardQualquer>
               </Protected>

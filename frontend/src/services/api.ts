@@ -1139,6 +1139,7 @@ export type CatalogoProc = {
   exame: string;
   nome_procedimento?: string;
   codigo_procedimento?: string;
+  descricao_sigtap?: string;
   especialidade: string;
   codigo_especialidade?: string;
   nome_especialidade?: string;
@@ -1147,6 +1148,12 @@ export type CatalogoProc = {
   rotulo: string;
   usos: number;
   origem?: string;
+  sigtap_cruzado?: boolean;
+  complexidade?: string;
+  instrumento?: string;
+  valor_sa?: number;
+  sexo?: string;
+  cbos_autorizados?: string[];
 };
 
 export interface ValidarCboResult {
@@ -2531,6 +2538,17 @@ export interface EmpresaOxigenio {
   contato_responsavel: string;
   endereco: string;
   servicos: string[];
+  servicos_prestados?: "LOCACAO_MAQUINAS" | "FORNECIMENTO_OXIGENIO" | "AMBOS" | string;
+  valor_unitario_10m3?: number;
+  valor_unitario_3m3?: number;
+  valor_unitario_1m3?: number;
+  valor_recarga_m3?: number;
+  locacao_mensal_concentrador?: number;
+  locacao_mensal_concentrador_5l?: number;
+  locacao_mensal_concentrador_10l?: number;
+  locacao_mensal_cpap?: number;
+  locacao_mensal_bipap?: number;
+  locacao_mensal_cilindro?: number;
   observacoes: string;
   ativo: boolean;
   created_at: string;
@@ -2552,6 +2570,13 @@ export interface LicitacaoOxigenio {
   valor_unitario_10m3: number;
   valor_unitario_3m3: number;
   valor_unitario_1m3: number;
+  valor_recarga_m3?: number;
+  locacao_mensal_concentrador?: number;
+  locacao_mensal_concentrador_5l?: number;
+  locacao_mensal_concentrador_10l?: number;
+  locacao_mensal_cpap?: number;
+  locacao_mensal_bipap?: number;
+  locacao_mensal_cilindro?: number;
   valor_total_contrato: number;
   saldo_alerta_minimo_pct: number;
   ativo: boolean;
@@ -2584,7 +2609,7 @@ export interface EntradaCompraOxigenio {
 
 export interface EquipamentoRespiratorio {
   id: number;
-  tipo: "CPAP" | "BiPAP" | "CONCENTRADOR";
+  tipo: "CPAP" | "BiPAP" | "CONCENTRADOR" | "CONCENTRADOR_5L" | "CONCENTRADOR_10L" | string;
   patrimonio: string;
   numero_serie: string;
   marca_modelo: string;
@@ -2602,6 +2627,23 @@ export interface EquipamentoRespiratorio {
   emprestimo_id?: number | null;
 }
 
+export interface ItemEmprestimo {
+  id?: number;
+  tipo_servico: "MAQUINA" | "OXIGENIO" | string;
+  tipo_item?: "MAQUINA" | "CILINDRO" | string;
+  equipamento_id?: number | null;
+  tipo_equipamento?: string | null;
+  equipamento_tipo?: string | null;
+  equipamento_patrimonio?: string | null;
+  equipamento_serie?: string | null;
+  tipo_cilindro?: string | null;
+  finalidade_cilindro?: string | null;
+  quantidade: number;
+  posse_cilindro: "PROPRIO" | "COMODATO" | string;
+  status?: string;
+  observacoes?: string;
+}
+
 export interface EmprestimoOxigenio {
   id: number;
   codigo_termo: string;
@@ -2614,12 +2656,15 @@ export interface EmprestimoOxigenio {
   paciente_endereco: string;
   tipo_servico: "MAQUINA" | "OXIGENIO";
   equipamento_id?: number | null;
-  tipo_equipamento?: "CPAP" | "BiPAP" | "CONCENTRADOR" | null;
+  tipo_equipamento?: "CPAP" | "BiPAP" | "CONCENTRADOR" | "CONCENTRADOR_5L" | "CONCENTRADOR_10L" | string | null;
   equipamento_patrimonio?: string | null;
   equipamento_serie?: string | null;
   tipo_cilindro?: "10m3" | "3m3" | "1m3" | null;
   finalidade_cilindro?: "FIXO_CONCENTRADOR" | "SEMANAL_CONCENTRADOR" | "TRANSPORTE_ESPECIAL" | "USO_CONTINUO" | "OUTRO" | null;
   quantidade: number;
+  posse_cilindro?: "PROPRIO" | "COMODATO";
+  itens_resumo?: string;
+  itens?: ItemEmprestimo[];
   empresa_id?: number | null;
   empresa_nome?: string | null;
   licitacao_id?: number | null;
@@ -2664,6 +2709,7 @@ export interface SaldoCilindroTipo {
   contratado: number;
   comprado: number;
   em_uso: number;
+  vazios?: number;
   saldo_licitacao: number;
   saldo_estoque_disponivel: number;
   alerta_baixo: boolean;
@@ -2676,6 +2722,8 @@ export interface EstoqueOxigenioResumo {
   pacientes_ativos_oxigenio: number;
   pacientes_ativos_maquinas: number;
   pacientes_ativos_concentrador: number;
+  pacientes_ativos_concentrador_5l?: number;
+  pacientes_ativos_concentrador_10l?: number;
   pacientes_ativos_cpap: number;
   pacientes_ativos_bipap: number;
   total_pacientes_inativos: number;
@@ -2696,12 +2744,23 @@ export interface EstoqueOxigenioResumo {
   consumo_por_empresa: {
     empresa_id: number;
     empresa_nome: string;
+    servicos?: string[];
+    fornece_oxigenio?: boolean;
+    loca_equipamentos?: boolean;
     compras_10m3: number;
     compras_3m3: number;
     compras_1m3: number;
     total_cilindros: number;
+    valor_total_compras?: number;
     equipamentos_cadastrados: number;
+    equipamentos_em_uso?: number;
   }[];
+  saldos_comodato?: ComodatoSaldo[];
+  total_cilindros_vazios_pendentes?: number;
+  vazios_10m3?: number;
+  vazios_3m3?: number;
+  vazios_1m3?: number;
+  total_cilindros_cheios_disponiveis?: number;
 }
 
 export interface ItemRequisicaoAF {
@@ -2729,6 +2788,8 @@ export interface RequisicaoAF {
 export interface ComprovanteEmprestimoData {
   codigo_termo: string;
   data_emissao: string;
+  itens_resumo?: string;
+  itens?: ItemEmprestimo[];
   paciente: {
     id: number;
     nome: string;
@@ -2751,6 +2812,9 @@ export interface ComprovanteEmprestimoData {
     tipo_cilindro?: string;
     finalidade_cilindro?: string;
     quantidade: number;
+    posse_cilindro?: string;
+    itens_resumo?: string;
+    itens?: ItemEmprestimo[];
     data_instalacao: string;
     data_prevista_troca?: string;
     fluxo_oxigenio?: string;
@@ -2763,6 +2827,145 @@ export interface ComprovanteEmprestimoData {
   };
   observacoes: string;
   declaracao_responsabilidade: string;
+}
+
+export interface CilindroVazio {
+  id: number;
+  paciente_id: number;
+  paciente_nome: string;
+  emprestimo_id?: number | null;
+  empresa_id?: number | null;
+  tipo_cilindro: string;
+  quantidade: number;
+  posse: string;
+  status: "PENDENTE" | "RECOLHIDO";
+  data_geracao: string;
+  data_recolhimento?: string | null;
+  responsavel_recolhimento?: string | null;
+  motivo_origem?: string;
+  observacoes: string;
+  created_at: string;
+}
+
+export interface ComodatoMovimentacao {
+  id: number;
+  empresa_id: number;
+  empresa_nome: string;
+  tipo_movimentacao: "ENTRADA_COMODATO" | "DEVOLUCAO_EMPRESA" | string;
+  tipo_cilindro: string;
+  quantidade: number;
+  data_movimento?: string;
+  data_movimentacao?: string;
+  numero_documento?: string;
+  numero_nota_remessa?: string;
+  responsavel?: string;
+  observacoes: string;
+  created_at?: string;
+}
+
+export interface ComodatoSaldo {
+  tipo_cilindro: string;
+  total_recebido: number;
+  total_devolvido: number;
+  saldo_em_comodato: number;
+  saldo_com_municipio?: number;
+}
+
+export interface ItemFaturamentoPaciente {
+  paciente_nome: string;
+  prontuario?: string;
+  item_descricao: string;
+  tipo_custo: string;
+  quantidade: number;
+  valor_unitario: number;
+  subtotal: number;
+}
+
+export interface RelatorioFaturamento {
+  mes: number;
+  ano: number;
+  empresa_id?: number | null;
+  empresa_nome?: string | null;
+  periodo_formatado: string;
+  pacientes_ativos_total: number;
+  pacientes_ativos_oxigenio: number;
+  pacientes_ativos_concentrador: number;
+  pacientes_ativos_concentrador_5l?: number;
+  pacientes_ativos_concentrador_10l?: number;
+  pacientes_ativos_cpap: number;
+  pacientes_ativos_bipap: number;
+  recargas_10m3_qtd: number;
+  recargas_10m3_unit: number;
+  recargas_10m3_total: number;
+  recargas_3m3_qtd: number;
+  recargas_3m3_unit: number;
+  recargas_3m3_total: number;
+  recargas_1m3_qtd: number;
+  recargas_1m3_unit: number;
+  recargas_1m3_total: number;
+  subtotal_recargas: number;
+  locacao_concentradores_qtd: number;
+  locacao_concentradores_unit: number;
+  locacao_concentradores_total: number;
+  locacao_concentradores_5l_qtd?: number;
+  locacao_concentradores_5l_unit?: number;
+  locacao_concentradores_5l_total?: number;
+  locacao_concentradores_10l_qtd?: number;
+  locacao_concentradores_10l_unit?: number;
+  locacao_concentradores_10l_total?: number;
+  locacao_cpaps_qtd: number;
+  locacao_cpaps_unit: number;
+  locacao_cpaps_total: number;
+  locacao_bipaps_qtd: number;
+  locacao_bipaps_unit: number;
+  locacao_bipaps_total: number;
+  subtotal_locacoes: number;
+  total_geral_faturamento: number;
+  detalhes_pacientes: any[];
+  itens?: ItemFaturamentoPaciente[];
+  total_faturamento?: number;
+  total_custo_recargas?: number;
+  total_custo_locacoes?: number;
+  total_pacientes_atendidos?: number;
+  total_m3_oxigenio?: number;
+  total_maquinas_locadas?: number;
+  data_geracao?: string;
+  contratado_licitacao_10m3?: number;
+  contratado_licitacao_3m3?: number;
+  contratado_licitacao_1m3?: number;
+  consumo_mes_10m3?: number;
+  consumo_mes_3m3?: number;
+  consumo_mes_1m3?: number;
+  acumulado_consumido_10m3?: number;
+  acumulado_consumido_3m3?: number;
+  acumulado_consumido_1m3?: number;
+  saldo_restante_licitacao_10m3?: number;
+  saldo_restante_licitacao_3m3?: number;
+  saldo_restante_licitacao_1m3?: number;
+  cilindros_em_pacientes_10m3?: number;
+  cilindros_em_pacientes_3m3?: number;
+  cilindros_em_pacientes_1m3?: number;
+  comodato_saldo_10m3?: number;
+  comodato_saldo_3m3?: number;
+  comodato_saldo_1m3?: number;
+  historico_abastecimentos?: {
+    data: string;
+    descricao: string;
+    quantidade: number;
+    valor_unitario: number;
+    valor_total: number;
+    numero_nf?: string;
+    empresa?: string;
+  }[];
+  faturamento_por_empresa?: {
+    empresa_id: number;
+    empresa_nome: string;
+    total_recargas: number;
+    total_locacoes: number;
+    total_geral: number;
+    maquinas_ativas: number;
+    m3_oxigenio: number;
+  }[];
 }
 
 export const oxigenioEmpresas = (params?: { q?: string; servico?: string; apenas_ativas?: boolean }) =>
@@ -2845,6 +3048,105 @@ export const oxigenioResumoEstoque = (params?: { empresa_id?: number }) =>
 export const oxigenioRequisicaoAF = () =>
   api.get<RequisicaoAF>("/api/oxigenio/requisicao-af").then((r) => r.data);
 
+export const oxigenioMigrarEmpresa = (data: {
+  empresa_origem_id: number;
+  empresa_destino_id: number;
+  transferir_pacientes?: boolean;
+  transferir_equipamentos?: boolean;
+  observacoes?: string;
+}) => api.post<{ sucesso: boolean; pacientes_transferidos: number; equipamentos_transferidos: number; mensagem: string }>(
+  "/api/oxigenio/empresas/migrar", data
+).then((r) => r.data);
+
+export const oxigenioAlterarStatusEquipamento = (id: number, data: { status: string; observacoes?: string; desvincular_paciente?: boolean }) =>
+  api.patch<EquipamentoRespiratorio>(`/api/oxigenio/equipamentos/${id}/status`, data).then((r) => r.data);
+
+export const oxigenioListarCilindrosVazios = (params?: { status?: string; tipo_cilindro?: string; paciente_id?: number; empresa_id?: number; q?: string }) =>
+  api.get<CilindroVazio[]>("/api/oxigenio/cilindros-vazios", { params }).then((r) => r.data);
+
+export const oxigenioRecolherCilindroVazio = (
+  id: number,
+  data: {
+    data_recolhimento: string;
+    responsavel_recolhimento?: string;
+    recolhido_por?: string;
+    empresa_id?: number;
+    observacoes?: string;
+  }
+) =>
+  api
+    .post<CilindroVazio>(`/api/oxigenio/cilindros-vazios/${id}/recolher`, {
+      data_recolhimento: data.data_recolhimento,
+      responsavel_recolhimento: data.responsavel_recolhimento || data.recolhido_por || "Transportador",
+      empresa_id: data.empresa_id,
+      observacoes: data.observacoes,
+    })
+    .then((r) => r.data);
+
+export const oxigenioCriarCilindroVazio = (data: { paciente_id: number; tipo_cilindro: string; quantidade: number; posse?: string; observacoes?: string }) =>
+  api.post<CilindroVazio>("/api/oxigenio/cilindros-vazios", data).then((r) => r.data);
+
+export const oxigenioListarComodato = (params?: { empresa_id?: number; tipo_movimentacao?: string; tipo_cilindro?: string }) =>
+  api.get<ComodatoMovimentacao[]>("/api/oxigenio/comodato", { params }).then((r) => r.data);
+
+export const oxigenioCriarComodato = (data: {
+  empresa_id: number;
+  tipo_movimentacao: string;
+  tipo_cilindro: string;
+  quantidade: number;
+  data_movimento?: string;
+  data_movimentacao?: string;
+  numero_documento?: string;
+  numero_nota_remessa?: string;
+  responsavel?: string;
+  observacoes?: string;
+}) =>
+  api
+    .post<ComodatoMovimentacao>("/api/oxigenio/comodato", {
+      ...data,
+      data_movimento: data.data_movimento || data.data_movimentacao || new Date().toISOString().slice(0, 10),
+      numero_documento: data.numero_documento || data.numero_nota_remessa || "",
+    })
+    .then((r) => r.data);
+
+export const oxigenioSaldosComodato = (params?: { empresa_id?: number }) =>
+  api.get<ComodatoSaldo[]>("/api/oxigenio/comodato/saldos", { params }).then((r) => r.data);
+
+export const oxigenioRelatorioFaturamento = (
+  anoOuParams?: number | { mes?: number; ano?: number; empresa_id?: number },
+  mes?: number,
+  empresa_id?: number
+) => {
+  const params = typeof anoOuParams === "object"
+    ? anoOuParams
+    : { ano: anoOuParams, mes, empresa_id };
+  return api
+    .get<RelatorioFaturamento>("/api/oxigenio/relatorios/faturamento", { params })
+    .then((r) => {
+      const data = r.data;
+      data.total_faturamento = data.total_faturamento ?? data.total_geral_faturamento ?? 0;
+      data.total_custo_recargas = data.total_custo_recargas ?? data.subtotal_recargas ?? 0;
+      data.total_custo_locacoes = data.total_custo_locacoes ?? data.subtotal_locacoes ?? 0;
+      data.total_pacientes_atendidos = data.total_pacientes_atendidos ?? data.pacientes_ativos_total ?? 0;
+      data.total_m3_oxigenio = data.total_m3_oxigenio ?? ((data.recargas_10m3_qtd || 0) * 10 + (data.recargas_3m3_qtd || 0) * 3 + (data.recargas_1m3_qtd || 0) * 1);
+      data.total_maquinas_locadas = data.total_maquinas_locadas ?? ((data.locacao_concentradores_qtd || 0) + (data.locacao_cpaps_qtd || 0) + (data.locacao_bipaps_qtd || 0));
+      data.data_geracao = data.data_geracao || new Date().toISOString();
+      data.itens = data.itens || (data.detalhes_pacientes as any[])?.map((d: any) => ({
+        paciente_nome: d.paciente_nome || d.paciente || "",
+        prontuario: d.prontuario || d.cpf || "",
+        item_descricao: d.item_descricao || d.tipo_item || "",
+        tipo_custo: d.tipo_custo || (d.tipo_servico === "MAQUINA" ? "FIXO_LOCACAO" : "VARIAVEL_RECARGA"),
+        quantidade: d.quantidade || 1,
+        valor_unitario: d.valor_unitario || 0,
+        subtotal: d.subtotal || 0,
+      })) || [];
+      return data;
+    });
+};
+
+export const oxigenioSeedDadosReais = () =>
+  api.post<{ status: string; mensagem: string; empresas_criadas?: number; licitacoes_criadas?: number; pacientes_criados?: number }>("/api/oxigenio/seed-dados-reais").then((r) => r.data);
+
 // ==========================================
 // VERIFICAÇÃO DE DUPLICIDADE (TFD & LAB)
 // ==========================================
@@ -2915,6 +3217,329 @@ export const labVerificarDuplicidade = (params: {
   sigtap_ids?: string;
 }) =>
   api.get<VerificarDuplicidadeLabOut>("/api/exames/verificar-duplicidade", { params }).then((r) => r.data);
+
+// ==========================================
+// FARMÁCIA MUNICIPAL & INSUMOS
+// ==========================================
+
+export interface MedicamentoOut {
+  id: number;
+  codigo: string;
+  nome: string;
+  principio_ativo: string;
+  dosagem: string;
+  forma_farmaceutica: string;
+  unidade_medida: string;
+  categoria: string;
+  fabricante: string;
+  lote: string;
+  validade: string | null;
+  estoque_atual: number;
+  estoque_minimo: number;
+  requer_receita: boolean;
+  controlado: boolean;
+  localizacao_prateleira: string;
+  observacoes: string;
+  ativo: boolean;
+  status_estoque: "ZERADO" | "CRITICO" | "BAIXO" | "NORMAL";
+  status_validade: "VENCIDO" | "PROXIMO_VENCIMENTO" | "VALIDO" | "SEM_DATA";
+  contagem_regressiva_texto: string;
+  dias_para_vencer: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MedicamentoCriar {
+  codigo: string;
+  nome: string;
+  principio_ativo?: string;
+  dosagem?: string;
+  forma_farmaceutica?: string;
+  unidade_medida?: string;
+  categoria?: string;
+  fabricante?: string;
+  lote?: string;
+  validade?: string | null;
+  estoque_atual?: number;
+  estoque_minimo?: number;
+  requer_receita?: boolean;
+  controlado?: boolean;
+  localizacao_prateleira?: string;
+  observacoes?: string;
+  ativo?: boolean;
+}
+
+export interface MedicamentoAtualizar {
+  codigo?: string;
+  nome?: string;
+  principio_ativo?: string;
+  dosagem?: string;
+  forma_farmaceutica?: string;
+  unidade_medida?: string;
+  categoria?: string;
+  fabricante?: string;
+  lote?: string;
+  validade?: string | null;
+  estoque_minimo?: number;
+  requer_receita?: boolean;
+  controlado?: boolean;
+  localizacao_prateleira?: string;
+  observacoes?: string;
+  ativo?: boolean;
+}
+
+export interface MovimentacaoMedicamentoCriar {
+  medicamento_id: number;
+  tipo: string;
+  quantidade: number;
+  lote?: string;
+  validade?: string | null;
+  documento_referencia?: string;
+  paciente_nome?: string;
+  paciente_cpf?: string;
+  paciente_cns?: string;
+  prescritor_nome?: string;
+  prescritor_crm?: string;
+  motivo_descarte?: string;
+  observacoes?: string;
+}
+
+export interface MovimentacaoMedicamentoOut {
+  id: number;
+  medicamento_id: number;
+  medicamento_nome: string;
+  tipo: string;
+  quantidade: number;
+  lote: string;
+  validade: string | null;
+  saldo_anterior: number;
+  saldo_posterior: number;
+  documento_referencia: string;
+  paciente_nome: string;
+  paciente_cpf: string;
+  paciente_cns: string;
+  prescritor_nome: string;
+  prescritor_crm: string;
+  motivo_descarte: string;
+  responsavel_usuario: string;
+  observacoes: string;
+  created_at: string;
+}
+
+export interface InsumoInternoOut {
+  id: number;
+  codigo: string;
+  nome: string;
+  categoria: string;
+  unidade_medida: string;
+  lote: string;
+  validade: string | null;
+  estoque_atual: number;
+  estoque_minimo: number;
+  local_armazenamento: string;
+  observacoes: string;
+  ativo: boolean;
+  status_estoque: "ZERADO" | "CRITICO" | "BAIXO" | "NORMAL";
+  status_validade: "VENCIDO" | "PROXIMO_VENCIMENTO" | "VALIDO" | "SEM_DATA";
+  contagem_regressiva_texto: string;
+  dias_para_vencer: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InsumoInternoCriar {
+  codigo: string;
+  nome: string;
+  categoria?: string;
+  unidade_medida?: string;
+  lote?: string;
+  validade?: string | null;
+  estoque_atual?: number;
+  estoque_minimo?: number;
+  local_armazenamento?: string;
+  observacoes?: string;
+  ativo?: boolean;
+}
+
+export interface InsumoInternoAtualizar {
+  codigo?: string;
+  nome?: string;
+  categoria?: string;
+  unidade_medida?: string;
+  lote?: string;
+  validade?: string | null;
+  estoque_minimo?: number;
+  local_armazenamento?: string;
+  observacoes?: string;
+  ativo?: boolean;
+}
+
+export interface MovimentacaoInsumoCriar {
+  insumo_id: number;
+  tipo: string;
+  quantidade: number;
+  unidade_destino?: string;
+  responsavel_recebimento?: string;
+  documento_referencia?: string;
+  observacoes?: string;
+}
+
+export interface MovimentacaoInsumoOut {
+  id: number;
+  insumo_id: number;
+  insumo_nome: string;
+  tipo: string;
+  quantidade: number;
+  saldo_anterior: number;
+  saldo_posterior: number;
+  unidade_destino: string;
+  responsavel_recebimento: string;
+  documento_referencia: string;
+  responsavel_usuario: string;
+  observacoes: string;
+  created_at: string;
+}
+
+export interface FarmaciaLinkPublicoOut {
+  id: number;
+  token: string;
+  url_publica: string;
+  titulo: string;
+  tipo_perfil: "paciente" | "tv";
+  mostrar_quantidade: boolean;
+  filtro_tipo: "todos" | "especificos" | "categoria";
+  medicamentos_ids: number[];
+  categoria_filtro: string;
+  tempo_atualizacao_segundos: number;
+  mensagem_rodape: string;
+  ativo: boolean;
+  visualizacoes_count: number;
+  created_by: string;
+  created_at: string;
+}
+
+export interface FarmaciaLinkPublicoCriar {
+  titulo?: string;
+  tipo_perfil: "paciente" | "tv";
+  mostrar_quantidade?: boolean;
+  filtro_tipo?: "todos" | "especificos" | "categoria";
+  medicamentos_ids?: number[];
+  categoria_filtro?: string;
+  tempo_atualizacao_segundos?: number;
+  mensagem_rodape?: string;
+}
+
+export interface ItemDisponibilidadePublicaOut {
+  id: number;
+  nome: string;
+  principio_ativo: string;
+  dosagem: string;
+  forma_farmaceutica: string;
+  categoria: string;
+  disponivel: boolean;
+  status_rotulo: string;
+  requer_receita: boolean;
+  quantidade_disponivel?: number | null;
+}
+
+export interface FarmaciaPainelPublicoResponse {
+  token: string;
+  titulo: string;
+  tipo_perfil: "paciente" | "tv";
+  mostrar_quantidade: boolean;
+  tempo_atualizacao_segundos: number;
+  mensagem_rodape: string;
+  total_itens: number;
+  total_disponiveis: number;
+  total_indisponiveis: number;
+  itens: ItemDisponibilidadePublicaOut[];
+  horario_servidor: string;
+}
+
+export interface FarmaciaResumoCardsOut {
+  total_medicamentos: number;
+  total_estoque_baixo: number;
+  total_estoque_zerado: number;
+  total_proximos_vencimento: number;
+  total_vencidos: number;
+  total_dispensacoes_mes: number;
+  total_entradas_mes: number;
+  total_insumos: number;
+  total_insumos_baixo: number;
+}
+
+export const farmaciaResumo = () =>
+  api.get<FarmaciaResumoCardsOut>("/api/farmacia/resumo").then((r) => r.data);
+
+export const farmaciaMedicamentosListar = (params?: {
+  q?: string;
+  categoria?: string;
+  status_estoque?: string;
+  status_validade?: string;
+  somente_ativos?: boolean;
+}) =>
+  api.get<MedicamentoOut[]>("/api/farmacia/medicamentos", { params }).then((r) => r.data);
+
+export const farmaciaMedicamentoCriar = (dados: MedicamentoCriar) =>
+  api.post<MedicamentoOut>("/api/farmacia/medicamentos", dados).then((r) => r.data);
+
+export const farmaciaMedicamentoAtualizar = (id: number, dados: MedicamentoAtualizar) =>
+  api.put<MedicamentoOut>(`/api/farmacia/medicamentos/${id}`, dados).then((r) => r.data);
+
+export const farmaciaMedicamentoExcluir = (id: number) =>
+  api.delete(`/api/farmacia/medicamentos/${id}`).then((r) => r.data);
+
+export const farmaciaMedicamentoMovimentar = (dados: MovimentacaoMedicamentoCriar) =>
+  api.post<MovimentacaoMedicamentoOut>("/api/farmacia/medicamentos/movimentar", dados).then((r) => r.data);
+
+export const farmaciaMovimentacoesListar = (params?: {
+  medicamento_id?: number;
+  tipo?: string;
+  termo_paciente?: string;
+  limite?: number;
+}) =>
+  api.get<MovimentacaoMedicamentoOut[]>("/api/farmacia/medicamentos/movimentacoes", { params }).then((r) => r.data);
+
+export const farmaciaValidadeListar = (params?: { apenas_atencao?: boolean; dias_corte?: number }) =>
+  api.get<MedicamentoOut[]>("/api/farmacia/validade", { params }).then((r) => r.data);
+
+export const farmaciaInsumosListar = (params?: {
+  q?: string;
+  categoria?: string;
+  somente_ativos?: boolean;
+}) =>
+  api.get<InsumoInternoOut[]>("/api/farmacia/insumos", { params }).then((r) => r.data);
+
+export const farmaciaInsumoCriar = (dados: InsumoInternoCriar) =>
+  api.post<InsumoInternoOut>("/api/farmacia/insumos", dados).then((r) => r.data);
+
+export const farmaciaInsumoAtualizar = (id: number, dados: InsumoInternoAtualizar) =>
+  api.put<InsumoInternoOut>(`/api/farmacia/insumos/${id}`, dados).then((r) => r.data);
+
+export const farmaciaInsumoExcluir = (id: number) =>
+  api.delete(`/api/farmacia/insumos/${id}`).then((r) => r.data);
+
+export const farmaciaInsumoMovimentar = (dados: MovimentacaoInsumoCriar) =>
+  api.post<MovimentacaoInsumoOut>("/api/farmacia/insumos/movimentar", dados).then((r) => r.data);
+
+export const farmaciaInsumoMovimentacoesListar = (params?: {
+  insumo_id?: number;
+  tipo?: string;
+  limite?: number;
+}) =>
+  api.get<MovimentacaoInsumoOut[]>("/api/farmacia/insumos/movimentacoes", { params }).then((r) => r.data);
+
+export const farmaciaLinksListar = () =>
+  api.get<FarmaciaLinkPublicoOut[]>("/api/farmacia/links").then((r) => r.data);
+
+export const farmaciaLinkCriar = (dados: FarmaciaLinkPublicoCriar) =>
+  api.post<FarmaciaLinkPublicoOut>("/api/farmacia/links", dados).then((r) => r.data);
+
+export const farmaciaLinkRevogar = (id: number) =>
+  api.delete(`/api/farmacia/links/${id}`).then((r) => r.data);
+
+export const farmaciaConsultarPublico = (token: string) =>
+  api.get<FarmaciaPainelPublicoResponse>(`/api/farmacia/publico/${token}`).then((r) => r.data);
 
 export default api;
 

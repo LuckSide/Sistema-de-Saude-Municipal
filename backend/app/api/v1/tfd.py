@@ -1829,6 +1829,7 @@ def _data_inclusao_iso(e: ExameFila) -> str:
             return e.created_at.strftime("%d/%m/%Y %H:%M")  # type: ignore[union-attr]
     except Exception:
         pass
+
     try:
         return e.data_pedido.strftime("%d/%m/%Y 00:00") if e.data_pedido else ""
     except Exception:
@@ -4456,11 +4457,15 @@ def catalogo_procedimentos(
 ):
     """Catálogo dinâmico + oficial SIGTAP com filtragem contextual por Grupo/Subgrupo e Especialidade."""
     from app.models.settings import SystemSettings
-    from app.models.lab_exames import SigtapProcedimento
+    from app.models.lab_exames import SigtapProcedimento, SigtapCbo
     from app.services.sigtap_hierarquia import (
         obter_filtro_sigtap_por_tipo,
         decompor_codigo_sigtap,
         MAPA_TIPO_ESPECIALIDADE,
+        MAPA_TIPO_SIGLA,
+        normalizar_tipo_fila,
+        expandir_aliases_busca,
+        corresponde_especialidade_sigtap,
     )
 
     if not isinstance(q, str):
@@ -4474,7 +4479,11 @@ def catalogo_procedimentos(
 
     ql = (q or "").strip().lower()
     esp_filtro = (especialidade or "").strip().lower()
-    regras = obter_filtro_sigtap_por_tipo(tipo_fila)
+
+    # Normaliza o tipo de fila para o padrão canônico e obtém a sigla oficial (ex: USG, TOMO, CARD, CIR)
+    tipo_canonico, sigla_canonico = normalizar_tipo_fila(tipo_fila)
+    tipo_busca = tipo_canonico or tipo_fila
+    regras = obter_filtro_sigtap_por_tipo(tipo_busca)
 
     # Determina se a busca é estritamente laboratorial
     eh_laboratorial = (
@@ -4486,31 +4495,99 @@ def catalogo_procedimentos(
     codigos_tfd = set()
 
     # 1) Catálogo dinâmico do TFD / procedimentos importados (Vivver e locais)
-    base = select(ProcedimentoCatalogo).where(ProcedimentoCatalogo.ativo == True).order_by(  # noqa: E712
-        ProcedimentoCatalogo.nome
-    )
-    if tipo_fila:
-        base = (
-            select(ProcedimentoCatalogo)
-            .where(
-                ProcedimentoCatalogo.ativo == True,  # noqa: E712
-                ProcedimentoCatalogo.tipo_fila.ilike(f"%{tipo_fila}%"),
+    tf_up = tipo_busca.strip().upper() if tipo_busca else ""
+    if tf_up:
+        if "EXAMES ESPECIALIZADOS" in tf_up or tf_up == "EXAMES":
+            base = (
+                select(ProcedimentoCatalogo)
+                .where(
+                    ProcedimentoCatalogo.ativo == True,  # noqa: E712
+                    ~ProcedimentoCatalogo.tipo_fila.ilike("%LAB%"),
+                    ~ProcedimentoCatalogo.tipo_fila.ilike("%SANGUE%"),
+                    ~ProcedimentoCatalogo.tipo_fila.ilike("%CIRURG%"),
+                    ~ProcedimentoCatalogo.tipo_fila.ilike("%CONSULTA%"),
+                )
+                .order_by(ProcedimentoCatalogo.nome)
             )
-            .order_by(ProcedimentoCatalogo.nome)
+        elif "CIRURG" in tf_up or sigla_canonico in ("CIR", "PCIR", "AVPC"):
+            base = (
+                select(ProcedimentoCatalogo)
+                .where(
+                    ProcedimentoCatalogo.ativo == True,  # noqa: E712
+                    or_(
+                        ProcedimentoCatalogo.tipo_fila.in_(["CIRURGIAS", "PEQUENA CIRURGIA", "AVALIAÇÃO CIRURGIA"]),
+                        ProcedimentoCatalogo.codigo_curto.in_(["CIR", "PCIR", "AVPC"]),
+                        ProcedimentoCatalogo.tipo_fila.ilike("%CIRURG%"),
+                    ),
+                )
+                .order_by(ProcedimentoCatalogo.nome)
+            )
+        elif "CARDIO" in tf_up or "ECG" in tf_up or sigla_canonico == "CARD":
+            base = (
+                select(ProcedimentoCatalogo)
+                .where(
+                    ProcedimentoCatalogo.ativo == True,  # noqa: E712
+                    or_(
+                        ProcedimentoCatalogo.tipo_fila == "EXAMES CARDIOLOGICOS",
+                        ProcedimentoCatalogo.codigo_curto == "CARD",
+                        ProcedimentoCatalogo.tipo_fila.ilike("%CARDIO%"),
+                        ProcedimentoCatalogo.nome_especialidade.ilike("%CARDIO%"),
+                    ),
+                )
+                .order_by(ProcedimentoCatalogo.nome)
+            )
+        else:
+            conds_tipo = [ProcedimentoCatalogo.tipo_fila.ilike(f"%{tipo_busca}%")]
+            if tipo_canonico:
+                conds_tipo.append(ProcedimentoCatalogo.tipo_fila == tipo_canonico)
+            if sigla_canonico:
+                conds_tipo.append(ProcedimentoCatalogo.codigo_curto == sigla_canonico)
+            base = (
+                select(ProcedimentoCatalogo)
+                .where(
+                    ProcedimentoCatalogo.ativo == True,  # noqa: E712
+                    or_(*conds_tipo),
+                )
+                .order_by(ProcedimentoCatalogo.nome)
+            )
+    else:
+        base = select(ProcedimentoCatalogo).where(ProcedimentoCatalogo.ativo == True).order_by(  # noqa: E712
+            ProcedimentoCatalogo.nome
         )
-    for p in db.exec(base.limit(800)).all():
-        rotulo = f"{p.codigo_curto} · {p.nome}" if p.codigo_curto else p.nome
+
+    aliases_q = expandir_aliases_busca(ql) if ql else []
+    if sigla_canonico and sigla_canonico.lower() not in aliases_q:
+        aliases_q.append(sigla_canonico.lower())
+
+    candidatos_procs = db.exec(base.limit(1000)).all()
+
+    # Busca em lote na tabela oficial SIGTAP para cruzar dados clínicos e financeiros
+    cods_candidatos = [p.codigo.strip() for p in candidatos_procs if p.codigo]
+    sig_map: dict[str, SigtapProcedimento] = {}
+    cbos_map: dict[str, list[dict]] = {}
+    if cods_candidatos:
+        for s in db.exec(select(SigtapProcedimento).where(SigtapProcedimento.codigo.in_(cods_candidatos))).all():
+            sig_map[s.codigo.strip()] = s
+        for c in db.exec(select(SigtapCbo).where(SigtapCbo.procedimento_codigo.in_(cods_candidatos))).all():
+            cod_k = c.procedimento_codigo.strip()
+            if cod_k not in cbos_map:
+                cbos_map[cod_k] = []
+            cbos_map[cod_k].append({"cbo": c.cbo.strip(), "descricao": c.descricao.strip()})
+
+    for p in candidatos_procs:
+        p_tf_up = (p.tipo_fila or "").strip().upper()
+        sigla_p = p.codigo_curto or MAPA_TIPO_SIGLA.get(p_tf_up, sigla_canonico)
+        rotulo = f"{sigla_p} · {p.nome}" if sigla_p else p.nome
         esp_nome = p.nome_especialidade or ""
         esp_cod = p.codigo_especialidade or ""
         if not esp_nome:
-            tf_up = (p.tipo_fila or "").strip().upper()
-            if tf_up in MAPA_TIPO_ESPECIALIDADE:
-                esp_nome, esp_cod = MAPA_TIPO_ESPECIALIDADE[tf_up]
+            if p_tf_up in MAPA_TIPO_ESPECIALIDADE:
+                esp_nome, esp_cod = MAPA_TIPO_ESPECIALIDADE[p_tf_up]
 
-        hay = f"{p.codigo} {p.nome} {p.codigo_curto} {p.tipo_fila} {esp_nome} {esp_cod}".lower()
-        if ql and ql not in hay:
+        hay = f"{p.codigo} {p.nome} {sigla_p} {p.tipo_fila} {esp_nome} {esp_cod}".lower()
+        if ql and (ql not in hay and not any(a in hay for a in aliases_q)):
             continue
-        if esp_filtro and (esp_filtro not in esp_nome.lower() and esp_filtro not in esp_cod.lower()):
+        if esp_filtro and not corresponde_especialidade_sigtap(p.codigo or "", p.nome or "", esp_filtro, esp_nome):
             continue
 
         cod = (p.codigo or "").strip()
@@ -4518,26 +4595,69 @@ def catalogo_procedimentos(
         if regras.get("excluir_prefixos") and any(cod.startswith(pref) for pref in regras["excluir_prefixos"]):
             continue
 
+        especialidade_saida = esp_nome
+        cbo_saida = esp_cod
+        if esp_filtro:
+            if "CONSULTA" in tf_up:
+                especialidade_saida = especialidade.strip()
+                for padrao, cbo_padrao, rotulo_padrao in MAPA_ESPECIALIDADES_CANONICAS:
+                    if padrao in esp_filtro.upper():
+                        cbo_saida = cbo_padrao
+                        especialidade_saida = rotulo_padrao
+                        break
+            elif not esp_nome or esp_nome == "Cirurgia Geral":
+                hier = decompor_codigo_sigtap(p.codigo or "")
+                if hier.get("subgrupo_nome") and hier.get("subgrupo_nome") != "Outros subgrupos":
+                    especialidade_saida = hier.get("subgrupo_nome")
+                else:
+                    especialidade_saida = especialidade.strip()
+
+        # Cruzamento direto com dados oficiais da tabela SIGTAP
+        sig_obj = sig_map.get(cod)
+        tem_sigtap = sig_obj is not None or (len(cod) == 10 and not cod.startswith("99"))
+
+        complexidade = "Média Complexidade"
+        instrumento = "BPA-C"
+        valor_sa = 0.0
+        sexo = ""
+        cbos_autorizados: list[str] = []
+        if sig_obj:
+            complexidade = sig_obj.complexidade or ("Alta Complexidade" if cod.startswith(("0206", "0207", "04")) else "Média Complexidade")
+            instrumento = sig_obj.instrumento or "BPA-C"
+            valor_sa = float(sig_obj.valor_sa or 0.0)
+            sexo = sig_obj.sexo or ""
+        elif cod.startswith(("0206", "0207", "04")):
+            complexidade = "Alta Complexidade"
+
+        if cod in cbos_map:
+            cbos_autorizados = [f"{item['cbo']} - {item['descricao']}" for item in cbos_map[cod]]
+
         out.append({
             "exame": f"{p.codigo} - {p.nome}" if p.codigo else p.nome,
             "nome_procedimento": p.nome,
             "codigo_procedimento": p.codigo,
-            "especialidade": esp_nome,
-            "codigo_especialidade": esp_cod,
-            "nome_especialidade": esp_nome,
-            "tipo_fila": p.tipo_fila or "",
-            "codigo_curto": p.codigo_curto or "",
+            "descricao_sigtap": sig_obj.descricao if sig_obj else p.nome,
+            "especialidade": especialidade_saida,
+            "codigo_especialidade": cbo_saida,
+            "nome_especialidade": especialidade_saida,
+            "tipo_fila": p.tipo_fila or tipo_canonico,
+            "codigo_curto": sigla_p,
             "rotulo": rotulo,
             "usos": 0,
-            "origem": "catalogo",
+            "origem": "VIVVER + SIGTAP" if tem_sigtap else "VIVVER",
+            "sigtap_cruzado": tem_sigtap,
+            "complexidade": complexidade,
+            "instrumento": instrumento,
+            "valor_sa": valor_sa,
+            "sexo": sexo,
+            "cbos_autorizados": cbos_autorizados,
         })
         codigos_tfd.add(cod)
 
-    # 2) Tabela Oficial SIGTAP (5.103 procedimentos) com categorização hierárquica
+    # 2) Tabela Oficial SIGTAP (5.103 procedimentos) com categorização e cruzamento inverso
     try:
         filtros_sig = []
         if eh_laboratorial:
-            # Modo Exames de Sangue / Laboratoriais (Subgrupo 0202)
             habs = []
             try:
                 cfg = db.get(SystemSettings, 1)
@@ -4553,60 +4673,133 @@ def catalogo_procedimentos(
             conds = [SigtapProcedimento.codigo.like(f"{pref}%") for pref in regras["prefixos"]]
             filtros_sig.append(or_(*conds))
 
-        # Exclusão de prefixos incompatíveis (ex: não trazer exames de sangue em cirurgias)
         if regras.get("excluir_prefixos"):
             for exc in regras["excluir_prefixos"]:
                 filtros_sig.append(~SigtapProcedimento.codigo.like(f"{exc}%"))
 
         if ql:
-            like = f"%{ql}%"
-            filtros_sig.append(
-                (SigtapProcedimento.codigo.ilike(like))
-                | (SigtapProcedimento.descricao.ilike(like))
-            )
+            termos_sig = [ql] + aliases_q
+            conds_busca_sig = []
+            for t in termos_sig:
+                like = f"%{t}%"
+                conds_busca_sig.append(SigtapProcedimento.codigo.ilike(like))
+                conds_busca_sig.append(SigtapProcedimento.descricao.ilike(like))
+            filtros_sig.append(or_(*conds_busca_sig))
 
         base_sig = select(SigtapProcedimento).where(*filtros_sig).order_by(SigtapProcedimento.descricao)
-        limite_sig = 150 if ql else 50
+        limite_sig = 250 if ql else 100
         for s in db.exec(base_sig.limit(limite_sig)).all():
             cod = (s.codigo or "").strip()
             if not cod or cod in codigos_tfd:
                 continue
             hier = decompor_codigo_sigtap(cod)
             esp_nome = hier.get("subgrupo_nome", "")
-            if esp_filtro and esp_filtro not in esp_nome.lower():
+            if esp_filtro and not corresponde_especialidade_sigtap(cod, s.descricao, esp_filtro, esp_nome):
                 continue
+
+            tipo_derivado, sigla_derivada = "", ""
+            if cod.startswith("0205"):
+                tipo_derivado, sigla_derivada = "ULTRASSONOGRAFIA", "USG"
+            elif cod.startswith("0206"):
+                tipo_derivado, sigla_derivada = "TOMOGRAFIA", "TOMO"
+            elif cod.startswith("0207"):
+                tipo_derivado, sigla_derivada = "RESSONÂNCIA MAGNÉTICA", "RNM"
+            elif cod.startswith("021102") or cod.startswith("020501"):
+                tipo_derivado, sigla_derivada = "EXAMES CARDIOLOGICOS", "CARD"
+            elif cod.startswith("020403") or cod.startswith("0201010585"):
+                tipo_derivado, sigla_derivada = "MAMOGRAFIA E MASTOLOGIA", "MAMO"
+            elif cod.startswith("0201"):
+                tipo_derivado, sigla_derivada = "BIOPSIA", "BIO"
+            elif cod.startswith("020405"):
+                tipo_derivado, sigla_derivada = "DENSITOMETRIA OSSEA", "DEOS"
+            elif cod.startswith("021108"):
+                tipo_derivado, sigla_derivada = "ESPIROMETRIA", "ESPM"
+            elif cod.startswith("0208"):
+                tipo_derivado, sigla_derivada = "CINTILOGRAFIA", "CINT"
+            elif cod.startswith("0209"):
+                tipo_derivado, sigla_derivada = "EXAMES GASTROENTEROLOGIA", "EXGAS"
+            elif cod.startswith("021105"):
+                tipo_derivado, sigla_derivada = "EXAMES NEUROLOGICOS", "NEU"
+            elif cod.startswith("021107"):
+                tipo_derivado, sigla_derivada = "EXAMES OTORRINOLARINGOLOGIA", "ORL"
+            elif cod.startswith("021109") or cod.startswith("020902"):
+                tipo_derivado, sigla_derivada = "EXAMES UROLOGICOS", "EXURO"
+            elif cod.startswith("021106") or cod.startswith("0405"):
+                tipo_derivado, sigla_derivada = "PROCEDIMENTOS OFTALMOLOGICOS", "POF"
+            elif cod.startswith("04"):
+                tipo_derivado, sigla_derivada = "CIRURGIAS", "CIR"
+            elif cod.startswith("0204"):
+                tipo_derivado, sigla_derivada = "EXAME RADIOLOGICO CONTRASTADO E TFD", "RXCTS"
 
             out.append({
                 "exame": f"{cod} - {s.descricao}",
                 "nome_procedimento": s.descricao,
                 "codigo_procedimento": cod,
+                "descricao_sigtap": s.descricao,
                 "especialidade": esp_nome,
                 "codigo_especialidade": "",
                 "nome_especialidade": esp_nome,
-                "tipo_fila": tipo_fila or hier.get("grupo_nome", ""),
-                "codigo_curto": "",
-                "rotulo": f"{cod} · {s.descricao}",
+                "tipo_fila": tipo_derivado or tipo_fila or hier.get("grupo_nome", ""),
+                "codigo_curto": sigla_derivada,
+                "rotulo": f"{sigla_derivada} · {cod} · {s.descricao}" if sigla_derivada else f"{cod} · {s.descricao}",
                 "usos": 0,
-                "origem": "sigtap",
+                "origem": "SIGTAP DATASUS",
+                "sigtap_cruzado": True,
+                "complexidade": s.complexidade or ("Alta Complexidade" if cod.startswith(("0206", "0207", "04")) else "Média Complexidade"),
                 "instrumento": s.instrumento or "BPA-C",
+                "valor_sa": float(s.valor_sa or 0.0),
+                "sexo": s.sexo or "",
+                "cbos_autorizados": [],
             })
             codigos_tfd.add(cod)
     except Exception:
         pass
+
+    if "CONSULTA" in tf_up and not any(p.get("codigo_procedimento") == "0301010072" for p in out):
+        esp_final = especialidade.strip() if especialidade else "CONSULTAS ESPECIALIZADAS"
+        cbo_final = ""
+        for padrao, cbo_padrao, rotulo_padrao in MAPA_ESPECIALIDADES_CANONICAS:
+            if padrao in esp_final.upper():
+                cbo_final = cbo_padrao
+                esp_final = rotulo_padrao
+                break
+        out.insert(0, {
+            "exame": "0301010072 - CONSULTA MEDICA EM ATENCAO ESPECIALIZADA",
+            "nome_procedimento": "CONSULTA MEDICA EM ATENCAO ESPECIALIZADA",
+            "codigo_procedimento": "0301010072",
+            "especialidade": esp_final,
+            "codigo_especialidade": cbo_final,
+            "nome_especialidade": esp_final,
+            "tipo_fila": tipo_fila or "CONSULTAS ESPECIALIZADAS",
+            "codigo_curto": "0301010072",
+            "rotulo": "0301010072 · CONSULTA MEDICA EM ATENCAO ESPECIALIZADA",
+            "usos": 0,
+            "origem": "sigtap",
+        })
+        codigos_tfd.add("0301010072")
 
     if ql:
         def _chave_proc(item):
             nome_l = (item.get("nome_procedimento") or "").lower()
             cod_l = (item.get("codigo_procedimento") or "").lower()
             curto_l = (item.get("codigo_curto") or "").lower()
-            comeca = 0 if (nome_l.startswith(ql) or cod_l.startswith(ql) or curto_l.startswith(ql)) else 1
-            return (comeca, nome_l)
+            comeca_direto = (nome_l.startswith(ql) or cod_l.startswith(ql) or curto_l.startswith(ql))
+            comeca_alias = any(nome_l.startswith(a) for a in aliases_q)
+            if comeca_direto:
+                prioridade = 0
+            elif comeca_alias:
+                prioridade = 1
+            elif ql in nome_l:
+                prioridade = 2
+            else:
+                prioridade = 3
+            return (prioridade, nome_l)
         out.sort(key=_chave_proc)
-        return out[:100]
+        return out[:150]
 
     if tipo_fila or esp_filtro:
-        return out[:250]
-    return out[:100]
+        return out[:350]
+    return out[:150]
 
 
 @router.post("/procedimentos/validar-cbo", response_model=ValidarCboOut)

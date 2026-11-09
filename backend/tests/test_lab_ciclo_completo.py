@@ -76,8 +76,8 @@ def db_session():
         session.add(pac)
         session.flush()
 
-        # Vagas no laboratório para 2026-11-05
-        data_vaga = date(2026, 11, 5)
+        # Vagas no laboratório para data atual
+        data_vaga = date.today()
         vaga = VagaLab(
             laboratorio_id=lab.id,
             data=data_vaga,
@@ -120,11 +120,12 @@ def test_fluxo_completo_fila_agendamento_comprovante_e_coleta(db_session):
     assert fila.status == "na_fila"
 
     # 2. Marcação em lote no início do mês
+    hoje = date.today()
     agendados = agendar_lote_fila(
         db_session,
         fila_ids=[fila.id],
         laboratorio_id=lab.id,
-        data_agendada=date(2026, 11, 5),
+        data_agendada=hoje,
         hora_agendada="07:30",
         sigtap_ids=[p.id for p in procs],
         agendado_por="coord_regulacao",
@@ -170,10 +171,11 @@ def test_pedido_ajuste_laboratorio(db_session):
     proc = db_session.exec(select(SigtapProcedimento)).first()
 
     # Cria solicitação agendada
+    hoje = date.today()
     mestre = criar_solicitacao_mestre(
         db_session,
         paciente_id=pac.id,
-        data_agendada=date(2026, 11, 5),
+        data_agendada=hoje,
         laboratorio_id=lab.id,
         sigtap_ids=[proc.id],
         agendado_por="regulacao",

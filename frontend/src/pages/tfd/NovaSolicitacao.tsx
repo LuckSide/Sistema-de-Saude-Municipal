@@ -513,24 +513,64 @@ export default function NovaSolicitacao() {
   }, [isTfdCentral, user]);
 
   // Regra 3: Hierarquia de Seleção (Serviço -> Procedimento)
+  // Regra 3: Carregamento e filtragem contextual de procedimentos ao selecionar Tipo de Serviço ou Especialidade
   useEffect(() => {
-    if (!tipoServico) {
-      setProcedimentosFiltrados(procedimentosTodos);
+    if (isConsulta) {
       return;
     }
-    const tNorm = tipoServico.trim().toLowerCase();
-    const filtrados = procedimentosTodos.filter(
-      (p) => (p.tipo_fila || "").toLowerCase() === tNorm || (p.tipo_fila || "").toLowerCase().includes(tNorm),
-    );
-    setProcedimentosFiltrados(filtrados.length > 0 ? filtrados : procedimentosTodos);
 
-    // Se o procedimento atual não pertencer ao novo serviço selecionado e não for consulta, limpa-o
-    if (!isConsulta && procedimentoSel && (procedimentoSel.tipo_fila || "").toLowerCase() !== tNorm) {
-      setProcedimentoSel(null);
-      setProcTexto("");
-      setCodigoProcedimento("");
-    }
-  }, [tipoServico, procedimentosTodos, procedimentoSel, isConsulta]);
+    let cancel = false;
+    setBuscandoProc(true);
+
+    tfdCatalogoExames("", tipoServico || undefined, undefined, especialidade || undefined)
+      .then((res) => {
+        if (!cancel) {
+          const lista = res || [];
+          if (lista.length > 0) {
+            setProcedimentosFiltrados(lista);
+          } else if (!tipoServico && !especialidade) {
+            setProcedimentosFiltrados(procedimentosTodos);
+          } else {
+            const tNorm = (tipoServico || "").trim().toLowerCase();
+            const espNorm = (especialidade || "").trim().toLowerCase();
+            const locais = procedimentosTodos.filter((p) => {
+              const pTf = (p.tipo_fila || "").toLowerCase();
+              const pEsp = (p.especialidade || p.nome_especialidade || "").toLowerCase();
+              const pCbo = (p.codigo_especialidade || "").toLowerCase();
+              const bateTipo =
+                !tNorm ||
+                pTf.includes(tNorm) ||
+                tNorm.includes(pTf) ||
+                (tNorm.includes("exame") &&
+                  !pTf.includes("lab") &&
+                  !pTf.includes("sangue") &&
+                  !pTf.includes("cirurg") &&
+                  !pTf.includes("consulta")) ||
+                (tNorm.includes("cirurg") && pTf.includes("cirurg"));
+              const bateEsp =
+                !espNorm ||
+                pEsp.includes(espNorm) ||
+                espNorm.includes(pEsp) ||
+                pCbo.includes(espNorm);
+              return bateTipo && (bateEsp || !especialidade);
+            });
+            setProcedimentosFiltrados(locais.length > 0 ? locais : procedimentosTodos);
+          }
+        }
+      })
+      .catch(() => {
+        if (!cancel) {
+          setProcedimentosFiltrados(procedimentosTodos);
+        }
+      })
+      .finally(() => {
+        if (!cancel) setBuscandoProc(false);
+      });
+
+    return () => {
+      cancel = true;
+    };
+  }, [tipoServico, especialidade, isConsulta, procedimentosTodos]);
 
   // Regra Dinâmica: Consultas vs Exames e Cirurgias
   // 1. Consultas Médicas Especializadas: define automaticamente o procedimento padrão 0301010072
@@ -554,7 +594,7 @@ export default function NovaSolicitacao() {
       setProcedimentoSel(null);
       setCbosAutorizados([]);
     }
-  }, [isConsulta, tipoServico]);
+  }, [isConsulta, tipoServico, especialidade]);
 
   // 2. Exames e Cirurgias: busca estrita de CBOs autorizados no SIGTAP para o procedimento selecionado
   useEffect(() => {
@@ -591,9 +631,6 @@ export default function NovaSolicitacao() {
               if (match) {
                 setEspecialidade(match.descricao || `CBO ${match.cbo}`);
                 setCodigoEspecialidade(match.cbo);
-              } else {
-                setEspecialidade("");
-                setCodigoEspecialidade("");
               }
             }
           }
@@ -613,7 +650,7 @@ export default function NovaSolicitacao() {
   // Busca inteligente via API quando o operador digita no campo de procedimento
   useEffect(() => {
     const termo = buscaProc.trim();
-    if (!termo || termo.length < 2) {
+    if (!termo) {
       setProcedimentosDinamicos([]);
       setBuscandoProc(false);
       return;
@@ -626,48 +663,95 @@ export default function NovaSolicitacao() {
         })
         .catch(() => setProcedimentosDinamicos([]))
         .finally(() => setBuscandoProc(false));
-    }, 200);
+    }, 150);
     return () => clearTimeout(t);
   }, [buscaProc, tipoServico, especialidade]);
 
-  // Filtro inteligente de procedimentos: busca por nome, código SIGTAP, código curto, especialidade
+  // Filtro inteligente de procedimentos: busca por nome, código SIGTAP, código curto, especialidade e aliases comuns
   const opcoesProcFiltradas = useMemo(() => {
-    let base = tipoServico ? procedimentosFiltrados : procedimentosTodos;
-    if (especialidade) {
-      const espNorm = especialidade.trim().toLowerCase();
-      const filtradosPorEsp = base.filter(
-        (p) =>
-          (p.especialidade || p.nome_especialidade || "").toLowerCase().includes(espNorm) ||
-          (p.codigo_especialidade || "").toLowerCase().includes(espNorm),
-      );
-      if (filtradosPorEsp.length > 0) {
-        base = filtradosPorEsp;
-      }
+    let base: CatalogoProc[] = [];
+
+    if (procedimentosFiltrados.length > 0) {
+      base = procedimentosFiltrados;
+    } else {
+      const tNorm = (tipoServico || "").trim().toLowerCase();
+      const espNorm = (especialidade || "").trim().toLowerCase();
+      const filtradosLocais = procedimentosTodos.filter((p) => {
+        const pTf = (p.tipo_fila || "").toLowerCase();
+        const pEsp = (p.especialidade || p.nome_especialidade || "").toLowerCase();
+        const pCbo = (p.codigo_especialidade || "").toLowerCase();
+        const bateTipo =
+          !tNorm ||
+          pTf.includes(tNorm) ||
+          tNorm.includes(pTf) ||
+          (tNorm.includes("exame") &&
+            !pTf.includes("lab") &&
+            !pTf.includes("sangue") &&
+            !pTf.includes("cirurg") &&
+            !pTf.includes("consulta")) ||
+          (tNorm.includes("cirurg") && pTf.includes("cirurg")) ||
+          (tNorm.includes("consulta") && pTf.includes("consulta"));
+        const bateEsp =
+          !espNorm ||
+          pEsp.includes(espNorm) ||
+          espNorm.includes(pEsp) ||
+          pCbo.includes(espNorm);
+        return bateTipo && (bateEsp || !especialidade);
+      });
+      base = filtradosLocais.length > 0 ? filtradosLocais : procedimentosTodos;
     }
 
     const t = buscaProc.trim().toLowerCase();
-    if (!t) return base.slice(0, 60);
+    if (!t) return base.slice(0, 80);
+
+    const aliasesLocais: Record<string, string[]> = {
+      ecg: ["eletrocardiograma", "eletrocardio"],
+      holter: ["holter", "24 hs"],
+      mapa: ["mapa", "monitorizacao ambulatorial", "pressao arterial"],
+      eco: ["ecocardiograma", "ecocardiografia", "doppler"],
+      usg: ["ultrassonografia", "ecografia"],
+      tc: ["tomografia"],
+      rm: ["ressonancia"],
+      rnm: ["ressonancia"],
+      rx: ["raio", "radiografia"],
+    };
+    const termosLocais = [t, ...(aliasesLocais[t] || [])];
 
     const locais = base.filter((p) => {
       const txt = `${p.codigo_curto || ""} ${p.codigo_procedimento || ""} ${p.exame || p.nome_procedimento || ""} ${p.especialidade || p.nome_especialidade || ""} ${p.tipo_fila || ""}`.toLowerCase();
-      return txt.includes(t);
+      return termosLocais.some((termo) => txt.includes(termo));
     });
 
     const mapaProcs = new Map<string, CatalogoProc>();
-    for (const p of locais) {
+    // Dinâmicos vindos da API (busca no SIGTAP e catálogo completo) têm alta prioridade
+    for (const p of procedimentosDinamicos) {
       const k = p.codigo_procedimento || p.exame || p.nome_procedimento;
       if (k) mapaProcs.set(k, p);
     }
-    for (const p of procedimentosDinamicos) {
+    // Adiciona os locais
+    for (const p of locais) {
       const k = p.codigo_procedimento || p.exame || p.nome_procedimento;
       if (k && !mapaProcs.has(k)) mapaProcs.set(k, p);
     }
-    return Array.from(mapaProcs.values()).slice(0, 60);
-  }, [buscaProc, procedimentosFiltrados, procedimentosTodos, tipoServico, especialidade, procedimentosDinamicos]);
+
+    const listaFinal = Array.from(mapaProcs.values());
+    listaFinal.sort((a, b) => {
+      const nomeA = (a.exame || a.nome_procedimento || "").toLowerCase();
+      const nomeB = (b.exame || b.nome_procedimento || "").toLowerCase();
+      const codA = (a.codigo_procedimento || a.codigo_curto || "").toLowerCase();
+      const codB = (b.codigo_procedimento || b.codigo_curto || "").toLowerCase();
+      const comecaA = nomeA.startsWith(t) || codA.startsWith(t) ? 0 : 1;
+      const comecaB = nomeB.startsWith(t) || codB.startsWith(t) ? 0 : 1;
+      if (comecaA !== comecaB) return comecaA - comecaB;
+      return nomeA.localeCompare(nomeB);
+    });
+
+    return listaFinal.slice(0, 80);
+  }, [buscaProc, procedimentosFiltrados, procedimentosTodos, especialidade, tipoServico, procedimentosDinamicos]);
 
   function escolherProcedimento(p: CatalogoProc) {
     handleSelecionarProcedimento(p);
-    if (p.tipo_fila && (!tipoServico || tipoServico !== p.tipo_fila)) {
+    if (p.tipo_fila && !tipoServico) {
       setTipoServico(p.tipo_fila);
     }
     setBuscaProc("");
@@ -1259,25 +1343,38 @@ export default function NovaSolicitacao() {
               </Label>
               <Select
                 value={tipoServico}
-                onChange={(e) => setTipoServico(e.target.value)}
+                onChange={(e) => {
+                  const novo = e.target.value;
+                  setTipoServico(novo);
+                  if (novo.toUpperCase().includes("CONSULTA") && !isConsulta) {
+                    setProcedimentoSel(null);
+                    setProcTexto("");
+                    setCodigoProcedimento("");
+                  }
+                }}
                 className="mt-1 text-xs font-semibold text-sus-950"
                 required
               >
                 <option value="">Selecione o Tipo de Serviço…</option>
-                {tiposFila.map((tf) => (
-                  <option key={tf.id} value={tf.nome}>
-                    {tf.nome}
-                  </option>
-                ))}
-                {!tiposFila.some((t) => t.nome === "CONSULTAS ESPECIALIZADAS") && (
+                <optgroup label="Categorias Principais">
+                  <option value="EXAMES ESPECIALIZADOS">EXAMES ESPECIALIZADOS</option>
+                  <option value="CIRURGIAS ESPECIALIZADAS">CIRURGIAS ESPECIALIZADAS</option>
                   <option value="CONSULTAS ESPECIALIZADAS">CONSULTAS ESPECIALIZADAS</option>
-                )}
-                {!tiposFila.some((t) => t.nome === "ULTRASSONOGRAFIA") && (
-                  <option value="ULTRASSONOGRAFIA">ULTRASSONOGRAFIA</option>
-                )}
-                {!tiposFila.some((t) => t.nome === "EXAMES LABORATORIAIS") && (
-                  <option value="EXAMES LABORATORIAIS">EXAMES LABORATORIAIS</option>
-                )}
+                </optgroup>
+                <optgroup label="Filas Específicas Cadastradas">
+                  {tiposFila
+                    .filter(
+                      (tf) =>
+                        !["EXAMES ESPECIALIZADOS", "CIRURGIAS ESPECIALIZADAS", "CONSULTAS ESPECIALIZADAS"].includes(
+                          tf.nome.trim().toUpperCase(),
+                        ),
+                    )
+                    .map((tf) => (
+                      <option key={tf.id} value={tf.nome}>
+                        {tf.nome}
+                      </option>
+                    ))}
+                </optgroup>
               </Select>
               <p className="mt-1 text-[11px] text-ink/60">
                 {isConsulta
@@ -1518,16 +1615,36 @@ export default function NovaSolicitacao() {
                         onClick={() => escolherProcedimento(p)}
                         className="flex w-full items-start justify-between gap-2 border-b border-sus-900/5 px-3 py-2 text-left text-xs last:border-0 hover:bg-teal/5 transition"
                       >
-                        <div>
-                          <span className="font-bold text-sus-950">
-                            {p.codigo_curto ? `${p.codigo_curto} · ` : ""}
-                            {p.exame || p.nome_procedimento}
-                          </span>
-                          <span className="block text-[11px] text-ink/50">
-                            {p.codigo_procedimento ? `SIGTAP ${p.codigo_procedimento}` : ""}
-                            {p.especialidade ? ` · ${p.especialidade}` : ""}
-                            {p.tipo_fila ? ` · ${p.tipo_fila}` : ""}
-                          </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {p.codigo_curto && (
+                              <span className="rounded bg-teal/15 px-1.5 py-0.5 text-[9px] font-bold text-teal uppercase shrink-0">
+                                {p.codigo_curto}
+                              </span>
+                            )}
+                            <span className="font-bold text-sus-950 truncate">
+                              {p.exame || p.nome_procedimento}
+                            </span>
+                          </div>
+                          <div className="mt-1 flex items-center gap-1.5 flex-wrap text-[11px] text-ink/60">
+                            {p.codigo_procedimento && (
+                              <span className="inline-flex items-center gap-0.5 rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-800 border border-emerald-200">
+                                ✓ SIGTAP {p.codigo_procedimento}
+                              </span>
+                            )}
+                            {p.instrumento && (
+                              <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[9px] font-medium text-sky-800 border border-sky-200">
+                                {p.instrumento}
+                              </span>
+                            )}
+                            {p.complexidade && (
+                              <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-medium text-amber-800 border border-amber-200">
+                                {p.complexidade}
+                              </span>
+                            )}
+                            {p.tipo_fila && <span>{p.tipo_fila}</span>}
+                            {p.especialidade && <span>· {p.especialidade}</span>}
+                          </div>
                         </div>
                         <Plus className="h-4 w-4 shrink-0 text-teal mt-0.5" />
                       </button>
@@ -2273,25 +2390,38 @@ export default function NovaSolicitacao() {
                   </Label>
                   <Select
                     value={tipoServico}
-                    onChange={(e) => setTipoServico(e.target.value)}
+                    onChange={(e) => {
+                      const novo = e.target.value;
+                      setTipoServico(novo);
+                      if (novo.toUpperCase().includes("CONSULTA") && !isConsulta) {
+                        setProcedimentoSel(null);
+                        setProcTexto("");
+                        setCodigoProcedimento("");
+                      }
+                    }}
                     className="mt-1 text-xs font-semibold text-sus-950"
                     required
                   >
                     <option value="">Selecione o Tipo de Serviço…</option>
-                    {tiposFila.map((tf) => (
-                      <option key={tf.id} value={tf.nome}>
-                        {tf.nome}
-                      </option>
-                    ))}
-                    {!tiposFila.some((t) => t.nome === "CONSULTAS ESPECIALIZADAS") && (
+                    <optgroup label="Categorias Principais">
+                      <option value="EXAMES ESPECIALIZADOS">EXAMES ESPECIALIZADOS</option>
+                      <option value="CIRURGIAS ESPECIALIZADAS">CIRURGIAS ESPECIALIZADAS</option>
                       <option value="CONSULTAS ESPECIALIZADAS">CONSULTAS ESPECIALIZADAS</option>
-                    )}
-                    {!tiposFila.some((t) => t.nome === "ULTRASSONOGRAFIA") && (
-                      <option value="ULTRASSONOGRAFIA">ULTRASSONOGRAFIA</option>
-                    )}
-                    {!tiposFila.some((t) => t.nome === "EXAMES LABORATORIAIS") && (
-                      <option value="EXAMES LABORATORIAIS">EXAMES LABORATORIAIS</option>
-                    )}
+                    </optgroup>
+                    <optgroup label="Filas Específicas Cadastradas">
+                      {tiposFila
+                        .filter(
+                          (tf) =>
+                            !["EXAMES ESPECIALIZADOS", "CIRURGIAS ESPECIALIZADAS", "CONSULTAS ESPECIALIZADAS"].includes(
+                              tf.nome.trim().toUpperCase(),
+                            ),
+                        )
+                        .map((tf) => (
+                          <option key={tf.id} value={tf.nome}>
+                            {tf.nome}
+                          </option>
+                        ))}
+                    </optgroup>
                   </Select>
                   <p className="mt-1 text-[11px] text-ink/60">
                     {isConsulta
@@ -2465,8 +2595,23 @@ export default function NovaSolicitacao() {
                     )}
 
                     {/* Dropdown de sugestões de procedimentos */}
-                    {procFoco && opcoesProcFiltradas.length > 0 && (
+                    {procFoco && (
                       <div className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-xl border border-sus-900/15 bg-white shadow-xl">
+                        <p className="sticky top-0 border-b border-sus-900/5 bg-sand/80 px-3 py-1.5 text-[11px] font-semibold text-sus-900/60 flex items-center justify-between">
+                          <span>
+                            {opcoesProcFiltradas.length > 0
+                              ? `${opcoesProcFiltradas.length} procedimento(s) encontrado(s) — clique para selecionar`
+                              : buscandoProc
+                              ? "Pesquisando no catálogo..."
+                              : "Nenhum procedimento encontrado"}
+                          </span>
+                          {buscandoProc && (
+                            <span className="text-[10px] text-teal font-bold flex items-center gap-1">
+                              <span className="h-1.5 w-1.5 rounded-full bg-teal animate-ping" />
+                              Buscando no SIGTAP...
+                            </span>
+                          )}
+                        </p>
                         <div className="p-1 space-y-0.5">
                           {opcoesProcFiltradas.map((p, idx) => {
                             const nome = p.exame || p.nome_procedimento || "";
@@ -2480,14 +2625,28 @@ export default function NovaSolicitacao() {
                                   e.preventDefault();
                                   escolherProcedimento(p);
                                 }}
-                                className="w-full text-left px-3 py-2 rounded-lg text-xs hover:bg-teal/10 transition flex items-start justify-between gap-2"
+                                className="w-full text-left px-3 py-2 rounded-lg text-xs hover:bg-teal/10 transition flex items-start justify-between gap-2 border-b border-sus-900/5 last:border-0"
                               >
-                                <div>
-                                  <div className="font-bold text-sus-950">
-                                    {cod ? <span className="font-mono text-teal mr-1.5">[{cod}]</span> : null}
-                                    {nome}
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap font-bold text-sus-950">
+                                    {p.codigo_curto && (
+                                      <span className="rounded bg-teal/15 px-1.5 py-0.5 text-[9px] font-bold text-teal uppercase shrink-0">
+                                        {p.codigo_curto}
+                                      </span>
+                                    )}
+                                    <span className="truncate">{nome}</span>
                                   </div>
-                                  <div className="text-[10px] text-ink/50 flex gap-2">
+                                  <div className="mt-1 text-[10px] text-ink/60 flex items-center gap-1.5 flex-wrap">
+                                    {p.codigo_procedimento && (
+                                      <span className="inline-flex items-center gap-0.5 rounded bg-emerald-50 px-1 py-0.2 text-[9px] font-semibold text-emerald-800 border border-emerald-200">
+                                        ✓ SIGTAP {p.codigo_procedimento}
+                                      </span>
+                                    )}
+                                    {p.instrumento && (
+                                      <span className="rounded bg-sky-50 px-1 py-0.2 text-[9px] font-medium text-sky-800 border border-sky-200">
+                                        {p.instrumento}
+                                      </span>
+                                    )}
                                     {p.tipo_fila && <span>Tipo: {p.tipo_fila}</span>}
                                     {esp && <span>· Especialidade: {esp}</span>}
                                   </div>

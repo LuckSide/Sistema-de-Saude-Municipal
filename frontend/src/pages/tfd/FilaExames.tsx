@@ -147,6 +147,83 @@ function sigtapDe(exame: string): string {
   return m ? m[1].trim() : "";
 }
 
+function removerAcentos(texto: string): string {
+  if (!texto) return "";
+  return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+const TIPOS_VIVVER_OFICIAIS: { sigla: string; nome: string }[] = [
+  { sigla: "USG", nome: "ULTRASSONOGRAFIA" },
+  { sigla: "TOMO", nome: "TOMOGRAFIA" },
+  { sigla: "RNM", nome: "RESSONÂNCIA MAGNÉTICA" },
+  { sigla: "CARD", nome: "EXAMES CARDIOLOGICOS" },
+  { sigla: "MAMO", nome: "MAMOGRAFIA E MASTOLOGIA" },
+  { sigla: "BIO", nome: "BIOPSIA" },
+  { sigla: "CIR", nome: "CIRURGIAS" },
+  { sigla: "PCIR", nome: "PEQUENA CIRURGIA" },
+  { sigla: "AVPC", nome: "AVALIAÇÃO CIRURGIA" },
+  { sigla: "DEOS", nome: "DENSITOMETRIA OSSEA" },
+  { sigla: "ESPM", nome: "ESPIROMETRIA" },
+  { sigla: "RXCTS", nome: "EXAME RADIOLOGICO CONTRASTADO E TFD" },
+  { sigla: "CINT", nome: "CINTILOGRAFIA" },
+  { sigla: "EXGAS", nome: "EXAMES GASTROENTEROLOGIA" },
+  { sigla: "NEU", nome: "EXAMES NEUROLOGICOS" },
+  { sigla: "ORL", nome: "EXAMES OTORRINOLARINGOLOGIA" },
+  { sigla: "EXURO", nome: "EXAMES UROLOGICOS" },
+  { sigla: "POF", nome: "PROCEDIMENTOS OFTALMOLOGICOS" },
+  { sigla: "CES", nome: "CONSULTAS ESPECIALIZADAS" },
+  { sigla: "RCES", nome: "RETORNO CONSULTA ESPECIALIZADA" },
+  { sigla: "EXGO", nome: "EX. LAB. GINECOLOGIA" },
+  { sigla: "EXHD", nome: "EX. LAB. HIPERDIA" },
+  { sigla: "EXPED", nome: "EX. LAB. PEDIATRIA" },
+  { sigla: "EXPN", nome: "EX. LAB. PRÉ-NATAL" },
+  { sigla: "EXPSF", nome: "EX. LAB. PSF ROTINA" },
+  { sigla: "EXSEC", nome: "EX. LAB. SECRETARIA" },
+];
+
+const ALIASES_TIPO_FILA: Record<string, string[]> = {
+  USG: ["ULTRASSONOGRAFIA", "ULTRASSOM", "ECOGRAFIA"],
+  TOMO: ["TOMOGRAFIA", "TOMOGRAFIA COMPUTADORIZADA", "TC"],
+  RNM: ["RESSONANCIA", "RESSONANCIA MAGNETICA", "RM"],
+  CARD: ["EXAMES CARDIOLOGICOS", "CARDIOLOGIA", "CARDIO", "ECG", "ELETROCARDIOGRAMA", "ECOCARDIOGRAMA", "HOLTER", "MAPA"],
+  MAMO: ["MAMOGRAFIA E MASTOLOGIA", "MAMOGRAFIA", "MASTOLOGIA"],
+  BIO: ["BIOPSIA", "PUNCAO"],
+  CIR: ["CIRURGIAS", "CIRURGIA", "CIRURGICO", "PEQUENA CIRURGIA", "AVALIACAO CIRURGIA"],
+  PCIR: ["PEQUENA CIRURGIA", "CIRURGIAS"],
+  AVPC: ["AVALIACAO CIRURGIA", "CIRURGIAS"],
+  DEOS: ["DENSITOMETRIA OSSEA", "DENSITOMETRIA"],
+  ESPM: ["ESPIROMETRIA", "PROVA DE FUNCAO PULMONAR"],
+  RXCTS: ["EXAME RADIOLOGICO CONTRASTADO E TFD", "RAIO-X CONTRASTADO", "RX CONTRASTADO", "CONTRASTADO"],
+  CINT: ["CINTILOGRAFIA", "MEDICINA NUCLEAR"],
+  EXGAS: ["EXAMES GASTROENTEROLOGIA", "ENDOSCOPIA", "COLONOSCOPIA", "GASTRO"],
+  NEU: ["EXAMES NEUROLOGICOS", "NEUROLOGIA", "EEG", "ELETRONEUROMIOGRAFIA"],
+  ORL: ["EXAMES OTORRINOLARINGOLOGIA", "OTORRINO", "AUDIOMETRIA", "IMPEDANCIOMETRIA"],
+  EXURO: ["EXAMES UROLOGICOS", "UROLOGIA", "URODINAMICA", "UROFLUXOMETRIA"],
+  POF: ["PROCEDIMENTOS OFTALMOLOGICOS", "OFTALMOLOGIA", "MAPEAMENTO DE RETINA", "CAMPIMETRIA"],
+  CES: ["CONSULTAS ESPECIALIZADAS", "CONSULTA"],
+  RCES: ["RETORNO CONSULTA ESPECIALIZADA", "RETORNO"],
+};
+
+function matchTipoFila(tipoProc?: string, siglaProc?: string, filtro?: string): boolean {
+  if (!filtro || !filtro.trim()) return true;
+  const f = removerAcentos(filtro.trim().toUpperCase());
+  const tp = removerAcentos((tipoProc || "").toUpperCase());
+  const sp = (siglaProc || "").trim().toUpperCase();
+
+  if (tp === f || sp === f) return true;
+  if (tp && f && (tp.includes(f) || f.includes(tp))) return true;
+
+  for (const [sigla, sinonimos] of Object.entries(ALIASES_TIPO_FILA)) {
+    const todos = [sigla, ...sinonimos];
+    const filtroCasou = todos.some((s) => s === f || f.includes(s) || s.includes(f));
+    if (filtroCasou) {
+      if (sp === sigla || todos.some((s) => s === tp || tp.includes(s))) return true;
+    }
+  }
+
+  return false;
+}
+
 function baseAcompanhar(): string {
   const env = (import.meta as any).env?.VITE_PUBLIC_URL as string | undefined;
   if (env) return env.replace(/\/$/, "");
@@ -762,26 +839,25 @@ export default function FilaExames() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Filtro local imediato: dropdown responde a cada tecla mesmo antes da API voltar.
-  const opcoesFiltradas = useMemo(() => {
-    let list = catalogo;
-    if (form.tipo_fila?.trim()) {
-      const tfNorm = form.tipo_fila.trim().toUpperCase();
-      const porTipo = catalogo.filter((c) => (c.tipo_fila || "").toUpperCase() === tfNorm);
-      if (porTipo.length > 0) list = porTipo;
-    }
-    const t = buscaExame.trim().toLowerCase();
-    if (!t) return list;
-    return list.filter((c) =>
-      `${c.codigo_curto} ${c.codigo_procedimento} ${c.exame} ${c.especialidade} ${nomeLimpo(c.exame)}`.toLowerCase().includes(t)
-    );
-  }, [buscaExame, catalogo, form.tipo_fila]);
-
   const procsDoTipo = useMemo(() => {
     if (!form.tipo_fila?.trim()) return catalogo;
-    const tfNorm = form.tipo_fila.trim().toUpperCase();
-    return catalogo.filter((c) => (c.tipo_fila || "").toUpperCase() === tfNorm);
+    const filtrados = catalogo.filter((c) => matchTipoFila(c.tipo_fila, c.codigo_curto, form.tipo_fila));
+    return filtrados.length > 0 ? filtrados : catalogo;
   }, [catalogo, form.tipo_fila]);
+
+  // Filtro local imediato: dropdown responde a cada tecla mesmo antes da API voltar.
+  const opcoesFiltradas = useMemo(() => {
+    let list = procsDoTipo;
+    const t = buscaExame.trim().toLowerCase();
+    if (!t) return list;
+    const tSemAcento = removerAcentos(t);
+    return list.filter((c) => {
+      const haystack = removerAcentos(
+        `${c.codigo_curto || ""} ${c.codigo_procedimento || ""} ${c.exame} ${c.nome_procedimento || ""} ${c.descricao_sigtap || ""} ${c.especialidade || ""} ${c.nome_especialidade || ""} ${c.instrumento || ""} ${nomeLimpo(c.exame)}`.toLowerCase()
+      );
+      return haystack.includes(tSemAcento);
+    });
+  }, [buscaExame, procsDoTipo]);
 
   const especialidadesDoTipo = useMemo(() => {
     const mapa = new Map<string, { nome: string; cbo: string }>();
@@ -1985,6 +2061,11 @@ export default function FilaExames() {
                   {form.exame && (
                     <div className="mt-1 flex flex-wrap items-center gap-1.5 rounded-lg bg-teal/10 px-2.5 py-1 text-xs font-semibold text-teal" title={form.exame}>
                       <span className="truncate">Selecionado: {nomeLimpo(form.exame)}{form.codigo_curto ? ` · ${form.codigo_curto}` : ""}</span>
+                      {form.codigo_procedimento && (
+                        <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 shrink-0">
+                          SIGTAP {form.codigo_procedimento}
+                        </span>
+                      )}
                       {valCbo?.hierarquia?.subgrupo_nome && (
                         <span className="rounded bg-teal/20 px-1.5 py-0.5 text-[10px] font-bold text-teal-900 shrink-0">
                           {valCbo.hierarquia.subgrupo_nome}
@@ -2001,21 +2082,64 @@ export default function FilaExames() {
                             ? `${opcoesFiltradas.length} opção(ões) — clique p/ selecionar`
                             : "Nenhuma opção p/ este filtro"}
                       </p>
-                      {opcoesFiltradas.map((c) => (
-                        <button
-                          key={`${c.codigo_curto}-${c.exame}`}
-                          type="button"
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => escolherExame(c)}
-                          className="flex w-full items-center justify-between gap-2 border-b border-sus-900/5 px-3 py-2 text-left text-sm last:border-0 hover:bg-sand"
-                        >
-                          <span>
-                            <span className="font-semibold">{c.codigo_curto ? `${c.codigo_curto} · ` : ""}{nomeLimpo(c.exame)}</span>
-                            <span className="block text-xs text-ink/50">{c.especialidade} · {c.usos} na fila{sigtapDe(c.exame) ? ` · SIGTAP ${sigtapDe(c.exame)}` : ""}</span>
-                          </span>
-                          <Plus className="h-4 w-4 shrink-0 text-teal" />
-                        </button>
-                      ))}
+                      {opcoesFiltradas.map((c, idx) => {
+                        const sigtapCod = c.codigo_procedimento || sigtapDe(c.exame);
+                        return (
+                          <button
+                            key={`${c.codigo_curto || ""}-${c.codigo_procedimento || ""}-${idx}-${c.exame}`}
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => escolherExame(c)}
+                            className="flex w-full items-start justify-between gap-3 border-b border-sus-900/5 px-3 py-2 text-left text-sm last:border-0 hover:bg-teal/5 transition"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {c.codigo_curto && (
+                                  <span className="rounded bg-teal/15 px-1.5 py-0.5 text-[10px] font-bold text-teal uppercase shrink-0">
+                                    {c.codigo_curto}
+                                  </span>
+                                )}
+                                <span className="font-semibold text-sus-950 truncate">
+                                  {nomeLimpo(c.exame)}
+                                </span>
+                              </div>
+                              <div className="mt-1 flex items-center gap-1.5 flex-wrap text-xs text-ink/60">
+                                {sigtapCod && (
+                                  <span className="inline-flex items-center gap-0.5 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800 border border-emerald-200">
+                                    ✓ SIGTAP {sigtapCod}
+                                  </span>
+                                )}
+                                {c.instrumento && (
+                                  <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-800 border border-sky-200">
+                                    {c.instrumento}
+                                  </span>
+                                )}
+                                {c.complexidade && (
+                                  <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 border border-amber-200">
+                                    {c.complexidade}
+                                  </span>
+                                )}
+                                {c.tipo_fila && (
+                                  <span className="text-[11px] text-ink/70">
+                                    {c.tipo_fila}
+                                  </span>
+                                )}
+                                {c.especialidade && (
+                                  <span className="text-[11px] text-ink/50">
+                                    · {c.especialidade}
+                                  </span>
+                                )}
+                                {c.usos > 0 && (
+                                  <span className="text-[11px] text-teal font-medium">
+                                    · {c.usos} na fila
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <Plus className="h-4 w-4 shrink-0 text-teal mt-1" />
+                          </button>
+                        );
+                      })}
                       {!catLoading && buscaExame.trim().length >= 2 && (
                         <button
                           type="button"
@@ -2052,8 +2176,7 @@ export default function FilaExames() {
                     onChange={(e) => {
                       const novoTipo = e.target.value.toUpperCase();
                       setForm((f) => {
-                        const compativeis = catalogo.filter((c) => (c.tipo_fila || "").toUpperCase() === novoTipo);
-                        const compativel = !f.exame || compativeis.length === 0 || compativeis.some((c) => c.exame === f.exame || c.codigo_curto === f.codigo_curto);
+                        const compativel = !f.exame || matchTipoFila(f.tipo_fila, f.codigo_curto, novoTipo);
                         return {
                           ...f,
                           tipo_fila: novoTipo,
@@ -2065,7 +2188,16 @@ export default function FilaExames() {
                     list="tipos-fila-datalist"
                   />
                   <datalist id="tipos-fila-datalist">
-                    {opTipos.map((o) => <option key={o.value} value={o.value} />)}
+                    {TIPOS_VIVVER_OFICIAIS.map((t) => (
+                      <option key={t.sigla} value={t.nome}>
+                        {t.sigla} · {t.nome}
+                      </option>
+                    ))}
+                    {opTipos.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label || o.value}
+                      </option>
+                    ))}
                   </datalist>
                 </div>
                 <div>

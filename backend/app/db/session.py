@@ -66,6 +66,16 @@ def init_db() -> None:
         EquipamentoRespiratorio,
         EmprestimoOxigenio,
         TrocaCilindroHistorico,
+        ItemEmprestimoOxigenio,
+        CilindroVazioRecolhimento,
+        CilindroComodatoMovimentacao,
+    )
+    from app.models.farmacia import (  # noqa: F401
+        Medicamento,
+        MovimentacaoMedicamento,
+        InsumoInterno,
+        MovimentacaoInsumo,
+        FarmaciaLinkPublico,
     )
 
     # create_all com checkfirst ainda tem janela de corrida entre workers
@@ -721,6 +731,14 @@ def init_db() -> None:
         except Exception:
             pass
         try:
+            from app.services.seed_oxigenio import seed_oxigenio_dados_reais
+            from app.models.oxigenio import EmpresaOxigenio
+            qtd_empresas = len(db.exec(select(EmpresaOxigenio)).all())
+            if qtd_empresas < 3:
+                seed_oxigenio_dados_reais(db, force_clean=True)
+        except Exception:
+            pass
+        try:
             seed_deslocamento(db)
         except Exception:
             pass
@@ -822,6 +840,63 @@ def init_db() -> None:
                 db.commit()
         except Exception:
             db.rollback()
+
+    # Oxigênio e Equipamentos: colunas adicionais para licitações, empresas e comodato
+    with engine.begin() as conn:
+        try:
+            cols_empresa = [c["name"] for c in inspect(conn).get_columns("oxigenio_empresas")]
+        except Exception:
+            cols_empresa = []
+        for col, ddl in {
+            "valor_unitario_10m3": "FLOAT DEFAULT 0.0 NOT NULL",
+            "valor_unitario_3m3": "FLOAT DEFAULT 0.0 NOT NULL",
+            "valor_unitario_1m3": "FLOAT DEFAULT 0.0 NOT NULL",
+            "valor_recarga_m3": "FLOAT DEFAULT 0.0 NOT NULL",
+            "locacao_mensal_concentrador": "FLOAT DEFAULT 0.0 NOT NULL",
+            "locacao_mensal_concentrador_5l": "FLOAT DEFAULT 0.0 NOT NULL",
+            "locacao_mensal_concentrador_10l": "FLOAT DEFAULT 0.0 NOT NULL",
+            "locacao_mensal_cpap": "FLOAT DEFAULT 0.0 NOT NULL",
+            "locacao_mensal_bipap": "FLOAT DEFAULT 0.0 NOT NULL",
+            "locacao_mensal_cilindro": "FLOAT DEFAULT 0.0 NOT NULL",
+        }.items():
+            if col not in cols_empresa:
+                try:
+                    conn.execute(text(f"ALTER TABLE oxigenio_empresas ADD COLUMN {col} {ddl}"))
+                except Exception:
+                    pass
+
+        try:
+            cols_lic = [c["name"] for c in inspect(conn).get_columns("oxigenio_licitacoes")]
+        except Exception:
+            cols_lic = []
+        for col, ddl in {
+            "valor_recarga_m3": "FLOAT DEFAULT 0.0 NOT NULL",
+            "locacao_mensal_concentrador": "FLOAT DEFAULT 0.0 NOT NULL",
+            "locacao_mensal_concentrador_5l": "FLOAT DEFAULT 0.0 NOT NULL",
+            "locacao_mensal_concentrador_10l": "FLOAT DEFAULT 0.0 NOT NULL",
+            "locacao_mensal_cpap": "FLOAT DEFAULT 0.0 NOT NULL",
+            "locacao_mensal_bipap": "FLOAT DEFAULT 0.0 NOT NULL",
+            "locacao_mensal_cilindro": "FLOAT DEFAULT 0.0 NOT NULL",
+        }.items():
+            if col not in cols_lic:
+                try:
+                    conn.execute(text(f"ALTER TABLE oxigenio_licitacoes ADD COLUMN {col} {ddl}"))
+                except Exception:
+                    pass
+
+        try:
+            cols_emp_ox = [c["name"] for c in inspect(conn).get_columns("oxigenio_emprestimos")]
+        except Exception:
+            cols_emp_ox = []
+        for col, ddl in {
+            "posse_cilindro": "VARCHAR(30) DEFAULT 'PROPRIO' NOT NULL",
+            "itens_resumo": "TEXT DEFAULT '' NOT NULL",
+        }.items():
+            if col not in cols_emp_ox:
+                try:
+                    conn.execute(text(f"ALTER TABLE oxigenio_emprestimos ADD COLUMN {col} {ddl}"))
+                except Exception:
+                    pass
 
     # Garantia de índices únicos e constraints contra race conditions
     with engine.begin() as conn:

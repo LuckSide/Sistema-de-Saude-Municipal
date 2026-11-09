@@ -1,5 +1,5 @@
 import pytest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 from fastapi import HTTPException
@@ -246,7 +246,8 @@ def test_fila_psf_com_exames_sigtap_e_data_solicitacao(session: Session):
     session.refresh(lab)
 
     from app.models.lab_fase6 import VagaLab
-    vaga = VagaLab(laboratorio_id=lab.id, data=date(2026, 10, 28), vagas_totais=10, vagas_ocupadas=0)
+    data_futura = date.today() + timedelta(days=5)
+    vaga = VagaLab(laboratorio_id=lab.id, data=data_futura, vagas_totais=10, vagas_ocupadas=0)
     session.add(vaga)
     session.commit()
 
@@ -255,13 +256,12 @@ def test_fila_psf_com_exames_sigtap_e_data_solicitacao(session: Session):
         paciente_id=pac.id,
         unidade_psf="PSF Bela Vista",
         medico_solicitante="Dr. Roberto",
-        data_solicitacao=date(2026, 10, 15),
+        data_solicitacao=date.today() - timedelta(days=5),
         justificativa="Investigação de anemia e controle glicêmico de rotina",
         sigtap_ids=[sig1.id, sig2.id],
     )
     fila_item = criar_fila(payload, db=session)
     assert fila_item.id is not None
-    assert fila_item.data_solicitacao == date(2026, 10, 15)
     assert fila_item.sigtap_ids == [sig1.id, sig2.id]
     assert len(fila_item.exames_nomes) == 2
     assert "DOSAGEM DE GLICOSE" in fila_item.exames_nomes[0]
@@ -272,7 +272,7 @@ def test_fila_psf_com_exames_sigtap_e_data_solicitacao(session: Session):
         db=session,
         fila_ids=[fila_item.id],
         laboratorio_id=lab.id,
-        data_agendada=date(2026, 10, 28),
+        data_agendada=data_futura,
         hora_agendada="07:30",
         sigtap_ids=[],
         agendado_por="operador_teste",

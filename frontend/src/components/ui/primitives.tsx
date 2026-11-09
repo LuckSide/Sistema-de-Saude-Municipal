@@ -86,9 +86,16 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
 );
 Select.displayName = "Select";
 
-export function Label({ children, className }: { children: ReactNode; className?: string }) {
+export function Label({
+  children,
+  className,
+  ...props
+}: React.LabelHTMLAttributes<HTMLLabelElement>) {
   return (
-    <label className={cn("mb-1.5 block font-display text-xs font-semibold uppercase tracking-wide text-sus-900/70", className)}>
+    <label
+      {...props}
+      className={cn("mb-1.5 block font-display text-xs font-semibold uppercase tracking-wide text-sus-900/70", className)}
+    >
       {children}
     </label>
   );
@@ -97,12 +104,11 @@ export function Label({ children, className }: { children: ReactNode; className?
 export function Card({
   className,
   children,
-}: {
-  className?: string;
-  children: ReactNode;
-}) {
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
+      {...props}
       className={cn("rounded-2xl border border-sus-900/10 bg-white shadow-card", className)}
     >
       {children}

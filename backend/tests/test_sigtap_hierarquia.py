@@ -316,6 +316,71 @@ def test_catalogo_procedimentos_filtro_por_especialidade(session):
     assert res_cardio[0]["especialidade"] == "Cardiologia"
 
 
+def test_catalogo_procedimentos_exames_especializados_aliases_e_busca(session):
+    # Adiciona exames cardiológicos no SIGTAP
+    session.add(SigtapProcedimento(
+        codigo="0211020036",
+        descricao="ELETROCARDIOGRAMA",
+        instrumento="BPA-C",
+    ))
+    session.add(SigtapProcedimento(
+        codigo="0211020044",
+        descricao="MONITORAMENTO PELO SISTEMA HOLTER 24 HS (3 CANAIS)",
+        instrumento="BPA-C",
+    ))
+    session.add(SigtapProcedimento(
+        codigo="0205010040",
+        descricao="ECOCARDIOGRAFIA TRANSTORACICA COM DOPPLER",
+        instrumento="BPA-C",
+    ))
+    session.add(SigtapProcedimento(
+        codigo="0408010010",
+        descricao="ARTROPLASTIA TOTAL DO QUADRIL",
+        instrumento="APAC",
+    ))
+    session.commit()
+
+    # 1. Busca por sigla 'ecg' deve retornar Eletrocardiograma via alias
+    res_ecg = catalogo_procedimentos(
+        q="ecg",
+        tipo_fila="EXAMES CARDIOLOGICOS",
+        apenas_laboratoriais=None,
+        db=session,
+        _=None,
+    )
+    assert any("ELETROCARDIOGRAMA" in item["nome_procedimento"].upper() for item in res_ecg)
+
+    # 2. Busca por 'holter' deve retornar o Holter 24h
+    res_holter = catalogo_procedimentos(
+        q="holter",
+        tipo_fila="EXAMES ESPECIALIZADOS",
+        apenas_laboratoriais=None,
+        db=session,
+        _=None,
+    )
+    assert any("HOLTER" in item["nome_procedimento"].upper() for item in res_holter)
+
+    # 3. Busca por 'ecocardiograma' deve retornar a ecocardiografia com doppler
+    res_eco = catalogo_procedimentos(
+        q="ecocardiograma com doppler",
+        tipo_fila="EXAMES ESPECIALIZADOS",
+        apenas_laboratoriais=None,
+        db=session,
+        _=None,
+    )
+    assert any("ECOCARDIOGRAFIA" in item["nome_procedimento"].upper() for item in res_eco)
+
+    # 4. Na categoria CIRURGIAS ESPECIALIZADAS, deve trazer procedimentos cirúrgicos do grupo 04
+    res_cir = catalogo_procedimentos(
+        q="artroplastia",
+        tipo_fila="CIRURGIAS ESPECIALIZADAS",
+        apenas_laboratoriais=None,
+        db=session,
+        _=None,
+    )
+    assert any("ARTROPLASTIA" in item["nome_procedimento"].upper() for item in res_cir)
+
+
 def test_buscar_sigtap_automatico_tratamento_excecao(session):
     from fastapi import HTTPException
     from app.api.v1.lab import buscar_sigtap_automatico
@@ -331,5 +396,63 @@ def test_buscar_sigtap_automatico_tratamento_excecao(session):
     assert "portal DATASUS/SIGTAP está temporariamente indisponível" in excinfo.value.detail
     assert "download.jsp" in excinfo.value.detail
     assert "importação manual" in excinfo.value.detail
+
+
+def test_catalogo_procedimentos_especialidades_e_cbos_contextual(session):
+    seed_vivver_procedimentos(session)
+
+    # 1. Consultas Especializadas para Cardiologia deve trazer 0301010072 vinculado
+    res_cons_cardio = catalogo_procedimentos(
+        q="",
+        tipo_fila="CONSULTAS ESPECIALIZADAS",
+        especialidade="Cardiologia",
+        db=session,
+        _=None,
+    )
+    assert len(res_cons_cardio) > 0
+    assert any(p["codigo_procedimento"] == "0301010072" for p in res_cons_cardio)
+
+    # 2. Consultas Especializadas para Pediatria deve trazer 0301010072
+    res_cons_ped = catalogo_procedimentos(
+        q="",
+        tipo_fila="CONSULTAS ESPECIALIZADAS",
+        especialidade="Pediatria",
+        db=session,
+        _=None,
+    )
+    assert len(res_cons_ped) > 0
+    assert any(p["codigo_procedimento"] == "0301010072" for p in res_cons_ped)
+
+    # 3. Exames Especializados para Ortopedia deve trazer exames e radiologia
+    res_ex_orto = catalogo_procedimentos(
+        q="",
+        tipo_fila="EXAMES ESPECIALIZADOS",
+        especialidade="Ortopedia e Traumatologia",
+        db=session,
+        _=None,
+    )
+    assert len(res_ex_orto) > 0
+
+    # 4. Exames Especializados para Cardiologia deve trazer exames cardiológicos
+    res_ex_cardio = catalogo_procedimentos(
+        q="",
+        tipo_fila="EXAMES ESPECIALIZADOS",
+        especialidade="Cardiologia",
+        db=session,
+        _=None,
+    )
+    assert len(res_ex_cardio) > 0
+
+    # 5. Cirurgias Especializadas para Ortopedia deve trazer cirurgias ortopédicas
+    res_cir_orto = catalogo_procedimentos(
+        q="",
+        tipo_fila="CIRURGIAS ESPECIALIZADAS",
+        especialidade="Ortopedia e Traumatologia",
+        db=session,
+        _=None,
+    )
+    assert len(res_cir_orto) > 0
+    assert all(not p["codigo_procedimento"].startswith("0202") for p in res_cir_orto)
+
 
 
