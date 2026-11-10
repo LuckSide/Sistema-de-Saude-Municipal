@@ -1,6 +1,7 @@
 from datetime import datetime
 import gzip
 import json
+import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel, Field
@@ -11,6 +12,7 @@ from app.models.user import User
 from app.services.backup_crypto import criptografar_dados, descriptografar_dados
 from app.services.backup_service import gerar_dump_dados, restaurar_dump_dados
 
+logger = logging.getLogger("backup")
 router = APIRouter()
 
 
@@ -98,16 +100,23 @@ async def restaurar_backup(
         # 3. Restauração atômica no banco de dados
         detalhes = restaurar_dump_dados(db, dump, autor_id=admin.id or 0)
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro de validação. Verifique os parâmetros.")
-    except json.JSONDecodeError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e) or "Erro de validação. Verifique os parâmetros.",
+        )
+    except (json.JSONDecodeError, UnicodeDecodeError, gzip.BadGzipFile):
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Arquivo de backup corrompido ou formato JSON inválido.",
         )
     except Exception as e:
+        db.rollback()
+        logger.exception("Falha inesperada durante restauração de backup")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erro interno durante a restauração do banco. Consulte os logs.",
+            detail=str(e) or "Erro interno durante a restauração do banco. Consulte os logs.",
         )
 
     return {
