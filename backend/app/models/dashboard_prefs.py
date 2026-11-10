@@ -12,7 +12,7 @@ class UserDashboardPrefs(SQLModel, table=True):
     user_id: int | None = Field(default=None, primary_key=True, foreign_key="usuarios.id")
     layout: str = Field(default="[]", max_length=8000)
     quadro_filtros: str = Field(default="{}", max_length=2000)
-    updated_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        sa_column=Column(DateTime(timezone=False), onupdate=datetime.utcnow),
+    updated_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False), default=None, onupdate=datetime.utcnow),
     )

@@ -190,9 +190,9 @@ class EmprestimoOxigenio(SQLModel, table=True):
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=False)),
     )
-    updated_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        sa_column=Column(DateTime(timezone=False)),
+    updated_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False), default=None),
     )
 
 
