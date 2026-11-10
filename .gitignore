@@ -73,3 +73,12 @@ locust_result_*
 .openchamber/
 .coverage
 htmlcov/
+
+# ==============================================================================
+# CHAVES SSH (NUNCA commitar chaves privadas no repositório)
+# ==============================================================================
+github
+github.pub
+*.pub
+id_*
+!*.pub.example
