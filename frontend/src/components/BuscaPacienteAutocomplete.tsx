@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { RefreshCw, Search, User } from "lucide-react";
-import { tfdPacientes, tfdPaciente, pagData, type Paciente } from "../services/api";
+import { tfdPacientes, tfdPaciente, pagData, msgErro, type Paciente } from "../services/api";
 import { Label } from "./ui/primitives";
 
 interface BuscaPacienteAutocompleteProps {
@@ -25,6 +25,7 @@ export default function BuscaPacienteAutocomplete({
   const [busca, setBusca] = useState("");
   const [sugestoes, setSugestoes] = useState<Paciente[]>([]);
   const [buscando, setBuscando] = useState(false);
+  const [erroBusca, setErroBusca] = useState("");
   const [aberto, setAberto] = useState(false);
   const [pacienteAtivo, setPacienteAtivo] = useState<Paciente | null>(pacienteInicial);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -54,22 +55,36 @@ export default function BuscaPacienteAutocomplete({
     const q = busca.trim();
     if (!q) {
       setSugestoes([]);
+      setErroBusca("");
       setBuscando(false);
       return;
     }
 
+    let ativo = true;
     setBuscando(true);
+    setErroBusca("");
     const t = setTimeout(() => {
       tfdPacientes(q, 1, 50)
         .then((r) => {
+          if (!ativo) return;
           setSugestoes(pagData<Paciente>(r));
           setAberto(true);
         })
-        .catch(() => setSugestoes([]))
-        .finally(() => setBuscando(false));
+        .catch((err) => {
+          if (!ativo) return;
+          setSugestoes([]);
+          setErroBusca(msgErro(err, "Erro ao buscar pacientes."));
+          setAberto(true);
+        })
+        .finally(() => {
+          if (ativo) setBuscando(false);
+        });
     }, 250);
 
-    return () => clearTimeout(t);
+    return () => {
+      ativo = false;
+      clearTimeout(t);
+    };
   }, [busca]);
 
   // Click outside fecha o dropdown
@@ -205,7 +220,13 @@ export default function BuscaPacienteAutocomplete({
             </div>
           )}
 
-          {aberto && busca.trim() && !buscando && sugestoes.length === 0 && (
+          {aberto && busca.trim() && !buscando && erroBusca && (
+            <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-red-200 bg-red-50 p-3 text-center text-xs font-medium text-red-700 shadow-xl">
+              {erroBusca}
+            </div>
+          )}
+
+          {aberto && busca.trim() && !buscando && !erroBusca && sugestoes.length === 0 && (
             <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-sus-900/15 bg-white p-4 text-center text-xs text-ink/50 shadow-xl">
               Nenhum paciente encontrado para "{busca}". Digite o nome, CPF, CNS ou número do prontuário.
             </div>

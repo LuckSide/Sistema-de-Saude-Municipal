@@ -16,6 +16,7 @@ from app.models.lab_fase6 import (
 )
 from app.models.tfd import Paciente
 from app.services.geradores import gerar_prontuario_aleatorio
+from app.services.tfd import coluna_sem_acento, remover_acentos
 from app.core.pagination import Pagina, paginar
 from app.schemas.lab_fase6 import (
     AuditoriaIn,
@@ -382,6 +383,29 @@ def _formatar_fila_out(o: FilaPsf, pac: Paciente | None) -> FilaPsfOut:
     )
 
 
+def _filtro_busca_fila_psf(db: Session, q_raw: str):
+    """Monta condição OR de busca para fila PSF sem depender da extensão unaccent no PostgreSQL."""
+    q_clean = str(q_raw).strip()
+    q_norm = remover_acentos(q_clean)
+    so_num = "".join(c for c in q_clean if c.isdigit())
+    conds = [
+        Paciente.nome.ilike(f"%{q_clean}%"),
+        coluna_sem_acento(db, Paciente.nome).ilike(f"%{q_norm}%"),
+        FilaPsf.unidade_psf.ilike(f"%{q_clean}%"),
+        FilaPsf.medico_solicitante.ilike(f"%{q_clean}%"),
+        FilaPsf.observacoes.ilike(f"%{q_clean}%"),
+        FilaPsf.justificativa.ilike(f"%{q_clean}%"),
+    ]
+    if so_num:
+        conds.append(Paciente.cpf.ilike(f"%{so_num}%"))
+        conds.append(Paciente.cns.ilike(f"%{so_num}%"))
+        conds.append(Paciente.codigo_prontuario.ilike(f"%{so_num}%"))
+        if len(so_num) <= 9 and int(so_num) <= 2147483647:
+            conds.append(Paciente.id == int(so_num))
+            conds.append(FilaPsf.id == int(so_num))
+    return or_(*conds)
+
+
 # ---------- Fila PSF ----------
 @router.get("/exames/fila-psf", response_model=Pagina[FilaPsfOut])
 def listar_fila(
@@ -431,26 +455,7 @@ def listar_fila(
     base = select(FilaPsf).join(Paciente, FilaPsf.paciente_id == Paciente.id, isouter=True)
 
     if q and str(q).strip():
-        q_clean = str(q).strip()
-        so_num = "".join(c for c in q_clean if c.isdigit())
-        is_sqlite = bool(db.bind and db.bind.dialect.name == "sqlite")
-        conds = [
-            Paciente.nome.ilike(f"%{q_clean}%"),
-            FilaPsf.unidade_psf.ilike(f"%{q_clean}%"),
-            FilaPsf.medico_solicitante.ilike(f"%{q_clean}%"),
-            FilaPsf.observacoes.ilike(f"%{q_clean}%"),
-            FilaPsf.justificativa.ilike(f"%{q_clean}%"),
-        ]
-        if not is_sqlite:
-            conds.append(func.unaccent(Paciente.nome).ilike(f"%{q_clean}%"))
-        if so_num:
-            conds.append(Paciente.cpf.ilike(f"%{so_num}%"))
-            conds.append(Paciente.cns.ilike(f"%{so_num}%"))
-            conds.append(Paciente.codigo_prontuario.ilike(f"%{so_num}%"))
-            if len(so_num) <= 9 and int(so_num) <= 2147483647:
-                conds.append(Paciente.id == int(so_num))
-                conds.append(FilaPsf.id == int(so_num))
-        filtros.append(or_(*conds))
+        filtros.append(_filtro_busca_fila_psf(db, q))
 
     if filtros:
         base = base.where(*filtros)
@@ -1239,26 +1244,7 @@ def exportar_fila_psf(
     base = select(FilaPsf).join(Paciente, FilaPsf.paciente_id == Paciente.id, isouter=True)
 
     if q and str(q).strip():
-        q_clean = str(q).strip()
-        so_num = "".join(c for c in q_clean if c.isdigit())
-        is_sqlite = bool(db.bind and db.bind.dialect.name == "sqlite")
-        conds = [
-            Paciente.nome.ilike(f"%{q_clean}%"),
-            FilaPsf.unidade_psf.ilike(f"%{q_clean}%"),
-            FilaPsf.medico_solicitante.ilike(f"%{q_clean}%"),
-            FilaPsf.observacoes.ilike(f"%{q_clean}%"),
-            FilaPsf.justificativa.ilike(f"%{q_clean}%"),
-        ]
-        if not is_sqlite:
-            conds.append(func.unaccent(Paciente.nome).ilike(f"%{q_clean}%"))
-        if so_num:
-            conds.append(Paciente.cpf.ilike(f"%{so_num}%"))
-            conds.append(Paciente.cns.ilike(f"%{so_num}%"))
-            conds.append(Paciente.codigo_prontuario.ilike(f"%{so_num}%"))
-            if len(so_num) <= 9 and int(so_num) <= 2147483647:
-                conds.append(Paciente.id == int(so_num))
-                conds.append(FilaPsf.id == int(so_num))
-        filtros.append(or_(*conds))
+        filtros.append(_filtro_busca_fila_psf(db, q))
 
     if filtros:
         base = base.where(*filtros)

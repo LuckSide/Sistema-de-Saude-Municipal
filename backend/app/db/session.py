@@ -976,8 +976,14 @@ def init_db() -> None:
                 except Exception:
                     pass
 
-    # Garantia de índices únicos e constraints contra race conditions
+    # Garante extensão unaccent (quando o usuário do banco tem permissão) e índices únicos
     with engine.begin() as conn:
+        if conn.dialect.name == "postgresql":
+            try:
+                with conn.begin_nested():
+                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS unaccent"))
+            except Exception:
+                pass
         for idx_sql in [
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_tfd_viagem_paciente ON tfd_viagem_pacientes (viagem_id, paciente_id)",
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_tfd_faturamento_viagem_pac_cod ON tfd_faturamento (viagem_id, paciente_id, codigo_sigtap) WHERE viagem_id IS NOT NULL",

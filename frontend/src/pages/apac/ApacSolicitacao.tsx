@@ -30,6 +30,7 @@ import {
   fetchMedicos,
   fetchUnidadesSaude,
   tfdPacientes,
+  msgErro,
   pagData,
   pagMeta,
   type SolicitacaoApac,
@@ -177,20 +178,28 @@ export default function ApacSolicitacao() {
       setPacientesSugestoes([]);
       return;
     }
+    let ativo = true;
     const timer = setTimeout(async () => {
       setBuscandoPacientes(true);
+      setErroModal("");
       try {
         const res = await tfdPacientes(buscaPaciente.trim(), 1, 8);
+        if (!ativo) return;
         const lista = pagData<Paciente>(res);
         setPacientesSugestoes(lista);
-      } catch {
+      } catch (err) {
+        if (!ativo) return;
         setPacientesSugestoes([]);
+        setErroModal(msgErro(err, "Erro ao buscar pacientes."));
       } finally {
-        setBuscandoPacientes(false);
+        if (ativo) setBuscandoPacientes(false);
       }
     }, 300);
 
-    return () => clearTimeout(timer);
+    return () => {
+      ativo = false;
+      clearTimeout(timer);
+    };
   }, [buscaPaciente]);
 
   // Selecionar paciente e auto-preencher

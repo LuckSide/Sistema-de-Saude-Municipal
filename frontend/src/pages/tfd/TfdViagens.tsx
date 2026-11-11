@@ -10,16 +10,15 @@ import {
   tfdEnviarWhatsAppConfirmacaoPassageiro,
   tfdExcluirViagem,
   tfdMotoristas,
-  tfdPacientes,
   tfdPassageiros,
   tfdRemoverPassageiro,
   tfdVeiculos,
   tfdViagens,
+  msgErro,
   pagData,
   pagMeta,
   type Destino,
   type Motorista,
-  type Paciente,
   type PacientePec,
   type Passageiro,
   type Veiculo,
@@ -73,6 +72,8 @@ export default function TfdViagens() {
   const [pacientesPec, setPacientesPec] = useState<PacientePec[]>([]);
   const [buscaPac, setBuscaPac] = useState("");
   const [buscaDebounce, setBuscaDebounce] = useState("");
+  const [buscandoPac, setBuscandoPac] = useState(false);
+  const [erroBuscaPac, setErroBuscaPac] = useState("");
   const [sel, setSel] = useState<Viagem | null>(null);
   const [pass, setPass] = useState<Passageiro[]>([]);
   const [adicionandoPassId, setAdicionandoPassId] = useState<number | null>(null);
@@ -155,35 +156,43 @@ export default function TfdViagens() {
   }, [buscaPac]);
 
   useEffect(() => {
-    if (!buscaDebounce || buscaDebounce.length < 2) {
+    const termo = buscaDebounce.trim();
+    if (!sel || termo.length < 2) {
       setPacientesPec([]);
+      setErroBuscaPac("");
+      setBuscandoPac(false);
       return;
     }
-    tfdBuscarPacientesPec(buscaDebounce)
-      .then((r) => setPacientesPec(r.resultados))
-      .catch(() => setPacientesPec([]));
-  }, [buscaDebounce]);
+    let ativo = true;
+    setBuscandoPac(true);
+    setErroBuscaPac("");
+    tfdBuscarPacientesPec(termo)
+      .then((r) => {
+        if (ativo) setPacientesPec(r.resultados || []);
+      })
+      .catch((err) => {
+        if (!ativo) return;
+        setPacientesPec([]);
+        setErroBuscaPac(msgErro(err, "Falha ao buscar pacientes."));
+      })
+      .finally(() => {
+        if (ativo) setBuscandoPac(false);
+      });
+    return () => {
+      ativo = false;
+    };
+  }, [sel, buscaDebounce]);
 
   useEffect(() => {
-    if (!sel) return;
+    if (!sel) {
+      setBuscaPac("");
+      setBuscaDebounce("");
+      setPacientesPec([]);
+      setErroBuscaPac("");
+      return;
+    }
     tfdPassageiros(sel.id).then(setPass).catch(() => {});
-    tfdPacientes(buscaPac || undefined)
-      .then((r) =>
-        setPacientesPec(
-          pagData<Paciente>(r).map((p) => ({
-            id: p.id,
-            origem: "local" as const,
-            nome: p.nome,
-            cns: p.cns,
-            cpf: p.cpf,
-            prontuario: "",
-            nascimento: p.nascimento,
-            ubs: "",
-          }))
-        )
-      )
-      .catch(() => {});
-  }, [sel, buscaPac]);
+  }, [sel]);
 
   function abrirModal(id?: number) {
     if (id) {
@@ -426,7 +435,13 @@ export default function TfdViagens() {
                 ))}
               </div>
             )}
-            {buscaDebounce && buscaDebounce.length >= 2 && pacientesPec.length === 0 && (
+            {buscandoPac && (
+              <p className="mt-2 text-xs text-ink/55 text-center">Buscando pacientes…</p>
+            )}
+            {!buscandoPac && erroBuscaPac && (
+              <p className="mt-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700 text-center">{erroBuscaPac}</p>
+            )}
+            {!buscandoPac && !erroBuscaPac && buscaDebounce && buscaDebounce.trim().length >= 2 && pacientesPec.length === 0 && (
               <p className="mt-2 text-sm text-ink/45 text-center">Nenhum paciente encontrado.</p>
             )}
             <div className="mt-3 space-y-1">

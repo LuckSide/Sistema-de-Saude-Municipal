@@ -7,6 +7,7 @@ import {
   tfdCriarPaciente,
   tfdExcluirPaciente,
   tfdPacientes,
+  msgErro,
   pagData,
   pagMeta,
   type Paciente,
@@ -45,10 +46,12 @@ export default function TfdPacientes() {
       setTotal(0);
       setPage(1);
       setPages(1);
+      setErro("");
       setCarregando(false);
       return;
     }
     setCarregando(true);
+    setErro("");
     try {
       const r = await tfdPacientes(q.trim(), p, limite);
       setLista(pagData<Paciente>(r));
@@ -56,8 +59,9 @@ export default function TfdPacientes() {
       setTotal(m.total);
       setPage(m.page);
       setPages(m.pages);
-    } catch {
-      setErro("Falha ao buscar pacientes.");
+    } catch (err) {
+      setLista([]);
+      setErro(msgErro(err, "Falha ao buscar pacientes."));
     } finally {
       setCarregando(false);
     }

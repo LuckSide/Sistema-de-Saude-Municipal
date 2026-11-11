@@ -18,6 +18,7 @@ import {
   tfdPacientes,
   tfdRegenerarTokenExame,
   validarCboProcedimento,
+  msgErro,
   type ValidarCboResult,
   pagData,
   pagMeta,
@@ -268,6 +269,7 @@ export default function FilaExames() {
   const [buscaPac, setBuscaPac] = useState("");
   const [buscaDebounce, setBuscaDebounce] = useState("");
   const [buscando, setBuscando] = useState(false);
+  const [erroBuscaPac, setErroBuscaPac] = useState("");
   const [catalogo, setCatalogo] = useState<CatalogoProc[]>([]);
   const [buscaExame, setBuscaExame] = useState("");
   const [buscaExameDeb, setBuscaExameDeb] = useState("");
@@ -722,10 +724,12 @@ export default function FilaExames() {
   useEffect(() => {
     if (!buscaDebounce || buscaDebounce.trim().length < 1) {
       setPacientesPec([]);
+      setErroBuscaPac("");
       return;
     }
     let vivo = true;
     setBuscando(true);
+    setErroBuscaPac("");
     const termo = buscaDebounce.trim();
 
     Promise.allSettled([
@@ -762,6 +766,10 @@ export default function FilaExames() {
             if (p.id) idsVistos.add(p.id);
             combinados.push(p);
           }
+        }
+
+        if (resLocais.status === "rejected" && resPec.status === "rejected") {
+          setErroBuscaPac(msgErro(resLocais.reason ?? resPec.reason, "Falha ao buscar pacientes."));
         }
 
         setPacientesPec(combinados);
@@ -2004,7 +2012,13 @@ export default function FilaExames() {
                           </div>
                         )}
 
-                        {buscaDebounce && buscaDebounce.trim().length >= 2 && !buscando && pacientesPec.length === 0 && (
+                        {!buscando && erroBuscaPac && (
+                          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                            {erroBuscaPac}
+                          </div>
+                        )}
+
+                        {buscaDebounce && buscaDebounce.trim().length >= 2 && !buscando && !erroBuscaPac && pacientesPec.length === 0 && (
                           <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 text-xs text-amber-900">
                             Nenhum paciente encontrado para a busca "<strong>{buscaDebounce}</strong>". Verifique o nome ou documento digitado.
                           </div>

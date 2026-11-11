@@ -72,7 +72,7 @@ from app.schemas.tfd import (
     ViagemConfirmarIn,
     ViagemStatusConfirmacaoIn,
 )
-from app.services.tfd import hoje_str, resumo_tfd
+from app.services.tfd import coluna_sem_acento, hoje_str, remover_acentos, resumo_tfd
 from app.services.geradores import (
     gerar_prontuario_aleatorio,
     gerar_exame_curto_aleatorio,
@@ -227,24 +227,93 @@ _PERMS_PACIENTES_LEITURA = (
     "tfd_exames",
     "tfd_fila_lancamento",
     "tfd_agenda",
+    "tfd_agendamentos",
     "tfd_viagens",
     "tfd_medico",
     "lab_marcacao",
     "lab_fila",
     "lab_vagas",
+    "lab_recepcao",
+    "lab_audit",
     "lab_faturamento",
     "tfd_faturamento",
+    "oxigenio_emprestimos",
+    "oxigenio",
+    "apac_solicitacao",
+    "apac",
     "tfd",
     "lab",
     "usuarios",
 )
 
-def _remover_acentos_str(texto: str) -> str:
-    if not texto:
-        return ""
-    import unicodedata
-    nfkd = unicodedata.normalize("NFKD", str(texto))
-    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+def _montar_filtros_busca_paciente(
+    db: Session, termo_limpo: str
+) -> tuple[list[Paciente] | None, object | None, object | None]:
+    """Resolve busca exata prioritária ou retorna filtros/ordenação para pesquisa sob demanda de pacientes."""
+    so_num = "".join(c for c in termo_limpo if c.isdigit())
+
+    # 1. Busca EXATA prioritária (quando o usuário digita CPF, CNS ou Prontuário Exato)
+    exatos: list[Paciente] = []
+    if len(so_num) == 11:
+        cpf_fmt = f"{so_num[:3]}.{so_num[3:6]}.{so_num[6:9]}-{so_num[9:]}"
+        exatos = db.exec(
+            select(Paciente).where(or_(Paciente.cpf == so_num, Paciente.cpf == cpf_fmt))
+        ).all()
+    elif len(so_num) == 15:
+        exatos = db.exec(select(Paciente).where(Paciente.cns == so_num)).all()
+    elif termo_limpo.upper().startswith("PR-"):
+        exatos = db.exec(select(Paciente).where(Paciente.codigo_prontuario.ilike(termo_limpo.upper()))).all()
+    elif termo_limpo.isdigit() and len(termo_limpo) == 5:
+        exatos = db.exec(select(Paciente).where(Paciente.codigo_prontuario.ilike(f"PR-{termo_limpo}"))).all()
+
+    if exatos:
+        if len(so_num) == 11:
+            exatos.sort(key=lambda p: (bool(p.endereco), bool(p.cns), p.id or 0), reverse=True)
+            vistos: set[str] = set()
+            unicos: list[Paciente] = []
+            for p in exatos:
+                c_clean = (p.cpf or "").strip()
+                if c_clean not in vistos:
+                    vistos.add(c_clean)
+                    unicos.append(p)
+            exatos = unicos
+        return exatos, None, None
+
+    # 2. Busca multi-palavras inteligente e sem distinção de acentos
+    palavras = [p for p in termo_limpo.split() if p]
+    if not palavras:
+        return [], None, None
+
+    nome_campo = coluna_sem_acento(db, Paciente.nome)
+    cpf_sem_mascara = func.replace(func.replace(Paciente.cpf, ".", ""), "-", "")
+
+    lista_and = []
+    for w in palavras:
+        w_clean = remover_acentos(w)
+        w_digits = "".join(c for c in w if c.isdigit())
+        conds = [
+            nome_campo.ilike(f"%{w_clean}%"),
+            Paciente.cpf.ilike(f"%{w}%"),
+            Paciente.cns.ilike(f"%{w}%"),
+            Paciente.codigo_prontuario.ilike(f"%{w}%"),
+        ]
+        if w_digits:
+            if len(w_digits) <= 9 and int(w_digits) <= 2147483647:
+                conds.append(Paciente.id == int(w_digits))
+            conds.append(Paciente.codigo_prontuario.ilike(f"%{w_digits}%"))
+            conds.append(Paciente.cpf.ilike(f"%{w_digits}%"))
+            conds.append(cpf_sem_mascara.ilike(f"%{w_digits}%"))
+            conds.append(Paciente.cns.ilike(f"%{w_digits}%"))
+        lista_and.append(or_(*conds))
+
+    primeira_w = remover_acentos(palavras[0])
+    ordem_relevancia = case(
+        (nome_campo.ilike(f"{primeira_w}%"), 0),
+        (Paciente.codigo_prontuario.ilike(f"{palavras[0]}%"), 0),
+        else_=1,
+    )
+    return None, and_(*lista_and), ordem_relevancia
 
 
 # ---------- Pacientes ----------
@@ -267,35 +336,9 @@ def listar_pacientes(
         # Busca Sob Demanda (Item 2): não exibe nenhum resultado automático ao abrir sem pesquisa
         return {"data": [], "total": 0, "page": 1, "pages": 1}
 
-    so_num = "".join(c for c in q_limpo if c.isdigit())
+    exatos, filtro_and, ordem_relevancia = _montar_filtros_busca_paciente(db, q_limpo)
 
-    # 1. Busca EXATA prioritária (quando o usuário digita CPF, CNS ou Prontuário Exato)
-    exatos: list[Paciente] = []
-    if len(so_num) == 11:
-        cpf_fmt = f"{so_num[:3]}.{so_num[3:6]}.{so_num[6:9]}-{so_num[9:]}"
-        exatos = db.exec(
-            select(Paciente).where(or_(Paciente.cpf == so_num, Paciente.cpf == cpf_fmt))
-        ).all()
-    elif len(so_num) == 15:
-        exatos = db.exec(select(Paciente).where(Paciente.cns == so_num)).all()
-    elif q_limpo.upper().startswith("PR-"):
-        exatos = db.exec(select(Paciente).where(Paciente.codigo_prontuario.ilike(q_limpo.upper()))).all()
-    elif q_limpo.isdigit() and len(q_limpo) == 5:
-        exatos = db.exec(select(Paciente).where(Paciente.codigo_prontuario.ilike(f"PR-{q_limpo}"))).all()
-
-    # Se encontrou correspondência exata, retorna SOMENTE esse(s) paciente(s)
-    if exatos:
-        if len(so_num) == 11:
-            exatos.sort(key=lambda p: (bool(p.endereco), bool(p.cns), p.id or 0), reverse=True)
-            vistos = set()
-            unicos = []
-            for p in exatos:
-                c_clean = (p.cpf or "").strip()
-                if c_clean not in vistos:
-                    vistos.add(c_clean)
-                    unicos.append(p)
-            exatos = unicos
-
+    if exatos is not None:
         for p in exatos:
             if not getattr(p, "codigo_prontuario", ""):
                 p.codigo_prontuario = gerar_prontuario_aleatorio(db, p.id)
@@ -309,43 +352,7 @@ def listar_pacientes(
             pass
         return {"data": exatos, "total": len(exatos), "page": 1, "pages": 1}
 
-    # 2. Busca multi-palavras inteligente e sem distinção de acentos
-    palavras = [p for p in q_limpo.split() if p]
-    if not palavras:
-        return {"data": [], "total": 0, "page": 1, "pages": 1}
-
-    try:
-        is_pg = getattr(db.get_bind().dialect, "name", "") == "postgresql"
-    except Exception:
-        is_pg = False
-    nome_campo = func.unaccent(Paciente.nome) if is_pg else Paciente.nome
-
-    lista_and = []
-    for w in palavras:
-        w_clean = _remover_acentos_str(w)
-        w_digits = "".join(c for c in w if c.isdigit())
-        conds = [
-            nome_campo.ilike(f"%{w_clean}%"),
-            Paciente.cpf.ilike(f"%{w}%"),
-            Paciente.cns.ilike(f"%{w}%"),
-            Paciente.codigo_prontuario.ilike(f"%{w}%"),
-        ]
-        if w_digits:
-            if len(w_digits) <= 9 and int(w_digits) <= 2147483647:
-                conds.append(Paciente.id == int(w_digits))
-            conds.append(Paciente.codigo_prontuario.ilike(f"%{w_digits}%"))
-            conds.append(Paciente.cpf.ilike(f"%{w_digits}%"))
-            conds.append(Paciente.cns.ilike(f"%{w_digits}%"))
-        lista_and.append(or_(*conds))
-
-    # Relevância inteligente: quem começa com o termo aparece primeiro
-    primeira_w = _remover_acentos_str(palavras[0])
-    ordem_relevancia = case(
-        (nome_campo.ilike(f"{primeira_w}%"), 0),
-        (Paciente.codigo_prontuario.ilike(f"{palavras[0]}%"), 0),
-        else_=1,
-    )
-    base = select(Paciente).where(and_(*lista_and)).order_by(ordem_relevancia, Paciente.nome)
+    base = select(Paciente).where(filtro_and).order_by(ordem_relevancia, Paciente.nome)
     total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
     meta = paginar(total, page, limit)
     rows = db.exec(base.offset(meta["offset"]).limit(limit)).all()
@@ -373,83 +380,20 @@ def buscar_pacientes_pec(
     db: Session = Depends(get_db),
     ator: User | None = Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
 ):
-    """Busca paciente local + DW PEC e-SUS (nome/CNS/CPF/prontuário).
-
-    Fonte PEC readonly; fallback local quando DW indisponível. Sem PII
-    além do necessário p/ autocomplete (nome, CNS, CPF, prontuário).
-    """
+    """Busca paciente local (nome/CNS/CPF/prontuário) para autocomplete sob demanda."""
     termo_limpo = (termo or "").strip()
     if not termo_limpo:
         # Busca Sob Demanda: não exibe pacientes automáticos ao abrir o campo
-        return {"termo": "", "total": 0, "resultados": []}
+        return {"fonte": "local", "termo": "", "total": 0, "resultados": []}
 
-    so_num = "".join(c for c in termo_limpo if c.isdigit())
+    exatos, filtro_and, ordem_relevancia = _montar_filtros_busca_paciente(db, termo_limpo)
 
-    # 1. Busca EXATA prioritária (CPF, CNS ou Prontuário Exato)
-    exatos_busca: list[Paciente] = []
-    if len(so_num) == 11:
-        cpf_fmt = f"{so_num[:3]}.{so_num[3:6]}.{so_num[6:9]}-{so_num[9:]}"
-        exatos_busca = db.exec(
-            select(Paciente).where(or_(Paciente.cpf == so_num, Paciente.cpf == cpf_fmt))
-        ).all()
-    elif len(so_num) == 15:
-        exatos_busca = db.exec(select(Paciente).where(Paciente.cns == so_num)).all()
-    elif termo_limpo.upper().startswith("PR-"):
-        exatos_busca = db.exec(select(Paciente).where(Paciente.codigo_prontuario.ilike(termo_limpo.upper()))).all()
-    elif termo_limpo.isdigit() and len(termo_limpo) == 5:
-        exatos_busca = db.exec(select(Paciente).where(Paciente.codigo_prontuario.ilike(f"PR-{termo_limpo}"))).all()
-
-    if exatos_busca:
-        if len(so_num) == 11:
-            exatos_busca.sort(key=lambda p: (bool(p.endereco), bool(p.cns), p.id or 0), reverse=True)
-            vistos = set()
-            unicos = []
-            for p in exatos_busca:
-                c_clean = (p.cpf or "").strip()
-                if c_clean not in vistos:
-                    vistos.add(c_clean)
-                    unicos.append(p)
-            exatos_busca = unicos
-        locais = exatos_busca
+    if exatos is not None:
+        locais = exatos
     else:
-        palavras = [p for p in termo_limpo.split() if p]
-        if not palavras:
-            return {"fonte": "local", "termo": termo, "resultados": []}
-
-        try:
-            is_pg = getattr(db.get_bind().dialect, "name", "") == "postgresql"
-        except Exception:
-            is_pg = False
-        nome_campo = func.unaccent(Paciente.nome) if is_pg else Paciente.nome
-
-        lista_and = []
-        for w in palavras:
-            w_clean = _remover_acentos_str(w)
-            w_digits = "".join(c for c in w if c.isdigit())
-            conds = [
-                nome_campo.ilike(f"%{w_clean}%"),
-                Paciente.cpf.ilike(f"%{w}%"),
-                Paciente.cns.ilike(f"%{w}%"),
-                Paciente.codigo_prontuario.ilike(f"%{w}%"),
-            ]
-            if w_digits:
-                if len(w_digits) <= 9 and int(w_digits) <= 2147483647:
-                    conds.append(Paciente.id == int(w_digits))
-                conds.append(Paciente.codigo_prontuario.ilike(f"%{w_digits}%"))
-                conds.append(Paciente.cpf.ilike(f"%{w_digits}%"))
-                conds.append(Paciente.cns.ilike(f"%{w_digits}%"))
-            lista_and.append(or_(*conds))
-
-        primeira_w = _remover_acentos_str(palavras[0])
-        ordem_relevancia = case(
-            (nome_campo.ilike(f"{primeira_w}%"), 0),
-            (Paciente.codigo_prontuario.ilike(f"{palavras[0]}%"), 0),
-            else_=1,
-        )
-
         locais = db.exec(
             select(Paciente)
-            .where(and_(*lista_and))
+            .where(filtro_and)
             .order_by(ordem_relevancia, Paciente.nome)
             .limit(20)
         ).all()
