@@ -134,7 +134,7 @@ export default function LabSigtap() {
     return (arvore?.cbos ?? []).map((c) => ({
       value: c.cbo,
       label: c.descricao ? `${c.cbo} · ${c.descricao}` : `CBO ${c.cbo}`,
-      sub: c.qtd_procedimentos ? `${c.qtd_procedimentos} proc.` : c.origem,
+      sub: c.cbo ? `CBO ${c.cbo}` : undefined,
       keywords: `${c.cbo} ${c.descricao}`,
     }));
   }, [arvore]);
