@@ -429,25 +429,45 @@ def unificar_cbos_duplicados(db: Session) -> dict:
             db.delete(dup)
             especialidades_mescladas += 1
 
-    # Deduplicação em sigtap_cbos por (procedimento_codigo, cbo_normalizado)
+    # Deduplicação em sigtap_cbos por (procedimento_codigo, cbo_normalizado) via projeção de tuplas + lote
+    from sqlalchemy import text as _sa_text
+
     sigtap_cbos_removidos = 0
-    vistos_sigtap: dict[tuple[str, str], SigtapCbo] = {}
-    for row in db.exec(select(SigtapCbo).order_by(SigtapCbo.id)).all():
-        cbo_norm = limpar_codigo_cbo(row.cbo) or (row.cbo or "").strip()
-        cod_proc = (row.procedimento_codigo or "").strip()
+    vistos_sigtap: dict[tuple[str, str], tuple[int, str, str]] = {}
+    ids_cbos_excluir: list[int] = []
+    cbos_atualizar: list[tuple[int, str, str]] = []
+    rows_cbo = db.exec(
+        select(SigtapCbo.id, SigtapCbo.procedimento_codigo, SigtapCbo.cbo, SigtapCbo.descricao).order_by(SigtapCbo.id)
+    ).all()
+    for row_id, proc_cod_r, cbo_r, desc_r in rows_cbo:
+        if not row_id:
+            continue
+        cbo_norm = limpar_codigo_cbo(cbo_r) or (cbo_r or "").strip()
+        cod_proc = (proc_cod_r or "").strip()
+        desc_s = (desc_r or "").strip()
         chave = (cod_proc, cbo_norm)
         if chave in vistos_sigtap:
-            existente = vistos_sigtap[chave]
-            if not (existente.descricao or "").strip() and (row.descricao or "").strip():
-                existente.descricao = row.descricao.strip()
-                db.add(existente)
-            db.delete(row)
+            ex_id, ex_cbo, ex_desc = vistos_sigtap[chave]
+            if not ex_desc and desc_s:
+                vistos_sigtap[chave] = (ex_id, ex_cbo, desc_s)
+                cbos_atualizar.append((ex_id, cbo_norm, desc_s[:120]))
+            ids_cbos_excluir.append(int(row_id))
             sigtap_cbos_removidos += 1
         else:
-            if row.cbo != cbo_norm:
-                row.cbo = cbo_norm
-                db.add(row)
-            vistos_sigtap[chave] = row
+            if (cbo_r or "").strip() != cbo_norm:
+                cbos_atualizar.append((int(row_id), cbo_norm, desc_s[:120]))
+            vistos_sigtap[chave] = (int(row_id), cbo_norm, desc_s)
+
+    for uid_c, u_cbo, u_desc in cbos_atualizar:
+        db.execute(
+            _sa_text("UPDATE sigtap_cbos SET cbo = :cbo, descricao = :desc WHERE id = :id"),
+            {"cbo": u_cbo, "desc": u_desc, "id": uid_c},
+        )
+    for ini in range(0, len(ids_cbos_excluir), 500):
+        bloco = ids_cbos_excluir[ini : ini + 500]
+        in_clause = ", ".join(f":d{i}" for i in range(len(bloco)))
+        params = {f"d{i}": v for i, v in enumerate(bloco)}
+        db.execute(_sa_text(f"DELETE FROM sigtap_cbos WHERE id IN ({in_clause})"), params)
 
     # Sincroniza tabela normalizada sigtap_ocupacoes
     vistos_oc: dict[str, SigtapOcupacao] = {
@@ -458,10 +478,10 @@ def unificar_cbos_duplicados(db: Session) -> dict:
         c = limpar_codigo_cbo(esp.codigo_cbo)
         if c and esp.nome:
             candidatos_oc.append((c, esp.nome))
-    for sc in vistos_sigtap.values():
-        c = limpar_codigo_cbo(sc.cbo)
+    for _eid, sc_cbo, sc_desc in vistos_sigtap.values():
+        c = limpar_codigo_cbo(sc_cbo)
         if c:
-            candidatos_oc.append((c, sc.descricao or _CBO_DESC_CANONICA.get(c, f"CBO {c}")))
+            candidatos_oc.append((c, sc_desc or _CBO_DESC_CANONICA.get(c, f"CBO {c}")))
     for cbo_c, nome_c, _rad, _t in CBO_ESPECIALIDADES_CANONICAS:
         candidatos_oc.append((cbo_c, nome_c))
 

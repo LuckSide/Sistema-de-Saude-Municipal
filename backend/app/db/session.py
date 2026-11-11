@@ -72,11 +72,46 @@ def _sincronizar_colunas_faltantes(target_engine) -> None:
 
 
 def init_db() -> None:
+    # Lock distribuído entre workers Gunicorn no PostgreSQL para evitar corrida em DDL/seeds
+    lock_conn = None
+    if engine.dialect.name == "postgresql":
+        try:
+            lock_conn = engine.connect()
+            lock_conn.execute(text("SELECT pg_advisory_lock(847291988)"))
+            lock_conn.commit()
+        except Exception:
+            if lock_conn is not None:
+                try:
+                    lock_conn.close()
+                except Exception:
+                    pass
+                lock_conn = None
+
+    try:
+        _init_db_impl()
+    finally:
+        if lock_conn is not None:
+            try:
+                lock_conn.execute(text("SELECT pg_advisory_unlock(847291988)"))
+                lock_conn.commit()
+            except Exception:
+                pass
+            try:
+                lock_conn.close()
+            except Exception:
+                pass
+
+
+def _init_db_impl() -> None:
     from app.models.lab_exames import (  # noqa: F401
         LabSolicitacao,
         SigtapCbo,
         SigtapCid,
+        SigtapFormaOrganizacao,
+        SigtapGrupo,
+        SigtapOcupacao,
         SigtapProcedimento,
+        SigtapSubgrupo,
         SigtapVersao,
     )
     from app.models.lab_fase6 import (  # noqa: F401
@@ -94,6 +129,7 @@ def init_db() -> None:
         Faturamento,
         Motorista,
         Paciente,
+        PacienteHistorico,
         ProcedimentoCatalogo,
         TipoFila,
         Veiculo,
@@ -836,17 +872,8 @@ def init_db() -> None:
         try:
             from app.services.sigtap_hierarquia import seed_arvore_sigtap, seed_vivver_procedimentos
             seed_vivver_procedimentos(db)
-            seed_arvore_sigtap(db)
-        except Exception:
-            pass
-        try:
-            from app.services.cbo_normalizacao import unificar_cbos_duplicados
-            unificar_cbos_duplicados(db)
-        except Exception:
-            pass
-        try:
-            from app.services.pec_sync import consolidar_pacientes_duplicados
-            consolidar_pacientes_duplicados(db, remover_inelegiveis_sem_vinculo=True)
+            if not db.exec(select(SigtapGrupo.id)).first():
+                seed_arvore_sigtap(db)
         except Exception:
             try:
                 db.rollback()

@@ -702,25 +702,34 @@ def _tabelas_existentes(db: Session) -> set[str]:
         return set()
 
 
-def _coletar_ids_com_vinculo(db: Session, tabelas: set[str] | None = None) -> tuple[set[int], set[int]]:
-    """Retorna `(ids_com_vinculo, ids_usuario)` indicando pacientes com histórico assistencial/operacional ou conta vinculada."""
+def _coletar_ids_com_vinculo(
+    db: Session,
+    tabelas: set[str] | None = None,
+    com_mapa_tabelas: bool = False,
+):
+    """Retorna `(ids_com_vinculo, ids_usuario)` (ou também `tabela_ids_map` por tabela/coluna)."""
     tabs = tabelas if tabelas is not None else _tabelas_existentes(db)
     vinculados: set[int] = set()
     usuarios_pac: set[int] = set()
+    tabela_ids_map: dict[tuple[str, str], set[int]] = {}
 
     for tabela, col in _REFERENCIAS_SIMPLES_PACIENTE + (("tfd_viagem_pacientes", "paciente_id"), ("tfd_faturamento", "paciente_id")):
-        if tabela not in tabs or tabela == "tfd_pacientes_historico":
+        if tabela not in tabs:
             continue
         try:
             rows = db.execute(text(f"SELECT DISTINCT {col} FROM {tabela} WHERE {col} IS NOT NULL")).all()
-            for (pid,) in rows:
-                if pid is not None:
-                    vinculados.add(int(pid))
-                    if tabela == "usuarios":
-                        usuarios_pac.add(int(pid))
+            ids_t = {int(pid) for (pid,) in rows if pid is not None}
+            tabela_ids_map[(tabela, col)] = ids_t
+            if tabela == "tfd_pacientes_historico":
+                continue
+            vinculados.update(ids_t)
+            if tabela == "usuarios":
+                usuarios_pac.update(ids_t)
         except Exception:
             continue
 
+    if com_mapa_tabelas:
+        return vinculados, usuarios_pac, tabela_ids_map
     return vinculados, usuarios_pac
 
 
@@ -772,69 +781,17 @@ def _score_paciente_master(
     )
 
 
-def _mesclar_pacientes(
-    db: Session,
+def _consolidar_campos_master_em_memoria(
     master: Paciente,
     dup: Paciente,
-    tabelas: set[str],
     ids_vinculo: set[int],
     ids_usuario: set[int],
-) -> int:
-    """Transfere todas as referências de `dup` para `master`, consolida campos e remove `dup`."""
-    if not master.id or not dup.id or master.id == dup.id:
-        return 0
-
+) -> None:
+    """Enriquece `master` com os dados mais completos de `dup` sem emitir SQL individual."""
+    if not master.id or not dup.id:
+        return
     mid, did = int(master.id), int(dup.id)
-    migrados = 0
 
-    # Trata constraints únicas ANTES do UPDATE
-    if "tfd_viagem_pacientes" in tabelas:
-        db.execute(
-            text(
-                "DELETE FROM tfd_viagem_pacientes "
-                "WHERE paciente_id = :did "
-                "AND viagem_id IN (SELECT viagem_id FROM tfd_viagem_pacientes WHERE paciente_id = :mid)"
-            ),
-            {"did": did, "mid": mid},
-        )
-        res = db.execute(
-            text("UPDATE tfd_viagem_pacientes SET paciente_id = :mid WHERE paciente_id = :did"),
-            {"did": did, "mid": mid},
-        )
-        migrados += getattr(res, "rowcount", 0) or 0
-
-    if "tfd_faturamento" in tabelas:
-        # Remove linha duplicada se já existir mesmo (viagem_id, codigo_sigtap) para master
-        conflitos = db.execute(
-            text(
-                "SELECT f_dup.id FROM tfd_faturamento f_dup "
-                "JOIN tfd_faturamento f_mas ON f_mas.paciente_id = :mid "
-                "AND ((f_mas.viagem_id IS NULL AND f_dup.viagem_id IS NULL) OR f_mas.viagem_id = f_dup.viagem_id) "
-                "AND f_mas.codigo_sigtap = f_dup.codigo_sigtap "
-                "WHERE f_dup.paciente_id = :did"
-            ),
-            {"did": did, "mid": mid},
-        ).all()
-        if conflitos:
-            ids_conf = [int(r[0]) for r in conflitos]
-            for cid in ids_conf:
-                db.execute(text("DELETE FROM tfd_faturamento WHERE id = :cid"), {"cid": cid})
-        res = db.execute(
-            text("UPDATE tfd_faturamento SET paciente_id = :mid WHERE paciente_id = :did"),
-            {"did": did, "mid": mid},
-        )
-        migrados += getattr(res, "rowcount", 0) or 0
-
-    for tabela, col in _REFERENCIAS_SIMPLES_PACIENTE:
-        if tabela not in tabelas:
-            continue
-        res = db.execute(
-            text(f"UPDATE {tabela} SET {col} = :mid WHERE {col} = :did"),
-            {"mid": mid, "did": did},
-        )
-        migrados += getattr(res, "rowcount", 0) or 0
-
-    # Enriquece `master` com melhores campos de `dup`
     if not limpar_cpf(master.cpf) and limpar_cpf(dup.cpf):
         master.cpf = limpar_cpf(dup.cpf)
     if not limpar_cns(master.cns) and limpar_cns(dup.cns):
@@ -892,7 +849,6 @@ def _mesclar_pacientes(
     sit_m = (getattr(master, "situacao_cadastral", None) or "ativo").lower()
     sit_d = (getattr(dup, "situacao_cadastral", None) or "ativo").lower()
     if sit_m != "ativo" and sit_d == "ativo":
-        # Se a duplicata unificada está ativa no PEC, mantém o cadastro ativo
         master.situacao_cadastral = "ativo"
         master.motivo_situacao = ""
         master.data_obito = None
@@ -907,8 +863,70 @@ def _mesclar_pacientes(
         ids_vinculo.add(mid)
     if did in ids_usuario:
         ids_usuario.add(mid)
-
     master.updated_at = datetime.utcnow()
+
+
+def _mesclar_pacientes(
+    db: Session,
+    master: Paciente,
+    dup: Paciente,
+    tabelas: set[str],
+    ids_vinculo: set[int],
+    ids_usuario: set[int],
+) -> int:
+    """Transfere todas as referências de `dup` para `master`, consolida campos e remove `dup`."""
+    if not master.id or not dup.id or master.id == dup.id:
+        return 0
+
+    mid, did = int(master.id), int(dup.id)
+    migrados = 0
+
+    # Trata constraints únicas ANTES do UPDATE
+    if "tfd_viagem_pacientes" in tabelas:
+        db.execute(
+            text(
+                "DELETE FROM tfd_viagem_pacientes "
+                "WHERE paciente_id = :did "
+                "AND viagem_id IN (SELECT viagem_id FROM tfd_viagem_pacientes WHERE paciente_id = :mid)"
+            ),
+            {"did": did, "mid": mid},
+        )
+        res = db.execute(
+            text("UPDATE tfd_viagem_pacientes SET paciente_id = :mid WHERE paciente_id = :did"),
+            {"did": did, "mid": mid},
+        )
+        migrados += getattr(res, "rowcount", 0) or 0
+
+    if "tfd_faturamento" in tabelas:
+        conflitos = db.execute(
+            text(
+                "SELECT f_dup.id FROM tfd_faturamento f_dup "
+                "JOIN tfd_faturamento f_mas ON f_mas.paciente_id = :mid "
+                "AND ((f_mas.viagem_id IS NULL AND f_dup.viagem_id IS NULL) OR f_mas.viagem_id = f_dup.viagem_id) "
+                "AND f_mas.codigo_sigtap = f_dup.codigo_sigtap "
+                "WHERE f_dup.paciente_id = :did"
+            ),
+            {"did": did, "mid": mid},
+        ).all()
+        if conflitos:
+            for (cid,) in conflitos:
+                db.execute(text("DELETE FROM tfd_faturamento WHERE id = :cid"), {"cid": int(cid)})
+        res = db.execute(
+            text("UPDATE tfd_faturamento SET paciente_id = :mid WHERE paciente_id = :did"),
+            {"did": did, "mid": mid},
+        )
+        migrados += getattr(res, "rowcount", 0) or 0
+
+    for tabela, col in _REFERENCIAS_SIMPLES_PACIENTE:
+        if tabela not in tabelas:
+            continue
+        res = db.execute(
+            text(f"UPDATE {tabela} SET {col} = :mid WHERE {col} = :did"),
+            {"mid": mid, "did": did},
+        )
+        migrados += getattr(res, "rowcount", 0) or 0
+
+    _consolidar_campos_master_em_memoria(master, dup, ids_vinculo, ids_usuario)
     db.add(master)
     db.flush()
     db.delete(dup)
@@ -916,39 +934,88 @@ def _mesclar_pacientes(
     return migrados
 
 
+def _executar_lote_updates_fk(
+    db: Session,
+    tabela: str,
+    col: str,
+    pares: list[tuple[int, int]],
+    chunk_size: int = 200,
+) -> int:
+    """Atualiza FK em lotes de `chunk_size` via `CASE` parametrizado (compatível PostgreSQL e SQLite)."""
+    migrados = 0
+    for ini in range(0, len(pares), chunk_size):
+        bloco = pares[ini : ini + chunk_size]
+        cases = " ".join(f"WHEN :d{i} THEN :m{i}" for i in range(len(bloco)))
+        in_clause = ", ".join(f":d{i}" for i in range(len(bloco)))
+        params = {}
+        for i, (did, mid) in enumerate(bloco):
+            params[f"d{i}"] = did
+            params[f"m{i}"] = mid
+        res = db.execute(
+            text(f"UPDATE {tabela} SET {col} = CASE {col} {cases} END WHERE {col} IN ({in_clause})"),
+            params,
+        )
+        migrados += getattr(res, "rowcount", 0) or 0
+    return migrados
+
+
+def _deletar_ids_em_lote(db: Session, tabela: str, col: str, ids: list[int], chunk_size: int = 500) -> None:
+    for ini in range(0, len(ids), chunk_size):
+        bloco = ids[ini : ini + chunk_size]
+        in_clause = ", ".join(f":x{i}" for i in range(len(bloco)))
+        params = {f"x{i}": v for i, v in enumerate(bloco)}
+        db.execute(text(f"DELETE FROM {tabela} WHERE {col} IN ({in_clause})"), params)
+
+
 def consolidar_pacientes_duplicados(
     db: Session,
     remover_inelegiveis_sem_vinculo: bool = True,
 ) -> dict:
-    """Unifica cidadãos duplicados em `tfd_pacientes` (CPF, CNS, Nome+Nascimento+Mãe) e
-    remove com segurança cadastros oriundos do PEC sem vínculos que estejam em óbito,
+    """Unifica cidadãos duplicados em `tfd_pacientes` (CPF, CNS, Nome+Nascimento+Mãe) em lote
+    de alta velocidade e remove cadastros oriundos do PEC sem vínculos que estejam em óbito,
     mudança de município ou inativos.
     """
     tabelas = _tabelas_existentes(db)
-    ids_vinculo, ids_usuario = _coletar_ids_com_vinculo(db, tabelas)
+    ids_vinculo, ids_usuario, tabela_ids_map = _coletar_ids_com_vinculo(db, tabelas, com_mapa_tabelas=True)
     pacientes = list(db.exec(select(Paciente).order_by(Paciente.id.asc())).all())
     total_antes = len(pacientes)
     por_id: dict[int, Paciente] = {p.id: p for p in pacientes if p.id}
     removidos_ids: set[int] = set()
+    dup_to_master: dict[int, int] = {}
+    masters_sujos: set[int] = set()
     duplicados_mesclados = 0
     referencias_migradas = 0
     inelegiveis_removidos = 0
 
-    def _mesclar_grupo(grupo_ids: list[int]) -> Optional[Paciente]:
-        nonlocal duplicados_mesclados, referencias_migradas
+    def _mesclar_grupo_mem(grupo_ids: list[int], apenas_ancora_unica: bool = False) -> Optional[Paciente]:
+        nonlocal duplicados_mesclados
         vivos = [por_id[pid] for pid in grupo_ids if pid in por_id and pid not in removidos_ids]
         if len(vivos) <= 1:
             return vivos[0] if vivos else None
-        vivos.sort(key=lambda p: _score_paciente_master(p, ids_vinculo, ids_usuario), reverse=True)
-        master = vivos[0]
-        for dup in vivos[1:]:
+        if apenas_ancora_unica:
+            ancoras = [p for p in vivos if p.nascimento is not None or limpar_cpf(p.cpf) or limpar_cns(p.cns)]
+            sem_nasc = [p for p in vivos if p.nascimento is None and not limpar_cpf(p.cpf) and not limpar_cns(p.cns)]
+            if len(ancoras) != 1 or not sem_nasc:
+                return None
+            master = ancoras[0]
+            alvos_dup = sem_nasc
+        else:
+            vivos.sort(key=lambda p: _score_paciente_master(p, ids_vinculo, ids_usuario), reverse=True)
+            master = vivos[0]
+            alvos_dup = vivos[1:]
+
+        if not master.id:
+            return None
+        for dup in alvos_dup:
+            if not dup.id or dup.id == master.id or dup.id in removidos_ids:
+                continue
             if not _registros_compatíveis_para_mescla(master, dup):
                 continue
-            migs = _mesclar_pacientes(db, master, dup, tabelas, ids_vinculo, ids_usuario)
-            referencias_migradas += migs
+            _consolidar_campos_master_em_memoria(master, dup, ids_vinculo, ids_usuario)
+            masters_sujos.add(int(master.id))
+            dup_to_master[int(dup.id)] = int(master.id)
+            removidos_ids.add(int(dup.id))
             duplicados_mesclados += 1
-            if dup.id:
-                removidos_ids.add(dup.id)
         return master
 
     # 1. Agrupa por CPF limpo
@@ -961,7 +1028,7 @@ def consolidar_pacientes_duplicados(
             por_cpf.setdefault(c, []).append(pid)
     for grupo in por_cpf.values():
         if len(grupo) > 1:
-            _mesclar_grupo(grupo)
+            _mesclar_grupo_mem(grupo)
 
     # 2. Agrupa por CNS limpo
     por_cns: dict[str, list[int]] = {}
@@ -973,7 +1040,7 @@ def consolidar_pacientes_duplicados(
             por_cns.setdefault(cns, []).append(pid)
     for grupo in por_cns.values():
         if len(grupo) > 1:
-            _mesclar_grupo(grupo)
+            _mesclar_grupo_mem(grupo)
 
     # 3. Agrupa por Nome (sem preposições) + Data de Nascimento
     por_nn: dict[tuple[str, str], list[int]] = {}
@@ -990,7 +1057,7 @@ def consolidar_pacientes_duplicados(
 
     for grupo in por_nn.values():
         if len(grupo) > 1:
-            _mesclar_grupo(grupo)
+            _mesclar_grupo_mem(grupo)
 
     # 3b. Mesma data de nascimento + nome da mãe não vazio idêntico/forte + sobrenome de casado ou erro leve de digitação
     por_nasc: dict[str, list[int]] = {}
@@ -1000,7 +1067,7 @@ def consolidar_pacientes_duplicados(
         if limpar_nome_mae(p.nome_mae):
             por_nasc.setdefault(str(p.nascimento), []).append(pid)
     for g_ids in por_nasc.values():
-        if len(g_ids) <= 1:
+        if len(g_ids) <= 1 or len(g_ids) > 50:
             continue
         for idx_a in range(len(g_ids)):
             pid_a = g_ids[idx_a]
@@ -1035,29 +1102,81 @@ def consolidar_pacientes_duplicados(
                 if nomes_sao_compativeis(nome_a, nome_b) or mesmo_com_typo:
                     cluster.append(pid_b)
             if len(cluster) > 1:
-                _mesclar_grupo(cluster)
+                _mesclar_grupo_mem(cluster)
 
-    # 4. Registros legados sem data de nascimento e sem CPF/CNS que têm correspondência única pelo nome completo
+    # 4. Registros legados sem data de nascimento e sem CPF/CNS com âncora única pelo nome completo
     for nome_sp, g_ids in por_nome_so.items():
-        vivos = [por_id[pid] for pid in g_ids if pid in por_id and pid not in removidos_ids]
-        if len(vivos) <= 1 or len(nome_sp.split()) < 2:
-            continue
-        ancoras = [p for p in vivos if p.nascimento is not None or limpar_cpf(p.cpf) or limpar_cns(p.cns)]
-        sem_nasc = [p for p in vivos if p.nascimento is None and not limpar_cpf(p.cpf) and not limpar_cns(p.cns)]
-        if len(ancoras) == 1 and sem_nasc:
-            master = ancoras[0]
-            for dup in sem_nasc:
-                if _registros_compatíveis_para_mescla(master, dup):
-                    migs = _mesclar_pacientes(db, master, dup, tabelas, ids_vinculo, ids_usuario)
-                    referencias_migradas += migs
-                    duplicados_mesclados += 1
-                    if dup.id:
-                        removidos_ids.add(dup.id)
+        if len(g_ids) > 1 and len(nome_sp.split()) >= 2:
+            _mesclar_grupo_mem(g_ids, apenas_ancora_unica=True)
 
-    # 5. Remove apenas cadastros PEC inelegíveis (óbito, mudança de município, inativo) sem nenhum histórico clínico/usuário
+    # Compressão de caminho transitiva (A -> B -> C passa a ser A -> C)
+    if dup_to_master:
+        for did in list(dup_to_master.keys()):
+            alvo = dup_to_master[did]
+            vistos_c = {did}
+            while alvo in dup_to_master and alvo not in vistos_c:
+                vistos_c.add(alvo)
+                alvo = dup_to_master[alvo]
+            dup_to_master[did] = alvo
+
+        # Persiste enriquecimento dos registros sobreviventes antes de migrar FKs e deletar duplicados
+        for mid in sorted(masters_sujos):
+            if mid not in removidos_ids and mid in por_id:
+                db.add(por_id[mid])
+        db.flush()
+
+        # Trata constraints únicas apenas quando há colisões nessas duas tabelas
+        vp_ids = tabela_ids_map.get(("tfd_viagem_pacientes", "paciente_id"), set())
+        for did in [d for d in dup_to_master if d in vp_ids]:
+            mid = dup_to_master[did]
+            db.execute(
+                text(
+                    "DELETE FROM tfd_viagem_pacientes "
+                    "WHERE paciente_id = :did "
+                    "AND viagem_id IN (SELECT viagem_id FROM tfd_viagem_pacientes WHERE paciente_id = :mid)"
+                ),
+                {"did": did, "mid": mid},
+            )
+            db.execute(
+                text("UPDATE tfd_viagem_pacientes SET paciente_id = :mid WHERE paciente_id = :did"),
+                {"did": did, "mid": mid},
+            )
+            referencias_migradas += 1
+
+        fat_ids = tabela_ids_map.get(("tfd_faturamento", "paciente_id"), set())
+        for did in [d for d in dup_to_master if d in fat_ids]:
+            mid = dup_to_master[did]
+            conflitos = db.execute(
+                text(
+                    "SELECT f_dup.id FROM tfd_faturamento f_dup "
+                    "JOIN tfd_faturamento f_mas ON f_mas.paciente_id = :mid "
+                    "AND ((f_mas.viagem_id IS NULL AND f_dup.viagem_id IS NULL) OR f_mas.viagem_id = f_dup.viagem_id) "
+                    "AND f_mas.codigo_sigtap = f_dup.codigo_sigtap "
+                    "WHERE f_dup.paciente_id = :did"
+                ),
+                {"did": did, "mid": mid},
+            ).all()
+            if conflitos:
+                _deletar_ids_em_lote(db, "tfd_faturamento", "id", [int(r[0]) for r in conflitos])
+            res = db.execute(
+                text("UPDATE tfd_faturamento SET paciente_id = :mid WHERE paciente_id = :did"),
+                {"did": did, "mid": mid},
+            )
+            referencias_migradas += getattr(res, "rowcount", 0) or 0
+
+        # Migração em lote apenas nas tabelas que realmente apontam para algum `dup_id`
+        for tabela, col in _REFERENCIAS_SIMPLES_PACIENTE:
+            ids_tab = tabela_ids_map.get((tabela, col))
+            if not ids_tab:
+                continue
+            pares = [(did, mid) for did, mid in dup_to_master.items() if did in ids_tab]
+            if pares:
+                referencias_migradas += _executar_lote_updates_fk(db, tabela, col, pares)
+
+    # 5. Remove apenas cadastros PEC inelegíveis (óbito, mudança de município, inativo) sem nenhum vínculo clínico/usuário
+    ghost_ids: list[int] = []
     if remover_inelegiveis_sem_vinculo:
-        ids_vinculo, _ = _coletar_ids_com_vinculo(db, tabelas)
-        for pid, p in list(por_id.items()):
+        for pid, p in por_id.items():
             if pid in removidos_ids:
                 continue
             sit = (getattr(p, "situacao_cadastral", None) or "ativo").strip().lower()
@@ -1067,11 +1186,22 @@ def consolidar_pacientes_duplicados(
                 continue
             if pid in ids_vinculo:
                 continue
-            if "tfd_pacientes_historico" in tabelas:
-                db.execute(text("DELETE FROM tfd_pacientes_historico WHERE paciente_id = :pid"), {"pid": pid})
-            db.delete(p)
+            ghost_ids.append(pid)
             removidos_ids.add(pid)
             inelegiveis_removidos += 1
+
+    todos_excluir = sorted(removidos_ids)
+    if todos_excluir:
+        for pid in todos_excluir:
+            obj = por_id.get(pid)
+            if obj is not None:
+                try:
+                    db.expunge(obj)
+                except Exception:
+                    pass
+        if ghost_ids and "tfd_pacientes_historico" in tabelas:
+            _deletar_ids_em_lote(db, "tfd_pacientes_historico", "paciente_id", ghost_ids)
+        _deletar_ids_em_lote(db, "tfd_pacientes", "id", todos_excluir)
 
     db.commit()
     total_depois = len(db.exec(select(Paciente.id)).all())

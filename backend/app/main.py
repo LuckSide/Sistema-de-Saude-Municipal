@@ -62,12 +62,90 @@ async def lifespan(app: FastAPI):
     iniciar_worker_pec()
     iniciar_worker_sigtap()
     iniciar_worker_lembretes_whatsapp()
+    _iniciar_higienizacao_startup()
     try:
         yield
     finally:
         parar_worker_pec()
         parar_worker_sigtap()
         parar_worker_lembretes_whatsapp()
+
+
+def _iniciar_higienizacao_startup() -> None:
+    """Executa unificação pesada (SIGTAP/CBOs e deduplicação global de pacientes) em segundo
+    plano após a API responder ao healthcheck, evitando timeout de startup em bases grandes.
+    """
+    import logging
+    import os
+    import threading
+    import time
+
+    from sqlalchemy import text
+
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+
+    def _run():
+        log = logging.getLogger("startup_hygiene")
+        time.sleep(5)
+        lock_conn = None
+        eh_lider = False
+        if engine.dialect.name == "postgresql":
+            try:
+                lock_conn = engine.connect()
+                eh_lider = bool(lock_conn.execute(text("SELECT pg_try_advisory_lock(847291989)")).scalar())
+                lock_conn.commit()
+            except Exception:
+                eh_lider = True
+                if lock_conn is not None:
+                    try:
+                        lock_conn.close()
+                    except Exception:
+                        pass
+                    lock_conn = None
+        else:
+            eh_lider = True
+
+        try:
+            if not eh_lider:
+                return
+            with Session(engine) as db:
+                try:
+                    from app.services.sigtap_hierarquia import seed_arvore_sigtap
+
+                    seed_arvore_sigtap(db)
+                except Exception as exc:
+                    log.warning(f"Higienização SIGTAP pós-boot: {exc}")
+                    db.rollback()
+                try:
+                    from app.services.cbo_normalizacao import unificar_cbos_duplicados
+
+                    unificar_cbos_duplicados(db)
+                except Exception as exc:
+                    log.warning(f"Unificação CBO pós-boot: {exc}")
+                    db.rollback()
+                try:
+                    from app.services.pec_sync import consolidar_pacientes_duplicados
+
+                    res = consolidar_pacientes_duplicados(db, remover_inelegiveis_sem_vinculo=True)
+                    log.info(f"Consolidação de pacientes pós-boot concluída: {res}")
+                except Exception as exc:
+                    log.warning(f"Consolidação de pacientes pós-boot: {exc}")
+                    db.rollback()
+        finally:
+            if lock_conn is not None:
+                if eh_lider:
+                    try:
+                        lock_conn.execute(text("SELECT pg_advisory_unlock(847291989)"))
+                        lock_conn.commit()
+                    except Exception:
+                        pass
+                try:
+                    lock_conn.close()
+                except Exception:
+                    pass
+
+    threading.Thread(target=_run, daemon=True, name="startup_hygiene").start()
 
 
 app = FastAPI(title="Sistema de Saúde — API", version="1.0.0", lifespan=lifespan)
