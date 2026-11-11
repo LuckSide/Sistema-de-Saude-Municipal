@@ -92,6 +92,8 @@ class PecSyncLog(SQLModel, table=True):
     total_atualizados: int = Field(default=0)
     total_duplicados_mesclados: int = Field(default=0)
     total_baixas_fila: int = Field(default=0)
+    total_ignorados_pec: int = Field(default=0)
+    total_removidos_inativos: int = Field(default=0)
     total_erros: int = Field(default=0)
     duracao_segundos: float = Field(default=0.0)
     mensagem: str = Field(default="", max_length=1000)

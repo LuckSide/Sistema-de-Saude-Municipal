@@ -318,10 +318,41 @@ def _montar_filtros_busca_paciente(
     return None, and_(*lista_and), ordem_relevancia
 
 
+def _deduplicar_lista_pacientes(rows: list[Paciente]) -> list[Paciente]:
+    """Garante unicidade na listagem/autocomplete mesmo se houver registros legados sobrepostos."""
+    from app.services.pec_sync import limpar_cns, limpar_cpf, normalizar_nome_sem_prep
+
+    vistos: set[str] = set()
+    unicos: list[Paciente] = []
+    for p in rows:
+        sit = (getattr(p, "situacao_cadastral", None) or "ativo").strip().lower()
+        cpf_c = limpar_cpf(p.cpf)
+        cns_c = limpar_cns(p.cns)
+        n_sp = normalizar_nome_sem_prep(p.nome)
+        chave = (
+            f"cpf:{cpf_c}"
+            if cpf_c
+            else (
+                f"cns:{cns_c}"
+                if cns_c
+                else (f"nn:{n_sp}|{p.nascimento}" if n_sp and p.nascimento else f"id:{p.id}")
+            )
+        )
+        # Se houver dois registros idênticos, prioriza o ativo/mais completo já ordenado
+        if chave in vistos and sit != "ativo":
+            continue
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        unicos.append(p)
+    return unicos
+
+
 # ---------- Pacientes ----------
 @router.get("/pacientes", response_model=Pagina[PacienteOut])
 def listar_pacientes(
     q: str = "",
+    incluir_inativos: bool = Query(default=False),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=100000),
     request: Request = None,
@@ -332,6 +363,7 @@ def listar_pacientes(
         page = getattr(page, "default", 1)
     if not isinstance(limit, int):
         limit = getattr(limit, "default", 100)
+    p_incluir_inativos = incluir_inativos if isinstance(incluir_inativos, bool) else False
 
     q_limpo = (q or "").strip()
     if not q_limpo:
@@ -339,8 +371,21 @@ def listar_pacientes(
         return {"data": [], "total": 0, "page": 1, "pages": 1}
 
     exatos, filtro_and, ordem_relevancia = _montar_filtros_busca_paciente(db, q_limpo)
+    filtro_ativo = or_(
+        Paciente.situacao_cadastral == "ativo",
+        Paciente.situacao_cadastral == "",
+        Paciente.situacao_cadastral.is_(None),
+    )
 
     if exatos is not None:
+        if not p_incluir_inativos:
+            ativos_exatos = [
+                p for p in exatos
+                if (getattr(p, "situacao_cadastral", None) or "ativo").strip().lower() in ("ativo", "")
+            ]
+            if ativos_exatos:
+                exatos = ativos_exatos
+        exatos = _deduplicar_lista_pacientes(exatos)
         for p in exatos:
             if not getattr(p, "codigo_prontuario", ""):
                 p.codigo_prontuario = gerar_prontuario_aleatorio(db, p.id)
@@ -354,10 +399,11 @@ def listar_pacientes(
             pass
         return {"data": exatos, "total": len(exatos), "page": 1, "pages": 1}
 
-    base = select(Paciente).where(filtro_and).order_by(ordem_relevancia, Paciente.nome)
+    where_cond = filtro_and if p_incluir_inativos else and_(filtro_and, filtro_ativo)
+    base = select(Paciente).where(where_cond).order_by(ordem_relevancia, Paciente.nome)
     total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
     meta = paginar(total, page, limit)
-    rows = db.exec(base.offset(meta["offset"]).limit(limit)).all()
+    rows = _deduplicar_lista_pacientes(list(db.exec(base.offset(meta["offset"]).limit(limit)).all()))
     # Garante prontuário curto em cada paciente
     for p in rows:
         if not getattr(p, "codigo_prontuario", ""):
@@ -382,23 +428,32 @@ def buscar_pacientes_pec(
     db: Session = Depends(get_db),
     ator: User | None = Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
 ):
-    """Busca paciente local (nome/CNS/CPF/prontuário) para autocomplete sob demanda."""
+    """Busca paciente local ativo (nome/CNS/CPF/prontuário) para autocomplete sob demanda."""
     termo_limpo = (termo or "").strip()
     if not termo_limpo:
         # Busca Sob Demanda: não exibe pacientes automáticos ao abrir o campo
         return {"fonte": "local", "termo": "", "total": 0, "resultados": []}
 
     exatos, filtro_and, ordem_relevancia = _montar_filtros_busca_paciente(db, termo_limpo)
+    filtro_ativo = or_(
+        Paciente.situacao_cadastral == "ativo",
+        Paciente.situacao_cadastral == "",
+        Paciente.situacao_cadastral.is_(None),
+    )
 
     if exatos is not None:
-        locais = exatos
+        locais = [
+            p for p in exatos
+            if (getattr(p, "situacao_cadastral", None) or "ativo").strip().lower() in ("ativo", "")
+        ]
     else:
         locais = db.exec(
             select(Paciente)
-            .where(filtro_and)
+            .where(and_(filtro_and, filtro_ativo))
             .order_by(ordem_relevancia, Paciente.nome)
-            .limit(20)
+            .limit(40)
         ).all()
+    locais = _deduplicar_lista_pacientes(list(locais))[:20]
     out = [
         {
             "id": p.id,
@@ -493,6 +548,23 @@ def excluir_destino(did: int, db: Session = Depends(get_db), _=Depends(need_perm
 def criar_paciente(
     data: PacienteIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_pacientes", "criar"))
 ):
+    from app.services.pec_sync import encontrar_paciente_duplicado
+
+    dup = encontrar_paciente_duplicado(
+        db,
+        nome=data.nome,
+        cpf=data.cpf,
+        cns=data.cns,
+        nascimento=data.nascimento,
+        nome_mae=getattr(data, "nome_mae", "") or "",
+    )
+    if dup:
+        pront_dup = dup.codigo_prontuario or f"PR-{dup.id:05d}"
+        raise HTTPException(
+            400,
+            f"Cidadão já cadastrado no sistema ({dup.nome} · Prontuário {pront_dup}). Utilize a busca para evitar duplicidade.",
+        )
+
     if data.unidade_saude_id is not None:
         from app.models.cadastros_saude import UnidadeSaude
 
@@ -529,9 +601,26 @@ def obter_paciente(
 def atualizar_paciente(
     pid: int, data: PacienteIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_pacientes", "editar"))
 ):
+    from app.services.pec_sync import encontrar_paciente_duplicado
+
     obj = db.get(Paciente, pid)
     if not obj:
         raise HTTPException(404, "Paciente não encontrado")
+    dup = encontrar_paciente_duplicado(
+        db,
+        nome=data.nome,
+        cpf=data.cpf,
+        cns=data.cns,
+        nascimento=data.nascimento,
+        nome_mae=getattr(data, "nome_mae", "") or "",
+        exclude_id=pid,
+    )
+    if dup:
+        pront_dup = dup.codigo_prontuario or f"PR-{dup.id:05d}"
+        raise HTTPException(
+            400,
+            f"CPF/CNS ou dados já pertencem a outro cadastro ({dup.nome} · Prontuário {pront_dup}).",
+        )
     if data.unidade_saude_id is not None:
         from app.models.cadastros_saude import UnidadeSaude
 

@@ -47,6 +47,7 @@ import {
   labsCriar,
   labsListar,
   labsRemover,
+  limparDuplicadosPec,
   restaurarBackup,
   salvarExamesPermitidos,
   salvarPecSyncConfig,
@@ -508,6 +509,7 @@ function AbaPec() {
   const [syncIntervalo, setSyncIntervalo] = useState(6);
   const [salvandoConfigSync, setSalvandoConfigSync] = useState(false);
   const [disparandoSync, setDisparandoSync] = useState(false);
+  const [limpandoDup, setLimpandoDup] = useState(false);
   const [logsSync, setLogsSync] = useState<PecSyncLogItem[]>([]);
   const [modalLogsAberto, setModalLogsAberto] = useState(false);
   const [carregandoLogs, setCarregandoLogs] = useState(false);
@@ -524,6 +526,8 @@ function AbaPec() {
     banco?: string;
     usuario?: string;
     total_cidadaos?: number;
+    total_cidadaos_ativos?: number;
+    total_pacientes_locais?: number;
     tunel_ssh?: boolean;
   } | null>(null);
 
@@ -671,6 +675,23 @@ function AbaPec() {
       setErro(msgErro(e, "Falha ao disparar sincronização com o e-SUS PEC."));
     } finally {
       setDisparandoSync(false);
+    }
+  }
+
+  async function limparDuplicadosAgora() {
+    setLimpandoDup(true);
+    setErro("");
+    setOk("");
+    try {
+      const r = await limparDuplicadosPec();
+      setOk(
+        `Limpeza e unificação concluídas: ${r.duplicados_mesclados} duplicado(s) mesclado(s), ${r.inelegiveis_removidos} cadastro(s) inativo(s)/óbito/mudança sem vínculo removido(s). Total na base: ${r.total_depois.toLocaleString("pt-BR")} (antes: ${r.total_antes.toLocaleString("pt-BR")}).`,
+      );
+      await carregarSyncStatus();
+    } catch (e: unknown) {
+      setErro(msgErro(e, "Falha ao limpar duplicados e cadastros inelegíveis."));
+    } finally {
+      setLimpandoDup(false);
     }
   }
 
@@ -1017,9 +1038,14 @@ function AbaPec() {
             {teste.ok && (
               <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <div className="rounded-lg bg-white/80 p-2.5 shadow-xs">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Cidadãos no e-SUS</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Ativos no e-SUS / Bruto</p>
                   <p className="font-display text-lg font-black text-sus-950">
-                    {teste.total_cidadaos?.toLocaleString("pt-BR") ?? "31.281"}
+                    {(teste.total_cidadaos_ativos ?? teste.total_cidadaos ?? 0).toLocaleString("pt-BR")}
+                    {teste.total_cidadaos ? (
+                      <span className="ml-1 text-[11px] font-normal text-ink/50">
+                        / {teste.total_cidadaos.toLocaleString("pt-BR")}
+                      </span>
+                    ) : null}
                   </p>
                 </div>
                 <div className="rounded-lg bg-white/80 p-2.5 shadow-xs">
@@ -1088,27 +1114,36 @@ function AbaPec() {
       </div>
 
       {/* Métricas de Sincronização e Desduplicação */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         <div className="rounded-xl border border-sus-900/10 bg-sand/20 p-3">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Cidadãos no e-SUS</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Ativos na Base Local</p>
+          <p className="font-display text-lg font-black text-emerald-700">
+            {(syncStatus?.total_pacientes ?? 0).toLocaleString("pt-BR")}
+          </p>
+          <span className="text-[9px] text-ink/50">Lidos PEC: {(syncStatus?.ultimo_log?.total_lidos ?? 0).toLocaleString("pt-BR")}</span>
+        </div>
+        <div className="rounded-xl border border-sus-900/10 bg-sand/20 p-3">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Novos / Atualizados</p>
           <p className="font-display text-lg font-black text-sus-950">
-            {syncStatus?.ultimo_log?.total_lidos
-              ? syncStatus.ultimo_log.total_lidos.toLocaleString("pt-BR")
-              : (teste?.total_cidadaos?.toLocaleString("pt-BR") ?? "31.281")}
+            {(syncStatus?.ultimo_log?.total_inseridos ?? 0).toLocaleString("pt-BR")}
+            <span className="ml-1 text-xs font-semibold text-ink/50">
+              / {(syncStatus?.ultimo_log?.total_atualizados ?? 0).toLocaleString("pt-BR")}
+            </span>
           </p>
         </div>
         <div className="rounded-xl border border-sus-900/10 bg-sand/20 p-3">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Novos Cadastros</p>
-          <p className="font-display text-lg font-black text-emerald-700">
-            {syncStatus?.ultimo_log?.total_inseridos?.toLocaleString("pt-BR") ?? "0"}
+          <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Ignorados (PEC)</p>
+          <p className="font-display text-lg font-black text-amber-700">
+            {((syncStatus?.ultimo_log?.total_ignorados_pec ?? 0) + (syncStatus?.ultimo_log?.total_removidos_inativos ?? 0)).toLocaleString("pt-BR")}
           </p>
+          <span className="text-[9px] text-ink/50">Óbitos, mudanças e inativos</span>
         </div>
         <div className="rounded-xl border border-sus-900/10 bg-sand/20 p-3">
           <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Duplicidades Unificadas</p>
           <p className="font-display text-lg font-black text-sus-900">
-            {syncStatus?.ultimo_log?.total_duplicados_mesclados?.toLocaleString("pt-BR") ?? "0"}
+            {(syncStatus?.ultimo_log?.total_duplicados_mesclados ?? 0).toLocaleString("pt-BR")}
           </p>
-          <span className="text-[9px] text-ink/50">Fichas e-SUS mescladas</span>
+          <span className="text-[9px] text-ink/50">Fichas mescladas</span>
         </div>
         <div className="rounded-xl border border-sus-900/10 bg-sand/20 p-3">
           <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50">Última Execução</p>
@@ -1167,18 +1202,30 @@ function AbaPec() {
 
       {/* Botões de Ação */}
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 pt-2">
-        <Button
-          onClick={dispararSyncAgora}
-          disabled={syncStatus?.em_execucao || disparandoSync}
-          className="gap-2 bg-emerald-700 hover:bg-emerald-800 text-white"
-        >
-          {syncStatus?.em_execucao || disparandoSync ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4" />
-          )}
-          {syncStatus?.em_execucao ? "Sincronização em Andamento..." : "Sincronizar Pacientes Agora"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            onClick={dispararSyncAgora}
+            disabled={syncStatus?.em_execucao || disparandoSync}
+            className="gap-2 bg-emerald-700 hover:bg-emerald-800 text-white"
+          >
+            {syncStatus?.em_execucao || disparandoSync ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            {syncStatus?.em_execucao ? "Sincronização em Andamento..." : "Sincronizar Pacientes Agora"}
+          </Button>
+
+          <button
+            type="button"
+            onClick={limparDuplicadosAgora}
+            disabled={limpandoDup || syncStatus?.em_execucao}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-sus-900/20 bg-white px-3.5 py-2.5 text-xs font-bold text-sus-900 shadow-xs hover:bg-sand disabled:opacity-50"
+          >
+            {limpandoDup ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5 text-emerald-700" />}
+            {limpandoDup ? "Unificando base..." : "Unificar Duplicados e Limpar Inativos"}
+          </button>
+        </div>
 
         <button
           type="button"

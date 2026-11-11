@@ -181,11 +181,28 @@ def processar_linhas(linhas: list[dict], db: Session) -> dict:
     esps_cat: dict[str, str] = {}
     procs_cat: dict[tuple[str, str], tuple[str, str, str]] = {}
 
-    pac_cache: dict[str, Paciente] = {}
+    from app.services.pec_sync import (
+        limpar_cns as _limpar_cns,
+        limpar_cpf as _limpar_cpf,
+        normalizar_nome_sem_prep as _norm_nome_sp,
+    )
+
+    pac_cpf_cache: dict[str, Paciente] = {}
+    pac_cns_cache: dict[str, Paciente] = {}
+    pac_nn_cache: dict[tuple[str, str], Paciente] = {}
+    pac_nome_cache: dict[str, list[Paciente]] = {}
     for p in db.exec(select(Paciente)).all():
-        if p.cpf:
-            pac_cache[f"cpf:{p.cpf}"] = p
-        pac_cache[f"nome:{p.nome.strip().upper()}"] = p
+        cpf_p = _limpar_cpf(p.cpf)
+        cns_p = _limpar_cns(p.cns)
+        n_sp = _norm_nome_sp(p.nome)
+        if cpf_p:
+            pac_cpf_cache[cpf_p] = p
+        if cns_p:
+            pac_cns_cache[cns_p] = p
+        if n_sp and p.nascimento:
+            pac_nn_cache[(n_sp, str(p.nascimento))] = p
+        if n_sp:
+            pac_nome_cache.setdefault(n_sp, []).append(p)
 
     for i, bruta in enumerate(linhas, start=2):  # linha 1 = cabeçalho
         r = normalizar_linha(bruta)
@@ -195,22 +212,56 @@ def processar_linhas(linhas: list[dict], db: Session) -> dict:
             if len(erros) < MAX_ERROS:
                 erros.append({"linha": i, "motivo": "nome ausente"})
             continue
-        cpf = so_digitos(r.get("cpf") or "")[:14]
-        cns = (r.get("cns") or "")[:20]
-        chave = f"cpf:{cpf}" if cpf else f"nome:{nome.upper()}"
-        pac = pac_cache.get(chave)
+        cpf_raw = so_digitos(r.get("cpf") or "")[:14]
+        cpf = _limpar_cpf(cpf_raw) or cpf_raw
+        cns_raw = so_digitos(r.get("cns") or "")[:20]
+        cns = _limpar_cns(cns_raw) or (r.get("cns") or "").strip()[:20]
+        nasc_lin = parse_data(r.get("nascimento") or "")
+        n_sp_lin = _norm_nome_sp(nome)
+
+        pac = None
+        if cpf and cpf in pac_cpf_cache:
+            pac = pac_cpf_cache[cpf]
+        elif cns and cns in pac_cns_cache:
+            pac = pac_cns_cache[cns]
+        elif n_sp_lin and nasc_lin and (n_sp_lin, str(nasc_lin)) in pac_nn_cache:
+            cand = pac_nn_cache[(n_sp_lin, str(nasc_lin))]
+            if not (cpf and _limpar_cpf(cand.cpf) and _limpar_cpf(cand.cpf) != cpf):
+                pac = cand
+        elif n_sp_lin and not nasc_lin:
+            cands = [
+                cand for cand in pac_nome_cache.get(n_sp_lin, [])
+                if not (cpf and _limpar_cpf(cand.cpf) and _limpar_cpf(cand.cpf) != cpf)
+            ]
+            if len(cands) == 1:
+                pac = cands[0]
+
         if not pac:
             pac = Paciente(
                 nome=nome, cpf=cpf, cns=cns,
-                nascimento=parse_data(r.get("nascimento") or ""),
+                nascimento=nasc_lin,
                 telefone=(r.get("telefone") or "")[:20],
             )
             db.add(pac)
             db.flush()
-            pac_cache[chave] = pac
+            if _limpar_cpf(pac.cpf):
+                pac_cpf_cache[_limpar_cpf(pac.cpf)] = pac
+            if _limpar_cns(pac.cns):
+                pac_cns_cache[_limpar_cns(pac.cns)] = pac
+            if n_sp_lin and pac.nascimento:
+                pac_nn_cache[(n_sp_lin, str(pac.nascimento))] = pac
+            if n_sp_lin:
+                pac_nome_cache.setdefault(n_sp_lin, []).append(pac)
             pacientes_novos += 1
-        elif (r.get("telefone") or "") and not pac.telefone:
-            pac.telefone = (r.get("telefone") or "")[:20]
+        else:
+            if cpf and not _limpar_cpf(pac.cpf):
+                pac.cpf = cpf
+                pac_cpf_cache[cpf] = pac
+            if cns and not _limpar_cns(pac.cns):
+                pac.cns = cns
+                pac_cns_cache[cns] = pac
+            if (r.get("telefone") or "") and not pac.telefone:
+                pac.telefone = (r.get("telefone") or "")[:20]
             db.add(pac)
 
         cod = (r.get("codigo_procedimento") or "").strip()

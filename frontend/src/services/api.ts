@@ -246,6 +246,8 @@ export const testarPec = () =>
     banco?: string;
     usuario?: string;
     total_cidadaos?: number;
+    total_cidadaos_ativos?: number;
+    total_pacientes_locais?: number;
     tunel_ssh?: boolean;
   }>("/api/integracoes/pec/testar").then((r) => r.data);
 
@@ -258,6 +260,9 @@ export type PecSyncLogItem = {
   total_inseridos: number;
   total_atualizados: number;
   total_duplicados_mesclados: number;
+  total_baixas_fila?: number;
+  total_ignorados_pec?: number;
+  total_removidos_inativos?: number;
   total_erros: number;
   duracao_segundos: number;
   mensagem: string;
@@ -351,8 +356,21 @@ export const sincronizarPecPacientes = (background = true) =>
     total_inseridos?: number;
     total_atualizados?: number;
     total_duplicados_mesclados?: number;
+    total_baixas_fila?: number;
+    total_ignorados_pec?: number;
+    total_removidos_inativos?: number;
     duracao_segundos?: number;
   }>("/api/integracoes/pec/sincronizar", null, { params: { background } }).then((r) => r.data);
+
+export const limparDuplicadosPec = () =>
+  api.post<{
+    ok: boolean;
+    total_antes: number;
+    total_depois: number;
+    duplicados_mesclados: number;
+    referencias_migradas: number;
+    inelegiveis_removidos: number;
+  }>("/api/integracoes/pec/limpar-duplicados").then((r) => r.data);
 
 export const sincronizarEnderecosPec = () =>
   api.post<{
@@ -875,8 +893,8 @@ export type ResumoTfd = {
 export const tfdResumo = (competencia?: string) =>
   api.get<ResumoTfd>("/api/tfd/resumo", { params: { competencia } }).then((r) => r.data);
 
-export const tfdPacientes = (q?: string, page?: number, limit?: number) =>
-  api.get<Pagina<Paciente> | Paciente[]>("/api/tfd/pacientes", { params: { q, page, limit } }).then((r) => r.data);
+export const tfdPacientes = (q?: string, page?: number, limit?: number, incluir_inativos?: boolean) =>
+  api.get<Pagina<Paciente> | Paciente[]>("/api/tfd/pacientes", { params: { q, page, limit, incluir_inativos: incluir_inativos || undefined } }).then((r) => r.data);
 export const tfdPaciente = (id: number) =>
   api.get<Paciente>(`/api/tfd/pacientes/${id}`).then((r) => r.data);
 export const tfdCriarPaciente = (p: Record<string, unknown>) =>

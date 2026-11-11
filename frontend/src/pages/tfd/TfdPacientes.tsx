@@ -39,8 +39,9 @@ export default function TfdPacientes() {
   const [pageSize, setPageSize] = useState(100);
   const [unidades, setUnidades] = useState<UnidadeSaude[]>([]);
   const [perfilId, setPerfilId] = useState<number | null>(null);
+  const [incluirInativos, setIncluirInativos] = useState(false);
 
-  async function carregar(p = 1, limite = pageSize) {
+  async function carregar(p = 1, limite = pageSize, incInat = incluirInativos) {
     if (!q.trim()) {
       setLista([]);
       setTotal(0);
@@ -53,7 +54,7 @@ export default function TfdPacientes() {
     setCarregando(true);
     setErro("");
     try {
-      const r = await tfdPacientes(q.trim(), p, limite);
+      const r = await tfdPacientes(q.trim(), p, limite, incInat);
       setLista(pagData<Paciente>(r));
       const m = pagMeta(r);
       setTotal(m.total);
@@ -75,9 +76,10 @@ export default function TfdPacientes() {
       setPages(1);
       return;
     }
-    const t = setTimeout(() => carregar(1), 250);
+    const t = setTimeout(() => carregar(1, pageSize, incluirInativos), 250);
     return () => clearTimeout(t);
-  }, [q]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, incluirInativos]);
 
   useEffect(() => {
     fetchUnidadesSaude().then(setUnidades).catch(() => {});
@@ -139,8 +141,8 @@ export default function TfdPacientes() {
       if (q.trim()) {
         await carregar(page);
       }
-    } catch {
-      setErro("Erro ao salvar.");
+    } catch (err) {
+      setErro(msgErro(err, "Erro ao salvar."));
     }
   }
 
@@ -216,6 +218,15 @@ export default function TfdPacientes() {
           <span className="rounded-full bg-sand px-2 py-0.5 text-[11px]">Cartão SUS (CNS)</span>
           <span className="text-ink/30">•</span>
           <span className="rounded-full bg-sand px-2 py-0.5 text-[11px]">Nome completo</span>
+          <label className="ml-2 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-sus-900/15 bg-white px-2.5 py-0.5 text-[11px] font-medium text-sus-900">
+            <input
+              type="checkbox"
+              checked={incluirInativos}
+              onChange={(e) => setIncluirInativos(e.target.checked)}
+              className="h-3 w-3 rounded border-sus-900/30 text-teal"
+            />
+            Exibir óbitos / mudanças / inativos
+          </label>
         </div>
 
         {pacienteExato && (
@@ -296,11 +307,28 @@ export default function TfdPacientes() {
                       </span>
                     </td>
                     <td className="px-4 py-3 font-semibold">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span>{p.nome}</span>
                         {ehExato && (
                           <span className="rounded-full bg-teal/15 px-2 py-0.5 text-[10px] font-bold text-teal">
                             Exato
+                          </span>
+                        )}
+                        {p.situacao_cadastral && p.situacao_cadastral !== "ativo" && (
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                              p.situacao_cadastral === "obito"
+                                ? "bg-red-100 text-red-800"
+                                : p.situacao_cadastral === "mudanca_municipio"
+                                  ? "bg-amber-100 text-amber-800"
+                                  : "bg-slate-200 text-slate-700"
+                            }`}
+                          >
+                            {p.situacao_cadastral === "obito"
+                              ? "Óbito"
+                              : p.situacao_cadastral === "mudanca_municipio"
+                                ? "Mudança de Município"
+                                : "Inativo PEC"}
                           </span>
                         )}
                       </div>

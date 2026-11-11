@@ -325,16 +325,37 @@ def testar_pec(db: Session = Depends(get_db), user: User = Depends(need_perm("cf
         with eng.connect() as conn:
             row_db = conn.execute(text("SELECT current_database(), current_user, version()")).first()
             total_cid = 0
+            total_cid_ativos = 0
             try:
                 row_cid = conn.execute(text("SELECT count(*) FROM tb_cidadao")).scalar()
                 total_cid = int(row_cid or 0)
             except Exception:
                 pass
+            try:
+                row_at = conn.execute(
+                    text(
+                        "SELECT count(*) FROM tb_cidadao "
+                        "WHERE COALESCE(st_ativo::text, '1') IN ('1', 'true', 't', 'TRUE') "
+                        "AND COALESCE(st_faleceu::text, '0') NOT IN ('1', 'true', 't', 'TRUE') "
+                        "AND dt_obito IS NULL"
+                    )
+                ).scalar()
+                total_cid_ativos = int(row_at or 0)
+            except Exception:
+                total_cid_ativos = total_cid
+        from app.models.tfd import Paciente as _Pac
+        total_locais_ativos = len(
+            db.exec(select(_Pac.id).where(_Pac.situacao_cadastral == "ativo")).all()
+        )
         ms = int((time.monotonic() - t0) * 1000)
         db_nome = row_db[0] if row_db else (c.pec_banco_nome or "esus")
         user_nome = row_db[1] if row_db else (c.pec_usuario or "painel_readonly")
         tunel_info = "via Túnel SSH Seguro" if c.pec_ssh_habilitado else "Conexão Direta"
-        msg = f"Conexão com e-SUS PEC realizada com sucesso ({tunel_info})! Banco '{db_nome}', usuário '{user_nome}', {total_cid:,} cidadãos cadastrados ({ms}ms)."
+        msg = (
+            f"Conexão com e-SUS PEC realizada com sucesso ({tunel_info})! Banco '{db_nome}', usuário '{user_nome}', "
+            f"{total_cid_ativos:,} cidadãos ativos/vivos de {total_cid:,} registros brutos no PEC "
+            f"({total_locais_ativos:,} ativos locais) ({ms}ms)."
+        )
         return {
             "ok": True,
             "fonte_efetiva": "postgres",
@@ -342,6 +363,8 @@ def testar_pec(db: Session = Depends(get_db), user: User = Depends(need_perm("cf
             "banco": db_nome,
             "usuario": user_nome,
             "total_cidadaos": total_cid,
+            "total_cidadaos_ativos": total_cid_ativos,
+            "total_pacientes_locais": total_locais_ativos,
             "tunel_ssh": c.pec_ssh_habilitado,
             "detalhe": msg,
         }
@@ -386,8 +409,22 @@ def sincronizar_pec(
             "total_atualizados": log.total_atualizados,
             "total_duplicados_mesclados": log.total_duplicados_mesclados,
             "total_baixas_fila": getattr(log, "total_baixas_fila", 0) or 0,
+            "total_ignorados_pec": getattr(log, "total_ignorados_pec", 0) or 0,
+            "total_removidos_inativos": getattr(log, "total_removidos_inativos", 0) or 0,
             "duracao_segundos": log.duracao_segundos,
         }
+
+
+@router.post("/integracoes/pec/limpar-duplicados")
+def limpar_duplicados_pec(
+    db: Session = Depends(get_db),
+    user: User = Depends(need_perm("cfg_pec", "editar")),
+):
+    """Unifica cidadãos duplicados em `tfd_pacientes` e remove cadastros fantasmas PEC inelegíveis sem vínculo."""
+    _ = user
+    from app.services.pec_sync import consolidar_pacientes_duplicados
+
+    return consolidar_pacientes_duplicados(db, remover_inelegiveis_sem_vinculo=True)
 
 
 @router.post("/integracoes/pec/sincronizar-enderecos")
@@ -428,6 +465,8 @@ def status_sync_pec(db: Session = Depends(get_db), user: User = Depends(need_per
             "total_atualizados": ultimo_log.total_atualizados,
             "total_duplicados_mesclados": ultimo_log.total_duplicados_mesclados,
             "total_baixas_fila": getattr(ultimo_log, "total_baixas_fila", 0) or 0,
+            "total_ignorados_pec": getattr(ultimo_log, "total_ignorados_pec", 0) or 0,
+            "total_removidos_inativos": getattr(ultimo_log, "total_removidos_inativos", 0) or 0,
             "duracao_segundos": ultimo_log.duracao_segundos,
             "mensagem": ultimo_log.mensagem,
             "origem": ultimo_log.origem,

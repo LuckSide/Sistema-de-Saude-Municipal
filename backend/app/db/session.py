@@ -346,12 +346,17 @@ def init_db() -> None:
         try:
             cols_plog = [c["name"] for c in inspect(conn).get_columns("pec_sync_logs")]
         except Exception:
-            cols_plog = ["total_baixas_fila"]
-        if "total_baixas_fila" not in cols_plog:
-            try:
-                conn.execute(text("ALTER TABLE pec_sync_logs ADD COLUMN total_baixas_fila INTEGER DEFAULT 0 NOT NULL"))
-            except Exception:
-                pass
+            cols_plog = ["total_baixas_fila", "total_ignorados_pec", "total_removidos_inativos"]
+        for col_plog, ddl_plog in {
+            "total_baixas_fila": "INTEGER DEFAULT 0 NOT NULL",
+            "total_ignorados_pec": "INTEGER DEFAULT 0 NOT NULL",
+            "total_removidos_inativos": "INTEGER DEFAULT 0 NOT NULL",
+        }.items():
+            if col_plog not in cols_plog:
+                try:
+                    conn.execute(text(f"ALTER TABLE pec_sync_logs ADD COLUMN {col_plog} {ddl_plog}"))
+                except Exception:
+                    pass
         try:
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pec_indicadores_cache_lookup ON pec_indicadores_cache (periodo, ubs, equipe, indicador_id)"))
         except Exception:
@@ -839,6 +844,14 @@ def init_db() -> None:
             unificar_cbos_duplicados(db)
         except Exception:
             pass
+        try:
+            from app.services.pec_sync import consolidar_pacientes_duplicados
+            consolidar_pacientes_duplicados(db, remover_inelegiveis_sem_vinculo=True)
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
         try:
             from app.services.seed_oxigenio import seed_oxigenio_dados_reais
             from app.models.oxigenio import EmpresaOxigenio

@@ -340,3 +340,223 @@ def test_sincronizacao_preserva_endereco_mais_completo(sqlite_session: Session):
             assert pac.bairro == "São Cristóvão"
             assert pac.cep == "37177000"
 
+
+def test_sincronizacao_nao_importa_obito_mudanca_inativo_e_outra_cidade(sqlite_session: Session):
+    """Garante que apenas cidadãos ativos e residentes no município sejam importados,
+    ignorando óbitos, mudanças de município, visitantes de outras cidades, inativos e sem identificação.
+    """
+    from app.services.pec_sync import classificar_situacao_pec
+
+    assert classificar_situacao_pec({"st_faleceu": 1})[0] == "obito"
+    assert classificar_situacao_pec({"st_mudanca": 1}, "Guapé")[0] == "mudanca_municipio"
+    assert classificar_situacao_pec({"no_municipio_raw": "Boa Esperança"}, "Guapé")[0] == "mudanca_municipio"
+    assert classificar_situacao_pec({"st_ativo": 0}, "Guapé")[0] == "inativo"
+    assert classificar_situacao_pec({"st_ativo_para_exibicao": 0}, "Guapé")[0] == "inativo"
+    assert classificar_situacao_pec({"st_ativo": 1, "no_municipio_raw": "Guapé"}, "Guapé")[0] == "ativo"
+
+    mock_rows = [
+        # 1. Cidadão elegível ativo de Guapé -> deve ser importado
+        {
+            "co_seq_cidadao": 401,
+            "no_cidadao": "Ana Paula Ferreira",
+            "nu_cpf": "32165498700",
+            "nu_cns": "700000000000401",
+            "dt_nascimento": date(1988, 7, 14),
+            "no_mae": "Lucia Ferreira",
+            "no_municipio_raw": "Guapé",
+            "st_ativo": 1,
+        },
+        # 2. Óbito no PEC -> NÃO importar
+        {
+            "co_seq_cidadao": 402,
+            "no_cidadao": "Antônio Falecido",
+            "nu_cpf": "32165498701",
+            "dt_nascimento": date(1940, 1, 1),
+            "st_faleceu_pec": 1,
+            "st_ativo": 1,
+        },
+        # 3. Mudança de município -> NÃO importar
+        {
+            "co_seq_cidadao": 403,
+            "no_cidadao": "Mariana Mudou",
+            "nu_cpf": "32165498702",
+            "dt_nascimento": date(1992, 2, 10),
+            "no_municipio_raw": "Belo Horizonte",
+            "st_ativo": 1,
+        },
+        # 4. Inativo / unificado no PEC -> NÃO importar
+        {
+            "co_seq_cidadao": 404,
+            "no_cidadao": "Registro Desativado",
+            "nu_cpf": "32165498703",
+            "dt_nascimento": date(1970, 3, 5),
+            "st_ativo": 0,
+        },
+        # 5. Registro genérico / incompleto sem CPF/CNS/Nascimento -> NÃO importar
+        {
+            "co_seq_cidadao": 405,
+            "no_cidadao": "NAO IDENTIFICADO",
+            "nu_cpf": "",
+            "nu_cns": "",
+            "dt_nascimento": None,
+            "st_ativo": 1,
+        },
+    ]
+
+    mock_result = MagicMock()
+    mock_result.mappings.return_value = mock_rows
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value = mock_result
+    mock_conn.__enter__.return_value = mock_conn
+    mock_conn.__exit__.return_value = None
+    mock_engine = MagicMock()
+    mock_engine.connect.return_value = mock_conn
+
+    with patch("app.services.pec_sync.garantir_tunel_db", return_value=(True, "postgresql://mock")):
+        with patch("sqlalchemy.create_engine", return_value=mock_engine):
+            log = sincronizar_pacientes_pec(sqlite_session, origem="teste")
+
+    assert log.status == "SUCESSO"
+    assert log.total_lidos == 5
+    assert log.total_inseridos == 1
+    assert log.total_ignorados_pec == 4
+
+    pacs = sqlite_session.exec(select(Paciente)).all()
+    assert len(pacs) == 1
+    assert pacs[0].nome == "Ana Paula Ferreira"
+
+
+def test_consolidar_pacientes_duplicados_e_pruning_fantasmas(sqlite_session: Session):
+    """Unifica duplicatas pré-existentes (preservando vínculos e gêmeos distintos)
+    e remove fantasmas PEC inelegíveis sem histórico assistencial.
+    """
+    from app.models.tfd import ExameFila, ViagemFila
+    from app.services.pec_sync import consolidar_pacientes_duplicados
+
+    # 1. Legado sem nascimento/CPF com vínculo na fila + cadastro completo + sobrenome casado
+    p_leg = Paciente(nome="MARIA APARECIDA SILVA", cpf="", cns="", nascimento=None, nome_mae="NAO INFORMADO")
+    p_comp = Paciente(
+        nome="Maria Aparecida da Silva",
+        cpf="12345678909",
+        cns="700000000000999",
+        nascimento=date(1975, 4, 12),
+        nome_mae="BENEDITA SILVA",
+        endereco="Rua Principal",
+        endereco_numero="42",
+        bairro="Centro",
+        cep="37177000",
+        co_seq_cidadao_pec=801,
+    )
+    p_casado = Paciente(
+        nome="Maria Aparecida da Silva Oliveira",
+        cpf="12345678909",
+        nascimento=date(1975, 4, 12),
+        nome_mae="Benedita da Silva",
+    )
+    # 2. Fantasma PEC em óbito sem vínculo clínico -> deve ser podado
+    p_ghost = Paciente(
+        nome="Fantasma Obito",
+        cpf="98765432100",
+        nascimento=date(1930, 1, 1),
+        co_seq_cidadao_pec=9001,
+        situacao_cadastral="obito",
+    )
+    # 3. Cidadão em óbito COM histórico assistencial -> deve ser preservado
+    p_hist = Paciente(
+        nome="Paciente Historico Obito",
+        cpf="98765432101",
+        nascimento=date(1945, 5, 5),
+        co_seq_cidadao_pec=9002,
+        situacao_cadastral="obito",
+    )
+    # 4. Gêmeos com mesma mãe e data de nascimento -> NÃO devem ser mesclados
+    g1 = Paciente(nome="MARIA CLARA SILVA", cpf="11100011101", nascimento=date(2010, 3, 1), nome_mae="ANA SILVA")
+    g2 = Paciente(nome="MARIA PAULA SILVA", cpf="11100011102", nascimento=date(2010, 3, 1), nome_mae="ANA SILVA")
+
+    sqlite_session.add_all([p_leg, p_comp, p_casado, p_ghost, p_hist, g1, g2])
+    sqlite_session.commit()
+    for p in (p_leg, p_comp, p_casado, p_ghost, p_hist):
+        sqlite_session.refresh(p)
+
+    ex_leg = ExameFila(paciente_id=p_leg.id, exame="ULTRASSOM", data_pedido=date(2026, 1, 10))
+    vf_leg = ViagemFila(paciente_id=p_leg.id, destino="Alfenas")
+    ex_hist = ExameFila(paciente_id=p_hist.id, exame="ECOCARDIOGRAMA", status="realizado", data_pedido=date(2025, 8, 1))
+    sqlite_session.add_all([ex_leg, vf_leg, ex_hist])
+    sqlite_session.commit()
+
+    res = consolidar_pacientes_duplicados(sqlite_session, remover_inelegiveis_sem_vinculo=True)
+    assert res["duplicados_mesclados"] == 2
+    assert res["inelegiveis_removidos"] == 1
+    assert res["total_depois"] == 4  # Maria unificada + Historico Obito + 2 gêmeos
+
+    marias = [
+        p for p in sqlite_session.exec(select(Paciente)).all()
+        if "APARECIDA" in p.nome.upper()
+    ]
+    assert len(marias) == 1
+    assert marias[0].cpf == "12345678909"
+    assert marias[0].cns == "700000000000999"
+    # Referências migradas para a Maria sobrevivente
+    ex_migrado = sqlite_session.get(ExameFila, ex_leg.id)
+    assert ex_migrado is not None and ex_migrado.paciente_id == marias[0].id
+    # Fantasma removido, histórico preservado, gêmeos intactos
+    assert sqlite_session.get(Paciente, p_ghost.id) is None
+    assert sqlite_session.get(Paciente, p_hist.id) is not None
+
+
+def test_nao_duplica_com_mae_placeholder_e_bloqueia_manual(sqlite_session: Session):
+    """Placeholders em nome_mae ('NAO INFORMADO') não bloqueiam dedup, fichas inativas não
+    desativam cidadão ativo e criação manual impede duplicidade."""
+    from fastapi import HTTPException
+    from app.api.v1.tfd import criar_paciente
+    from app.schemas.tfd import PacienteIn
+
+    mock_rows = [
+        {
+            "co_seq_cidadao": 501,
+            "no_cidadao": "Carlos Souza",
+            "nu_cpf": "22233344455",
+            "nu_cns": "",
+            "dt_nascimento": date(1980, 5, 5),
+            "no_mae": "NAO INFORMADO",
+            "st_ativo": 1,
+        },
+        {
+            "co_seq_cidadao": 502,
+            "no_cidadao": "Carlos de Souza",
+            "nu_cpf": "",
+            "nu_cns": "700000000000502",
+            "dt_nascimento": date(1980, 5, 5),
+            "no_mae": "JOANA SOUZA",
+            "st_ativo": 0,
+        },
+    ]
+
+    mock_result = MagicMock()
+    mock_result.mappings.return_value = mock_rows
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value = mock_result
+    mock_conn.__enter__.return_value = mock_conn
+    mock_conn.__exit__.return_value = None
+    mock_engine = MagicMock()
+    mock_engine.connect.return_value = mock_conn
+
+    with patch("app.services.pec_sync.garantir_tunel_db", return_value=(True, "postgresql://mock")):
+        with patch("sqlalchemy.create_engine", return_value=mock_engine):
+            log = sincronizar_pacientes_pec(sqlite_session, origem="teste")
+
+    assert log.status == "SUCESSO"
+    pacs = sqlite_session.exec(select(Paciente)).all()
+    assert len(pacs) == 1
+    assert pacs[0].cpf == "22233344455"
+    assert pacs[0].cns == "700000000000502"
+    assert pacs[0].situacao_cadastral == "ativo"
+
+    # Tentativa de criação manual com mesmo CPF formatado deve falhar (bloqueio de duplicidade)
+    with pytest.raises(HTTPException) as exc:
+        criar_paciente(
+            PacienteIn(nome="CARLOS SOUZA", cpf="222.333.444-55"),
+            db=sqlite_session,
+        )
+    assert exc.value.status_code == 400
+
