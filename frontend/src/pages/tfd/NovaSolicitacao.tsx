@@ -67,12 +67,20 @@ function hojeISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function normalizarTexto(texto: string): string {
+  return (texto || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 const JUST_MIN = 12;
 const MEDICO_GENERICO = "Médico da Unidade / Responsável Técnico";
 
 export default function NovaSolicitacao() {
   const navigate = useNavigate();
-  const { user, isTfdCentral, isLancamentoRestrito } = useAuth();
+  const { user, isTfdCentral, isLancamentoRestrito, retroativoBloqueado } = useAuth();
+  const podeDataRetroativa = isTfdCentral && !retroativoBloqueado;
 
   // Estados dos Catálogos
   const [tiposFila, setTiposFila] = useState<TipoFila[]>([]);
@@ -99,6 +107,7 @@ export default function NovaSolicitacao() {
   const [codigoProcedimento, setCodigoProcedimento] = useState("");
   const [especialidade, setEspecialidade] = useState("");
   const [codigoEspecialidade, setCodigoEspecialidade] = useState("");
+  const [espManual, setEspManual] = useState(false);
   const [cbosAutorizados, setCbosAutorizados] = useState<SigtapCbo[]>([]);
   const [carregandoCbos, setCarregandoCbos] = useState(false);
 
@@ -386,6 +395,10 @@ export default function NovaSolicitacao() {
       setErro("Selecione o(a) Médico(a) Requisitante / Profissional Responsável.");
       return;
     }
+    if (isTfdCentral && retroativoBloqueado && dataPedido < hojeISO()) {
+      setErro("Seu perfil não possui permissão para realizar lançamentos com datas retroativas.");
+      return;
+    }
 
     // Validação da Justificativa para cada paciente
     const justPadrao = justificativaLotePadrao.trim();
@@ -513,7 +526,11 @@ export default function NovaSolicitacao() {
   }, [isTfdCentral, user]);
 
   // Regra 3: Hierarquia de Seleção (Serviço -> Procedimento)
-  // Regra 3: Carregamento e filtragem contextual de procedimentos ao selecionar Tipo de Serviço ou Especialidade
+  // Regra 3: Carregamento e filtragem contextual de procedimentos ao selecionar Tipo de Serviço
+  // Nota: não refiltra o catálogo por `especialidade` quando ela foi autopreenchida pelo procedimento,
+  // para não ocultar os demais procedimentos daquela fila.
+  const espFiltroCatalogo = espManual ? especialidade : "";
+
   useEffect(() => {
     if (isConsulta) {
       return;
@@ -522,40 +539,43 @@ export default function NovaSolicitacao() {
     let cancel = false;
     setBuscandoProc(true);
 
-    tfdCatalogoExames("", tipoServico || undefined, undefined, especialidade || undefined)
-      .then((res) => {
-        if (!cancel) {
-          const lista = res || [];
-          if (lista.length > 0) {
-            setProcedimentosFiltrados(lista);
-          } else if (!tipoServico && !especialidade) {
-            setProcedimentosFiltrados(procedimentosTodos);
-          } else {
-            const tNorm = (tipoServico || "").trim().toLowerCase();
-            const espNorm = (especialidade || "").trim().toLowerCase();
-            const locais = procedimentosTodos.filter((p) => {
-              const pTf = (p.tipo_fila || "").toLowerCase();
-              const pEsp = (p.especialidade || p.nome_especialidade || "").toLowerCase();
-              const pCbo = (p.codigo_especialidade || "").toLowerCase();
-              const bateTipo =
-                !tNorm ||
-                pTf.includes(tNorm) ||
-                tNorm.includes(pTf) ||
-                (tNorm.includes("exame") &&
-                  !pTf.includes("lab") &&
-                  !pTf.includes("sangue") &&
-                  !pTf.includes("cirurg") &&
-                  !pTf.includes("consulta")) ||
-                (tNorm.includes("cirurg") && pTf.includes("cirurg"));
-              const bateEsp =
-                !espNorm ||
-                pEsp.includes(espNorm) ||
-                espNorm.includes(pEsp) ||
-                pCbo.includes(espNorm);
-              return bateTipo && (bateEsp || !especialidade);
-            });
-            setProcedimentosFiltrados(locais.length > 0 ? locais : procedimentosTodos);
-          }
+    tfdCatalogoExames("", tipoServico || undefined, undefined, espFiltroCatalogo || undefined)
+      .then(async (res) => {
+        if (cancel) return;
+        let lista = res || [];
+        if (lista.length === 0 && espFiltroCatalogo && tipoServico) {
+          lista = (await tfdCatalogoExames("", tipoServico)) || [];
+        }
+        if (cancel) return;
+        if (lista.length > 0) {
+          setProcedimentosFiltrados(lista);
+        } else if (!tipoServico && !espFiltroCatalogo) {
+          setProcedimentosFiltrados(procedimentosTodos);
+        } else {
+          const tNorm = normalizarTexto(tipoServico.trim());
+          const espNorm = normalizarTexto(espFiltroCatalogo.trim());
+          const locais = procedimentosTodos.filter((p) => {
+            const pTf = normalizarTexto(p.tipo_fila || "");
+            const pEsp = normalizarTexto(p.especialidade || p.nome_especialidade || "");
+            const pCbo = normalizarTexto(p.codigo_especialidade || "");
+            const bateTipo =
+              !tNorm ||
+              pTf.includes(tNorm) ||
+              tNorm.includes(pTf) ||
+              (tNorm.includes("exame") &&
+                !pTf.includes("lab") &&
+                !pTf.includes("sangue") &&
+                !pTf.includes("cirurg") &&
+                !pTf.includes("consulta")) ||
+              (tNorm.includes("cirurg") && pTf.includes("cirurg"));
+            const bateEsp =
+              !espNorm ||
+              pEsp.includes(espNorm) ||
+              espNorm.includes(pEsp) ||
+              pCbo.includes(espNorm);
+            return bateTipo && (bateEsp || !espFiltroCatalogo);
+          });
+          setProcedimentosFiltrados(locais.length > 0 ? locais : procedimentosTodos);
         }
       })
       .catch(() => {
@@ -570,7 +590,7 @@ export default function NovaSolicitacao() {
     return () => {
       cancel = true;
     };
-  }, [tipoServico, especialidade, isConsulta, procedimentosTodos]);
+  }, [tipoServico, espFiltroCatalogo, isConsulta, procedimentosTodos]);
 
   // Regra Dinâmica: Consultas vs Exames e Cirurgias
   // 1. Consultas Médicas Especializadas: define automaticamente o procedimento padrão 0301010072
@@ -618,6 +638,7 @@ export default function NovaSolicitacao() {
           if (lista.length === 1) {
             setEspecialidade(lista[0].descricao || `CBO ${lista[0].cbo}`);
             setCodigoEspecialidade(lista[0].cbo);
+            setEspManual(false);
           } else if (lista.length > 1) {
             const jaAutorizado = lista.some(
               (c) =>
@@ -631,6 +652,7 @@ export default function NovaSolicitacao() {
               if (match) {
                 setEspecialidade(match.descricao || `CBO ${match.cbo}`);
                 setCodigoEspecialidade(match.cbo);
+                setEspManual(false);
               }
             }
           }
@@ -655,17 +677,30 @@ export default function NovaSolicitacao() {
       setBuscandoProc(false);
       return;
     }
+    let ativo = true;
     setBuscandoProc(true);
     const t = setTimeout(() => {
-      tfdCatalogoExames(termo, tipoServico || undefined, undefined, especialidade || undefined)
-        .then((res) => {
-          setProcedimentosDinamicos(res || []);
+      tfdCatalogoExames(termo, tipoServico || undefined, undefined, espFiltroCatalogo || undefined)
+        .then(async (res) => {
+          if (!ativo) return;
+          let lista = res || [];
+          if (lista.length === 0 && espFiltroCatalogo && tipoServico) {
+            lista = (await tfdCatalogoExames(termo, tipoServico)) || [];
+          }
+          if (ativo) setProcedimentosDinamicos(lista);
         })
-        .catch(() => setProcedimentosDinamicos([]))
-        .finally(() => setBuscandoProc(false));
+        .catch(() => {
+          if (ativo) setProcedimentosDinamicos([]);
+        })
+        .finally(() => {
+          if (ativo) setBuscandoProc(false);
+        });
     }, 150);
-    return () => clearTimeout(t);
-  }, [buscaProc, tipoServico, especialidade]);
+    return () => {
+      ativo = false;
+      clearTimeout(t);
+    };
+  }, [buscaProc, tipoServico, espFiltroCatalogo]);
 
   // Filtro inteligente de procedimentos: busca por nome, código SIGTAP, código curto, especialidade e aliases comuns
   const opcoesProcFiltradas = useMemo(() => {
@@ -674,12 +709,12 @@ export default function NovaSolicitacao() {
     if (procedimentosFiltrados.length > 0) {
       base = procedimentosFiltrados;
     } else {
-      const tNorm = (tipoServico || "").trim().toLowerCase();
-      const espNorm = (especialidade || "").trim().toLowerCase();
+      const tNorm = normalizarTexto(tipoServico.trim());
+      const espNorm = normalizarTexto(espFiltroCatalogo.trim());
       const filtradosLocais = procedimentosTodos.filter((p) => {
-        const pTf = (p.tipo_fila || "").toLowerCase();
-        const pEsp = (p.especialidade || p.nome_especialidade || "").toLowerCase();
-        const pCbo = (p.codigo_especialidade || "").toLowerCase();
+        const pTf = normalizarTexto(p.tipo_fila || "");
+        const pEsp = normalizarTexto(p.especialidade || p.nome_especialidade || "");
+        const pCbo = normalizarTexto(p.codigo_especialidade || "");
         const bateTipo =
           !tNorm ||
           pTf.includes(tNorm) ||
@@ -696,13 +731,13 @@ export default function NovaSolicitacao() {
           pEsp.includes(espNorm) ||
           espNorm.includes(pEsp) ||
           pCbo.includes(espNorm);
-        return bateTipo && (bateEsp || !especialidade);
+        return bateTipo && (bateEsp || !espFiltroCatalogo);
       });
       base = filtradosLocais.length > 0 ? filtradosLocais : procedimentosTodos;
     }
 
-    const t = buscaProc.trim().toLowerCase();
-    if (!t) return base.slice(0, 80);
+    const t = normalizarTexto(buscaProc.trim());
+    if (!t) return base.slice(0, 150);
 
     const aliasesLocais: Record<string, string[]> = {
       ecg: ["eletrocardiograma", "eletrocardio"],
@@ -718,7 +753,9 @@ export default function NovaSolicitacao() {
     const termosLocais = [t, ...(aliasesLocais[t] || [])];
 
     const locais = base.filter((p) => {
-      const txt = `${p.codigo_curto || ""} ${p.codigo_procedimento || ""} ${p.exame || p.nome_procedimento || ""} ${p.especialidade || p.nome_especialidade || ""} ${p.tipo_fila || ""}`.toLowerCase();
+      const txt = normalizarTexto(
+        `${p.codigo_curto || ""} ${p.codigo_procedimento || ""} ${p.exame || p.nome_procedimento || ""} ${p.especialidade || p.nome_especialidade || ""} ${p.tipo_fila || ""}`,
+      );
       return termosLocais.some((termo) => txt.includes(termo));
     });
 
@@ -736,8 +773,8 @@ export default function NovaSolicitacao() {
 
     const listaFinal = Array.from(mapaProcs.values());
     listaFinal.sort((a, b) => {
-      const nomeA = (a.exame || a.nome_procedimento || "").toLowerCase();
-      const nomeB = (b.exame || b.nome_procedimento || "").toLowerCase();
+      const nomeA = normalizarTexto(a.exame || a.nome_procedimento || "");
+      const nomeB = normalizarTexto(b.exame || b.nome_procedimento || "");
       const codA = (a.codigo_procedimento || a.codigo_curto || "").toLowerCase();
       const codB = (b.codigo_procedimento || b.codigo_curto || "").toLowerCase();
       const comecaA = nomeA.startsWith(t) || codA.startsWith(t) ? 0 : 1;
@@ -746,8 +783,21 @@ export default function NovaSolicitacao() {
       return nomeA.localeCompare(nomeB);
     });
 
-    return listaFinal.slice(0, 80);
-  }, [buscaProc, procedimentosFiltrados, procedimentosTodos, especialidade, tipoServico, procedimentosDinamicos]);
+    return listaFinal.slice(0, 100);
+  }, [buscaProc, procedimentosFiltrados, procedimentosTodos, espFiltroCatalogo, tipoServico, procedimentosDinamicos]);
+
+  function aoMudarTipoServico(novo: string) {
+    setTipoServico(novo);
+    setProcedimentoSel(null);
+    setProcTexto("");
+    setCodigoProcedimento("");
+    setBuscaProc("");
+    setEspecialidade("");
+    setCodigoEspecialidade("");
+    setEspManual(false);
+    setCbosAutorizados([]);
+    setProcedimentosDinamicos([]);
+  }
 
   function escolherProcedimento(p: CatalogoProc) {
     handleSelecionarProcedimento(p);
@@ -765,6 +815,7 @@ export default function NovaSolicitacao() {
       setCodigoProcedimento(p.codigo_procedimento || "");
       if (p.especialidade || p.nome_especialidade) {
         setEspecialidade(p.especialidade || p.nome_especialidade || "");
+        setEspManual(false);
       }
       if (p.codigo_especialidade) {
         setCodigoEspecialidade(p.codigo_especialidade);
@@ -775,6 +826,11 @@ export default function NovaSolicitacao() {
     } else {
       setProcTexto("");
       setCodigoProcedimento("");
+      setCbosAutorizados([]);
+      if (!espManual) {
+        setEspecialidade("");
+        setCodigoEspecialidade("");
+      }
     }
   }
 
@@ -854,6 +910,7 @@ export default function NovaSolicitacao() {
     setCodigoProcedimento("");
     setEspecialidade("");
     setCodigoEspecialidade("");
+    setEspManual(false);
     setJustificativa("");
     setObservacoes("");
     setNumeroPedido("");
@@ -931,6 +988,11 @@ export default function NovaSolicitacao() {
 
     if (!justificativa.trim() || justificativa.trim().length < JUST_MIN) {
       setErro(`A Justificativa Clínica é obrigatória e deve conter no mínimo ${JUST_MIN} caracteres.`);
+      return;
+    }
+
+    if (isTfdCentral && retroativoBloqueado && dataPedido < hojeISO()) {
+      setErro("Seu perfil não possui permissão para realizar lançamentos com datas retroativas.");
       return;
     }
 
@@ -1310,13 +1372,21 @@ export default function NovaSolicitacao() {
               </div>
               <div className="w-full sm:w-64">
                 {isTfdCentral ? (
-                  <Input
-                    type="date"
-                    value={dataPedido}
-                    onChange={(e) => setDataPedido(e.target.value)}
-                    className="h-10 text-xs font-semibold"
-                    required
-                  />
+                  <div>
+                    <Input
+                      type="date"
+                      value={dataPedido}
+                      min={retroativoBloqueado ? hojeISO() : undefined}
+                      onChange={(e) => setDataPedido(e.target.value)}
+                      className="h-10 text-xs font-semibold"
+                      required
+                    />
+                    <span className="block mt-0.5 text-[10px] text-ink/60 font-medium">
+                      {podeDataRetroativa
+                        ? "Lançamentos retroativos liberados para este perfil."
+                        : "Perfil sem permissão para datas retroativas."}
+                    </span>
+                  </div>
                 ) : (
                   <div>
                     <Input
@@ -1343,15 +1413,7 @@ export default function NovaSolicitacao() {
               </Label>
               <Select
                 value={tipoServico}
-                onChange={(e) => {
-                  const novo = e.target.value;
-                  setTipoServico(novo);
-                  if (novo.toUpperCase().includes("CONSULTA") && !isConsulta) {
-                    setProcedimentoSel(null);
-                    setProcTexto("");
-                    setCodigoProcedimento("");
-                  }
-                }}
+                onChange={(e) => aoMudarTipoServico(e.target.value)}
                 className="mt-1 text-xs font-semibold text-sus-950"
                 required
               >
@@ -1400,6 +1462,7 @@ export default function NovaSolicitacao() {
                     onClick={() => {
                       setEspecialidade("");
                       setCodigoEspecialidade("");
+                      setEspManual(false);
                     }}
                     className="text-[10px] text-red-600 font-semibold hover:underline"
                   >
@@ -1412,6 +1475,7 @@ export default function NovaSolicitacao() {
                   value={especialidade}
                   onChange={(v) => {
                     setEspecialidade(v);
+                    setEspManual(Boolean(v));
                     const cboItem = cbosAutorizados.find(
                       (c) => (c.descricao || `CBO ${c.cbo}`) === v || c.descricao === v,
                     );
@@ -2390,15 +2454,7 @@ export default function NovaSolicitacao() {
                   </Label>
                   <Select
                     value={tipoServico}
-                    onChange={(e) => {
-                      const novo = e.target.value;
-                      setTipoServico(novo);
-                      if (novo.toUpperCase().includes("CONSULTA") && !isConsulta) {
-                        setProcedimentoSel(null);
-                        setProcTexto("");
-                        setCodigoProcedimento("");
-                      }
-                    }}
+                    onChange={(e) => aoMudarTipoServico(e.target.value)}
                     className="mt-1 text-xs font-semibold text-sus-950"
                     required
                   >
@@ -2447,6 +2503,7 @@ export default function NovaSolicitacao() {
                         onClick={() => {
                           setEspecialidade("");
                           setCodigoEspecialidade("");
+                          setEspManual(false);
                         }}
                         className="text-[10px] text-red-600 font-semibold hover:underline"
                       >
@@ -2459,6 +2516,7 @@ export default function NovaSolicitacao() {
                       value={especialidade}
                       onChange={(v) => {
                         setEspecialidade(v);
+                        setEspManual(Boolean(v));
                         const cboItem = cbosAutorizados.find(
                           (c) => (c.descricao || `CBO ${c.cbo}`) === v || c.descricao === v,
                         );
@@ -2656,6 +2714,21 @@ export default function NovaSolicitacao() {
                             );
                           })}
                         </div>
+                        {buscaProc.trim().length >= 2 && (
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              setProcTexto(buscaProc.trim());
+                              setProcedimentoSel(null);
+                              setBuscaProc("");
+                              setProcFoco(false);
+                            }}
+                            className="flex w-full items-center gap-2 border-t border-sus-900/10 bg-sand/30 px-3 py-2 text-left text-xs font-semibold text-teal hover:bg-teal/10 transition"
+                          >
+                            <Plus className="h-3.5 w-3.5" /> Usar texto digitado: “{buscaProc.trim()}”
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2712,16 +2785,19 @@ export default function NovaSolicitacao() {
                   </Label>
                   <Input
                     type="date"
-                    value={dataPedido}
+                    value={isTfdCentral ? dataPedido : hojeISO()}
+                    min={isTfdCentral && retroativoBloqueado ? hojeISO() : undefined}
                     onChange={(e) => setDataPedido(e.target.value)}
                     disabled={!isTfdCentral}
                     max={hojeISO()}
                     className="mt-1 text-xs"
                   />
                   <p className="mt-1 text-[11px] text-ink/60">
-                    {isTfdCentral
-                      ? "Operadores da Central podem registrar pedidos retroativos."
-                      : "Fixada na data de hoje para unidades solicitantes."}
+                    {!isTfdCentral
+                      ? "Fixada na data de hoje para unidades solicitantes."
+                      : podeDataRetroativa
+                      ? "Lançamentos retroativos liberados para este perfil."
+                      : "Perfil sem permissão para datas retroativas."}
                   </p>
                 </div>
 

@@ -2660,20 +2660,26 @@ def _garantir_token(obj: ExameFila) -> str:
 
 
 def eh_tfd_central(ator: User) -> bool:
-    """Verifica se o usuário possui perfil central do TFD.
-    Usuários centrais (ou superusuários) podem lançar pedidos para qualquer unidade
-    e escolher livremente a data de lançamento.
-    Usuários lotados em PSF só podem lançar para o dia atual e vinculados à sua própria unidade.
+    """Verifica se o usuário possui perfil central/gestão de fila do TFD.
+
+    Operadores centrais (ou superusuários) podem escolher qualquer unidade e usar datas
+    livres (respeitando `permite_retroativo`). Ter `unidade_saude_id` preenchido no cadastro
+    como unidade de lotação não bloqueia operadores que possuem acesso à Fila/TFD (`tfd`,
+    `tfd_exames`, `tfd_resumo`, `tfd_agenda`); apenas perfis exclusivos de lançamento PSF
+    (`tfd_fila_lancamento` sem `tfd_exames`/`tfd_medico`, ou sem telas de gestão TFD)
+    ficam restritos à própria unidade e ao dia atual.
     """
     if ator.is_superuser:
         return True
-    if ator.unidade_saude_id:
-        return False
     from app.services.permissoes import tem_tela
-    tem_tfd_geral = tem_tela(ator, "tfd") and not tem_tela(ator, "tfd_fila_lancamento")
-    if tem_tfd_geral:
-        return True
-    if tem_tela(ator, "tfd_resumo"):
+    if tem_tela(ator, "tfd_fila_lancamento") and not tem_tela(ator, "tfd_exames") and not tem_tela(ator, "tfd_medico"):
+        return False
+    if (
+        tem_tela(ator, "tfd")
+        or tem_tela(ator, "tfd_exames")
+        or tem_tela(ator, "tfd_resumo")
+        or tem_tela(ator, "tfd_agenda")
+    ):
         return True
     return False
 
@@ -2916,6 +2922,7 @@ def criar_exames_lote(
     if not data.itens:
         raise HTTPException(400, "Nenhum paciente informado no lote.")
 
+    exige_sem_retroativo(ator, data.data_pedido, data.data_pedido is not None)
     is_central = eh_tfd_central(ator)
     hoje = date.today()
 
@@ -4410,6 +4417,7 @@ def catalogo_procedimentos(
         normalizar_tipo_fila,
         expandir_aliases_busca,
         corresponde_especialidade_sigtap,
+        carregar_vivver_catalogo_csv,
     )
 
     if not isinstance(q, str):
@@ -4421,12 +4429,13 @@ def catalogo_procedimentos(
     if not isinstance(apenas_laboratoriais, (bool, type(None))):
         apenas_laboratoriais = getattr(apenas_laboratoriais, "default", None)
 
-    ql = (q or "").strip().lower()
-    esp_filtro = (especialidade or "").strip().lower()
+    ql = remover_acentos((q or "").strip()).lower()
+    esp_filtro = remover_acentos((especialidade or "").strip()).lower()
 
     # Normaliza o tipo de fila para o padrão canônico e obtém a sigla oficial (ex: USG, TOMO, CARD, CIR)
     tipo_canonico, sigla_canonico = normalizar_tipo_fila(tipo_fila)
     tipo_busca = tipo_canonico or tipo_fila
+    tipo_busca_norm = remover_acentos(tipo_busca).strip()
     regras = obter_filtro_sigtap_por_tipo(tipo_busca)
 
     # Determina se a busca é estritamente laboratorial
@@ -4439,84 +4448,94 @@ def catalogo_procedimentos(
     codigos_tfd = set()
 
     # 1) Catálogo dinâmico do TFD / procedimentos importados (Vivver e locais)
-    tf_up = tipo_busca.strip().upper() if tipo_busca else ""
-    if tf_up:
-        if "EXAMES ESPECIALIZADOS" in tf_up or tf_up == "EXAMES":
-            base = (
-                select(ProcedimentoCatalogo)
-                .where(
-                    ProcedimentoCatalogo.ativo == True,  # noqa: E712
-                    ~ProcedimentoCatalogo.tipo_fila.ilike("%LAB%"),
-                    ~ProcedimentoCatalogo.tipo_fila.ilike("%SANGUE%"),
-                    ~ProcedimentoCatalogo.tipo_fila.ilike("%CIRURG%"),
-                    ~ProcedimentoCatalogo.tipo_fila.ilike("%CONSULTA%"),
-                )
-                .order_by(ProcedimentoCatalogo.nome)
-            )
-        elif "CIRURG" in tf_up or sigla_canonico in ("CIR", "PCIR", "AVPC"):
-            base = (
-                select(ProcedimentoCatalogo)
-                .where(
-                    ProcedimentoCatalogo.ativo == True,  # noqa: E712
-                    or_(
-                        ProcedimentoCatalogo.tipo_fila.in_(["CIRURGIAS", "PEQUENA CIRURGIA", "AVALIAÇÃO CIRURGIA"]),
-                        ProcedimentoCatalogo.codigo_curto.in_(["CIR", "PCIR", "AVPC"]),
-                        ProcedimentoCatalogo.tipo_fila.ilike("%CIRURG%"),
-                    ),
-                )
-                .order_by(ProcedimentoCatalogo.nome)
-            )
-        elif "CARDIO" in tf_up or "ECG" in tf_up or sigla_canonico == "CARD":
-            base = (
-                select(ProcedimentoCatalogo)
-                .where(
-                    ProcedimentoCatalogo.ativo == True,  # noqa: E712
-                    or_(
-                        ProcedimentoCatalogo.tipo_fila == "EXAMES CARDIOLOGICOS",
-                        ProcedimentoCatalogo.codigo_curto == "CARD",
-                        ProcedimentoCatalogo.tipo_fila.ilike("%CARDIO%"),
-                        ProcedimentoCatalogo.nome_especialidade.ilike("%CARDIO%"),
-                    ),
-                )
-                .order_by(ProcedimentoCatalogo.nome)
-            )
-        else:
-            conds_tipo = [ProcedimentoCatalogo.tipo_fila.ilike(f"%{tipo_busca}%")]
-            if tipo_canonico:
-                conds_tipo.append(ProcedimentoCatalogo.tipo_fila == tipo_canonico)
-            if sigla_canonico:
-                conds_tipo.append(ProcedimentoCatalogo.codigo_curto == sigla_canonico)
-            base = (
-                select(ProcedimentoCatalogo)
-                .where(
-                    ProcedimentoCatalogo.ativo == True,  # noqa: E712
-                    or_(*conds_tipo),
-                )
-                .order_by(ProcedimentoCatalogo.nome)
-            )
-    else:
-        base = select(ProcedimentoCatalogo).where(ProcedimentoCatalogo.ativo == True).order_by(  # noqa: E712
-            ProcedimentoCatalogo.nome
-        )
+    tf_up = tipo_busca_norm.upper() if tipo_busca_norm else ""
+    tipo_fila_col = coluna_sem_acento(db, ProcedimentoCatalogo.tipo_fila)
+    nome_esp_col = coluna_sem_acento(db, ProcedimentoCatalogo.nome_especialidade)
 
-    aliases_q = expandir_aliases_busca(ql) if ql else []
+    def _condicao_tipo_catalogo(ativo_apenas: bool = True):
+        filtros_cat = [ProcedimentoCatalogo.ativo == True] if ativo_apenas else []  # noqa: E712
+        if not tf_up:
+            return filtros_cat
+        if "EXAMES ESPECIALIZADOS" in tf_up or tf_up == "EXAMES":
+            return filtros_cat + [
+                ~tipo_fila_col.ilike("%LAB%"),
+                ~tipo_fila_col.ilike("%SANGUE%"),
+                ~tipo_fila_col.ilike("%CIRURG%"),
+                ~tipo_fila_col.ilike("%CONSULTA%"),
+            ]
+        if "CIRURG" in tf_up or sigla_canonico in ("CIR", "PCIR", "AVPC"):
+            return filtros_cat + [
+                or_(
+                    ProcedimentoCatalogo.tipo_fila.in_(["CIRURGIAS", "PEQUENA CIRURGIA", "AVALIAÇÃO CIRURGIA", "AVALIACAO CIRURGIA"]),
+                    ProcedimentoCatalogo.codigo_curto.in_(["CIR", "PCIR", "AVPC"]),
+                    tipo_fila_col.ilike("%CIRURG%"),
+                )
+            ]
+        if "CARDIO" in tf_up or "ECG" in tf_up or sigla_canonico == "CARD":
+            return filtros_cat + [
+                or_(
+                    ProcedimentoCatalogo.tipo_fila == "EXAMES CARDIOLOGICOS",
+                    ProcedimentoCatalogo.codigo_curto == "CARD",
+                    tipo_fila_col.ilike("%CARDIO%"),
+                    nome_esp_col.ilike("%CARDIO%"),
+                )
+            ]
+        conds_tipo = [
+            tipo_fila_col.ilike(f"%{tipo_busca_norm}%"),
+            ProcedimentoCatalogo.tipo_fila.ilike(f"%{tipo_busca}%"),
+        ]
+        if tipo_canonico:
+            conds_tipo.append(ProcedimentoCatalogo.tipo_fila == tipo_canonico)
+            conds_tipo.append(tipo_fila_col.ilike(f"%{remover_acentos(tipo_canonico)}%"))
+        if sigla_canonico:
+            conds_tipo.append(ProcedimentoCatalogo.codigo_curto == sigla_canonico)
+        return filtros_cat + [or_(*conds_tipo)]
+
+    conds_base_cat = _condicao_tipo_catalogo(ativo_apenas=True)
+    base = select(ProcedimentoCatalogo).where(*conds_base_cat).order_by(ProcedimentoCatalogo.nome)
+
+    aliases_q = [remover_acentos(a).lower() for a in expandir_aliases_busca(ql)] if ql else []
     if sigla_canonico and sigla_canonico.lower() not in aliases_q:
         aliases_q.append(sigla_canonico.lower())
 
-    candidatos_procs = db.exec(base.limit(1000)).all()
+    candidatos_procs = db.exec(base.limit(2000)).all()
 
-    # Busca em lote na tabela oficial SIGTAP para cruzar dados clínicos e financeiros
-    cods_candidatos = [p.codigo.strip() for p in candidatos_procs if p.codigo]
+    # Fallback não-destrutivo com CSV Vivver embutido caso a tabela local ainda não possua essa fila cadastrada
+    if not candidatos_procs:
+        conds_qualquer_cat = _condicao_tipo_catalogo(ativo_apenas=False)
+        existe_na_fila = db.exec(select(ProcedimentoCatalogo.id).where(*conds_qualquer_cat).limit(1)).first()
+        if not existe_na_fila:
+            from types import SimpleNamespace
+            for item in carregar_vivver_catalogo_csv():
+                t_item = remover_acentos(item["tipo_fila"]).upper()
+                if not tf_up:
+                    bate = True
+                elif "EXAMES ESPECIALIZADOS" in tf_up or tf_up == "EXAMES":
+                    bate = all(k not in t_item for k in ("LAB", "SANGUE", "CIRURG", "CONSULTA"))
+                elif "CIRURG" in tf_up or sigla_canonico in ("CIR", "PCIR", "AVPC"):
+                    bate = "CIRURG" in t_item or item["codigo_curto"] in ("CIR", "PCIR", "AVPC")
+                elif "CARDIO" in tf_up or "ECG" in tf_up or sigla_canonico == "CARD":
+                    bate = "CARDIO" in t_item or item["codigo_curto"] == "CARD"
+                else:
+                    bate = (
+                        tipo_busca_norm.upper() in t_item
+                        or (bool(tipo_canonico) and remover_acentos(tipo_canonico).upper() == t_item)
+                        or (bool(sigla_canonico) and item["codigo_curto"] == sigla_canonico)
+                    )
+                if bate:
+                    candidatos_procs.append(SimpleNamespace(**item))
+
+    # Busca em lote na tabela oficial SIGTAP para cruzar dados clínicos e financeiros (em blocos de 400 p/ compatibilidade SQLite/Postgres)
+    cods_candidatos = list({p.codigo.strip() for p in candidatos_procs if p.codigo})
     sig_map: dict[str, SigtapProcedimento] = {}
     cbos_map: dict[str, list[dict]] = {}
-    if cods_candidatos:
-        for s in db.exec(select(SigtapProcedimento).where(SigtapProcedimento.codigo.in_(cods_candidatos))).all():
+    for ini in range(0, len(cods_candidatos), 400):
+        bloco = cods_candidatos[ini : ini + 400]
+        for s in db.exec(select(SigtapProcedimento).where(SigtapProcedimento.codigo.in_(bloco))).all():
             sig_map[s.codigo.strip()] = s
-        for c in db.exec(select(SigtapCbo).where(SigtapCbo.procedimento_codigo.in_(cods_candidatos))).all():
+        for c in db.exec(select(SigtapCbo).where(SigtapCbo.procedimento_codigo.in_(bloco))).all():
             cod_k = c.procedimento_codigo.strip()
-            if cod_k not in cbos_map:
-                cbos_map[cod_k] = []
-            cbos_map[cod_k].append({"cbo": c.cbo.strip(), "descricao": c.descricao.strip()})
+            cbos_map.setdefault(cod_k, []).append({"cbo": c.cbo.strip(), "descricao": c.descricao.strip()})
 
     for p in candidatos_procs:
         p_tf_up = (p.tipo_fila or "").strip().upper()
@@ -4528,7 +4547,7 @@ def catalogo_procedimentos(
             if p_tf_up in MAPA_TIPO_ESPECIALIDADE:
                 esp_nome, esp_cod = MAPA_TIPO_ESPECIALIDADE[p_tf_up]
 
-        hay = f"{p.codigo} {p.nome} {sigla_p} {p.tipo_fila} {esp_nome} {esp_cod}".lower()
+        hay = remover_acentos(f"{p.codigo} {p.nome} {sigla_p} {p.tipo_fila} {esp_nome} {esp_cod}").lower()
         if ql and (ql not in hay and not any(a in hay for a in aliases_q)):
             continue
         if esp_filtro and not corresponde_especialidade_sigtap(p.codigo or "", p.nome or "", esp_filtro, esp_nome):
@@ -4622,12 +4641,13 @@ def catalogo_procedimentos(
                 filtros_sig.append(~SigtapProcedimento.codigo.like(f"{exc}%"))
 
         if ql:
+            desc_sig_col = coluna_sem_acento(db, SigtapProcedimento.descricao)
             termos_sig = [ql] + aliases_q
             conds_busca_sig = []
             for t in termos_sig:
                 like = f"%{t}%"
                 conds_busca_sig.append(SigtapProcedimento.codigo.ilike(like))
-                conds_busca_sig.append(SigtapProcedimento.descricao.ilike(like))
+                conds_busca_sig.append(desc_sig_col.ilike(like))
             filtros_sig.append(or_(*conds_busca_sig))
 
         base_sig = select(SigtapProcedimento).where(*filtros_sig).order_by(SigtapProcedimento.descricao)
@@ -4724,7 +4744,7 @@ def catalogo_procedimentos(
 
     if ql:
         def _chave_proc(item):
-            nome_l = (item.get("nome_procedimento") or "").lower()
+            nome_l = remover_acentos(item.get("nome_procedimento") or "").lower()
             cod_l = (item.get("codigo_procedimento") or "").lower()
             curto_l = (item.get("codigo_curto") or "").lower()
             comeca_direto = (nome_l.startswith(ql) or cod_l.startswith(ql) or curto_l.startswith(ql))
@@ -4739,11 +4759,11 @@ def catalogo_procedimentos(
                 prioridade = 3
             return (prioridade, nome_l)
         out.sort(key=_chave_proc)
-        return out[:150]
+        return out[:200]
 
     if tipo_fila or esp_filtro:
-        return out[:350]
-    return out[:150]
+        return out[:500]
+    return out[:1500]
 
 
 @router.post("/procedimentos/validar-cbo", response_model=ValidarCboOut)

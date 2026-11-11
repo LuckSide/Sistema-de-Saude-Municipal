@@ -294,14 +294,19 @@ MAPA_ESPECIALIDADE_PREFIXOS: dict[str, list[str]] = {
     "oftalmo": ["021106", "0405", "030305", "0301"],
     "otorrino": ["021107", "0404", "0301"],
     "gastro": ["0209", "0407", "0201010216", "0301"],
+    "digestiv": ["0209", "0407", "0301"],
     "uro": ["021109", "0409", "020902", "020502", "0301"],
     "ortop": ["0408", "0204", "0205", "0207", "020405", "0301"],
     "traumato": ["0408", "0204", "0205", "0207", "020405", "0301"],
     "pneumo": ["021108", "0204", "0206", "0412", "0301"],
+    "torac": ["0412", "0204", "0206", "0301"],
     "masto": ["020403", "0410", "0201010585", "0205", "0301"],
     "gineco": ["0409", "0411", "020403", "020502", "0301"],
     "obstetr": ["0411", "020502", "0301"],
     "cirurg": ["04", "0201", "0301"],
+    "plast": ["0413", "04", "0301"],
+    "cabeca": ["0404", "04", "0301"],
+    "bucomax": ["0414", "04", "0301"],
     "dermato": ["0401", "0201", "0301"],
     "endocrino": ["0402", "020405", "0205", "0301"],
     "vascular": ["0406", "020501", "021001", "0301"],
@@ -321,7 +326,7 @@ MAPA_ESPECIALIDADE_PREFIXOS: dict[str, list[str]] = {
     "alerg": ["0211", "0301"],
     "imuno": ["0211", "0301"],
     "coloprocto": ["0209", "0407", "0301"],
-    "procto": ["0209", "0407", "0301"],
+    "proct": ["0209", "0407", "0301"],
     "nutrol": ["020405", "0205", "0301"],
     "anestesiolog": ["0301"],
     "fisiatri": ["0302", "0301"],
@@ -673,6 +678,9 @@ def normalizar_tipo_fila(tipo: str | None) -> tuple[str, str]:
         return (nome_c, t)
 
     sinonimos: dict[str, tuple[str, str]] = {
+        "RETORNO CONSULTA ESPECIALIZADA": ("RETORNO CONSULTA ESPECIALIZADA", "RCES"),
+        "RETORNO": ("RETORNO CONSULTA ESPECIALIZADA", "RCES"),
+        "RCES": ("RETORNO CONSULTA ESPECIALIZADA", "RCES"),
         "TC": ("TOMOGRAFIA", "TOMO"),
         "RM": ("RESSONÂNCIA MAGNÉTICA", "RNM"),
         "RNM": ("RESSONÂNCIA MAGNÉTICA", "RNM"),
@@ -697,13 +705,16 @@ def normalizar_tipo_fila(tipo: str | None) -> tuple[str, str]:
         "CIR": ("CIRURGIAS", "CIR"),
         "CIRURGIA": ("CIRURGIAS", "CIR"),
         "CIRURGIAS": ("CIRURGIAS", "CIR"),
+        "CIRURGIAS ESPECIALIZADAS": ("CIRURGIAS", "CIR"),
         "PCIR": ("PEQUENA CIRURGIA", "PCIR"),
         "PEQUENA CIRURGIA": ("PEQUENA CIRURGIA", "PCIR"),
         "AVPC": ("AVALIAÇÃO CIRURGIA", "AVPC"),
         "AVALIACAO CIRURGIA": ("AVALIAÇÃO CIRURGIA", "AVPC"),
+        "EXAMES ESPECIALIZADOS": ("EXAMES ESPECIALIZADOS", ""),
         "CES": ("CONSULTAS ESPECIALIZADAS", "CES"),
         "CONSULTA": ("CONSULTAS ESPECIALIZADAS", "CES"),
         "CONSULTAS": ("CONSULTAS ESPECIALIZADAS", "CES"),
+        "CONSULTAS ESPECIALIZADAS": ("CONSULTAS ESPECIALIZADAS", "CES"),
         "DEOS": ("DENSITOMETRIA OSSEA", "DEOS"),
         "DENSITOMETRIA": ("DENSITOMETRIA OSSEA", "DEOS"),
         "DENSITOMETRIA OSSEA": ("DENSITOMETRIA OSSEA", "DEOS"),
@@ -736,15 +747,22 @@ def normalizar_tipo_fila(tipo: str | None) -> tuple[str, str]:
         "OFTALMO": ("PROCEDIMENTOS OFTALMOLOGICOS", "POF"),
         "OFTALMOLOGIA": ("PROCEDIMENTOS OFTALMOLOGICOS", "POF"),
         "PROCEDIMENTOS OFTALMOLOGICOS": ("PROCEDIMENTOS OFTALMOLOGICOS", "POF"),
+        "EX. LAB. GINECOLOGIA": ("EX. LAB. GINECOLOGIA", "EXGO"),
+        "EX. LAB. HIPERDIA": ("EX. LAB. HIPERDIA", "EXHD"),
+        "EX. LAB. PEDIATRIA": ("EX. LAB. PEDIATRIA", "EXPED"),
+        "EX. LAB. PRE-NATAL": ("EX. LAB. PRÉ-NATAL", "EXPN"),
+        "EX. LAB. PSF ROTINA": ("EX. LAB. PSF ROTINA", "EXPSF"),
+        "EX. LAB. SECRETARIA": ("EX. LAB. SECRETARIA", "EXSEC"),
     }
     if t in sinonimos:
         return sinonimos[t]
-    for k, v in sinonimos.items():
-        if k in t or t in k:
-            return v
     for nome_p, sigla_p in MAPA_TIPO_SIGLA.items():
         if _remover_acentos(nome_p).upper() == t:
             return (nome_p, sigla_p)
+    # Match por substring somente para termos não ambíguos (>= 4 caracteres), evitando siglas curtas ("RM", "TC", "RX")
+    for k, v in sinonimos.items():
+        if len(k) >= 4 and (k in t or t in k):
+            return v
     return (tipo, "")
 
 
@@ -919,3 +937,42 @@ def seed_vivver_procedimentos(db: Session, caminho_csv: str | None = None) -> di
         db.commit()
 
     return {"ok": True, "arquivo": arquivo_encontrado, "inseridos": inseridos, "atualizados": atualizados}
+
+
+from functools import lru_cache
+
+
+@lru_cache(maxsize=1)
+def _ler_vivver_catalogo_csv_cached() -> tuple[dict, ...]:
+    import csv
+    import os
+
+    caminho = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", "data", "vivver", "procedimentos.csv")
+    )
+    if not os.path.exists(caminho):
+        return ()
+    itens: list[dict] = []
+    with open(caminho, "r", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            cod = (row.get("codprocedimento") or "").strip()
+            nome = (row.get("nomprocedimento") or "").strip().upper()
+            tipo_nome = (row.get("servico_tipo_nome") or "").strip().upper()
+            if not cod or not nome:
+                continue
+            esp_nome, esp_cod = MAPA_TIPO_ESPECIALIDADE.get(tipo_nome, ("", ""))
+            sigla = MAPA_TIPO_SIGLA.get(tipo_nome, "")
+            itens.append({
+                "codigo": cod,
+                "nome": nome[:150],
+                "tipo_fila": tipo_nome[:80],
+                "nome_especialidade": esp_nome,
+                "codigo_especialidade": esp_cod,
+                "codigo_curto": sigla,
+            })
+    return tuple(itens)
+
+
+def carregar_vivver_catalogo_csv() -> list[dict]:
+    """Lê em memória (cacheado) o catálogo oficial exportado do Vivver para fallback caso tfd_procedimentos esteja incompleto."""
+    return [dict(item) for item in _ler_vivver_catalogo_csv_cached()]

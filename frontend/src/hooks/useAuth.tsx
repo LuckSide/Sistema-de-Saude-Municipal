@@ -83,11 +83,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isMedico = !!user && (user.is_superuser || concedida(user.telas, "tfd_medico"));
 
-  /** Perfil de lançamento restrito: pode adicionar à fila, mas não pode setar urgente nem agendar direto. */
-  const isLancamentoRestrito = !!user && !user.is_superuser && concedida(user.telas, "tfd_fila_lancamento") && !concedida(user.telas, "tfd_medico");
+  const temTfdExames = !!user && concedida(user.telas, "tfd_exames");
 
-  /** Perfil TFD Central: superusuário ou permissão central sem restrição a PSF. */
-  const isTfdCentral = !!user && (user.is_superuser || (concedida(user.telas, "tfd") && !concedida(user.telas, "tfd_fila_lancamento")));
+  /** Perfil de lançamento restrito: apenas lançamento PSF, sem acesso à Fila/Regulação (tfd_exames) nem Médico. */
+  const isLancamentoRestrito = !!user && !user.is_superuser && concedida(user.telas, "tfd_fila_lancamento") && !temTfdExames && !concedida(user.telas, "tfd_medico");
+
+  /** Perfil TFD Central / Regulação: superusuário ou acesso à fila/módulo TFD (não exclusivo PSF). */
+  const isTfdCentral = !!user && (user.is_superuser || (!isLancamentoRestrito && (concedida(user.telas, "tfd") || temTfdExames || concedida(user.telas, "tfd_resumo") || concedida(user.telas, "tfd_agenda"))));
 
   /** Perfil PSF: lotado em unidade de saúde e não pertencente à central TFD. */
   const isPsf = !!user && !isTfdCentral && !!user.unidade_saude_id;
