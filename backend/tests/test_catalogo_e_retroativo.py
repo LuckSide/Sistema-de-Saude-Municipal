@@ -86,6 +86,27 @@ def test_catalogo_procedimentos_cirurgias_fallback_acentos_e_retorno(session: Se
 
         # 4. RETORNO CONSULTA ESPECIALIZADA não colapsa para CONSULTAS ESPECIALIZADAS
         assert normalizar_tipo_fila("RETORNO CONSULTA ESPECIALIZADA") == ("RETORNO CONSULTA ESPECIALIZADA", "RCES")
+
+        # 5. Rota /exames/catalogo deve vir registrada antes de /exames/{eid} e responder 200 em todos os tipos
+        paths_get = [
+            getattr(r, "path", "")
+            for r in app.routes
+            if "GET" in (getattr(r, "methods", set()) or set())
+        ]
+        assert paths_get.index("/api/tfd/exames/catalogo") < paths_get.index("/api/tfd/exames/{eid}")
+
+        for tf in (
+            "",
+            "CIRURGIAS ESPECIALIZADAS",
+            "CIRURGIAS",
+            "EXAMES ESPECIALIZADOS",
+            "EXAMES LABORATORIAIS",
+            "ULTRASSONOGRAFIA",
+            "CONSULTAS ESPECIALIZADAS",
+        ):
+            r = client.get("/api/tfd/exames/catalogo", params={"tipo_fila": tf} if tf else {})
+            assert r.status_code == 200, (tf, r.text)
+            assert len(r.json()) > 0, f"Catálogo vazio para tipo_fila={tf!r}"
     finally:
         app.dependency_overrides.clear()
 
@@ -144,6 +165,23 @@ def test_retroativo_permitido_nao_conflita_com_unidade_nem_com_tfd_exames(sessio
             },
         )
         assert res_tudo.status_code == 201, res_tudo.text
+
+        # 2b. Médico (tfd_medico + tfd_fila_lancamento) com unidade vinculada e permite_retroativo=True também lança retroativo
+        op_medico = _usuario("tfd_medico,tfd_fila_lancamento", unidade_id=1, permite_retroativo=True)
+        app.dependency_overrides[get_current_user_senha_ok] = lambda: op_medico
+        res_med = client.post(
+            "/api/tfd/exames",
+            json={
+                "paciente_id": 1,
+                "exame": "ELETROCARDIOGRAMA",
+                "tipo_fila": "EXAMES CARDIOLOGICOS",
+                "data_pedido": ontem,
+                "justificativa": "Pedido retroativo por perfil médico vinculado à unidade",
+                "unidade_saude_id": 1,
+                "medico_id": 1,
+            },
+        )
+        assert res_med.status_code == 201, res_med.text
 
         # 3. Operador sem permissão retroativa (permite_retroativo=False) é bloqueado tanto no individual quanto no lote
         op_bloqueado = _usuario("tfd_exames", unidade_id=1, permite_retroativo=False)

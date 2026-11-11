@@ -89,7 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isLancamentoRestrito = !!user && !user.is_superuser && concedida(user.telas, "tfd_fila_lancamento") && !temTfdExames && !concedida(user.telas, "tfd_medico");
 
   /** Perfil TFD Central / Regulação: superusuário ou acesso à fila/módulo TFD (não exclusivo PSF). */
-  const isTfdCentral = !!user && (user.is_superuser || (!isLancamentoRestrito && (concedida(user.telas, "tfd") || temTfdExames || concedida(user.telas, "tfd_resumo") || concedida(user.telas, "tfd_agenda"))));
+  const isTfdCentral = !!user && (user.is_superuser || (!isLancamentoRestrito && (concedida(user.telas, "tfd") || temTfdExames || concedida(user.telas, "tfd_resumo") || concedida(user.telas, "tfd_agenda") || concedida(user.telas, "tfd_medico"))));
 
   /** Perfil PSF: lotado em unidade de saúde e não pertencente à central TFD. */
   const isPsf = !!user && !isTfdCentral && !!user.unidade_saude_id;

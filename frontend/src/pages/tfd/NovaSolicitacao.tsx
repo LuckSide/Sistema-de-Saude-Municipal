@@ -42,6 +42,7 @@ import {
   labSigtap,
   sigtapCbos,
   pagData,
+  msgErro,
   type CatalogoProc,
   type EspecialidadeCat,
   type Exame,
@@ -164,6 +165,7 @@ export default function NovaSolicitacao() {
   const [especialidadesCadastradas, setEspecialidadesCadastradas] = useState<EspecialidadeCat[]>([]);
   const [procedimentosDinamicos, setProcedimentosDinamicos] = useState<CatalogoProc[]>([]);
   const [buscandoProc, setBuscandoProc] = useState(false);
+  const [erroCatalogo, setErroCatalogo] = useState("");
 
   // Modo de Lançamento: Individual vs Lote
   const [searchParams, setSearchParams] = useSearchParams();
@@ -476,7 +478,17 @@ export default function NovaSolicitacao() {
     let cancelado = false;
     Promise.all([
       tfdTipos().catch(() => []),
-      tfdCatalogoExames().catch(() => []),
+      tfdCatalogoExames()
+        .then((res) => {
+          if (!cancelado) setErroCatalogo("");
+          return res;
+        })
+        .catch((err) => {
+          if (!cancelado) {
+            setErroCatalogo(msgErro(err, "Erro ao carregar catálogo de procedimentos."));
+          }
+          return [];
+        }),
       tfdEspecialidades({ limit: 500, ativos: true }).catch(() => ({ data: [] })),
       fetchMedicos().catch(() => []),
       fetchUnidadesSaude().catch(() => []),
@@ -542,6 +554,7 @@ export default function NovaSolicitacao() {
     tfdCatalogoExames("", tipoServico || undefined, undefined, espFiltroCatalogo || undefined)
       .then(async (res) => {
         if (cancel) return;
+        setErroCatalogo("");
         let lista = res || [];
         if (lista.length === 0 && espFiltroCatalogo && tipoServico) {
           lista = (await tfdCatalogoExames("", tipoServico)) || [];
@@ -578,8 +591,9 @@ export default function NovaSolicitacao() {
           setProcedimentosFiltrados(locais.length > 0 ? locais : procedimentosTodos);
         }
       })
-      .catch(() => {
+      .catch((err) => {
         if (!cancel) {
+          setErroCatalogo(msgErro(err, "Erro ao consultar catálogo de procedimentos."));
           setProcedimentosFiltrados(procedimentosTodos);
         }
       })
@@ -683,14 +697,18 @@ export default function NovaSolicitacao() {
       tfdCatalogoExames(termo, tipoServico || undefined, undefined, espFiltroCatalogo || undefined)
         .then(async (res) => {
           if (!ativo) return;
+          setErroCatalogo("");
           let lista = res || [];
           if (lista.length === 0 && espFiltroCatalogo && tipoServico) {
             lista = (await tfdCatalogoExames(termo, tipoServico)) || [];
           }
           if (ativo) setProcedimentosDinamicos(lista);
         })
-        .catch(() => {
-          if (ativo) setProcedimentosDinamicos([]);
+        .catch((err) => {
+          if (ativo) {
+            setErroCatalogo(msgErro(err, "Erro ao pesquisar procedimentos no servidor."));
+            setProcedimentosDinamicos([]);
+          }
         })
         .finally(() => {
           if (ativo) setBuscandoProc(false);
@@ -797,6 +815,7 @@ export default function NovaSolicitacao() {
     setEspManual(false);
     setCbosAutorizados([]);
     setProcedimentosDinamicos([]);
+    setErroCatalogo("");
   }
 
   function escolherProcedimento(p: CatalogoProc) {
@@ -1657,11 +1676,13 @@ export default function NovaSolicitacao() {
                 {procFoco && (
                   <div className="absolute left-0 right-0 z-30 mt-1 max-h-56 overflow-y-auto rounded-xl border border-sus-900/10 bg-white shadow-card">
                     <p className="sticky top-0 border-b border-sus-900/5 bg-sand/80 px-3 py-1.5 text-[11px] font-semibold text-sus-900/60 flex items-center justify-between">
-                      <span>
+                      <span className={erroCatalogo && opcoesProcFiltradas.length === 0 ? "text-red-700" : ""}>
                         {opcoesProcFiltradas.length > 0
                           ? `${opcoesProcFiltradas.length} procedimento(s) encontrado(s) — clique para selecionar`
                           : buscandoProc
                           ? "Pesquisando no catálogo..."
+                          : erroCatalogo
+                          ? `Falha ao carregar catálogo: ${erroCatalogo}`
                           : "Nenhum procedimento encontrado"}
                       </span>
                       {buscandoProc && (
@@ -1671,6 +1692,11 @@ export default function NovaSolicitacao() {
                         </span>
                       )}
                     </p>
+                    {erroCatalogo && opcoesProcFiltradas.length > 0 && (
+                      <p className="border-b border-amber-200 bg-amber-50 px-3 py-1 text-[11px] text-amber-800">
+                        Aviso da consulta ao catálogo: {erroCatalogo}
+                      </p>
+                    )}
                     {opcoesProcFiltradas.map((p, idx) => (
                       <button
                         key={`${p.codigo_curto || p.codigo_procedimento || idx}-${p.exame}`}
@@ -2656,11 +2682,13 @@ export default function NovaSolicitacao() {
                     {procFoco && (
                       <div className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-xl border border-sus-900/15 bg-white shadow-xl">
                         <p className="sticky top-0 border-b border-sus-900/5 bg-sand/80 px-3 py-1.5 text-[11px] font-semibold text-sus-900/60 flex items-center justify-between">
-                          <span>
+                          <span className={erroCatalogo && opcoesProcFiltradas.length === 0 ? "text-red-700" : ""}>
                             {opcoesProcFiltradas.length > 0
                               ? `${opcoesProcFiltradas.length} procedimento(s) encontrado(s) — clique para selecionar`
                               : buscandoProc
                               ? "Pesquisando no catálogo..."
+                              : erroCatalogo
+                              ? `Falha ao carregar catálogo: ${erroCatalogo}`
                               : "Nenhum procedimento encontrado"}
                           </span>
                           {buscandoProc && (
@@ -2670,6 +2698,11 @@ export default function NovaSolicitacao() {
                             </span>
                           )}
                         </p>
+                        {erroCatalogo && opcoesProcFiltradas.length > 0 && (
+                          <p className="border-b border-amber-200 bg-amber-50 px-3 py-1 text-[11px] text-amber-800">
+                            Aviso da consulta ao catálogo: {erroCatalogo}
+                          </p>
+                        )}
                         <div className="p-1 space-y-0.5">
                           {opcoesProcFiltradas.map((p, idx) => {
                             const nome = p.exame || p.nome_procedimento || "";
@@ -2744,7 +2777,7 @@ export default function NovaSolicitacao() {
                   <Select
                     value={unidadeId}
                     onChange={(e) => setUnidadeId(e.target.value)}
-                    disabled={isLancamentoRestrito && !!user?.unidade_saude_id}
+                    disabled={!isTfdCentral && !!user?.unidade_saude_id}
                     className="mt-1 text-xs"
                     required
                   >
