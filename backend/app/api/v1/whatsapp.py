@@ -220,7 +220,7 @@ def obter_configuracao_whatsapp(
     ator: User = Depends(get_current_user),
 ):
     """Consulta os parâmetros de integração de WhatsApp (apenas campos seguros/mascarados)."""
-    if not (bool(getattr(ator, "is_superuser", False)) or tem_tela(ator, "cfg_geral") or tem_tela(ator, "integracoes")):
+    if not (bool(getattr(ator, "is_superuser", False)) or tem_tela(ator, "cfg_geral") or tem_tela(ator, "cfg_whatsapp") or tem_tela(ator, "integracoes")):
         raise HTTPException(403, "Apenas administradores podem visualizar configurações de integração")
     c = db.exec(select(IntegrationSettings).where(IntegrationSettings.id == 1)).first()
     if not c:
@@ -247,7 +247,7 @@ def salvar_configuracao_whatsapp(
     ator: User = Depends(get_current_user),
 ):
     """Salva as configurações de integração com WhatsApp (Meta Cloud API, Z-API, Evolution ou Webhook)."""
-    if not (bool(getattr(ator, "is_superuser", False)) or tem_tela(ator, "cfg_geral") or tem_tela(ator, "integracoes")):
+    if not (bool(getattr(ator, "is_superuser", False)) or tem_tela(ator, "cfg_geral") or tem_tela(ator, "cfg_whatsapp") or tem_tela(ator, "integracoes")):
         raise HTTPException(403, "Apenas administradores podem configurar integrações")
 
     c = db.exec(select(IntegrationSettings).where(IntegrationSettings.id == 1)).first()
@@ -288,7 +288,7 @@ def endpoint_testar_whatsapp(
     ator: User = Depends(get_current_user),
 ):
     """Realiza um disparo de teste para verificar a conectividade do gateway com o WhatsApp."""
-    if not (bool(getattr(ator, "is_superuser", False)) or tem_tela(ator, "cfg_geral") or tem_tela(ator, "integracoes")):
+    if not (bool(getattr(ator, "is_superuser", False)) or tem_tela(ator, "cfg_geral") or tem_tela(ator, "cfg_whatsapp") or tem_tela(ator, "integracoes")):
         raise HTTPException(403, "Apenas administradores podem testar integrações")
 
     resultado = disparar_whatsapp_gateway(
@@ -308,7 +308,7 @@ def listar_logs_whatsapp(
     ator: User = Depends(get_current_user),
 ):
     """Consulta os últimos disparos e tentativas de envio via WhatsApp."""
-    if not (bool(getattr(ator, "is_superuser", False)) or tem_tela(ator, "cfg_geral") or tem_tela(ator, "integracoes")):
+    if not (bool(getattr(ator, "is_superuser", False)) or tem_tela(ator, "cfg_geral") or tem_tela(ator, "cfg_whatsapp") or tem_tela(ator, "integracoes")):
         raise HTTPException(403, "Apenas administradores podem visualizar o histórico de logs do WhatsApp.")
     stmt = select(WhatsAppLog).order_by(desc(WhatsAppLog.criado_em)).limit(limit)
     rows = db.exec(stmt).all()
@@ -322,7 +322,7 @@ def disparar_lembretes_manualmente(
     ator: User = Depends(get_current_user),
 ):
     """Executa imediatamente a rotina de envio de lembretes via WhatsApp para os pacientes com exame marcado para o dia seguinte."""
-    if not (bool(getattr(ator, "is_superuser", False)) or tem_tela(ator, "cfg_geral")):
+    if not (bool(getattr(ator, "is_superuser", False)) or tem_tela(ator, "cfg_geral") or tem_tela(ator, "cfg_whatsapp")):
         raise HTTPException(403, "Apenas administradores podem disparar rotinas de lembretes em lote.")
     from datetime import datetime
     from app.services.whatsapp_reminder_worker import executar_disparo_lembretes_dia_anterior

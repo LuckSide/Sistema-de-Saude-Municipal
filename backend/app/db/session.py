@@ -363,6 +363,12 @@ def init_db() -> None:
                 conn.execute(text("ALTER TABLE usuarios ADD COLUMN laboratorio_id INTEGER"))
             except Exception:
                 pass
+        if "paciente_id" not in cols_u3:
+            try:
+                conn.execute(text("ALTER TABLE usuarios ADD COLUMN paciente_id INTEGER"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_usuarios_paciente_id ON usuarios (paciente_id)"))
+            except Exception:
+                pass
         try:
             cols_fila = [c["name"] for c in inspect(conn).get_columns("lab_fila_psf")]
         except Exception:

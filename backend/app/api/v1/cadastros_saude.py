@@ -12,7 +12,7 @@ from app.schemas.cadastros_saude import (
     UnidadeIn,
     UnidadeOut,
 )
-from app.services.permissoes import need_perm
+from app.services.permissoes import need_any_perm
 from app.services.users import gerar_temporaria
 
 
@@ -133,7 +133,7 @@ def listar_medicos(
 def criar_medico(
     data: MedicoIn,
     db: Session = Depends(_get_db),
-    _ator: User = Depends(need_perm("usuarios", "criar")),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_medicos", acoes=("criar",))),
 ):
     """Cadastra novo profissional de saúde e cria automaticamente seu usuário de acesso
     em uma única transação atômica.
@@ -213,7 +213,7 @@ def atualizar_medico(
     mid: int,
     data: MedicoIn,
     db: Session = Depends(_get_db),
-    _ator: User = Depends(need_perm("usuarios", "editar")),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_medicos", acoes=("editar",))),
 ):
     obj = db.get(Medico, mid)
     if not obj:
@@ -298,7 +298,7 @@ def atualizar_medico(
 def inativar_medico(
     mid: int,
     db: Session = Depends(_get_db),
-    _ator: User = Depends(need_perm("usuarios", "excluir")),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_medicos", acoes=("excluir",))),
 ):
     obj = db.get(Medico, mid)
     if not obj:
@@ -350,7 +350,7 @@ def listar_unidades(
 def criar_unidade(
     data: UnidadeIn,
     db: Session = Depends(_get_db),
-    _ator: User = Depends(need_perm("usuarios", "criar")),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", acoes=("criar",))),
 ):
     obj = UnidadeSaude(**data.model_dump())
     db.add(obj)
@@ -365,7 +365,7 @@ def atualizar_unidade(
     uid: int,
     data: UnidadeIn,
     db: Session = Depends(_get_db),
-    _ator: User = Depends(need_perm("usuarios", "editar")),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", acoes=("editar",))),
 ):
     obj = db.get(UnidadeSaude, uid)
     if not obj:
@@ -383,7 +383,7 @@ def atualizar_unidade(
 def inativar_unidade(
     uid: int,
     db: Session = Depends(_get_db),
-    _ator: User = Depends(need_perm("usuarios", "excluir")),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", acoes=("excluir",))),
 ):
     obj = db.get(UnidadeSaude, uid)
     if not obj:
@@ -396,7 +396,7 @@ def inativar_unidade(
 # ---------- Exportações XLSX ----------
 @router.get("/medicos/exportar")
 def exportar_medicos(
-    db: Session = Depends(_get_db), ator=Depends(need_perm("usuarios")),
+    db: Session = Depends(_get_db), ator=Depends(need_any_perm("usuarios", "cfg_medicos")),
 ):
     from app.services.export_xlsx import resposta_xlsx
 
@@ -423,7 +423,7 @@ def exportar_medicos(
 
 @router.get("/unidades-saude/exportar")
 def exportar_unidades(
-    db: Session = Depends(_get_db), ator=Depends(need_perm("usuarios")),
+    db: Session = Depends(_get_db), ator=Depends(need_any_perm("usuarios", "cfg_unidades")),
 ):
     from app.services.export_xlsx import resposta_xlsx
 

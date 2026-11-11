@@ -94,6 +94,12 @@ export type Usuario = {
   unidade_saude_nome?: string | null;
   laboratorio_id?: number | null;
   laboratorio_nome?: string | null;
+  paciente_id?: number | null;
+  paciente_nome?: string | null;
+  paciente_cpf?: string | null;
+  paciente_cns?: string | null;
+  paciente_telefone?: string | null;
+  paciente_nascimento?: string | null;
   permite_retroativo?: boolean;
   is_superuser: boolean;
   is_active: boolean;
@@ -150,8 +156,26 @@ export const createUnidadeSaude = (payload: Record<string, unknown>) => api.post
 export const updateUnidadeSaude = (id: number, payload: Record<string, unknown>) => api.put<UnidadeSaude>(`/api/unidades-saude/${id}`, payload).then((r) => r.data);
 export const deleteUnidadeSaude = (id: number) => api.delete(`/api/unidades-saude/${id}`).then((r) => r.data);
 
-export const fetchUsuarios = (page?: number, limit?: number) =>
-  api.get<Pagina<Usuario> | Usuario[]>("/api/usuarios/", { params: { page, limit } }).then((r) => r.data);
+export type UsuariosResumo = {
+  total: number;
+  ativos: number;
+  inativos: number;
+  superusers: number;
+  com_vinculo: number;
+  sem_vinculo: number;
+};
+export const fetchUsuariosResumo = () =>
+  api.get<UsuariosResumo>("/api/usuarios/resumo").then((r) => r.data);
+export const fetchUsuarios = (
+  page?: number,
+  limit?: number,
+  filtros?: { q?: string; area?: string; filtro?: string }
+) =>
+  api
+    .get<Pagina<Usuario> | Usuario[]>("/api/usuarios/", {
+      params: { page, limit, ...filtros },
+    })
+    .then((r) => r.data);
 export const createUsuario = (payload: Record<string, unknown>) =>
   api.post<Usuario>("/api/usuarios/", payload).then((r) => r.data);
 export const updateUsuario = (id: number, payload: Record<string, unknown>) =>

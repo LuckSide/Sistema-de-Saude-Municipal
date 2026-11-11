@@ -26,6 +26,7 @@ class UserCreate(BaseModel):
     medico_id: int | None = None
     unidade_saude_id: int | None = None
     laboratorio_id: int | None = None
+    paciente_id: int | None = None
     permite_retroativo: bool = True
     is_superuser: bool = False
     is_active: bool = True
@@ -39,6 +40,7 @@ class UserUpdate(BaseModel):
     medico_id: int | None = None
     unidade_saude_id: int | None = None
     laboratorio_id: int | None = None
+    paciente_id: int | None = None
     permite_retroativo: bool | None = None
     is_superuser: bool | None = None
     is_active: bool | None = None
@@ -62,6 +64,12 @@ class UserOut(BaseModel):
     unidade_saude_nome: str | None = None
     laboratorio_id: int | None = None
     laboratorio_nome: str | None = None
+    paciente_id: int | None = None
+    paciente_nome: str | None = None
+    paciente_cpf: str | None = None
+    paciente_cns: str | None = None
+    paciente_telefone: str | None = None
+    paciente_nascimento: str | None = None
     permite_retroativo: bool = True
     is_superuser: bool
     is_active: bool

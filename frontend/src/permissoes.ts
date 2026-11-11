@@ -14,9 +14,11 @@ import {
   FileText,
   FlaskConical,
   HeartPulse,
+  History,
   LayoutDashboard,
   ListOrdered,
   MapPin,
+  MessageCircle,
   Microscope,
   Network,
   Package,
@@ -29,6 +31,7 @@ import {
   Tv,
   CalendarClock,
   Upload,
+  UserCheck,
   Users,
   Wind,
   type LucideIcon,
@@ -75,11 +78,12 @@ export const MODULOS: NoPermissao[] = [
       { codigo: "tfd_exames", rotulo: "Fila de Espera e Solicitações", icone: ListOrdered, rota: "/fila-exames" },
       { codigo: "tfd_fila_lancamento", rotulo: "Solicitações — somente lançamento PSF (sem agendar/urgente)", icone: ListOrdered, rota: "/tfd/solicitacoes/nova" },
       { codigo: "tfd_agenda", rotulo: "Agenda e Recepção", icone: CalendarDays, rota: "/tfd/agendamentos" },
-      { codigo: "tfd_agendamentos", rotulo: "Agenda e Recepção", icone: CalendarDays, rota: "/tfd/agendamentos" },
+      { codigo: "tfd_relatorio_agendados", rotulo: "Relatório de Agendados", icone: ChartColumn, rota: "/tfd/relatorio-agendados" },
       { codigo: "tfd_medico", rotulo: "Painel Médico (prioridades)", icone: Stethoscope, rota: "/painel-medico" },
       { codigo: "tfd_catalogo", rotulo: "Catálogo de procedimentos", icone: BookOpenText, rota: "/tfd/catalogo" },
       { codigo: "tfd_destinos", rotulo: "Destinos", icone: MapPin, rota: "/tfd/destinos" },
-      { codigo: "tfd_frota", rotulo: "Frota", icone: CalendarDays, rota: "/tfd/frota" },
+      { codigo: "tfd_frota", rotulo: "Frota (Veículos)", icone: CalendarDays, rota: "/tfd/frota" },
+      { codigo: "tfd_motoristas", rotulo: "Motoristas", icone: UserCheck, rota: "/tfd/motoristas" },
       { codigo: "tfd_frota_gestao", rotulo: "Gestão de frota (só veículos/motoristas)", icone: Bus, rota: "/tfd/quadro" },
       { codigo: "tfd_faturamento", rotulo: "Faturamento", icone: ReceiptText, rota: "/tfd/faturamento" },
     ],
@@ -144,9 +148,12 @@ export const MODULOS: NoPermissao[] = [
   },
   {
     codigo: "usuarios",
-    rotulo: "Contas",
+    rotulo: "Contas e Administração",
     icone: Users,
     rota: "/usuarios",
+    filhos: [
+      { codigo: "auditoria", rotulo: "Auditoria / Logs (requer Superuser)", icone: History, rota: "/auditoria" },
+    ],
   },
   {
     codigo: "integracoes",
@@ -158,7 +165,12 @@ export const MODULOS: NoPermissao[] = [
       { codigo: "cfg_filas", rotulo: "Importação de filas", icone: Upload, rota: "/configuracoes?aba=filas" },
       { codigo: "cfg_pec", rotulo: "Integração PEC / e-SUS APS", icone: Database, rota: "/configuracoes?aba=pec" },
       { codigo: "cfg_rnds", rotulo: "Integração RNDS", icone: Network, rota: "/configuracoes?aba=rnds" },
-      { codigo: "cfg_backup", rotulo: "Backup e Restauração", icone: Database, rota: "/configuracoes?aba=backup" },
+      { codigo: "cfg_whatsapp", rotulo: "WhatsApp / Notificações", icone: MessageCircle, rota: "/configuracoes?aba=whatsapp" },
+      { codigo: "cfg_exames", rotulo: "Procedimentos / Exames Permitidos", icone: FileSpreadsheet, rota: "/configuracoes?aba=exames" },
+      { codigo: "cfg_medicos", rotulo: "Médicos e Profissionais", icone: Stethoscope, rota: "/configuracoes?aba=medicos" },
+      { codigo: "cfg_unidades", rotulo: "Unidades de Saúde e PSFs", icone: Building2, rota: "/configuracoes?aba=unidades" },
+      { codigo: "cfg_laboratorios", rotulo: "Laboratórios Conveniados", icone: FlaskConical, rota: "/configuracoes?aba=laboratorios" },
+      { codigo: "cfg_backup", rotulo: "Backup e Restauração (Superuser)", icone: Database, rota: "/configuracoes?aba=backup" },
     ],
   },
 ];
@@ -181,6 +193,7 @@ export function todosCodigos(): string[] {
 export const EXCLUSIVAS = new Set(["tfd_medico", "tfd_fila_lancamento", "tfd_viagens_passadas", "apac_regulacao", "lab_recepcao"]);
 export function concedida(telas: string[], codigo: string): boolean {
   if (telas.includes(codigo)) return true;
+  if (codigo === "tfd_agenda" && telas.includes("tfd_agendamentos")) return true;
   if (EXCLUSIVAS.has(codigo)) return false;
   const pai = PAI_DE[codigo];
   return !!pai && telas.includes(pai);

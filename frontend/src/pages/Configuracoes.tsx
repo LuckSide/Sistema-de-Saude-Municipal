@@ -107,9 +107,11 @@ export default function Configuracoes() {
     if (a.id === "geral") return can("cfg_geral") || can("usuarios");
     if (a.id === "filas") return can("cfg_filas");
     if (a.id === "pec") return can("cfg_pec");
-    if (a.id === "whatsapp") return can("cfg_geral") || can("usuarios") || can("cfg_pec");
-    if (a.id === "exames") return can("cfg_geral") || can("usuarios") || can("tfd_procedimentos") || can("lab_vagas");
-    if (a.id === "medicos" || a.id === "unidades" || a.id === "laboratorios") return can("usuarios") || can("lab_vagas");
+    if (a.id === "whatsapp") return can("cfg_whatsapp") || can("cfg_geral") || can("usuarios") || can("cfg_pec");
+    if (a.id === "exames") return can("cfg_exames") || can("cfg_geral") || can("usuarios") || can("tfd_catalogo") || can("lab_vagas");
+    if (a.id === "medicos") return can("cfg_medicos") || can("usuarios") || can("lab_vagas");
+    if (a.id === "unidades") return can("cfg_unidades") || can("usuarios") || can("lab_vagas");
+    if (a.id === "laboratorios") return can("cfg_laboratorios") || can("usuarios") || can("lab_vagas");
     if (a.id === "backup") return !!user?.is_superuser;
     return can("cfg_rnds");
   });

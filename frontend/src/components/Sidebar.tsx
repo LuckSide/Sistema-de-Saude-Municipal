@@ -72,7 +72,7 @@ const MODULOS_NAV: ModuloNav[] = [
     icon: Truck,
     itens: [
       { to: "/tfd/frota", label: "Veículos", icon: Car, tela: "tfd_frota", ou: ["tfd_frota_gestao", "tfd"] },
-      { to: "/tfd/motoristas", label: "Motoristas", icon: UserCheck, tela: "tfd_frota", ou: ["tfd_frota_gestao", "tfd"] },
+      { to: "/tfd/motoristas", label: "Motoristas", icon: UserCheck, tela: "tfd_frota", ou: ["tfd_motoristas", "tfd_frota_gestao", "tfd"] },
     ],
   },
   {
@@ -96,7 +96,7 @@ const MODULOS_NAV: ModuloNav[] = [
       { to: "/tfd/solicitacoes/nova", label: "Nova Solicitação", icon: PlusCircle, tela: "tfd_exames", ou: ["tfd_fila_lancamento", "tfd"] },
       { to: "/fila-exames", label: "Fila de Espera", icon: ListOrdered, tela: "tfd_exames", ou: ["tfd_fila_lancamento", "tfd_medico", "tfd"] },
       { to: "/tfd/agendamentos", label: "Agenda e Recepção", icon: CalendarDays, tela: "tfd_agenda", ou: ["tfd"] },
-      { to: "/tfd/relatorio-agendados", label: "Relatório de Agendados", icon: BarChart3, tela: "tfd_agenda", ou: ["tfd", "usuarios"] },
+      { to: "/tfd/relatorio-agendados", label: "Relatório de Agendados", icon: BarChart3, tela: "tfd_agenda", ou: ["tfd_relatorio_agendados", "tfd", "usuarios"] },
       { to: "/painel-medico", label: "Regulação Médica", icon: Stethoscope, tela: "tfd_medico" },
     ],
   },
@@ -106,8 +106,8 @@ const MODULOS_NAV: ModuloNav[] = [
     icon: BookOpenText,
     itens: [
       { to: "/tfd/pacientes", label: "Pacientes", icon: Users, tela: "tfd_pacientes", ou: ["tfd"] },
-      { to: "/configuracoes?aba=medicos", label: "Médicos", icon: Stethoscope, tela: "usuarios", ou: ["lab_vagas", "cfg_geral"] },
-      { to: "/configuracoes?aba=unidades", label: "Unidades de Saúde", icon: Building2, tela: "usuarios", ou: ["lab_vagas", "cfg_geral"] },
+      { to: "/configuracoes?aba=medicos", label: "Médicos", icon: Stethoscope, tela: "usuarios", ou: ["cfg_medicos", "lab_vagas", "cfg_geral"] },
+      { to: "/configuracoes?aba=unidades", label: "Unidades de Saúde", icon: Building2, tela: "usuarios", ou: ["cfg_unidades", "lab_vagas", "cfg_geral"] },
       { to: "/tfd/catalogo", label: "Catálogo SIGTAP", icon: BookOpenText, tela: "tfd_catalogo", ou: ["tfd"] },
       { to: "/tfd/destinos", label: "Destinos", icon: MapPin, tela: "tfd_destinos", ou: ["tfd"] },
     ],
@@ -165,8 +165,8 @@ const MODULOS_NAV: ModuloNav[] = [
     itens: [
       { to: "/usuarios", label: "Usuários e Acessos", icon: UserCog, tela: "usuarios" },
       { to: "/configuracoes?aba=backup", label: "Backup do Sistema", icon: Database, tela: "cfg_backup", ou: ["usuarios", "cfg_geral"] },
-      { to: "/configuracoes?aba=geral", label: "Configurações", icon: SlidersHorizontal, tela: "cfg_geral", ou: ["usuarios", "integracoes"] },
-      { to: "/auditoria", label: "Auditoria / Logs", icon: History, tela: "usuarios" },
+      { to: "/configuracoes?aba=geral", label: "Configurações", icon: SlidersHorizontal, tela: "cfg_geral", ou: ["usuarios", "integracoes", "cfg_filas", "cfg_pec", "cfg_rnds", "cfg_whatsapp", "cfg_exames", "cfg_medicos", "cfg_unidades", "cfg_laboratorios"] },
+      { to: "/auditoria", label: "Auditoria / Logs", icon: History, tela: "auditoria", ou: ["usuarios"] },
     ],
   },
 ];

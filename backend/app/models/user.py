@@ -17,6 +17,7 @@ class User(SQLModel, table=True):
     medico_id: int | None = Field(default=None, index=True)  # vínculo conta <-> cadastro de médico (perfil Médico)
     unidade_saude_id: int | None = Field(default=None, index=True)  # vínculo conta <-> unidade de saúde / PSF
     laboratorio_id: int | None = Field(default=None, index=True)  # vínculo conta <-> laboratório conveniado
+    paciente_id: int | None = Field(default=None, index=True)  # vínculo conta <-> cadastro de pessoa/paciente do município
     permite_retroativo: bool = Field(default=True)  # trava de lançamentos retroativos (data < hoje)
     is_superuser: bool = Field(default=False)
     is_active: bool = Field(default=True)

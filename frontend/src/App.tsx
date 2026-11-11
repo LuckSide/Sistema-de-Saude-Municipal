@@ -80,7 +80,21 @@ function Guard({ tela, children }: { tela: string; children: ReactElement }) {
 function ConfigGuard({ children }: { children: ReactElement }) {
   const { can, loading } = useAuth();
   if (loading) return null;
-  if (!can("usuarios") && !can("integracoes")) return <Navigate to="/" replace />;
+  const CFG_TELAS = [
+    "usuarios",
+    "integracoes",
+    "cfg_geral",
+    "cfg_filas",
+    "cfg_pec",
+    "cfg_rnds",
+    "cfg_whatsapp",
+    "cfg_exames",
+    "cfg_medicos",
+    "cfg_unidades",
+    "cfg_laboratorios",
+    "cfg_backup",
+  ];
+  if (!CFG_TELAS.some((t) => can(t))) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -94,7 +108,7 @@ function GuardQualquer({ telas, children }: { telas: string[]; children: ReactEl
 function LabGuard({ tela, telas, children }: { tela: string; telas?: string[]; children: ReactElement }) {
   const { can, loading } = useAuth();
   if (loading) return null;
-  const LAB_TELAS = ["lab", "lab_marcacao", "lab_fila", "lab_agenda", "lab_vagas", "lab_audit", "lab_faturamento", "lab_sigtap"];
+  const LAB_TELAS = ["lab", "lab_recepcao", "lab_marcacao", "lab_fila", "lab_agenda", "lab_vagas", "lab_audit", "lab_faturamento", "lab_sigtap"];
   const alvos = telas ?? [tela];
   if (tela === "lab") {
     if (!LAB_TELAS.some((t) => can(t))) return <Navigate to="/" replace />;
@@ -107,7 +121,7 @@ function LabGuard({ tela, telas, children }: { tela: string; telas?: string[]; c
 function TfdRoutes() {
   return (
     <Protected>
-      <GuardQualquer telas={["tfd", "tfd_resumo", "tfd_viagens", "tfd_pacientes", "tfd_exames", "tfd_fila_lancamento", "tfd_agenda", "tfd_catalogo", "tfd_destinos", "tfd_frota", "tfd_frota_gestao", "tfd_faturamento"]}>
+      <GuardQualquer telas={["tfd", "tfd_resumo", "tfd_viagens", "tfd_pacientes", "tfd_exames", "tfd_fila_lancamento", "tfd_agenda", "tfd_relatorio_agendados", "tfd_catalogo", "tfd_destinos", "tfd_frota", "tfd_motoristas", "tfd_frota_gestao", "tfd_faturamento"]}>
         <Shell>
           <TfdLayout />
         </Shell>
@@ -200,7 +214,7 @@ export default function App() {
           <Route path="/tfd" element={<TfdRoutes />}>
             <Route index element={<Guard tela="tfd_resumo"><TfdResumo /></Guard>} />
             <Route path="solicitacoes/nova" element={<GuardQualquer telas={["tfd_exames", "tfd_fila_lancamento", "tfd"]}><NovaSolicitacao /></GuardQualquer>} />
-            <Route path="relatorio-agendados" element={<GuardQualquer telas={["tfd_agenda", "tfd_exames", "tfd", "usuarios"]}><RelatorioAgendados /></GuardQualquer>} />
+            <Route path="relatorio-agendados" element={<GuardQualquer telas={["tfd_agenda", "tfd_relatorio_agendados", "tfd_exames", "tfd", "usuarios"]}><RelatorioAgendados /></GuardQualquer>} />
             <Route path="viagens" element={<Guard tela="tfd_viagens"><TfdViagens /></Guard>} />
             <Route path="quadro" element={<GuardQualquer telas={["tfd_viagens", "tfd_frota_gestao"]}><QuadroViagens /></GuardQualquer>} />
             <Route path="pacientes" element={<Guard tela="tfd_pacientes"><TfdPacientes /></Guard>} />
@@ -210,7 +224,7 @@ export default function App() {
             <Route path="catalogo" element={<Guard tela="tfd_catalogo"><CatalogoExames /></Guard>} />
             <Route path="destinos" element={<Guard tela="tfd_destinos"><TfdDestinos /></Guard>} />
             <Route path="frota" element={<GuardQualquer telas={["tfd_frota", "tfd_frota_gestao", "tfd"]}><TfdFrota /></GuardQualquer>} />
-            <Route path="motoristas" element={<GuardQualquer telas={["tfd_frota", "tfd_frota_gestao", "tfd"]}><TfdMotoristas /></GuardQualquer>} />
+            <Route path="motoristas" element={<GuardQualquer telas={["tfd_frota", "tfd_motoristas", "tfd_frota_gestao", "tfd"]}><TfdMotoristas /></GuardQualquer>} />
             <Route path="faturamento" element={<Guard tela="tfd_faturamento"><TfdFaturamento /></Guard>} />
           </Route>
           <Route path="/lab" element={<LabRoutes />}>
@@ -397,11 +411,11 @@ export default function App() {
             path="/auditoria"
             element={
               <Protected>
-                <Guard tela="usuarios">
+                <GuardQualquer telas={["auditoria", "usuarios"]}>
                   <Shell>
                     <Auditoria />
                   </Shell>
-                </Guard>
+                </GuardQualquer>
               </Protected>
             }
           />

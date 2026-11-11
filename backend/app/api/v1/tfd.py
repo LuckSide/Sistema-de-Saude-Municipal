@@ -845,7 +845,7 @@ def listar_veiculos(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
-    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "tfd_viagens", "usuarios")),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd_motoristas", "tfd", "tfd_viagens", "usuarios")),
 ):
     filtros = []
     if q.strip():
@@ -869,7 +869,7 @@ def listar_veiculos(
 def criar_veiculo(
     data: VeiculoIn,
     db: Session = Depends(get_db),
-    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "usuarios", acoes=("criar",))),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd_motoristas", "tfd", "usuarios", acoes=("criar",))),
 ):
     placa = data.placa.strip().upper()
     if db.exec(select(Veiculo).where(Veiculo.placa == placa)).first():
@@ -887,7 +887,7 @@ def atualizar_veiculo(
     vid: int,
     data: VeiculoIn,
     db: Session = Depends(get_db),
-    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "usuarios", acoes=("editar",))),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd_motoristas", "tfd", "usuarios", acoes=("editar",))),
 ):
     obj = db.get(Veiculo, vid)
     if not obj:
@@ -909,7 +909,7 @@ def gerenciar_manutencao_veiculo(
     vid: int,
     data: VeiculoManutencaoIn,
     db: Session = Depends(get_db),
-    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "usuarios", acoes=("editar",))),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd_motoristas", "tfd", "usuarios", acoes=("editar",))),
 ):
     obj = db.get(Veiculo, vid)
     if not obj:
@@ -937,7 +937,7 @@ def gerenciar_manutencao_veiculo(
 def excluir_veiculo(
     vid: int,
     db: Session = Depends(get_db),
-    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "usuarios", acoes=("excluir",))),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd_motoristas", "tfd", "usuarios", acoes=("excluir",))),
 ):
     obj = db.get(Veiculo, vid)
     if not obj:
@@ -978,7 +978,7 @@ def listar_motoristas(
     page: int = 1,
     limit: int = 100,
     db: Session = Depends(get_db),
-    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "tfd_viagens", "usuarios")),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd_motoristas", "tfd", "tfd_viagens", "usuarios")),
 ):
     base = select(Motorista).order_by(Motorista.nome)
     filtros = []
@@ -999,7 +999,7 @@ def listar_motoristas(
 def criar_motorista(
     data: MotoristaIn,
     db: Session = Depends(get_db),
-    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "usuarios", acoes=("criar",))),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd_motoristas", "tfd", "usuarios", acoes=("criar",))),
 ):
     nome = data.nome.strip()
     cpf = "".join(c for c in (data.cpf or "") if c.isdigit())[:11]
@@ -1018,7 +1018,7 @@ def atualizar_motorista(
     mid: int,
     data: MotoristaIn,
     db: Session = Depends(get_db),
-    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "usuarios", acoes=("editar",))),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd_motoristas", "tfd", "usuarios", acoes=("editar",))),
 ):
     obj = db.get(Motorista, mid)
     if not obj:
@@ -1041,7 +1041,7 @@ def atualizar_motorista(
 def excluir_motorista(
     mid: int,
     db: Session = Depends(get_db),
-    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd", "usuarios", acoes=("excluir",))),
+    _=Depends(need_any_perm("tfd_frota", "tfd_frota_gestao", "tfd_motoristas", "tfd", "usuarios", acoes=("excluir",))),
 ):
     obj = db.get(Motorista, mid)
     if not obj:
@@ -3555,7 +3555,7 @@ def obter_relatorio_agendados(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=1000),
     db: Session = Depends(get_db),
-    ator: User = Depends(need_any_perm("tfd_agenda", "tfd_exames", "tfd")),
+    ator: User = Depends(need_any_perm("tfd_agenda", "tfd_relatorio_agendados", "tfd_exames", "tfd")),
 ):
     """Relatório detalhado de agendamentos e solicitações com métricas de resultados, absenteísmo e segmentação."""
     esc = (escopo or "").lower() if isinstance(escopo, str) else "agendados"
@@ -3729,7 +3729,7 @@ def exportar_relatorio_agendados(
     escopo: str = Query(default="agendados", max_length=50),
     q: str = Query(default="", max_length=80),
     db: Session = Depends(get_db),
-    ator: User = Depends(need_any_perm("tfd_agenda", "tfd_exames", "tfd")),
+    ator: User = Depends(need_any_perm("tfd_agenda", "tfd_relatorio_agendados", "tfd_exames", "tfd")),
 ):
     """Exporta o relatório gerencial de agendados para planilha Excel (.xlsx)."""
     from app.services.export_xlsx import resposta_xlsx

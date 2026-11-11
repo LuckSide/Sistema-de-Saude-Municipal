@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlmodel import Session, func, select
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
+from sqlmodel import Session, func, select
 
 from app.core.deps import get_current_user, get_db, require_superuser
 from app.core.pagination import Pagina, paginar
+from app.models.tfd import Paciente
 from app.models.user import User
 from app.schemas import PrimeiraTrocaIn, ResetSenhaOut, TrocarSenhaIn, UserCreate, UserOut, UserUpdate
 from app.services.users import (
@@ -13,6 +15,7 @@ from app.services.users import (
     to_out,
     trocar_senha,
     update_user,
+    users_to_out,
 )
 
 router = APIRouter()
@@ -59,19 +62,83 @@ def resetar_senha(
     return ResetSenhaOut(ok=True, senha_temporaria=temporaria)
 
 
+@router.get("/resumo")
+def resumo_usuarios(
+    db: Session = Depends(get_db),
+    _=Depends(require_superuser),
+):
+    total = db.exec(select(func.count()).select_from(User)).one() or 0
+    ativos = db.exec(select(func.count()).select_from(User).where(User.is_active == True)).one() or 0  # noqa: E712
+    superusers = db.exec(select(func.count()).select_from(User).where(User.is_superuser == True)).one() or 0  # noqa: E712
+    com_vinculo = db.exec(select(func.count()).select_from(User).where(User.paciente_id.is_not(None))).one() or 0
+    return {
+        "total": total,
+        "ativos": ativos,
+        "inativos": max(0, total - ativos),
+        "superusers": superusers,
+        "com_vinculo": com_vinculo,
+        "sem_vinculo": max(0, total - com_vinculo),
+    }
+
+
 @router.get("/", response_model=Pagina[UserOut])
 def listar(
+    q: str = Query(default="", max_length=120),
+    area: str = Query(default="", max_length=20),
+    filtro: str = Query(default="", max_length=30),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
     _=Depends(require_superuser),
 ):
-    base = select(User).order_by(User.username)
+    base = select(User).outerjoin(Paciente, User.paciente_id == Paciente.id)
+    filtros = []
+
+    termo = (q or "").strip()
+    if termo:
+        like = f"%{termo}%"
+        digitos = "".join(c for c in termo if c.isdigit())
+        conds = [
+            User.username.ilike(like),
+            User.nome.ilike(like),
+            Paciente.nome.ilike(like),
+            Paciente.cpf.ilike(like),
+            Paciente.cns.ilike(like),
+        ]
+        if digitos:
+            conds.append(Paciente.cpf.ilike(f"%{digitos}%"))
+            if len(digitos) == 11:
+                cpf_fmt = f"{digitos[:3]}.{digitos[3:6]}.{digitos[6:9]}-{digitos[9:]}"
+                conds.append(Paciente.cpf.ilike(f"%{cpf_fmt}%"))
+        filtros.append(or_(*conds))
+
+    area_limpa = (area or "").strip()
+    if area_limpa:
+        filtros.append(User.area == area_limpa)
+
+    filtro_limpo = (filtro or "").strip().lower()
+    if filtro_limpo == "ativos":
+        filtros.append(User.is_active == True)  # noqa: E712
+    elif filtro_limpo == "inativos":
+        filtros.append(User.is_active == False)  # noqa: E712
+    elif filtro_limpo == "superuser":
+        filtros.append(User.is_superuser == True)  # noqa: E712
+    elif filtro_limpo == "com_vinculo":
+        filtros.append(User.paciente_id.is_not(None))
+    elif filtro_limpo == "sem_vinculo":
+        filtros.append(User.paciente_id.is_(None))
+    elif filtro_limpo == "medicos":
+        filtros.append(User.medico_id.is_not(None))
+
+    if filtros:
+        base = base.where(*filtros)
+    base = base.order_by(User.username)
+
     total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
     meta = paginar(total, page, limit)
-    rows = db.exec(base.offset(meta["offset"]).limit(limit)).all()
+    rows = list(db.exec(base.offset(meta["offset"]).limit(limit)).all())
     return {
-        "data": [to_out(u, db) for u in rows],
+        "data": users_to_out(rows, db),
         "total": total,
         "page": meta["page"],
         "pages": meta["pages"],
@@ -86,17 +153,24 @@ def exportar(
     from app.services.export_xlsx import resposta_xlsx
     from app.services.users import list_users
 
+    usuarios_out = users_to_out(list_users(db), db)
     linhas = [{
-        "usuario": u.username, "nome": u.nome or "", "area": u.area,
-        "telas": u.telas or "",
-        "perfil": "Superuser" if u.is_superuser else ("Médico" if getattr(u, "medico_id", None) else "Operador"),
-        "status": "ativo" if u.is_active else "inativo",
-    } for u in list_users(db)]
+        "usuario": u["username"],
+        "nome": u["nome"] or "",
+        "pessoa_vinculada": u.get("paciente_nome") or "",
+        "cpf_vinculado": u.get("paciente_cpf") or "",
+        "area": u["area"],
+        "telas": ",".join(u["telas"]),
+        "perfil": "Superuser" if u["is_superuser"] else ("Médico" if u.get("medico_id") else "Operador"),
+        "status": "ativo" if u["is_active"] else "inativo",
+    } for u in usuarios_out]
     return resposta_xlsx(
         "Contas de usuário", admin.nome or admin.username,
         [
             {"chave": "usuario", "rotulo": "Usuário", "largura": 22},
             {"chave": "nome", "rotulo": "Nome", "largura": 32},
+            {"chave": "pessoa_vinculada", "rotulo": "Pessoa do Município", "largura": 32},
+            {"chave": "cpf_vinculado", "rotulo": "CPF Vinculado", "largura": 18},
             {"chave": "area", "rotulo": "Área", "largura": 14},
             {"chave": "telas", "rotulo": "Telas", "largura": 50},
             {"chave": "perfil", "rotulo": "Perfil", "largura": 14},

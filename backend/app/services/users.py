@@ -26,12 +26,46 @@ def telas_to_list(raw: str) -> list[str]:
     return [t for t in (raw or "").split(",") if t]
 
 
+def _montar_user_out(
+    user: User,
+    unidade_nome: str | None = None,
+    lab_nome: str | None = None,
+    paciente: object | None = None,
+) -> dict:
+    pid = getattr(user, "paciente_id", None)
+    p_nasc = getattr(paciente, "nascimento", None) if paciente else None
+    return {
+        "id": user.id,
+        "username": user.username,
+        "nome": user.nome,
+        "area": user.area,
+        "telas": telas_to_list(user.telas),
+        "acoes": acoes_map(user),
+        "medico_id": getattr(user, "medico_id", None),
+        "unidade_saude_id": getattr(user, "unidade_saude_id", None),
+        "unidade_saude_nome": unidade_nome,
+        "laboratorio_id": getattr(user, "laboratorio_id", None),
+        "laboratorio_nome": lab_nome,
+        "paciente_id": pid,
+        "paciente_nome": getattr(paciente, "nome", None) if paciente else None,
+        "paciente_cpf": getattr(paciente, "cpf", None) if paciente else None,
+        "paciente_cns": getattr(paciente, "cns", None) if paciente else None,
+        "paciente_telefone": getattr(paciente, "telefone", None) if paciente else None,
+        "paciente_nascimento": p_nasc.isoformat() if p_nasc else None,
+        "permite_retroativo": bool(getattr(user, "permite_retroativo", True)),
+        "is_superuser": user.is_superuser,
+        "is_active": user.is_active,
+        "must_change_password": bool(getattr(user, "must_change_password", False)),
+    }
+
+
 def to_out(user: User, db: Session | None = None) -> dict:
     uid = getattr(user, "unidade_saude_id", None)
     unidade_nome = None
     if uid and db:
         try:
             from app.models.cadastros_saude import UnidadeSaude
+
             u = db.get(UnidadeSaude, uid)
             if u:
                 unidade_nome = u.nome
@@ -42,28 +76,70 @@ def to_out(user: User, db: Session | None = None) -> dict:
     if lid and db:
         try:
             from app.models.lab_fase6 import Laboratorio
+
             l = db.get(Laboratorio, lid)
             if l:
                 lab_nome = l.nome
         except Exception:
             pass
-    return {
-        "id": user.id,
-        "username": user.username,
-        "nome": user.nome,
-        "area": user.area,
-        "telas": telas_to_list(user.telas),
-        "acoes": acoes_map(user),
-        "medico_id": getattr(user, "medico_id", None),
-        "unidade_saude_id": uid,
-        "unidade_saude_nome": unidade_nome,
-        "laboratorio_id": lid,
-        "laboratorio_nome": lab_nome,
-        "permite_retroativo": bool(getattr(user, "permite_retroativo", True)),
-        "is_superuser": user.is_superuser,
-        "is_active": user.is_active,
-        "must_change_password": bool(getattr(user, "must_change_password", False)),
-    }
+    pid = getattr(user, "paciente_id", None)
+    paciente = None
+    if pid and db:
+        try:
+            from app.models.tfd import Paciente
+
+            paciente = db.get(Paciente, pid)
+        except Exception:
+            pass
+    return _montar_user_out(user, unidade_nome=unidade_nome, lab_nome=lab_nome, paciente=paciente)
+
+
+def users_to_out(users: list[User], db: Session) -> list[dict]:
+    """Serializa uma lista de usuários resolvendo vínculos em lote (sem queries N+1)."""
+    if not users:
+        return []
+    from app.models.cadastros_saude import UnidadeSaude
+    from app.models.lab_fase6 import Laboratorio
+    from app.models.tfd import Paciente
+
+    u_ids = {u.unidade_saude_id for u in users if getattr(u, "unidade_saude_id", None)}
+    l_ids = {u.laboratorio_id for u in users if getattr(u, "laboratorio_id", None)}
+    p_ids = {u.paciente_id for u in users if getattr(u, "paciente_id", None)}
+
+    unidades_map = (
+        {
+            u.id: u.nome
+            for u in db.exec(select(UnidadeSaude).where(UnidadeSaude.id.in_(u_ids))).all()
+        }
+        if u_ids
+        else {}
+    )
+    labs_map = (
+        {
+            l.id: l.nome
+            for l in db.exec(select(Laboratorio).where(Laboratorio.id.in_(l_ids))).all()
+        }
+        if l_ids
+        else {}
+    )
+    pacs_map = (
+        {
+            p.id: p
+            for p in db.exec(select(Paciente).where(Paciente.id.in_(p_ids))).all()
+        }
+        if p_ids
+        else {}
+    )
+
+    return [
+        _montar_user_out(
+            u,
+            unidade_nome=unidades_map.get(getattr(u, "unidade_saude_id", None)),
+            lab_nome=labs_map.get(getattr(u, "laboratorio_id", None)),
+            paciente=pacs_map.get(getattr(u, "paciente_id", None)),
+        )
+        for u in users
+    ]
 
 
 def gerar_temporaria(tamanho: int = 5) -> str:
@@ -106,6 +182,18 @@ def _validar_laboratorio_id(db: Session, lab_id) -> int | None:
     return lid
 
 
+def _validar_paciente_id(db: Session, paciente_id):
+    if paciente_id is None or paciente_id == "" or paciente_id == 0:
+        return None, None
+    from app.models.tfd import Paciente
+
+    pid = int(paciente_id)
+    pac = db.get(Paciente, pid)
+    if not pac:
+        raise ValueError("pessoa/paciente vinculada não encontrada no cadastro municipal")
+    return pid, pac
+
+
 def get_by_username(db: Session, username: str) -> User | None:
     return db.exec(select(User).where(User.username == username)).first()
 
@@ -138,16 +226,19 @@ def create_user(db: Session, data: UserCreate) -> tuple[User, str | None]:
         if len(data.password) < SENHA_MIN:
             raise ValueError(f"Senha deve ter ao menos {SENHA_MIN} caracteres")
         pwd_hash = hash_password(data.password)
+    pid, pac_vinculado = _validar_paciente_id(db, getattr(data, "paciente_id", None))
+    nome_final = (data.nome or "").strip() or (pac_vinculado.nome if pac_vinculado else "")
     user = User(
         username=username,
         password_hash=pwd_hash,
-        nome=data.nome.strip(),
+        nome=nome_final,
         area=data.area,
         telas=telas_to_str(data.telas),
         acoes=json.dumps(validar_acoes(data.acoes or {})),
         medico_id=_validar_medico_id(db, data.medico_id),
         unidade_saude_id=_validar_unidade_id(db, data.unidade_saude_id),
         laboratorio_id=_validar_laboratorio_id(db, data.laboratorio_id),
+        paciente_id=pid,
         permite_retroativo=data.permite_retroativo,
         is_superuser=data.is_superuser,
         is_active=data.is_active,
@@ -180,14 +271,20 @@ def update_user(db: Session, user: User, data: UserUpdate) -> User:
         user.unidade_saude_id = _validar_unidade_id(db, patch.pop("unidade_saude_id"))
     if "laboratorio_id" in patch:
         user.laboratorio_id = _validar_laboratorio_id(db, patch.pop("laboratorio_id"))
+    pac_vinculado = None
+    if "paciente_id" in patch:
+        pid, pac_vinculado = _validar_paciente_id(db, patch.pop("paciente_id"))
+        user.paciente_id = pid
     if "acoes" in patch and patch["acoes"] is not None:
         try:
             user.acoes = json.dumps(validar_acoes(patch.pop("acoes")))
-        except ValueError as e:
+        except ValueError:
             raise ValueError("Erro de validação ao processar as ações.")
     for k, v in patch.items():
         if v is not None and hasattr(user, k):
             setattr(user, k, v.strip() if isinstance(v, str) else v)
+    if pac_vinculado and not (user.nome or "").strip():
+        user.nome = pac_vinculado.nome
     db.add(user)
     try:
         db.commit()

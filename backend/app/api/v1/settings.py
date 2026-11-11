@@ -10,7 +10,7 @@ from app.core.deps import get_current_user_senha_ok as get_user_ok, get_db
 from app.db.session import engine
 from app.models.settings import SystemSettings
 from app.models.user import User
-from app.services.permissoes import need_perm
+from app.services.permissoes import need_any_perm, need_perm
 
 router = APIRouter()
 
@@ -146,7 +146,7 @@ def obter_exames_permitidos(
 def salvar_exames_permitidos(
     data: ExamesPermitidosIn,
     db: Session = Depends(get_db),
-    _user: User = Depends(need_perm("cfg_geral", "editar")),
+    _user: User = Depends(need_any_perm("cfg_geral", "cfg_exames", acoes=("editar",))),
 ):
     s = get_settings(db)
     limpos = sorted({c.strip() for c in data.codigos if c.strip()})

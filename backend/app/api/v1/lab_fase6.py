@@ -81,7 +81,7 @@ def listar_labs(
 def criar_lab(
     data: LaboratorioIn,
     db: Session = Depends(get_db),
-    _=Depends(need_perm("lab_vagas", "criar")),
+    _=Depends(need_any_perm("lab_vagas", "cfg_laboratorios", acoes=("criar",))),
 ):
     nome = data.nome.strip()
     if db.exec(select(Laboratorio).where(Laboratorio.nome == nome)).first():
@@ -98,7 +98,7 @@ def atualizar_lab(
     lid: int,
     data: LaboratorioIn,
     db: Session = Depends(get_db),
-    _=Depends(need_perm("lab_vagas", "editar")),
+    _=Depends(need_any_perm("lab_vagas", "cfg_laboratorios", acoes=("editar",))),
 ):
     lab = db.get(Laboratorio, lid)
     if not lab:
@@ -117,7 +117,7 @@ def atualizar_lab(
 
 @router.delete("/exames/laboratorios/{lid}", status_code=204)
 def remover_lab(
-    lid: int, db: Session = Depends(get_db), _=Depends(need_perm("lab_vagas", "excluir"))
+    lid: int, db: Session = Depends(get_db), _=Depends(need_any_perm("lab_vagas", "cfg_laboratorios", acoes=("excluir",)))
 ):
     lab = db.get(Laboratorio, lid)
     if not lab:
