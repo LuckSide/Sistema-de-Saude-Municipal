@@ -1,26 +1,36 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  Clock,
   Download,
   ExternalLink,
   Globe,
   History,
+  Layers,
   RefreshCw,
   Sparkles,
   Upload,
 } from "lucide-react";
 import {
   labSigtap,
+  msgErro,
   pagData,
   pagMeta,
+  sigtapArvore,
+  sigtapAutoSyncConfig,
+  sigtapAutoSyncExecutar,
+  sigtapAutoSyncStatus,
   sigtapBuscarAutomatico,
   sigtapImportar,
   sigtapVersoes,
+  type SigtapArvore,
+  type SigtapAutoSyncStatus,
   type SigtapImportOut,
   type SigtapProc,
   type SigtapVersao,
 } from "../../services/api";
 import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
+import { Combobox } from "../../components/ui/combobox";
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
 
@@ -33,13 +43,18 @@ function brl(v: number | undefined): string {
 export default function LabSigtap() {
   const [q, setQ] = useState("");
   const [inst, setInst] = useState("");
+  const [apenasLab, setApenasLab] = useState(false);
+  const [grupoCodigo, setGrupoCodigo] = useState("");
+  const [subgrupoCodigo, setSubgrupoCodigo] = useState("");
+  const [cboCodigo, setCboCodigo] = useState("");
+  const [arvore, setArvore] = useState<SigtapArvore | null>(null);
   const [lista, setLista] = useState<SigtapProc[]>([]);
   const [erro, setErro] = useState("");
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
 
-  // Importação Tabela Unificada
+  // Importação e Atualização Agendada (Tabela Unificada DATASUS)
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [competencia, setCompetencia] = useState(() => {
     const d = new Date();
@@ -51,10 +66,22 @@ export default function LabSigtap() {
   const [avisoAuto, setAvisoAuto] = useState<{ mensagem: string; linkOficial?: string } | null>(null);
   const [preview, setPreview] = useState<SigtapImportOut | null>(null);
   const [versoes, setVersoes] = useState<SigtapVersao[]>([]);
+  const [autoSync, setAutoSync] = useState<SigtapAutoSyncStatus | null>(null);
+  const [salvandoAutoSync, setSalvandoAutoSync] = useState(false);
+  const [executandoAutoSync, setExecutandoAutoSync] = useState(false);
   const [ok, setOk] = useState("");
 
   function buscar(p = 1) {
-    labSigtap(q || undefined, inst || undefined, p, 100)
+    labSigtap(
+      q || undefined,
+      inst || undefined,
+      p,
+      100,
+      apenasLab,
+      grupoCodigo || undefined,
+      subgrupoCodigo || undefined,
+      cboCodigo || undefined,
+    )
       .then((r) => {
         setLista(pagData<SigtapProc>(r));
         const m = pagMeta(r);
@@ -69,17 +96,118 @@ export default function LabSigtap() {
     sigtapVersoes().then(setVersoes).catch(() => {});
   }
 
+  function carregarAutoSync() {
+    sigtapAutoSyncStatus().then(setAutoSync).catch(() => {});
+  }
+
+  useEffect(() => {
+    let cancel = false;
+    sigtapArvore({
+      grupo_codigo: grupoCodigo || undefined,
+      subgrupo_codigo: subgrupoCodigo || undefined,
+      cbo: cboCodigo || undefined,
+    })
+      .then((res) => {
+        if (!cancel) setArvore(res);
+      })
+      .catch(() => {});
+    return () => {
+      cancel = true;
+    };
+  }, [grupoCodigo, subgrupoCodigo, cboCodigo]);
+
   useEffect(() => {
     const t = setTimeout(() => {
       setPage(1);
       buscar(1);
     }, 250);
     return () => clearTimeout(t);
-  }, [q, inst]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, inst, apenasLab, grupoCodigo, subgrupoCodigo, cboCodigo]);
 
   useEffect(() => {
     carregarVersoes();
+    carregarAutoSync();
   }, []);
+
+  const opcoesCboArvore = useMemo(() => {
+    return (arvore?.cbos ?? []).map((c) => ({
+      value: c.cbo,
+      label: c.descricao ? `${c.cbo} · ${c.descricao}` : `CBO ${c.cbo}`,
+      sub: c.qtd_procedimentos ? `${c.qtd_procedimentos} proc.` : c.origem,
+      keywords: `${c.cbo} ${c.descricao}`,
+    }));
+  }, [arvore]);
+
+  async function atualizarConfigAutoSync(patch: { sigtap_sync_automatica?: boolean; sigtap_sync_intervalo_horas?: number }) {
+    setSalvandoAutoSync(true);
+    setErro("");
+    try {
+      const novo = await sigtapAutoSyncConfig(patch);
+      setAutoSync((prev) =>
+        prev
+          ? { ...prev, ...novo }
+          : {
+              sigtap_sync_automatica: novo.sigtap_sync_automatica,
+              sigtap_sync_intervalo_horas: novo.sigtap_sync_intervalo_horas,
+              sigtap_sync_ultima_execucao: null,
+              sigtap_sync_ultimo_status: "",
+              sigtap_sync_ultima_competencia: "",
+              sigtap_sync_ultimo_erro: "",
+              em_execucao: false,
+            },
+      );
+      setOk("Configuração da rotina automática SIGTAP/DATASUS atualizada.");
+    } catch (e: unknown) {
+      setErro(msgErro(e, "Falha ao atualizar configuração automática do SIGTAP."));
+    } finally {
+      setSalvandoAutoSync(false);
+    }
+  }
+
+  async function rodarSyncAgendadaAgora() {
+    setExecutandoAutoSync(true);
+    setErro("");
+    setOk("");
+    setAvisoAuto(null);
+    try {
+      const res = await sigtapAutoSyncExecutar(competencia || undefined, false);
+      carregarAutoSync();
+      const st = String(res.status || "").toUpperCase();
+      if (st === "SUCESSO" && res.ok) {
+        setPreview(res as unknown as SigtapImportOut);
+        setOk(
+          `Atualização automática concluída (${String(res.competencia || competencia)}): ${Number(res.inseridos || 0)} inseridos, ${Number(res.atualizados || 0)} atualizados.`,
+        );
+        carregarVersoes();
+        buscar(1);
+      } else if (st === "SEM_NOVIDADE") {
+        setOk(String(res.mensagem || `Verificação concluída: competência ${String(res.competencia || competencia)} já estava sincronizada.`));
+      } else if (st === "INDISPONIVEL" || st === "ERRO" || res.ok === false) {
+        setAvisoAuto({
+          mensagem: String(
+            res.mensagem ||
+              "Portal DATASUS/SIGTAP indisponível no momento. Utilize o download manual abaixo.",
+          ),
+          linkOficial: "http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp",
+        });
+      } else {
+        setOk(String(res.mensagem || "Verificação automática concluída."));
+      }
+    } catch (e: unknown) {
+      const detalhe = msgErro(
+        e,
+        "Não foi possível conectar ao portal DATASUS no momento para atualização automática.",
+      );
+      setAvisoAuto({
+        mensagem: detalhe,
+        linkOficial: "http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp",
+      });
+      carregarAutoSync();
+    } finally {
+      setExecutandoAutoSync(false);
+    }
+  }
 
   async function buscarAutomatico(simular: boolean) {
     if (!/^\d{4}-\d{2}$/.test(competencia)) {
@@ -146,12 +274,25 @@ export default function LabSigtap() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <h2 className="font-display text-lg font-bold text-sus-950">Tabela SIGTAP</h2>
-        <span className="ml-auto"><ExportarExcel url="/api/lab/sigtap/exportar" arquivo="sigtap" params={{ q: q.trim() || undefined, instrumento: inst || undefined }} /></span>
+        <h2 className="font-display text-lg font-bold text-sus-950">Tabela SIGTAP Completa</h2>
+        <span className="ml-auto">
+          <ExportarExcel
+            url="/api/lab/sigtap/exportar"
+            arquivo="sigtap"
+            params={{
+              q: q.trim() || undefined,
+              instrumento: inst || undefined,
+              apenas_laboratoriais: apenasLab,
+              grupo_codigo: grupoCodigo || undefined,
+              subgrupo_codigo: subgrupoCodigo || undefined,
+              cbo: cboCodigo || undefined,
+            }}
+          />
+        </span>
       </div>
 
-      <Card className="mb-4 p-4">
-        <div className="grid gap-3 md:grid-cols-3">
+      <Card className="mb-4 p-4 space-y-3">
+        <div className="grid gap-3 md:grid-cols-4">
           <div className="md:col-span-2">
             <Label>Busca rápida</Label>
             <Input placeholder="Código ou descrição do procedimento…" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -162,6 +303,80 @@ export default function LabSigtap() {
               <option value="">Todos</option>
               {INSTRUMENTOS.map((i) => <option key={i} value={i}>{i}</option>)}
             </Select>
+          </div>
+          <div className="flex flex-col justify-end pb-1">
+            <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-sus-950">
+              <input
+                type="checkbox"
+                checked={apenasLab}
+                onChange={(e) => setApenasLab(e.target.checked)}
+                className="h-4 w-4 rounded border-sus-900/30 text-teal"
+              />
+              Somente Laboratoriais (0202)
+            </label>
+          </div>
+        </div>
+
+        <div className="grid gap-3 border-t border-sus-900/10 pt-3 md:grid-cols-3">
+          <div>
+            <Label className="flex items-center gap-1.5 text-xs">
+              <Layers className="h-3.5 w-3.5 text-teal" /> Área (Grupo SIGTAP)
+            </Label>
+            <Select
+              value={grupoCodigo}
+              onChange={(e) => {
+                const g = e.target.value;
+                setGrupoCodigo(g);
+                if (subgrupoCodigo && (!g || !subgrupoCodigo.startsWith(g))) {
+                  setSubgrupoCodigo("");
+                }
+              }}
+              className="mt-1"
+            >
+              <option value="">Todas as áreas (Grupos 01–08)</option>
+              {(arvore?.grupos ?? []).map((g) => (
+                <option key={g.codigo} value={g.codigo}>
+                  {g.codigo} · {g.nome}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs">Subgrupo SIGTAP</Label>
+            <Select
+              value={subgrupoCodigo}
+              onChange={(e) => {
+                const s = e.target.value;
+                setSubgrupoCodigo(s);
+                if (s.length >= 2 && !grupoCodigo) {
+                  setGrupoCodigo(s.slice(0, 2));
+                }
+              }}
+              className="mt-1"
+            >
+              <option value="">Todos os subgrupos</option>
+              {(arvore?.subgrupos ?? [])
+                .filter((s) => !grupoCodigo || s.grupo_codigo === grupoCodigo || s.codigo.startsWith(grupoCodigo))
+                .map((s) => (
+                  <option key={s.codigo} value={s.codigo}>
+                    {s.codigo} · {s.nome}
+                  </option>
+                ))}
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs">CBO (Ocupação Autorizada)</Label>
+            <div className="mt-1">
+              <Combobox
+                value={cboCodigo}
+                onChange={(v) => setCboCodigo(v)}
+                options={opcoesCboArvore}
+                placeholder="Filtrar por CBO…"
+                searchPlaceholder="Código ou ocupação CBO…"
+                emptyText="Nenhum CBO nessa área/subgrupo"
+                showAll={true}
+              />
+            </div>
           </div>
         </div>
       </Card>
@@ -175,7 +390,7 @@ export default function LabSigtap() {
           <thead>
             <tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
               <th className="px-4 py-3">Código</th>
-              <th className="px-4 py-3">Descrição</th>
+              <th className="px-4 py-3">Descrição / Área &amp; Subgrupo</th>
               <th className="px-4 py-3">Complexidade</th>
               <th className="px-4 py-3">Instrumento</th>
               <th className="px-4 py-3">Valores SA/SP/SH</th>
@@ -185,7 +400,15 @@ export default function LabSigtap() {
             {lista.map((s) => (
               <tr key={s.id ?? s.codigo} className="border-b border-sus-900/5 last:border-0">
                 <td className="px-4 py-3 font-mono font-semibold">{s.codigo}</td>
-                <td className="px-4 py-3">{s.descricao}</td>
+                <td className="px-4 py-3">
+                  <p className="font-medium text-sus-950">{s.descricao}</p>
+                  {(s.grupo_nome || s.subgrupo_nome) && (
+                    <p className="mt-0.5 text-[11px] text-ink/55">
+                      {s.grupo_codigo ? `${s.grupo_codigo} ${s.grupo_nome}` : ""}
+                      {s.subgrupo_codigo ? ` › ${s.subgrupo_codigo} ${s.subgrupo_nome}` : ""}
+                    </p>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-xs">{s.complexidade || "—"}</td>
                 <td className="px-4 py-3 text-xs">{s.instrumento}</td>
                 <td className="px-4 py-3 text-xs">{brl(s.valor_sa)} / {brl(s.valor_sp)} / {brl(s.valor_sh)}</td>
@@ -207,6 +430,73 @@ export default function LabSigtap() {
             Mantenha o catálogo de procedimentos, valores ambulatoriais/hospitalares e compatibilidades de CBO/CID
             atualizados com a competência oficial do Ministério da Saúde.
           </p>
+        </div>
+
+        {/* Rotina Agendada de Atualização Automática do DATASUS */}
+        <div className="rounded-2xl border border-sus-900/15 bg-sand/40 p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="font-bold text-sm text-sus-950 flex items-center gap-1.5">
+                <Clock className="h-4 w-4 text-teal" /> Rotina Agendada de Busca Automática (DATASUS)
+              </p>
+              <p className="text-xs text-ink/65 mt-0.5">
+                Verifica periodicamente no portal/FTP do DATASUS se há nova competência SIGTAP e importa a árvore completa automaticamente.
+              </p>
+            </div>
+            {autoSync && (
+              <span
+                className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+                  ["sucesso", "sem_novidade"].includes((autoSync.sigtap_sync_ultimo_status || "").toLowerCase())
+                    ? "bg-emerald-100 text-emerald-800"
+                    : ["erro", "indisponivel"].includes((autoSync.sigtap_sync_ultimo_status || "").toLowerCase())
+                      ? "bg-red-100 text-red-800"
+                      : "bg-sus-900/10 text-sus-900"
+                }`}
+              >
+                Status: {autoSync.sigtap_sync_ultimo_status || "aguardando"}
+                {autoSync.sigtap_sync_ultima_competencia ? ` (${autoSync.sigtap_sync_ultima_competencia})` : ""}
+              </span>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-xs font-semibold text-sus-950">
+              <input
+                type="checkbox"
+                checked={Boolean(autoSync?.sigtap_sync_automatica ?? true)}
+                disabled={salvandoAutoSync}
+                onChange={(e) => atualizarConfigAutoSync({ sigtap_sync_automatica: e.target.checked })}
+                className="h-4 w-4 rounded border-sus-900/30 text-teal"
+              />
+              Verificação periódica automática ativa
+            </label>
+            <div>
+              <Label className="text-[11px]">Periodicidade</Label>
+              <Select
+                value={String(autoSync?.sigtap_sync_intervalo_horas ?? 168)}
+                disabled={salvandoAutoSync}
+                onChange={(e) => atualizarConfigAutoSync({ sigtap_sync_intervalo_horas: Number(e.target.value) })}
+                className="mt-1 h-9 bg-white text-xs"
+              >
+                <option value="24">A cada 24 horas (Diária)</option>
+                <option value="72">A cada 3 dias (72h)</option>
+                <option value="168">Semanal (168h)</option>
+                <option value="720">Mensal (30 dias)</option>
+              </Select>
+            </div>
+            <Button
+              type="button"
+              onClick={rodarSyncAgendadaAgora}
+              disabled={executandoAutoSync || buscandoAuto || importando}
+              className="!w-auto text-xs"
+            >
+              <RefreshCw className={`h-4 w-4 ${executandoAutoSync ? "animate-spin" : ""}`} />
+              {executandoAutoSync ? "Verificando DATASUS…" : "Executar Verificação Agendada Agora"}
+            </Button>
+          </div>
+          {autoSync?.sigtap_sync_ultimo_erro && (
+            <p className="text-[11px] text-red-700">Último erro registrado: {autoSync.sigtap_sync_ultimo_erro}</p>
+          )}
         </div>
 
         {/* Bloco 1: Integração de Download Automático */}

@@ -322,6 +322,10 @@ def init_db() -> None:
             "equipe_ine": "VARCHAR(20) DEFAULT '' NOT NULL",
             "microarea": "VARCHAR(20) DEFAULT '' NOT NULL",
             "co_seq_cidadao_pec": "BIGINT",
+            "situacao_cadastral": "VARCHAR(30) DEFAULT 'ativo' NOT NULL",
+            "data_obito": "DATE",
+            "motivo_situacao": "VARCHAR(255) DEFAULT '' NOT NULL",
+            "situacao_atualizada_em": "TIMESTAMP",
             "sincronizado_em": "TIMESTAMP",
             "updated_at": "TIMESTAMP",
         }.items():
@@ -337,6 +341,15 @@ def init_db() -> None:
         ):
             try:
                 conn.execute(text(f"CREATE INDEX IF NOT EXISTS {idx} ON tfd_pacientes ({col})"))
+            except Exception:
+                pass
+        try:
+            cols_plog = [c["name"] for c in inspect(conn).get_columns("pec_sync_logs")]
+        except Exception:
+            cols_plog = ["total_baixas_fila"]
+        if "total_baixas_fila" not in cols_plog:
+            try:
+                conn.execute(text("ALTER TABLE pec_sync_logs ADD COLUMN total_baixas_fila INTEGER DEFAULT 0 NOT NULL"))
             except Exception:
                 pass
         try:
@@ -526,6 +539,12 @@ def init_db() -> None:
             "valor_sp": "FLOAT DEFAULT 0 NOT NULL",
             "valor_sh": "FLOAT DEFAULT 0 NOT NULL",
             "competencia": "VARCHAR(7) DEFAULT '' NOT NULL",
+            "grupo_codigo": "VARCHAR(2) DEFAULT '' NOT NULL",
+            "grupo_nome": "VARCHAR(150) DEFAULT '' NOT NULL",
+            "subgrupo_codigo": "VARCHAR(4) DEFAULT '' NOT NULL",
+            "subgrupo_nome": "VARCHAR(180) DEFAULT '' NOT NULL",
+            "forma_organizacao_codigo": "VARCHAR(6) DEFAULT '' NOT NULL",
+            "forma_organizacao_nome": "VARCHAR(180) DEFAULT '' NOT NULL",
         }.items():
             if col not in cols_sg:
                 try:
@@ -772,6 +791,12 @@ def init_db() -> None:
             "pec_sync_ultima_execucao": "TIMESTAMP",
             "pec_sync_ultimo_status": "VARCHAR(30) DEFAULT '' NOT NULL",
             "pec_sync_total_pacientes": "INTEGER DEFAULT 0 NOT NULL",
+            "sigtap_sync_automatica": "BOOLEAN DEFAULT TRUE NOT NULL",
+            "sigtap_sync_intervalo_horas": "INTEGER DEFAULT 24 NOT NULL",
+            "sigtap_sync_ultima_execucao": "TIMESTAMP",
+            "sigtap_sync_ultimo_status": "VARCHAR(30) DEFAULT '' NOT NULL",
+            "sigtap_sync_ultima_competencia": "VARCHAR(10) DEFAULT '' NOT NULL",
+            "sigtap_sync_ultimo_erro": "VARCHAR(500) DEFAULT '' NOT NULL",
             "whatsapp_habilitado": "BOOLEAN DEFAULT FALSE NOT NULL",
             "whatsapp_provedor": "VARCHAR(50) DEFAULT 'api_oficial' NOT NULL",
             "whatsapp_api_url": "VARCHAR(500) DEFAULT '' NOT NULL",
@@ -804,8 +829,14 @@ def init_db() -> None:
         except Exception:
             pass
         try:
-            from app.services.sigtap_hierarquia import seed_vivver_procedimentos
+            from app.services.sigtap_hierarquia import seed_arvore_sigtap, seed_vivver_procedimentos
             seed_vivver_procedimentos(db)
+            seed_arvore_sigtap(db)
+        except Exception:
+            pass
+        try:
+            from app.services.cbo_normalizacao import unificar_cbos_duplicados
+            unificar_cbos_duplicados(db)
         except Exception:
             pass
         try:

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  AlertTriangle,
   CalendarDays,
   CheckCircle2,
   Clock,
   ExternalLink,
+  History,
   Layers,
   ListOrdered,
   MapPin,
@@ -19,6 +21,14 @@ function fmtNasc(s: string | null): string {
   const base = s.slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(base)) return "—";
   return base.split("-").reverse().join("/");
+}
+
+function fmtDataHora(s?: string | null): string {
+  if (!s || typeof s !== "string") return "—";
+  const base = s.slice(0, 10);
+  const data = /^\d{4}-\d{2}-\d{2}$/.test(base) ? base.split("-").reverse().join("/") : s;
+  const horaMatch = s.match(/T(\d{2}:\d{2})/);
+  return horaMatch ? `${data} ${horaMatch[1]}` : data;
 }
 
 function enderecoCompleto(p: PacientePerfil["paciente"]): string {
@@ -48,7 +58,7 @@ export default function PerfilPaciente({
   const navigate = useNavigate();
   const [perfil, setPerfil] = useState<PacientePerfil | null>(null);
   const [erro, setErro] = useState("");
-  const [abaDemanda, setAbaDemanda] = useState<"espera" | "realizados">("espera");
+  const [abaDemanda, setAbaDemanda] = useState<"espera" | "realizados" | "historico">("espera");
   const [modoVisao, setModoVisao] = useState<"geral" | "procedimento">("geral");
 
   const itensEspera = useMemo(() => {
@@ -58,6 +68,8 @@ export default function PerfilPaciente({
   const itensRealizados = useMemo(() => {
     return (perfil?.demanda || []).filter((d) => (d.status || "").toLowerCase() !== "aguardando");
   }, [perfil]);
+
+  const historico = useMemo(() => perfil?.historico ?? [], [perfil]);
 
   const abrirExame = (id: number) => {
     if (onVerExame) {
@@ -77,19 +89,45 @@ export default function PerfilPaciente({
   if (!perfil) return <p className="py-6 text-center text-sm text-ink/50">Carregando perfil…</p>;
 
   const p = perfil.paciente;
+  const situacao = (p.situacao_cadastral || "ativo").toLowerCase();
+  const isInativoCadastral = situacao !== "ativo";
   return (
     <div className="space-y-4">
       {/* Cabeçalho do perfil */}
-      <section className="rounded-2xl border border-sus-900/10 p-4">
-        <div className="flex items-center justify-between">
+      <section className={`rounded-2xl border p-4 ${isInativoCadastral ? "border-red-300 bg-red-50/40" : "border-sus-900/10"}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-sus-900/50">
             <User className="h-3.5 w-3.5" /> Dados pessoais
           </p>
-          <span className="rounded-md bg-sus-900/10 px-2.5 py-0.5 text-xs font-mono font-bold text-sus-900">
-            Prontuário: {p.codigo_prontuario || `PR-${String(p.id).padStart(5, "0")}`}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            {situacao === "obito" && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-red-600 px-2.5 py-0.5 text-xs font-bold text-white shadow-2xs">
+                <AlertTriangle className="h-3 w-3" /> Óbito{p.data_obito ? ` (${fmtNasc(p.data_obito)})` : ""}
+              </span>
+            )}
+            {situacao === "mudanca_municipio" && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-600 px-2.5 py-0.5 text-xs font-bold text-white shadow-2xs">
+                <AlertTriangle className="h-3 w-3" /> Mudança de Município
+              </span>
+            )}
+            {isInativoCadastral && situacao !== "obito" && situacao !== "mudanca_municipio" && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-700 px-2.5 py-0.5 text-xs font-bold text-white shadow-2xs">
+                <AlertTriangle className="h-3 w-3" /> {p.situacao_cadastral}
+              </span>
+            )}
+            <span className="rounded-md bg-sus-900/10 px-2.5 py-0.5 text-xs font-mono font-bold text-sus-900">
+              Prontuário: {p.codigo_prontuario || `PR-${String(p.id).padStart(5, "0")}`}
+            </span>
+          </div>
         </div>
         <p className="mt-1 font-display text-lg font-bold text-sus-950">{p.nome}</p>
+        {isInativoCadastral && (
+          <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
+            <strong>Situação cadastral (e-SUS PEC):</strong>{" "}
+            {p.motivo_situacao || (situacao === "obito" ? "Óbito registrado" : "Mudança de município")}.
+            {" "}Pedidos ativos na fila de espera foram baixados automaticamente e registrados no histórico do prontuário.
+          </div>
+        )}
         <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2.5 text-xs md:grid-cols-3">
           <div><dt className="text-ink/45">Nome completo</dt><dd className="font-semibold">{p.nome}</dd></div>
           <div><dt className="text-ink/45">Prontuário / ID</dt><dd className="font-semibold font-mono text-sus-900">{p.codigo_prontuario || `PR-${String(p.id).padStart(5, "0")}`}</dd></div>
@@ -151,6 +189,24 @@ export default function PerfilPaciente({
                 abaDemanda === "realizados" ? "bg-white/20 text-white" : "bg-emerald-600/10 text-emerald-700"
               }`}>
                 {itensRealizados.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAbaDemanda("historico")}
+              className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition shadow-xs ${
+                abaDemanda === "historico"
+                  ? "bg-sus-900 text-white shadow-sus-900/20"
+                  : "bg-sand/60 text-sus-900/70 hover:bg-sand hover:text-sus-950 border border-sus-900/10"
+              }`}
+            >
+              <History className="h-4 w-4" />
+              <span>Histórico do Prontuário</span>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                abaDemanda === "historico" ? "bg-white/20 text-white" : "bg-sus-900/10 text-sus-900"
+              }`}>
+                {historico.length}
               </span>
             </button>
           </div>
@@ -540,6 +596,61 @@ export default function PerfilPaciente({
             <p className="mt-3 text-[11px] text-ink/45">
               Histórico de Procedimentos: exibe procedimentos já realizados ou marcados pelo paciente com baixa automática na fila de espera.
             </p>
+          </div>
+        )}
+
+        {abaDemanda === "historico" && (
+          <div className="mt-3 space-y-2.5">
+            {historico.length === 0 ? (
+              <p className="rounded-xl border border-sus-900/10 bg-sand/30 px-4 py-6 text-center text-xs text-ink/55">
+                Nenhum evento de baixa cadastral ou movimentação automática registrado para este paciente.
+              </p>
+            ) : (
+              historico.map((h, idx) => {
+                const ev = (h.tipo_evento || "").toLowerCase();
+                const isObitoEv = ev.includes("obito");
+                const isMudancaEv = ev.includes("mudanca");
+                const rotulo = isObitoEv
+                  ? "Baixa por Óbito"
+                  : isMudancaEv
+                    ? "Baixa por Mudança de Município"
+                    : h.tipo_evento;
+                const corBadge = isObitoEv
+                  ? "bg-red-100 text-red-800 border-red-200"
+                  : isMudancaEv
+                    ? "bg-amber-100 text-amber-800 border-amber-200"
+                    : "bg-sus-900/10 text-sus-900 border-sus-900/15";
+                return (
+                  <div
+                    key={h.id ?? `${h.tipo_evento}-${idx}`}
+                    className="rounded-xl border border-sus-900/10 bg-white p-3 text-xs shadow-2xs"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${corBadge}`}>
+                        {rotulo}
+                      </span>
+                      <span className="font-mono text-[11px] text-ink/55">
+                        {fmtDataHora(h.registrado_em)}
+                      </span>
+                    </div>
+                    {h.motivo && (
+                      <p className="mt-1.5 font-semibold text-sus-950">{h.motivo}</p>
+                    )}
+                    {h.descricao && (
+                      <p className="mt-0.5 text-ink/75">{h.descricao}</p>
+                    )}
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink/55">
+                      <span>Origem: <strong className="text-ink/80">{h.origem || "—"}</strong></span>
+                      <span>Exames baixados: <strong className="text-ink/80">{h.exames_baixados_qtd ?? 0}</strong></span>
+                      {h.exames_baixados_ids && (
+                        <span>Protocolos/IDs: <strong className="font-mono text-ink/80">{h.exames_baixados_ids}</strong></span>
+                      )}
+                      <span>Registrado por: <strong className="text-ink/80">{h.registrado_por || "—"}</strong></span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         )}
       </section>

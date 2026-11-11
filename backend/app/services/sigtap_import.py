@@ -110,9 +110,20 @@ def _eh_compat(nome_arq: str) -> str:
     return ""
 
 
-def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usuario: str, simular: bool = True) -> dict:
+def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usuario: str, simular: bool = True, origem: str = "upload") -> dict:
     """arquivos: [(nome, bytes)]. Retorna stats + erros (amostra)."""
-    from app.models.lab_exames import SigtapCbo, SigtapCid, SigtapProcedimento, SigtapVersao
+    from app.models.lab_exames import (
+        SigtapCbo,
+        SigtapCid,
+        SigtapFormaOrganizacao,
+        SigtapGrupo,
+        SigtapOcupacao,
+        SigtapProcedimento,
+        SigtapSubgrupo,
+        SigtapVersao,
+    )
+    from app.services.cbo_normalizacao import limpar_codigo_cbo, sanitizar_texto_cbo
+    from app.services.sigtap_hierarquia import GRUPOS_SIGTAP, SUBGRUPOS_SIGTAP, decompor_codigo_sigtap
 
     stats = {
         "simulacao": simular, "arquivo": ", ".join(n for n, _ in arquivos)[:200],
@@ -129,6 +140,10 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
     pend_proc: dict[str, dict] = {}
     pend_cbo: list[dict] = []
     pend_cid: list[dict] = []
+    grupos_zip: dict[str, str] = {}
+    subgrupos_zip: dict[str, str] = {}
+    formas_zip: dict[str, str] = {}
+    ocorrencias_zip: dict[str, str] = {}
 
     COMPLEXIDADE_MAP = {"0": "NA", "1": "AB", "2": "MC", "3": "AC"}
     for nome_arq, raw in arquivos:
@@ -142,19 +157,45 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
             # ZIP oficial da Tabela Unificada DATASUS (layout fixo)
             if "tb_procedimento.txt" in names:
                 zfiles = {n: zf.read(n) for n in names if not n.endswith("/")}
+                # Áreas / Grupos, Subgrupos, Formas de Organização e Ocupações
+                if "tb_grupo.txt" in zfiles:
+                    for gline in zfiles["tb_grupo.txt"].decode("latin-1", "ignore").splitlines():
+                        if len(gline) >= 3:
+                            gc = gline[0:2].strip()
+                            gn = gline[2:102].strip()
+                            if gc.isdigit() and gn:
+                                grupos_zip[gc] = gn[:150]
+                if "tb_sub_grupo.txt" in zfiles:
+                    for sline in zfiles["tb_sub_grupo.txt"].decode("latin-1", "ignore").splitlines():
+                        if len(sline) >= 5:
+                            sc = sline[0:4].strip()
+                            sn = sline[4:104].strip()
+                            if sc.isdigit() and sn:
+                                subgrupos_zip[sc] = sn[:180]
+                if "tb_forma_organizacao.txt" in zfiles:
+                    for fline in zfiles["tb_forma_organizacao.txt"].decode("latin-1", "ignore").splitlines():
+                        if len(fline) >= 7:
+                            fc = fline[0:6].strip()
+                            fn = fline[6:106].strip()
+                            if fc.isdigit() and fn:
+                                formas_zip[fc] = fn[:180]
                 # descrições auxiliares
                 ocorrencias = {}
                 cids = {}
                 if "tb_ocupacao.txt" in zfiles:
-                    for bline in zfiles["tb_ocupacao.txt"].decode("latin-1").splitlines():
+                    for bline in zfiles["tb_ocupacao.txt"].decode("latin-1", "ignore").splitlines():
                         if len(bline) >= 6:
-                            ocorrencias[bline[0:6].strip()] = bline[6:156].strip()
+                            cbo_k = limpar_codigo_cbo(bline[0:6]) or bline[0:6].strip()
+                            desc_k = bline[6:156].strip()
+                            if cbo_k:
+                                ocorrencias[cbo_k] = desc_k
+                                ocorrencias_zip[cbo_k] = desc_k
                 if "tb_cid.txt" in zfiles:
-                    for cline in zfiles["tb_cid.txt"].decode("latin-1").splitlines():
+                    for cline in zfiles["tb_cid.txt"].decode("latin-1", "ignore").splitlines():
                         if len(cline) >= 4:
                             cids[cline[0:4].strip()] = cline[4:104].strip()
                 stats["processados"] += 0
-                for line in zfiles["tb_procedimento.txt"].decode("latin-1").splitlines():
+                for line in zfiles["tb_procedimento.txt"].decode("latin-1", "ignore").splitlines():
                     if not line.strip():
                         continue
                     if len(line) < 318:
@@ -179,6 +220,10 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                     valor_sh = int((line[282:294] or "0").strip() or "0") / 100.0
                     valor_sa = int((line[294:306] or "0").strip() or "0") / 100.0
                     valor_sp = int((line[306:318] or "0").strip() or "0") / 100.0
+                    hier = decompor_codigo_sigtap(cod)
+                    g_cod = hier["grupo_codigo"]
+                    sg_cod = hier["subgrupo_codigo"]
+                    f_cod = hier["forma_organizacao"]
                     pend_proc[cod] = {
                         "codigo": cod, "descricao": desc, "complexidade": comp or "NA",
                         "instrumento": "BPA-C", "sexo": sexo,
@@ -188,15 +233,21 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                         "valor_sp": round(valor_sp, 2),
                         "valor_sh": round(valor_sh, 2),
                         "competencia": competencia,
+                        "grupo_codigo": g_cod,
+                        "grupo_nome": (grupos_zip.get(g_cod) or GRUPOS_SIGTAP.get(g_cod, hier["grupo_nome"]))[:150],
+                        "subgrupo_codigo": sg_cod,
+                        "subgrupo_nome": (subgrupos_zip.get(sg_cod) or SUBGRUPOS_SIGTAP.get(sg_cod, hier["subgrupo_nome"]))[:180],
+                        "forma_organizacao_codigo": f_cod,
+                        "forma_organizacao_nome": formas_zip.get(f_cod, "")[:180],
                     }
                 # CBO ocupação compatível
                 if "rl_procedimento_ocupacao.txt" in zfiles:
                     vistos = set()
-                    for line in zfiles["rl_procedimento_ocupacao.txt"].decode("latin-1").splitlines():
+                    for line in zfiles["rl_procedimento_ocupacao.txt"].decode("latin-1", "ignore").splitlines():
                         if len(line) < 16:
                             continue
                         cod = line[0:10].strip()
-                        cbo = line[10:16].strip()
+                        cbo = limpar_codigo_cbo(line[10:16]) or line[10:16].strip()
                         if not re.fullmatch(r"\d{10}", cod) or not cbo:
                             continue
                         chave = (cod, cbo)
@@ -289,6 +340,10 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                     inst = "BPA-C" if "BPA" in inst else (inst if len(inst) <= 10 else "BPA-C")
                     if inst not in INSTRUMENTOS:
                         inst = "BPA-C"
+                hier_csv = decompor_codigo_sigtap(cod)
+                g_cod_csv = hier_csv["grupo_codigo"]
+                sg_cod_csv = hier_csv["subgrupo_codigo"]
+                f_cod_csv = hier_csv["forma_organizacao"]
                 pend_proc[cod] = {
                     "codigo": cod, "descricao": desc, "complexidade": comp,
                     "instrumento": inst, "sexo": get(lin, "sexo").upper()[:10],
@@ -300,9 +355,61 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                     "valor_sp": _num(get(lin, "valor_sp")),
                     "valor_sh": _num(get(lin, "valor_sh")),
                     "competencia": competencia,
+                    "grupo_codigo": g_cod_csv,
+                    "grupo_nome": GRUPOS_SIGTAP.get(g_cod_csv, hier_csv["grupo_nome"])[:150],
+                    "subgrupo_codigo": sg_cod_csv,
+                    "subgrupo_nome": SUBGRUPOS_SIGTAP.get(sg_cod_csv, hier_csv["subgrupo_nome"])[:180],
+                    "forma_organizacao_codigo": f_cod_csv,
+                    "forma_organizacao_nome": formas_zip.get(f_cod_csv, "")[:180],
                 }
 
     if not simular:
+        # Upsert árvore hierárquica SIGTAP (grupos, subgrupos, formas, ocupações normalizadas)
+        grupos_db = {g.codigo: g for g in db.exec(_select(SigtapGrupo)).all()}
+        for gc, gn in ({**GRUPOS_SIGTAP, **grupos_zip}).items():
+            if gc not in grupos_db:
+                g_obj = SigtapGrupo(codigo=gc, nome=gn[:150])
+                db.add(g_obj)
+                grupos_db[gc] = g_obj
+            elif grupos_zip.get(gc) and grupos_db[gc].nome != grupos_zip[gc][:150]:
+                grupos_db[gc].nome = grupos_zip[gc][:150]
+                db.add(grupos_db[gc])
+
+        subgrupos_db = {s.codigo: s for s in db.exec(_select(SigtapSubgrupo)).all()}
+        for sc, sn in ({**SUBGRUPOS_SIGTAP, **subgrupos_zip}).items():
+            if sc not in subgrupos_db:
+                sg_obj = SigtapSubgrupo(codigo=sc, grupo_codigo=sc[:2], nome=sn[:180])
+                db.add(sg_obj)
+                subgrupos_db[sc] = sg_obj
+            elif subgrupos_zip.get(sc) and subgrupos_db[sc].nome != subgrupos_zip[sc][:180]:
+                subgrupos_db[sc].nome = subgrupos_zip[sc][:180]
+                db.add(subgrupos_db[sc])
+
+        if formas_zip:
+            formas_db = {f.codigo: f for f in db.exec(_select(SigtapFormaOrganizacao)).all()}
+            for fc, fn in formas_zip.items():
+                if fc not in formas_db:
+                    db.add(SigtapFormaOrganizacao(codigo=fc, grupo_codigo=fc[:2], subgrupo_codigo=fc[:4], nome=fn[:180]))
+                elif formas_db[fc].nome != fn[:180]:
+                    formas_db[fc].nome = fn[:180]
+                    db.add(formas_db[fc])
+
+        ocup_db = {
+            limpar_codigo_cbo(o.cbo): o
+            for o in db.exec(_select(SigtapOcupacao)).all()
+            if limpar_codigo_cbo(o.cbo)
+        }
+        for cbo_k, desc_k in ocorrencias_zip.items():
+            if cbo_k and desc_k:
+                if cbo_k not in ocup_db:
+                    oc = SigtapOcupacao(cbo=cbo_k, descricao=desc_k[:150], descricao_normalizada=sanitizar_texto_cbo(desc_k)[:150], ativo=True)
+                    db.add(oc)
+                    ocup_db[cbo_k] = oc
+                elif desc_k[:150] != ocup_db[cbo_k].descricao:
+                    ocup_db[cbo_k].descricao = desc_k[:150]
+                    ocup_db[cbo_k].descricao_normalizada = sanitizar_texto_cbo(desc_k)[:150]
+                    db.add(ocup_db[cbo_k])
+
         existentes = {p.codigo: p for p in db.exec(
             _select(SigtapProcedimento)
         ).all()} if pend_proc else {}
@@ -316,28 +423,42 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
             else:
                 db.add(SigtapProcedimento(**dados))
                 stats["inseridos"] += 1
-        if pend_proc:
-            db.commit()
+        db.commit()
         if pend_cbo:
+            cbo_existentes = {
+                (row.procedimento_codigo, limpar_codigo_cbo(row.cbo) or row.cbo): row
+                for row in db.exec(_select(SigtapCbo)).all()
+            }
             vistos = set()
             for c in pend_cbo:
-                chave = (c["procedimento_codigo"], c["cbo"])
+                cbo_norm = limpar_codigo_cbo(c["cbo"]) or c["cbo"]
+                chave = (c["procedimento_codigo"], cbo_norm)
                 if chave in vistos:
                     continue
                 vistos.add(chave)
-                db.add(SigtapCbo(**c))
+                if chave in cbo_existentes:
+                    ex_cbo = cbo_existentes[chave]
+                    if c.get("descricao") and not ex_cbo.descricao:
+                        ex_cbo.descricao = c["descricao"]
+                        db.add(ex_cbo)
+                else:
+                    db.add(SigtapCbo(procedimento_codigo=c["procedimento_codigo"], cbo=cbo_norm, descricao=c.get("descricao", "")))
             db.commit()
         if pend_cid:
+            cid_existentes = {
+                (row.procedimento_codigo, row.cid): row
+                for row in db.exec(_select(SigtapCid)).all()
+            }
             vistos = set()
             for c in pend_cid:
                 chave = (c["procedimento_codigo"], c["cid"])
-                if chave in vistos:
+                if chave in vistos or chave in cid_existentes:
                     continue
                 vistos.add(chave)
                 db.add(SigtapCid(**c))
             db.commit()
         db.add(SigtapVersao(
-            competencia=competencia, origem="upload",
+            competencia=competencia, origem=origem[:20],
             arquivo=stats["arquivo"][:255], total_proc=len(pend_proc),
             inseridos=stats["inseridos"], atualizados=stats["atualizados"],
             cbo_total=stats["cbo_total"], cid_total=stats["cid_total"],

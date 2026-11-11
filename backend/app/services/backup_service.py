@@ -36,7 +36,11 @@ from app.models.lab_exames import (
     LabSolicitacao,
     SigtapCbo,
     SigtapCid,
+    SigtapFormaOrganizacao,
+    SigtapGrupo,
+    SigtapOcupacao,
     SigtapProcedimento,
+    SigtapSubgrupo,
     SigtapVersao,
 )
 from app.models.lab_fase6 import (
@@ -66,6 +70,7 @@ from app.models.tfd import (
     Faturamento,
     Motorista,
     Paciente,
+    PacienteHistorico,
     ProcedimentoCatalogo,
     TipoFila,
     Veiculo,
@@ -88,6 +93,7 @@ MODELOS_LIMPEZA_EXTRA = [
     ProcedimentoSecundarioAPAC,   # referencia apac_solicitacoes
     SolicitacaoAPAC,              # referencia tfd_pacientes + medicos
     LabPedidoAjuste,              # referencia lab_solic_mestre + lab_laboratorios
+    PacienteHistorico,            # referencia tfd_pacientes
 ]
 
 # Conjunto legado de 29 tabelas (compatibilidade com backups antigos que não incluem módulos novos)
@@ -150,6 +156,11 @@ TODOS_MODELOS: list[type[SQLModel]] = [
     PecSyncLog,
     PecIndicadorCache,
     WhatsAppLog,
+    PacienteHistorico,
+    SigtapGrupo,
+    SigtapSubgrupo,
+    SigtapFormaOrganizacao,
+    SigtapOcupacao,
 ]
 
 MODELO_POR_TABELA: dict[str, type[SQLModel]] = {

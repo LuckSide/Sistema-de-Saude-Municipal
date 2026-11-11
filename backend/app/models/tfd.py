@@ -33,6 +33,13 @@ class Paciente(SQLModel, table=True):
     observacoes: str = Field(default="", max_length=500)
     co_seq_cidadao_pec: int | None = Field(default=None, index=True)
     codigo_prontuario: str = Field(default="", max_length=20, index=True)
+    situacao_cadastral: str = Field(default="ativo", max_length=30, index=True)  # ativo | obito | mudanca_municipio
+    data_obito: date | None = Field(default=None, sa_column=Column(Date))
+    motivo_situacao: str = Field(default="", max_length=255)
+    situacao_atualizada_em: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False)),
+    )
     sincronizado_em: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=False)),
@@ -305,4 +312,24 @@ class Faturamento(SQLModel, table=True):
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=False)),
+    )
+
+
+class PacienteHistorico(SQLModel, table=True):
+    """Histórico clínico/cadastral do prontuário do paciente (baixas por óbito, mudança de município, etc.)."""
+
+    __tablename__ = "tfd_pacientes_historico"
+
+    id: int | None = Field(default=None, primary_key=True)
+    paciente_id: int = Field(foreign_key="tfd_pacientes.id", index=True)
+    tipo_evento: str = Field(max_length=40, index=True)  # OBITO_PEC | MUDANCA_MUNICIPIO_PEC | BAIXA_FILA
+    motivo: str = Field(default="", max_length=120)
+    descricao: str = Field(default="", max_length=500)
+    origem: str = Field(default="e-SUS PEC", max_length=50)
+    exames_baixados_qtd: int = Field(default=0)
+    exames_baixados_ids: str = Field(default="", max_length=500)
+    registrado_por: str = Field(default="Sincronização Automática e-SUS PEC", max_length=120)
+    registrado_em: datetime = Field(
+        default_factory=datetime.utcnow,
+        sa_column=Column(DateTime(timezone=False), index=True),
     )

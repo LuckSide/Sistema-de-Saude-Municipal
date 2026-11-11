@@ -89,7 +89,25 @@ class PacienteIn(PacienteBase):
 
 class PacienteOut(PacienteBase):
     id: int
+    situacao_cadastral: str = "ativo"
+    data_obito: date | None = None
+    motivo_situacao: str = ""
+    situacao_atualizada_em: datetime | None = None
     sincronizado_em: datetime | None = None
+
+
+class PacienteHistoricoOut(BaseModel):
+    """Registro histórico do prontuário do paciente (baixas por óbito, mudança de município, remoções)."""
+
+    id: int | None = None
+    tipo_evento: str = ""
+    motivo: str = ""
+    descricao: str = ""
+    origem: str = ""
+    exames_baixados_qtd: int = 0
+    exames_baixados_ids: str = ""
+    registrado_por: str = ""
+    registrado_em: datetime | None = None
 
 
 class DemandaItemOut(BaseModel):
@@ -124,6 +142,7 @@ class PacientePerfilOut(BaseModel):
     paciente: PacienteOut
     unidade_saude_nome: str = ""
     demanda: list[DemandaItemOut] = []
+    historico: list[PacienteHistoricoOut] = []
 
 
 # ---------- Veículos ----------
@@ -577,6 +596,7 @@ class FiltrosOpcoesOut(BaseModel):
     tipos: list[OpcaoFiltro] = []
     procedimentos: list[OpcaoFiltro] = []
     especialidades: list[OpcaoFiltro] = []
+    cbos: list[OpcaoFiltro] = []
 
 
 # ---------- Faturamento ----------

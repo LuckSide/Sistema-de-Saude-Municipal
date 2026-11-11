@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { BookOpenText, Pencil, Plus, Search, ShieldCheck, ShieldOff, Trash2, X } from "lucide-react";
+import { BookOpenText, Layers, Pencil, Plus, Search, ShieldCheck, ShieldOff, Trash2, X } from "lucide-react";
 import {
+  msgErro,
   pagData,
   pagMeta,
   tfdAtualizarEspecialidade,
@@ -16,6 +17,7 @@ import {
   tfdExcluirTipo,
   tfdProcedimentos,
   tfdTipos,
+  tfdUnificarEspecialidades,
   type EspecialidadeCat,
   type ProcedimentoCat,
   type TipoFila,
@@ -58,8 +60,26 @@ export default function CatalogoExames() {
   const [formProc, setFormProc] = useState(vazioProc);
   const [formEsp, setFormEsp] = useState(vazioEsp);
   const [salvando, setSalvando] = useState(false);
+  const [unificando, setUnificando] = useState(false);
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
+
+  async function unificarCbos() {
+    setUnificando(true);
+    setErro("");
+    setOk("");
+    try {
+      const r = await tfdUnificarEspecialidades();
+      setOk(
+        `Deduplicação concluída: ${r.especialidades_mescladas} especialidade(s) e ${r.sigtap_cbos_removidos} CBO(s) SIGTAP unificados (${r.registros_atualizados} vínculo(s) atualizado(s), ${r.ocupacoes_total} ocupação(ões) únicas).`,
+      );
+      await carregar(1, "especialidades", q);
+    } catch (e: unknown) {
+      setErro(msgErro(e, "Falha ao unificar CBOs duplicados."));
+    } finally {
+      setUnificando(false);
+    }
+  }
 
   const modalBackdrop = useBackdropClose(fecharModal, modal);
 
@@ -272,6 +292,18 @@ export default function CatalogoExames() {
               >
                 Limpar
               </button>
+              {aba === "especialidades" && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={unificarCbos}
+                  disabled={unificando}
+                  className="ml-auto"
+                >
+                  <Layers className="h-4 w-4 text-teal" />
+                  {unificando ? "Unificando…" : "Unificar CBOs duplicados"}
+                </Button>
+              )}
             </form>
             <p className="mt-2 text-xs text-ink/50">
               Tipos e CBOs alimentam os filtros da Fila de exames com contagem. Procedimentos alimentam o autocomplete do pedido.

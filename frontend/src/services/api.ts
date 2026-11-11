@@ -495,6 +495,22 @@ export type Paciente = {
   equipe_esf: string;
   acs_nome: string;
   observacoes: string;
+  situacao_cadastral?: string;
+  data_obito?: string | null;
+  motivo_situacao?: string;
+  situacao_atualizada_em?: string | null;
+};
+
+export type PacienteHistoricoItem = {
+  id?: number | null;
+  tipo_evento: string;
+  motivo: string;
+  descricao: string;
+  origem: string;
+  exames_baixados_qtd: number;
+  exames_baixados_ids: string;
+  registrado_por: string;
+  registrado_em?: string | null;
 };
 
 export type DemandaItem = {
@@ -525,6 +541,7 @@ export type PacientePerfil = {
   paciente: Paciente;
   unidade_saude_nome: string;
   demanda: DemandaItem[];
+  historico?: PacienteHistoricoItem[];
 };
 export const tfdPerfilPaciente = (id: number) =>
   api.get<PacientePerfil>(`/api/tfd/pacientes/${id}/perfil`).then((r) => r.data);
@@ -1014,6 +1031,8 @@ export type FilaExamesParams = {
   agendada_de?: string;
   agendada_ate?: string;
   apenas_agendados?: boolean;
+  idade_min?: number;
+  idade_max?: number;
   ordenacao?: string;
   meus?: boolean;
   page?: number;
@@ -1025,14 +1044,16 @@ export type FiltrosOpcoes = {
   tipos: OpcaoFiltro[];
   procedimentos: OpcaoFiltro[];
   especialidades: OpcaoFiltro[];
+  cbos?: OpcaoFiltro[];
 };
 export async function tfdFiltrosOpcoes(
   status?: string,
-  tipo_fila?: string
-): Promise<{ tipos: OpcaoFiltro[]; procedimentos: OpcaoFiltro[]; especialidades: OpcaoFiltro[] }> {
+  tipo_fila?: string,
+  cbo?: string,
+): Promise<{ tipos: OpcaoFiltro[]; procedimentos: OpcaoFiltro[]; especialidades: OpcaoFiltro[]; cbos?: OpcaoFiltro[] }> {
   return api
     .get<FiltrosOpcoes>("/api/tfd/exames/filtros-opcoes", {
-      params: { status, tipo_fila: tipo_fila || undefined },
+      params: { status, tipo_fila: tipo_fila || undefined, cbo: cbo || undefined },
     })
     .then((r) => r.data);
 }
@@ -1060,8 +1081,19 @@ export const tfdAtualizarProcedimento = (id: number, p: Record<string, unknown>)
   api.put<ProcedimentoCat>(`/api/tfd/procedimentos/${id}`, p).then((r) => r.data);
 export const tfdExcluirProcedimento = (id: number) => api.delete(`/api/tfd/procedimentos/${id}`);
 
-export const tfdEspecialidades = (params?: { q?: string; ativos?: boolean; page?: number; limit?: number }) =>
+export const tfdEspecialidades = (params?: { q?: string; cbo?: string; ativos?: boolean; page?: number; limit?: number }) =>
   api.get<Pagina<EspecialidadeCat> | EspecialidadeCat[]>("/api/tfd/especialidades", { params }).then((r) => r.data);
+export type CboEspecialidadesOut = {
+  cbo: string;
+  descricao: string;
+  especialidades: { id: number | null; codigo_cbo: string; nome: string; ativo: boolean }[];
+  areas: { codigo: string; nome: string }[];
+  subgrupos: { codigo: string; nome: string }[];
+};
+export const tfdCboEspecialidades = (cbo: string) =>
+  api.get<CboEspecialidadesOut>("/api/tfd/cbo-especialidades", { params: { cbo } }).then((r) => r.data);
+export const tfdUnificarEspecialidades = () =>
+  api.post<{ especialidades_mescladas: number; sigtap_cbos_removidos: number; registros_atualizados: number; ocupacoes_total: number }>("/api/tfd/especialidades/unificar-duplicados").then((r) => r.data);
 export const tfdCriarEspecialidade = (p: Record<string, unknown>) =>
   api.post<EspecialidadeCat>("/api/tfd/especialidades", p).then((r) => r.data);
 export const tfdAtualizarEspecialidade = (id: number, p: Record<string, unknown>) =>
@@ -1217,10 +1249,13 @@ export const tfdCatalogoExames = (
   tipo_fila?: string,
   apenas_laboratoriais?: boolean,
   especialidade?: string,
+  grupo_codigo?: string,
+  subgrupo_codigo?: string,
+  cbo?: string,
 ) =>
   api
     .get<CatalogoProc[]>("/api/tfd/exames/catalogo", {
-      params: { q, tipo_fila, apenas_laboratoriais, especialidade },
+      params: { q, tipo_fila, apenas_laboratoriais, especialidade, grupo_codigo, subgrupo_codigo, cbo },
     })
     .then((r) => r.data);
 
@@ -1416,6 +1451,30 @@ export type SigtapProc = {
   valor_sp?: number;
   valor_sh?: number;
   competencia?: string;
+  grupo_codigo?: string;
+  grupo_nome?: string;
+  subgrupo_codigo?: string;
+  subgrupo_nome?: string;
+  forma_organizacao_codigo?: string;
+  forma_organizacao_nome?: string;
+};
+
+export type SigtapArvore = {
+  grupos: { codigo: string; nome: string }[];
+  subgrupos: { codigo: string; grupo_codigo: string; nome: string }[];
+  formas: { codigo: string; grupo_codigo: string; subgrupo_codigo: string; nome: string }[];
+  cbos: { cbo: string; descricao: string }[];
+  procedimentos_cbo_total: number;
+};
+
+export type SigtapAutoSyncStatus = {
+  sigtap_sync_automatica: boolean;
+  sigtap_sync_intervalo_horas: number;
+  sigtap_sync_ultima_execucao: string | null;
+  sigtap_sync_ultimo_status: string;
+  sigtap_sync_ultima_competencia: string;
+  sigtap_sync_ultimo_erro: string;
+  em_execucao: boolean;
 };
 
 export type SigtapVersao = {
@@ -1449,8 +1508,16 @@ export type SigtapImportOut = {
 export const sigtapVersoes = () =>
   api.get<SigtapVersao[]>("/api/lab/sigtap/versoes").then((r) => r.data);
 export type SigtapCbo = { cbo: string; descricao: string; origem: string };
-export const sigtapCbos = (procedimento_codigo?: string, q?: string) =>
-  api.get<SigtapCbo[]>("/api/lab/sigtap/cbos", { params: { procedimento_codigo, q } }).then((r) => r.data);
+export const sigtapCbos = (procedimento_codigo?: string, q?: string, grupo_codigo?: string, subgrupo_codigo?: string) =>
+  api.get<SigtapCbo[]>("/api/lab/sigtap/cbos", { params: { procedimento_codigo, q, grupo_codigo, subgrupo_codigo } }).then((r) => r.data);
+export const sigtapArvore = (params?: { grupo_codigo?: string; subgrupo_codigo?: string; cbo?: string }) =>
+  api.get<SigtapArvore>("/api/lab/sigtap/arvore", { params }).then((r) => r.data);
+export const sigtapAutoSyncStatus = () =>
+  api.get<SigtapAutoSyncStatus>("/api/lab/sigtap/auto-sync").then((r) => r.data);
+export const sigtapAutoSyncConfig = (p: { sigtap_sync_automatica?: boolean; sigtap_sync_intervalo_horas?: number }) =>
+  api.put<{ ok: boolean; sigtap_sync_automatica: boolean; sigtap_sync_intervalo_horas: number }>("/api/lab/sigtap/auto-sync", p).then((r) => r.data);
+export const sigtapAutoSyncExecutar = (competencia?: string, forcar?: boolean) =>
+  api.post<Record<string, unknown>>("/api/lab/sigtap/auto-sync/executar", null, { params: { competencia, forcar } }).then((r) => r.data);
 export const sigtapImportar = (arquivo: File, competencia: string, simular: boolean) => {
   const form = new FormData();
   form.append("file", arquivo);
@@ -1481,9 +1548,20 @@ export type LabSol = {
   procedimento_descricao: string;
 };
 
-export const labSigtap = (q?: string, instrumento?: string, page?: number, limit?: number, apenas_laboratoriais: boolean = true) =>
+export const labSigtap = (
+  q?: string,
+  instrumento?: string,
+  page?: number,
+  limit?: number,
+  apenas_laboratoriais: boolean = true,
+  grupo_codigo?: string,
+  subgrupo_codigo?: string,
+  cbo?: string,
+) =>
   api
-    .get<Pagina<SigtapProc> | SigtapProc[]>("/api/lab/sigtap", { params: { q, instrumento, page, limit, apenas_laboratoriais } })
+    .get<Pagina<SigtapProc> | SigtapProc[]>("/api/lab/sigtap", {
+      params: { q, instrumento, page, limit, apenas_laboratoriais, grupo_codigo, subgrupo_codigo, cbo },
+    })
     .then((r) => r.data);
 
 export const labSols = (filtros?: {

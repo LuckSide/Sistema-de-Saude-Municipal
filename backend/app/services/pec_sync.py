@@ -5,15 +5,18 @@ import re
 import threading
 import time
 import unicodedata
-from datetime import datetime
+from datetime import date, datetime
+import json as _json
 from typing import Optional
 
 from sqlalchemy import text
 from sqlmodel import Session, select
 
+from app.models.audit import AuditLog
 from app.models.cadastros_saude import UnidadeSaude
 from app.models.integracoes import IntegrationSettings, PecSyncLog
-from app.models.tfd import Paciente
+from app.models.settings import SystemSettings
+from app.models.tfd import ExameFila, Paciente, PacienteHistorico, ViagemFila
 from app.services.geradores import gerar_prontuario_aleatorio
 from app.services.pec_tunnel import garantir_tunel_db
 
@@ -90,6 +93,232 @@ def calcular_completude_endereco(logr: str, num: str, comp: str, bairro: str, ce
     if comp and comp.strip():
         score += 1
     return score
+
+
+def _eh_verdadeiro(val) -> bool:
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return int(val) == 1
+    s = normalizar_nome(str(val or ""))
+    return s in ("1", "TRUE", "T", "S", "SIM", "YES")
+
+
+def _parse_data_opcional(val) -> date | None:
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, date):
+        return val
+    s = str(val).strip()[:10]
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except Exception:
+            continue
+    return None
+
+
+def classificar_situacao_pec(row_map: dict, municipio_sede: str = "Guapé") -> tuple[str, str, date | None]:
+    """Identifica se o registro do e-SUS PEC indica Óbito ou Mudança de Município.
+
+    Retorna `(situacao, detalhe, data_obito)` onde `situacao` é `'obito'`,
+    `'mudanca_municipio'` ou `'ativo'`.
+    """
+    st_faleceu = any(
+        _eh_verdadeiro(row_map.get(k))
+        for k in ("st_faleceu_pec", "st_faleceu", "faleceu", "c_st_faleceu", "f_st_faleceu")
+    )
+    dt_obito = None
+    for k in ("dt_obito_pec", "dt_obito"):
+        dt_obito = _parse_data_opcional(row_map.get(k))
+        if dt_obito:
+            break
+
+    ds_saida = normalizar_nome(
+        row_map.get("ds_tipo_saida_pec") or row_map.get("ds_tipo_saida") or ""
+    )
+    co_saida = row_map.get("co_tipo_saida_pec") or row_map.get("co_dim_tipo_saida_cadastro")
+    try:
+        co_saida_int = int(co_saida) if co_saida is not None and str(co_saida).strip().isdigit() else None
+    except Exception:
+        co_saida_int = None
+
+    if st_faleceu or dt_obito is not None or "OBITO" in ds_saida or co_saida_int == 1:
+        dt_str = f" em {dt_obito.strftime('%d/%m/%Y')}" if dt_obito else ""
+        return "obito", f"Óbito identificado no e-SUS PEC{dt_str}.", dt_obito
+
+    st_mudanca = any(
+        _eh_verdadeiro(row_map.get(k))
+        for k in ("st_mudanca_pec", "st_mudanca_territorio", "st_mudanca_municipio", "st_mudanca")
+    )
+    muni_raw = str(
+        row_map.get("no_municipio_raw")
+        or row_map.get("no_municipio_domicilio")
+        or row_map.get("no_municipio_tb_cidadao")
+        or row_map.get("no_municipio")
+        or ""
+    ).strip()
+    muni_norm = normalizar_nome(muni_raw)
+    sede_norm = normalizar_nome(municipio_sede or "Guapé") or "GUAPE"
+
+    mudanca_por_saida = (
+        st_mudanca
+        or "MUDANCA" in ds_saida
+        or "OUTRO MUNICIPIO" in ds_saida
+        or co_saida_int == 2
+    )
+    mudanca_por_cidade = (
+        bool(muni_norm)
+        and len(muni_norm) >= 3
+        and muni_norm not in ("NAO INFORMADO", "IGNORADO", "SEM INFORMACAO")
+        and sede_norm not in muni_norm
+    )
+
+    if mudanca_por_saida or mudanca_por_cidade:
+        detalhe = (
+            f"Mudança de Município identificada no e-SUS PEC ({muni_raw})."
+            if mudanca_por_cidade
+            else "Mudança de Município / Território registrada no e-SUS PEC."
+        )
+        return "mudanca_municipio", detalhe, None
+
+    return "ativo", "", None
+
+
+def aplicar_baixa_automatica_paciente(
+    db: Session,
+    paciente: Paciente,
+    situacao: str,
+    detalhe: str,
+    data_obito: date | None = None,
+    origem: str = "e-SUS PEC",
+    agora: datetime | None = None,
+) -> int:
+    """Remove automaticamente o paciente da fila de espera ativa e registra histórico no prontuário."""
+    if situacao not in ("obito", "mudanca_municipio") or not paciente.id:
+        return 0
+
+    agora = agora or datetime.utcnow()
+    rotulo = "Óbito" if situacao == "obito" else "Mudança de Município"
+    situacao_anterior = (getattr(paciente, "situacao_cadastral", None) or "ativo").strip().lower()
+
+    paciente.situacao_cadastral = situacao
+    paciente.motivo_situacao = (detalhe or rotulo)[:255]
+    paciente.situacao_atualizada_em = agora
+    if situacao == "obito" and data_obito is not None:
+        paciente.data_obito = data_obito
+
+    motivo_fila = f"Baixa automática ({rotulo}) via {origem}: {detalhe}".strip()[:500]
+    itens_ativos = list(
+        db.exec(
+            select(ExameFila).where(
+                ExameFila.paciente_id == paciente.id,
+                ExameFila.ativo == True,  # noqa: E712
+                ExameFila.status.in_(["aguardando", "agendado"]),
+            )
+        ).all()
+    )
+
+    ids_baixados: list[int] = []
+    for ex in itens_ativos:
+        ex.status_anterior = ex.status or ""
+        ex.status = "cancelado"
+        ex.ativo = False
+        ex.motivo_remocao = motivo_fila
+        ex.removido_em = agora
+        ex.removido_por = f"Sincronização {origem}"[:120]
+        db.add(ex)
+        if ex.id:
+            ids_baixados.append(ex.id)
+        db.add(
+            AuditLog(
+                user_id=None,
+                user_name=f"Sincronização {origem}"[:120],
+                action="EXAM_REMOVE_AUTO",
+                entity="EXAM",
+                entity_id=ex.id,
+                details=_json.dumps(
+                    {
+                        "situacao": situacao,
+                        "motivo": motivo_fila,
+                        "paciente_id": paciente.id,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        )
+
+    viagens_ativas = list(
+        db.exec(
+            select(ViagemFila).where(
+                ViagemFila.paciente_id == paciente.id,
+                ViagemFila.status.in_(["aguardando", "alocado"]),
+            )
+        ).all()
+    )
+    for vf in viagens_ativas:
+        vf.status = "cancelado"
+        obs_atual = (vf.observacoes or "").strip()
+        if motivo_fila not in obs_atual:
+            vf.observacoes = f"{obs_atual} | {motivo_fila}"[:500] if obs_atual else motivo_fila
+        db.add(vf)
+
+    mudou_situacao = situacao_anterior != situacao
+    if ids_baixados or mudou_situacao:
+        tipo_ev = "OBITO_PEC" if situacao == "obito" else "MUDANCA_MUNICIPIO_PEC"
+        resumo_hist = (
+            f"{detalhe} {len(ids_baixados)} solicitação(ões) removida(s) automaticamente da fila ativa."
+            if ids_baixados
+            else f"{detalhe} Nenhuma solicitação ativa pendente na fila."
+        )[:500]
+        db.add(
+            PacienteHistorico(
+                paciente_id=paciente.id,
+                tipo_evento=tipo_ev,
+                motivo=rotulo,
+                descricao=resumo_hist,
+                origem=origem[:50],
+                exames_baixados_qtd=len(ids_baixados),
+                exames_baixados_ids=",".join(str(x) for x in ids_baixados)[:500],
+                registrado_por=f"Sincronização {origem}"[:120],
+                registrado_em=agora,
+            )
+        )
+        carimbo_obs = f"[{agora.strftime('%d/%m/%Y')}] {rotulo} ({origem}): {detalhe}"
+        obs_pac = (paciente.observacoes or "").strip()
+        if carimbo_obs not in obs_pac:
+            paciente.observacoes = f"{obs_pac}\n{carimbo_obs}"[-500:] if obs_pac else carimbo_obs[:500]
+
+    db.add(paciente)
+    return len(ids_baixados)
+
+
+def _inspecionar_colunas_pec(pec_conn) -> dict[str, set[str]]:
+    """Descobre colunas existentes nas tabelas do e-SUS PEC para compatibilidade entre versões."""
+    mapa: dict[str, set[str]] = {}
+    try:
+        rows = pec_conn.execute(
+            text(
+                """
+                SELECT table_name, column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name IN (
+                      'tb_cidadao',
+                      'tb_acomp_cidadaos_vinculados',
+                      'tb_fat_cidadao_pec',
+                      'tb_dim_tipo_saida_cadastro'
+                  )
+                """
+            )
+        ).all()
+        for tname, cname in rows:
+            mapa.setdefault(str(tname), set()).add(str(cname))
+    except Exception:
+        pass
+    return mapa
 
 
 def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog:
@@ -215,49 +444,107 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
         from sqlalchemy import create_engine
         pec_engine = create_engine(dsn, pool_pre_ping=True, connect_args={"connect_timeout": 8})
 
-        query_pec = text("""
-            SELECT
-                c.co_seq_cidadao,
-                c.no_cidadao,
-                c.no_social,
-                c.nu_cpf,
-                c.nu_cns,
-                c.dt_nascimento,
-                c.no_sexo,
-                c.no_mae,
-                c.nu_telefone_celular,
-                c.nu_telefone_contato,
-                c.nu_telefone_residencial,
-                COALESCE(NULLIF(TRIM(v.ds_logradouro_domicilio), ''), NULLIF(TRIM(v.ds_logradouro_tb_cidadao), ''), c.ds_logradouro) AS ds_logradouro,
-                COALESCE(NULLIF(TRIM(v.nu_numero_domicilio), ''), NULLIF(TRIM(v.nu_numero_tb_cidadao), ''), c.nu_numero) AS nu_numero,
-                COALESCE(NULLIF(TRIM(v.ds_complemento_domicilio), ''), NULLIF(TRIM(v.ds_complemento_tb_cidadao), ''), c.ds_complemento) AS ds_complemento,
-                COALESCE(NULLIF(TRIM(v.no_bairro_domicilio), ''), NULLIF(TRIM(v.no_bairro_tb_cidadao), ''), c.no_bairro) AS no_bairro,
-                COALESCE(NULLIF(TRIM(v.ds_cep_domicilio), ''), NULLIF(TRIM(v.ds_cep_tb_cidadao), ''), c.ds_cep) AS ds_cep,
-                c.ds_ponto_referencia,
-                COALESCE(NULLIF(TRIM(v.nu_micro_area_domicilio), ''), NULLIF(TRIM(v.nu_micro_area_tb_cidadao), ''), c.nu_micro_area) AS nu_micro_area,
-                COALESCE(NULLIF(TRIM(v.no_municipio_domicilio), ''), NULLIF(TRIM(v.no_municipio_tb_cidadao), ''), 'Guapé') AS no_municipio,
-                c.dt_atualizado,
-                c.st_ativo,
-                COALESCE(NULLIF(TRIM(v.nu_cnes_vinc_equipe), ''), u.nu_cnes) AS nu_cnes,
-                u.no_unidade_saude,
-                COALESCE(NULLIF(TRIM(v.nu_ine_vinc_equipe), ''), e.nu_ine) AS nu_ine,
-                COALESCE(NULLIF(TRIM(v.no_equipe_vinc_equipe), ''), e.no_equipe) AS no_equipe
-            FROM tb_cidadao c
-            LEFT JOIN tb_acomp_cidadaos_vinculados v ON v.co_cidadao = c.co_seq_cidadao
-            LEFT JOIN tb_fat_cidadao_pec f ON f.co_cidadao = c.co_seq_cidadao
-            LEFT JOIN tb_dim_unidade_saude u ON u.co_seq_dim_unidade_saude = f.co_dim_unidade_saude_vinc
-            LEFT JOIN tb_dim_equipe e ON e.co_seq_dim_equipe = f.co_dim_equipe_vinc
-            ORDER BY c.dt_atualizado DESC NULLS LAST, c.co_seq_cidadao DESC;
-        """)
+        sys_cfg = db.exec(select(SystemSettings).where(SystemSettings.id == 1)).first()
+        municipio_sede = (getattr(sys_cfg, "cidade", None) or "Guapé").strip() or "Guapé"
 
         total_lidos = 0
         total_inseridos = 0
         total_atualizados = 0
         total_duplicados_mesclados = 0
+        total_baixas_fila = 0
         total_erros = 0
         pacientes_processados_nesta_execucao: set[int] = set()
 
         with pec_engine.connect() as pec_conn:
+            cols_pec = _inspecionar_colunas_pec(pec_conn)
+            c_cols = cols_pec.get("tb_cidadao", set())
+            v_cols = cols_pec.get("tb_acomp_cidadaos_vinculados", set())
+            f_cols = cols_pec.get("tb_fat_cidadao_pec", set())
+            ts_cols = cols_pec.get("tb_dim_tipo_saida_cadastro", set())
+
+            faleceu_exprs = []
+            if "st_faleceu" in c_cols:
+                faleceu_exprs.append("c.st_faleceu::text")
+            if "st_faleceu" in f_cols:
+                faleceu_exprs.append("f.st_faleceu::text")
+            if "st_vivo" in c_cols:
+                faleceu_exprs.append("CASE WHEN c.st_vivo IN (0, false) THEN '1' ELSE '0' END")
+            sel_faleceu = f"COALESCE({', '.join(faleceu_exprs)}, '') AS st_faleceu_pec" if faleceu_exprs else "'' AS st_faleceu_pec"
+
+            sel_dt_obito = "c.dt_obito AS dt_obito_pec" if "dt_obito" in c_cols else "NULL::date AS dt_obito_pec"
+
+            mudanca_exprs = []
+            if "st_mudanca_territorio" in v_cols:
+                mudanca_exprs.append("v.st_mudanca_territorio::text")
+            if "st_mudanca" in c_cols:
+                mudanca_exprs.append("c.st_mudanca::text")
+            if "st_mudou_se" in f_cols:
+                mudanca_exprs.append("f.st_mudou_se::text")
+            sel_mudanca = f"COALESCE({', '.join(mudanca_exprs)}, '') AS st_mudanca_pec" if mudanca_exprs else "'' AS st_mudanca_pec"
+
+            if "co_dim_tipo_saida_cadastro" in f_cols:
+                sel_co_saida = "f.co_dim_tipo_saida_cadastro AS co_tipo_saida_pec"
+                if ts_cols and "ds_tipo_saida" in ts_cols:
+                    join_saida = "LEFT JOIN tb_dim_tipo_saida_cadastro ts ON ts.co_seq_dim_tipo_saida_cadastro = f.co_dim_tipo_saida_cadastro"
+                    sel_ds_saida = "COALESCE(ts.ds_tipo_saida, '') AS ds_tipo_saida_pec"
+                else:
+                    join_saida = ""
+                    sel_ds_saida = "'' AS ds_tipo_saida_pec"
+            else:
+                sel_co_saida = "NULL::integer AS co_tipo_saida_pec"
+                join_saida = ""
+                sel_ds_saida = "'' AS ds_tipo_saida_pec"
+
+            muni_exprs = [
+                "NULLIF(TRIM(v.no_municipio_domicilio), '')",
+                "NULLIF(TRIM(v.no_municipio_tb_cidadao), '')",
+            ]
+            if "no_municipio" in c_cols:
+                muni_exprs.append("NULLIF(TRIM(c.no_municipio), '')")
+            sel_muni_raw = f"COALESCE({', '.join(muni_exprs)}, '') AS no_municipio_raw"
+
+            query_pec = text(f"""
+                SELECT
+                    c.co_seq_cidadao,
+                    c.no_cidadao,
+                    c.no_social,
+                    c.nu_cpf,
+                    c.nu_cns,
+                    c.dt_nascimento,
+                    c.no_sexo,
+                    c.no_mae,
+                    c.nu_telefone_celular,
+                    c.nu_telefone_contato,
+                    c.nu_telefone_residencial,
+                    COALESCE(NULLIF(TRIM(v.ds_logradouro_domicilio), ''), NULLIF(TRIM(v.ds_logradouro_tb_cidadao), ''), c.ds_logradouro) AS ds_logradouro,
+                    COALESCE(NULLIF(TRIM(v.nu_numero_domicilio), ''), NULLIF(TRIM(v.nu_numero_tb_cidadao), ''), c.nu_numero) AS nu_numero,
+                    COALESCE(NULLIF(TRIM(v.ds_complemento_domicilio), ''), NULLIF(TRIM(v.ds_complemento_tb_cidadao), ''), c.ds_complemento) AS ds_complemento,
+                    COALESCE(NULLIF(TRIM(v.no_bairro_domicilio), ''), NULLIF(TRIM(v.no_bairro_tb_cidadao), ''), c.no_bairro) AS no_bairro,
+                    COALESCE(NULLIF(TRIM(v.ds_cep_domicilio), ''), NULLIF(TRIM(v.ds_cep_tb_cidadao), ''), c.ds_cep) AS ds_cep,
+                    c.ds_ponto_referencia,
+                    COALESCE(NULLIF(TRIM(v.nu_micro_area_domicilio), ''), NULLIF(TRIM(v.nu_micro_area_tb_cidadao), ''), c.nu_micro_area) AS nu_micro_area,
+                    COALESCE(NULLIF(TRIM(v.no_municipio_domicilio), ''), NULLIF(TRIM(v.no_municipio_tb_cidadao), ''), '') AS no_municipio,
+                    {sel_muni_raw},
+                    {sel_faleceu},
+                    {sel_dt_obito},
+                    {sel_mudanca},
+                    {sel_co_saida},
+                    {sel_ds_saida},
+                    c.dt_atualizado,
+                    c.st_ativo,
+                    COALESCE(NULLIF(TRIM(v.nu_cnes_vinc_equipe), ''), u.nu_cnes) AS nu_cnes,
+                    u.no_unidade_saude,
+                    COALESCE(NULLIF(TRIM(v.nu_ine_vinc_equipe), ''), e.nu_ine) AS nu_ine,
+                    COALESCE(NULLIF(TRIM(v.no_equipe_vinc_equipe), ''), e.no_equipe) AS no_equipe
+                FROM tb_cidadao c
+                LEFT JOIN tb_acomp_cidadaos_vinculados v ON v.co_cidadao = c.co_seq_cidadao
+                LEFT JOIN tb_fat_cidadao_pec f ON f.co_cidadao = c.co_seq_cidadao
+                {join_saida}
+                LEFT JOIN tb_dim_unidade_saude u ON u.co_seq_dim_unidade_saude = f.co_dim_unidade_saude_vinc
+                LEFT JOIN tb_dim_equipe e ON e.co_seq_dim_equipe = f.co_dim_equipe_vinc
+                ORDER BY c.dt_atualizado DESC NULLS LAST, c.co_seq_cidadao DESC;
+            """)
+
             result = pec_conn.execute(query_pec)
             batch_count = 0
 
@@ -411,9 +698,23 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
                                 p.updated_at = agora
                                 db.add(p)
                                 db.flush()
+
+                                situacao_pec, detalhe_pec, dt_obito_pec = classificar_situacao_pec(row_map, municipio_sede)
+                                if situacao_pec in ("obito", "mudanca_municipio"):
+                                    total_baixas_fila += aplicar_baixa_automatica_paciente(
+                                        db,
+                                        p,
+                                        situacao_pec,
+                                        detalhe_pec,
+                                        data_obito=dt_obito_pec,
+                                        origem="e-SUS PEC",
+                                        agora=agora,
+                                    )
+
                                 pacientes_processados_nesta_execucao.add(p.id)
                                 pec_id_map[pec_id] = p.id
                         else:
+                            situacao_pec, detalhe_pec, dt_obito_pec = classificar_situacao_pec(row_map, municipio_sede)
                             # Paciente Inédito -> Inserção
                             novo_p = Paciente(
                                 nome=nome,
@@ -428,7 +729,7 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
                                 endereco_numero=str(row_map.get("nu_numero") or "").strip()[:20],
                                 complemento=str(row_map.get("ds_complemento") or "").strip()[:100],
                                 bairro=str(row_map.get("no_bairro") or "").strip()[:100],
-                                municipio=str(row_map.get("no_municipio") or "Guapé").strip()[:100],
+                                municipio=str(row_map.get("no_municipio") or municipio_sede).strip()[:100],
                                 cep=str(row_map.get("ds_cep") or "").strip()[:10],
                                 ponto_referencia=str(row_map.get("ds_ponto_referencia") or "").strip()[:150],
                                 unidade_saude_id=uid,
@@ -438,6 +739,10 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
                                 equipe_esf=str(row_map.get("no_equipe") or "").strip()[:80],
                                 microarea=str(row_map.get("nu_micro_area") or "").strip()[:20],
                                 co_seq_cidadao_pec=pec_id,
+                                situacao_cadastral=situacao_pec,
+                                data_obito=dt_obito_pec,
+                                motivo_situacao=detalhe_pec[:255],
+                                situacao_atualizada_em=agora if situacao_pec != "ativo" else None,
                                 sincronizado_em=agora,
                                 created_at=agora,
                                 updated_at=agora,
@@ -447,6 +752,18 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
                             if novo_p.id and not novo_p.codigo_prontuario:
                                 novo_p.codigo_prontuario = gerar_prontuario_aleatorio(db, novo_p.id)
                                 db.add(novo_p)
+                            if novo_p.id and situacao_pec in ("obito", "mudanca_municipio"):
+                                db.add(
+                                    PacienteHistorico(
+                                        paciente_id=novo_p.id,
+                                        tipo_evento="OBITO_PEC" if situacao_pec == "obito" else "MUDANCA_MUNICIPIO_PEC",
+                                        motivo="Óbito" if situacao_pec == "obito" else "Mudança de Município",
+                                        descricao=detalhe_pec[:500],
+                                        origem="e-SUS PEC",
+                                        registrado_por="Sincronização Automática e-SUS PEC",
+                                        registrado_em=agora,
+                                    )
+                                )
 
                             pacientes_cache[novo_p.id] = novo_p
 
@@ -479,12 +796,14 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
         log.total_inseridos = total_inseridos
         log.total_atualizados = total_atualizados
         log.total_duplicados_mesclados = total_duplicados_mesclados
+        log.total_baixas_fila = total_baixas_fila
         log.total_erros = total_erros
         log.duracao_segundos = duracao
         log.mensagem = (
             f"Sincronização concluída com sucesso: {total_lidos} cidadãos lidos do e-SUS PEC, "
-            f"{total_inseridos} novos cadastros, {total_atualizados} atualizados e "
-            f"{total_duplicados_mesclados} registros duplicados unificados em {duracao}s."
+            f"{total_inseridos} novos cadastros, {total_atualizados} atualizados, "
+            f"{total_duplicados_mesclados} registros duplicados unificados e "
+            f"{total_baixas_fila} baixa(s) automática(s) na fila em {duracao}s."
         )
 
         cfg = db.exec(select(IntegrationSettings).where(IntegrationSettings.id == 1)).first()

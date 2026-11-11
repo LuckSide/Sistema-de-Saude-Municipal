@@ -385,6 +385,7 @@ def sincronizar_pec(
             "total_inseridos": log.total_inseridos,
             "total_atualizados": log.total_atualizados,
             "total_duplicados_mesclados": log.total_duplicados_mesclados,
+            "total_baixas_fila": getattr(log, "total_baixas_fila", 0) or 0,
             "duracao_segundos": log.duracao_segundos,
         }
 
@@ -426,6 +427,7 @@ def status_sync_pec(db: Session = Depends(get_db), user: User = Depends(need_per
             "total_inseridos": ultimo_log.total_inseridos,
             "total_atualizados": ultimo_log.total_atualizados,
             "total_duplicados_mesclados": ultimo_log.total_duplicados_mesclados,
+            "total_baixas_fila": getattr(ultimo_log, "total_baixas_fila", 0) or 0,
             "duracao_segundos": ultimo_log.duracao_segundos,
             "mensagem": ultimo_log.mensagem,
             "origem": ultimo_log.origem,

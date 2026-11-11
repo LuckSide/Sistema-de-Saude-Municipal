@@ -17,6 +17,7 @@ from app.models.tfd import (
     Faturamento,
     Motorista,
     Paciente,
+    PacienteHistorico,
     ProcedimentoCatalogo,
     TipoFila,
     Veiculo,
@@ -47,6 +48,7 @@ from app.schemas.tfd import (
     MotoristaOut,
     OpcaoFiltro,
     PacienteIn,
+    PacienteHistoricoOut,
     PacienteOut,
     PacientePerfilOut,
     PedidoDuplicadoTfdOut,
@@ -623,10 +625,67 @@ def perfil_paciente(
                 realizado_em=realizado_em,
             )
         )
+    hist_rows = list(
+        db.exec(
+            select(PacienteHistorico)
+            .where(PacienteHistorico.paciente_id == pid)
+            .order_by(PacienteHistorico.registrado_em.desc(), PacienteHistorico.id.desc())
+        ).all()
+    )
+    historico = [
+        PacienteHistoricoOut(
+            id=h.id,
+            tipo_evento=h.tipo_evento or "",
+            motivo=h.motivo or "",
+            descricao=h.descricao or "",
+            origem=h.origem or "",
+            exames_baixados_qtd=h.exames_baixados_qtd or 0,
+            exames_baixados_ids=h.exames_baixados_ids or "",
+            registrado_por=h.registrado_por or "",
+            registrado_em=h.registrado_em,
+        )
+        for h in hist_rows
+    ]
+    # Inclui remoções/baixas registradas diretamente nos itens inativos caso não tenham entrada separada
+    removidos = list(
+        db.exec(
+            select(ExameFila)
+            .where(
+                ExameFila.paciente_id == pid,
+                ExameFila.ativo == False,  # noqa: E712
+                ExameFila.motivo_remocao != "",
+            )
+            .order_by(ExameFila.removido_em.desc(), ExameFila.id.desc())
+        ).all()
+    )
+    ids_ja_citados = {
+        int(x.strip())
+        for h in hist_rows
+        for x in (h.exames_baixados_ids or "").split(",")
+        if x.strip().isdigit()
+    }
+    for rem in removidos:
+        if rem.id and rem.id not in ids_ja_citados:
+            historico.append(
+                PacienteHistoricoOut(
+                    id=None,
+                    tipo_evento="BAIXA_FILA",
+                    motivo=f"Remoção de {rem.exame or 'solicitação'}",
+                    descricao=rem.motivo_remocao or "",
+                    origem="Fila TFD",
+                    exames_baixados_qtd=1,
+                    exames_baixados_ids=str(rem.id),
+                    registrado_por=rem.removido_por or "",
+                    registrado_em=rem.removido_em,
+                )
+            )
+    historico.sort(key=lambda h: str(h.registrado_em or ""), reverse=True)
+
     return PacientePerfilOut(
         paciente=PacienteOut(**obj.model_dump()),
         unidade_saude_nome=unidade_nome,
         demanda=demanda,
+        historico=historico,
     )
 
 
@@ -1557,7 +1616,8 @@ TIPOS_CONSULTA_ESPECIALIZADA = frozenset({
 })
 
 MAPA_ESPECIALIDADES_CANONICAS = [
-    ("GASTROENTEROLOG", "225125", "Médico Gastroenterologista"),
+    ("GASTROENTEROLOG", "225165", "Médico Gastroenterologista"),
+    ("GASTROLOG", "225165", "Médico Gastroenterologista"),
     ("CARDIOLOG", "225120", "Médico Cardiologista"),
     ("DERMATOLOG", "225135", "Médico Dermatologista"),
     ("ORTOPED", "225270", "Médico Ortopedista e Traumatologista"),
@@ -1584,8 +1644,8 @@ MAPA_ESPECIALIDADES_CANONICAS = [
     ("MASTOLOG", "225255", "Médico Mastologista"),
     ("ONCOLOG", "225122", "Médico Cancerologista / Oncologista"),
     ("CANCEROLOG", "225122", "Médico Cancerologista / Oncologista"),
-    ("GERIATRA", "225180", "Médico Geriatra"),
-    ("GERIATRI", "225180", "Médico Geriatra"),
+    ("GERIATRA", "225181", "Médico Geriatra"),
+    ("GERIATRI", "225181", "Médico Geriatra"),
     ("ALERG", "225110", "Médico Alergista e Imunologista"),
     ("CIRURGIA PEDIATRICA", "225220", "Médico Cirurgião Pediátrico"),
     ("CIRURGIAO PEDIATRICO", "225220", "Médico Cirurgião Pediátrico"),
@@ -1973,6 +2033,15 @@ def _com_posicao(
     return out
 
 
+def _calcular_idade(nascimento: date | None, referencia: date | None = None) -> int | None:
+    """Calcula a idade em anos completos a partir da data de nascimento."""
+    if not nascimento:
+        return None
+    hoje = referencia or date.today()
+    idade = hoje.year - nascimento.year - ((hoje.month, hoje.day) < (nascimento.month, nascimento.day))
+    return idade if idade >= 0 else None
+
+
 @router.get("/exames", response_model=Pagina[ExameOut])
 @router.get("/fila", response_model=Pagina[ExameOut])
 @router.get("/procedimentos/fila", response_model=Pagina[ExameOut])
@@ -1994,6 +2063,8 @@ def listar_exames(
     agendada_de: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     agendada_ate: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     apenas_agendados: bool = Query(default=False),
+    idade_min: int | None = Query(default=None, ge=0, le=150),
+    idade_max: int | None = Query(default=None, ge=0, le=150),
     meus: bool = Query(default=False),
     ordenacao: str = Query(default="prioridade", pattern="^(prioridade|cronologica)$"),
     page: int = Query(default=1, ge=1),
@@ -2021,6 +2092,8 @@ def listar_exames(
     p_ag_de = agendada_de if isinstance(agendada_de, str) else None
     p_ag_ate = agendada_ate if isinstance(agendada_ate, str) else None
     p_apenas_ag = apenas_agendados if isinstance(apenas_agendados, bool) else False
+    p_idade_min = idade_min if isinstance(idade_min, int) else None
+    p_idade_max = idade_max if isinstance(idade_max, int) else None
 
     itens = _filtrar_exames_lista(
         db, ator, p_status, p_q, prioridade, p_esp, p_tf,
@@ -2028,6 +2101,8 @@ def listar_exames(
         p_ag, p_meus, p_uid, p_unome,
         p_ag_de, p_ag_ate, p_apenas_ag,
         justificativa=p_just,
+        idade_min=p_idade_min,
+        idade_max=p_idade_max,
     )
     total = len(itens)
     meta = paginar(total, p_page, p_limit)
@@ -2072,6 +2147,8 @@ def _filtrar_exames_lista(
     agendada_ate: str | None = None,
     apenas_agendados: bool = False,
     justificativa: str = "",
+    idade_min: int | None = None,
+    idade_max: int | None = None,
 ) -> list:
     """Filtros da fila compartilhados entre listagem e exportação XLSX."""
     filtros = [ExameFila.ativo == True]  # noqa: E712
@@ -2181,12 +2258,44 @@ def _filtrar_exames_lista(
             .order_by(ExameFila.data_pedido.desc())
         )
     itens = list(db.exec(base).all())
+    precisa_pacs = (
+        (isinstance(q, str) and bool(q.strip()))
+        or (isinstance(idade_min, int))
+        or (isinstance(idade_max, int))
+    )
+    pacs_filtro: dict[int, Paciente] = {}
+    if precisa_pacs and itens:
+        pac_ids_f = {e.paciente_id for e in itens if e.paciente_id}
+        if pac_ids_f:
+            pacs_filtro = {
+                p.id: p
+                for p in db.exec(select(Paciente).where(Paciente.id.in_(pac_ids_f))).all()
+                if p.id
+            }
+
+    if isinstance(idade_min, int) or isinstance(idade_max, int):
+        i_min = idade_min if isinstance(idade_min, int) else None
+        i_max = idade_max if isinstance(idade_max, int) else None
+        hoje_ref = date.today()
+        filtrados_idade = []
+        for e in itens:
+            pac = pacs_filtro.get(e.paciente_id)
+            idade = _calcular_idade(pac.nascimento if pac else None, hoje_ref)
+            if idade is None:
+                continue
+            if i_min is not None and idade < i_min:
+                continue
+            if i_max is not None and idade > i_max:
+                continue
+            filtrados_idade.append(e)
+        itens = filtrados_idade
+
     if isinstance(q, str) and q.strip():
         ql = q.strip().lower()
         palavras = [p for p in ql.split() if p]
         com_nome = []
         for e in itens:
-            pac = db.get(Paciente, e.paciente_id)
+            pac = pacs_filtro.get(e.paciente_id) or db.get(Paciente, e.paciente_id)
             pront = (pac.codigo_prontuario or "") if pac else ""
             pront_num = "".join(c for c in pront if c.isdigit())
             hay = " ".join([
@@ -2378,6 +2487,8 @@ def exportar_fila(
     data_de: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     data_ate: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     agendada_em: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    idade_min: int | None = Query(default=None, ge=0, le=150),
+    idade_max: int | None = Query(default=None, ge=0, le=150),
     meus: bool = Query(default=False),
     ordenacao: str = Query(default="prioridade", pattern="^(prioridade|cronologica)$"),
     colunas: str | None = Query(default=None),
@@ -2408,6 +2519,8 @@ def exportar_fila(
     de_val = data_de if isinstance(data_de, str) else None
     ate_val = data_ate if isinstance(data_ate, str) else None
     ag_val = agendada_em if isinstance(agendada_em, str) else None
+    i_min_val = idade_min if isinstance(idade_min, int) else None
+    i_max_val = idade_max if isinstance(idade_max, int) else None
     meus_val = meus if isinstance(meus, bool) else False
     ordem_val = ordenacao if isinstance(ordenacao, str) else "prioridade"
     cols_val = colunas if isinstance(colunas, str) else None
@@ -2417,6 +2530,8 @@ def exportar_fila(
         proc_val, cod_esp_val, dest_val, de_val, ate_val,
         ag_val, meus_val, unid_id_val, unid_val,
         justificativa=just_val,
+        idade_min=i_min_val,
+        idade_max=i_max_val,
     )
     if ids_set:
         itens_filtrados = [it for it in itens if it.id in ids_set]
@@ -2538,6 +2653,8 @@ def exportar_fila(
             "procedimento": proc_val,
             "codigo_especialidade": cod_esp_val,
             "destino": dest_val,
+            "idade_min": i_min_val,
+            "idade_max": i_max_val,
             "ids_selecionados": list(ids_set) if ids_set else None,
             "colunas": cols_val,
         },
@@ -2577,24 +2694,38 @@ def exportar_agenda(
 def filtros_opcoes(
     status_: str | None = Query(default="aguardando", alias="status"),
     tipo_fila: str | None = Query(default=None),
+    cbo: str | None = Query(default=None),
     db: Session = Depends(get_db),
     _=Depends(need_any_perm("tfd_exames", "tfd_fila_lancamento", "tfd_medico")),
 ):
     """Agrega Tipo de Fila / Procedimento / Especialidade-CBO com totais.
 
-    Fonte primária: tfd_exames_fila (dados reais importados). Catálogo
-    dinâmico (tfd_tipos_fila / tfd_procedimentos / tfd_especialidades)
-    completa nomes zerados quando inativados não entram na fila.
+    Quando `cbo` é informado, restringe as especialidades e procedimentos às
+    opções correspondentes e autorizadas para aquele CBO específico.
     """
     from sqlalchemy import func as sa_func
+    from app.models.lab_exames import SigtapCbo
+    from app.services.cbo_normalizacao import especialidade_pertence_ao_cbo, limpar_codigo_cbo
 
-    base_f = [ExameFila.status == status_] if status_ else []
+    p_status = status_ if (isinstance(status_, str) or status_ is None) else "aguardando"
+    cbo_alvo = limpar_codigo_cbo(cbo) if isinstance(cbo, str) else ""
+    base_f = [ExameFila.ativo == True]  # noqa: E712
+    if p_status:
+        base_f.append(ExameFila.status == p_status)
 
     # Se tipo_fila for informado, especialidades e procedimentos são filtrados por ele
-    tf_filtro = (tipo_fila or "").strip()
+    tf_filtro = (tipo_fila or "").strip() if isinstance(tipo_fila, str) else ""
     base_procs_esps = list(base_f)
     if tf_filtro:
         base_procs_esps.append(ExameFila.tipo_fila == tf_filtro)
+
+    procs_autorizados_cbo: set[str] = set()
+    if cbo_alvo:
+        procs_autorizados_cbo = {
+            c.procedimento_codigo
+            for c in db.exec(select(SigtapCbo).where(SigtapCbo.cbo == cbo_alvo)).all()
+            if c.procedimento_codigo
+        }
 
     # Tipos
     tipos: list[OpcaoFiltro] = []
@@ -2607,38 +2738,50 @@ def filtros_opcoes(
     ).all()
     for nome, n in rows:
         tipos.append(OpcaoFiltro(value=nome, label=f"{nome} ({n})", total=n or 0))
-    # Procedimentos: agrupa por codigo_procedimento + nome limpo (filtrado por tipo_fila se informado)
+
+    # Especialidades CBO e lista distinta de CBOs (filtrados por tipo_fila e opcionalmente por cbo)
+    esps_map: dict[str, dict] = {}
+    cbos_map: dict[str, dict] = {}
+    procs_counts: dict[tuple[str, str], int] = {}
+    todos_itens = db.exec(select(ExameFila).where(*base_procs_esps)).all()
+    for e in todos_itens:
+        chave, rot = _identificar_grupo_especialidade(e)
+        cbo_item = chave.split(":", 1)[1] if chave.startswith("CBO:") else limpar_codigo_cbo(e.codigo_especialidade)
+        if cbo_item:
+            if cbo_item not in cbos_map:
+                cbos_map[cbo_item] = {"val": cbo_item, "rot": rot or CBO_PARA_NOME_CANONICO.get(cbo_item, f"CBO {cbo_item}"), "total": 0}
+            cbos_map[cbo_item]["total"] += 1
+
+        # Se filtro de CBO ativo, restringe especialidades e procedimentos ao CBO selecionado
+        if cbo_alvo:
+            bate_esp_cbo = (cbo_item == cbo_alvo) or especialidade_pertence_ao_cbo(rot, cbo_item, cbo_alvo)
+            bate_proc_cbo = bool(e.codigo_procedimento and e.codigo_procedimento in procs_autorizados_cbo)
+            if not (bate_esp_cbo or bate_proc_cbo):
+                continue
+
+        if chave.startswith("CBO:"):
+            cbo_k = chave.split(":", 1)[1]
+            if cbo_k not in esps_map:
+                esps_map[cbo_k] = {"val": cbo_k, "rot": rot, "total": 0}
+            esps_map[cbo_k]["total"] += 1
+        elif chave.startswith("ESP:") and rot.strip().upper() not in TERMOS_FILA_GENERICOS:
+            if rot not in esps_map:
+                esps_map[rot] = {"val": rot, "rot": rot, "total": 0}
+            esps_map[rot]["total"] += 1
+
+        k_proc = (e.codigo_procedimento or "", e.exame or "")
+        procs_counts[k_proc] = procs_counts.get(k_proc, 0) + 1
+
+    # Procedimentos filtrados
     procs: list[OpcaoFiltro] = []
-    rows_p = db.exec(
-        select(ExameFila.codigo_procedimento, ExameFila.exame, sa_func.count(ExameFila.id))
-        .where(*base_procs_esps)
-        .group_by(ExameFila.codigo_procedimento, ExameFila.exame)
-        .order_by(sa_func.count(ExameFila.id).desc())
-        .limit(500)
-    ).all()
-    for cod, exame, n in rows_p:
+    for (cod, exame), n in sorted(procs_counts.items(), key=lambda x: x[1], reverse=True)[:500]:
         nome_limpo = (exame or "").strip()
-        # exame legado = "COD - NOME"; exibe NOME (COD)
         m = _re.match(r"^[0-9.\-]{4,}\s*-\s*(.+)$", nome_limpo)
         nome_curto = (m.group(1) if m else nome_limpo).strip() or nome_limpo
         value = nome_curto or (cod or "")
         label = f"{nome_curto} ({n})" if nome_curto else f"{cod} ({n})"
         if value:
             procs.append(OpcaoFiltro(value=value, label=label, total=n or 0))
-    # Especialidades CBO (agrupamento canônico unificado, filtrado por tipo_fila se informado)
-    esps_map: dict[str, dict] = {}
-    todos_itens = db.exec(select(ExameFila).where(*base_procs_esps)).all()
-    for e in todos_itens:
-        chave, rot = _identificar_grupo_especialidade(e)
-        if chave.startswith("CBO:"):
-            cbo = chave.split(":", 1)[1]
-            if cbo not in esps_map:
-                esps_map[cbo] = {"val": cbo, "rot": rot, "total": 0}
-            esps_map[cbo]["total"] += 1
-        elif chave.startswith("ESP:") and rot.strip().upper() not in TERMOS_FILA_GENERICOS:
-            if rot not in esps_map:
-                esps_map[rot] = {"val": rot, "rot": rot, "total": 0}
-            esps_map[rot]["total"] += 1
 
     esps: list[OpcaoFiltro] = [
         OpcaoFiltro(
@@ -2648,7 +2791,15 @@ def filtros_opcoes(
         )
         for d in sorted(esps_map.values(), key=lambda x: x["total"], reverse=True)[:100]
     ]
-    return FiltrosOpcoesOut(tipos=tipos, procedimentos=procs, especialidades=esps)
+    cbos_list: list[OpcaoFiltro] = [
+        OpcaoFiltro(
+            value=d["val"],
+            label=f"{d['val']} · {d['rot']} ({d['total']})",
+            total=d["total"],
+        )
+        for d in sorted(cbos_map.values(), key=lambda x: x["total"], reverse=True)[:100]
+    ]
+    return FiltrosOpcoesOut(tipos=tipos, procedimentos=procs, especialidades=esps, cbos=cbos_list)
 
 
 def _garantir_token(obj: ExameFila) -> str:
@@ -3175,12 +3326,16 @@ def catalogo_procedimentos(
     tipo_fila: str = Query(default="", max_length=80),
     apenas_laboratoriais: bool | None = Query(default=None),
     especialidade: str = Query(default="", max_length=120),
+    grupo_codigo: str = Query(default="", max_length=2),
+    subgrupo_codigo: str = Query(default="", max_length=4),
+    cbo: str = Query(default="", max_length=10),
     db: Session = Depends(get_db),
     _=Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
 ):
-    """Catálogo dinâmico + oficial SIGTAP com filtragem contextual por Grupo/Subgrupo e Especialidade."""
+    """Catálogo dinâmico + oficial SIGTAP com filtragem contextual por Grupo/Subgrupo, CBO e Especialidade."""
     from app.models.settings import SystemSettings
     from app.models.lab_exames import SigtapProcedimento, SigtapCbo
+    from app.services.cbo_normalizacao import limpar_codigo_cbo
     from app.services.sigtap_hierarquia import (
         obter_filtro_sigtap_por_tipo,
         decompor_codigo_sigtap,
@@ -3198,11 +3353,28 @@ def catalogo_procedimentos(
         tipo_fila = getattr(tipo_fila, "default", "") or ""
     if not isinstance(especialidade, str):
         especialidade = getattr(especialidade, "default", "") or ""
+    if not isinstance(grupo_codigo, str):
+        grupo_codigo = getattr(grupo_codigo, "default", "") or ""
+    if not isinstance(subgrupo_codigo, str):
+        subgrupo_codigo = getattr(subgrupo_codigo, "default", "") or ""
+    if not isinstance(cbo, str):
+        cbo = getattr(cbo, "default", "") or ""
     if not isinstance(apenas_laboratoriais, (bool, type(None))):
         apenas_laboratoriais = getattr(apenas_laboratoriais, "default", None)
 
     ql = remover_acentos((q or "").strip()).lower()
     esp_filtro = remover_acentos((especialidade or "").strip()).lower()
+    g_filtro = (grupo_codigo or "").strip()[:2]
+    sg_filtro = (subgrupo_codigo or "").strip()[:4]
+    pref_hier = sg_filtro or g_filtro
+    cbo_filtro = limpar_codigo_cbo(cbo)
+    cods_autorizados_cbo: set[str] = set()
+    if cbo_filtro:
+        cods_autorizados_cbo = {
+            sc.procedimento_codigo.strip()
+            for sc in db.exec(select(SigtapCbo).where(SigtapCbo.cbo == cbo_filtro)).all()
+            if sc.procedimento_codigo
+        }
 
     # Normaliza o tipo de fila para o padrão canônico e obtém a sigla oficial (ex: USG, TOMO, CARD, CIR)
     tipo_canonico, sigla_canonico = normalizar_tipo_fila(tipo_fila)
@@ -3338,6 +3510,15 @@ def catalogo_procedimentos(
             continue
 
         cod = (p.codigo or "").strip()
+        if pref_hier and not cod.startswith(pref_hier):
+            continue
+        if cbo_filtro:
+            cbo_ok = (
+                (cod in cods_autorizados_cbo)
+                or (limpar_codigo_cbo(esp_cod) == cbo_filtro)
+            )
+            if not cbo_ok:
+                continue
         # Se filtrando fila especializada/cirúrgica, desconsidera exames de sangue (0202)
         if regras.get("excluir_prefixos") and any(cod.startswith(pref) for pref in regras["excluir_prefixos"]):
             continue
@@ -3423,6 +3604,17 @@ def catalogo_procedimentos(
         if regras.get("excluir_prefixos"):
             for exc in regras["excluir_prefixos"]:
                 filtros_sig.append(~SigtapProcedimento.codigo.like(f"{exc}%"))
+
+        if sg_filtro:
+            filtros_sig.append(SigtapProcedimento.codigo.like(f"{sg_filtro}%"))
+        elif g_filtro:
+            filtros_sig.append(SigtapProcedimento.codigo.like(f"{g_filtro}%"))
+
+        if cbo_filtro:
+            if cods_autorizados_cbo:
+                filtros_sig.append(SigtapProcedimento.codigo.in_(list(cods_autorizados_cbo)[:2000]))
+            else:
+                filtros_sig.append(SigtapProcedimento.id == -1)
 
         if ql:
             desc_sig_col = coluna_sem_acento(db, SigtapProcedimento.descricao)
@@ -5030,55 +5222,164 @@ def buscar_cids_tfd(
 @router.get("/especialidades", response_model=Pagina[EspecialidadeOut])
 def listar_especialidades(
     q: str = Query(default="", max_length=80),
+    cbo: str = Query(default="", max_length=20),
     ativos: bool | None = None,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
     _=Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
 ):
+    from app.services.cbo_normalizacao import (
+        especialidade_pertence_ao_cbo,
+        limpar_codigo_cbo,
+        sanitizar_texto_cbo,
+    )
+
+    p_q = q if isinstance(q, str) else ""
+    p_cbo = limpar_codigo_cbo(cbo) if isinstance(cbo, str) else ""
+    p_ativos = ativos if (isinstance(ativos, bool) or ativos is None) else None
+    p_page = page if isinstance(page, int) and page > 0 else 1
+    p_limit = limit if isinstance(limit, int) and limit > 0 else 100
+
     base = select(Especialidade).order_by(Especialidade.nome)
-    filtros = []
-    if q:
-        like = f"%{q}%"
-        filtros.append(
-            (Especialidade.nome.ilike(like)) | (Especialidade.codigo_cbo.ilike(like))
-        )
-    if ativos is not None:
-        filtros.append(Especialidade.ativo == ativos)
-    if filtros:
-        base = select(Especialidade).where(*filtros).order_by(Especialidade.nome)
-    total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
-    meta = paginar(total, page, limit)
-    rows = db.exec(base.offset(meta["offset"]).limit(limit)).all()
-    return {"data": rows, "total": total, "page": meta["page"], "pages": meta["pages"]}
+    if p_ativos is not None:
+        base = base.where(Especialidade.ativo == p_ativos)
+    rows = list(db.exec(base).all())
+
+    if p_cbo:
+        from app.models.lab_exames import SigtapOcupacao
+        oc = db.exec(select(SigtapOcupacao).where(SigtapOcupacao.cbo == p_cbo)).first()
+        oc_desc = oc.descricao if oc else ""
+        rows = [
+            r for r in rows
+            if especialidade_pertence_ao_cbo(r.nome, r.codigo_cbo, p_cbo, oc_desc)
+        ]
+
+    if p_q.strip():
+        termo = sanitizar_texto_cbo(p_q)
+        rows = [
+            r for r in rows
+            if termo in sanitizar_texto_cbo(r.nome)
+            or termo in sanitizar_texto_cbo(r.codigo_cbo)
+        ]
+
+    total = len(rows)
+    meta = paginar(total, p_page, p_limit)
+    return {"data": rows[meta["offset"]:meta["offset"] + p_limit], "total": total, "page": meta["page"], "pages": meta["pages"]}
+
+
+@router.get("/cbo-especialidades")
+def especialidades_por_cbo(
+    cbo: str = Query(..., max_length=20),
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
+):
+    """Retorna as especialidades e áreas/subgrupos SIGTAP autorizados para o CBO selecionado."""
+    from app.models.lab_exames import SigtapCbo, SigtapOcupacao, SigtapProcedimento
+    from app.services.cbo_normalizacao import (
+        CBO_ESPECIALIDADES_CANONICAS,
+        especialidade_pertence_ao_cbo,
+        limpar_codigo_cbo,
+    )
+    from app.services.sigtap_hierarquia import decompor_codigo_sigtap
+
+    cbo_norm = limpar_codigo_cbo(cbo)
+    if not cbo_norm:
+        return {"cbo": "", "descricao": "", "especialidades": [], "areas": [], "subgrupos": []}
+
+    oc = db.exec(select(SigtapOcupacao).where(SigtapOcupacao.cbo == cbo_norm)).first()
+    desc_cbo = (oc.descricao if oc else "") or CBO_PARA_NOME_CANONICO.get(cbo_norm, "")
+    if not desc_cbo:
+        sc = db.exec(select(SigtapCbo).where(SigtapCbo.cbo == cbo_norm)).first()
+        desc_cbo = sc.descricao if sc else ""
+
+    esps_ativas = list(db.exec(select(Especialidade).where(Especialidade.ativo == True).order_by(Especialidade.nome)).all())  # noqa: E712
+    filtradas = [
+        {"id": e.id, "codigo_cbo": e.codigo_cbo, "nome": e.nome, "ativo": e.ativo}
+        for e in esps_ativas
+        if especialidade_pertence_ao_cbo(e.nome, e.codigo_cbo, cbo_norm, desc_cbo)
+    ]
+
+    if not filtradas:
+        for cbo_c, nome_c, _r, _t in CBO_ESPECIALIDADES_CANONICAS:
+            if cbo_c == cbo_norm:
+                filtradas.append({"id": None, "codigo_cbo": cbo_c, "nome": nome_c, "ativo": True})
+                break
+        if not filtradas and desc_cbo:
+            filtradas.append({"id": None, "codigo_cbo": cbo_norm, "nome": desc_cbo, "ativo": True})
+
+    cods_procs = {
+        sc.procedimento_codigo
+        for sc in db.exec(select(SigtapCbo).where(SigtapCbo.cbo == cbo_norm)).all()
+        if sc.procedimento_codigo
+    }
+    areas_map: dict[str, str] = {}
+    subgrupos_map: dict[str, str] = {}
+    if cods_procs:
+        procs = db.exec(
+            select(SigtapProcedimento).where(SigtapProcedimento.codigo.in_(list(cods_procs)[:1500]))
+        ).all()
+        for p in procs:
+            info = decompor_codigo_sigtap(p.codigo)
+            gc = p.grupo_codigo or info["grupo_codigo"]
+            gn = p.grupo_nome or info["grupo_nome"]
+            sc_cod = p.subgrupo_codigo or info["subgrupo_codigo"]
+            sn = p.subgrupo_nome or info["subgrupo_nome"]
+            if gc:
+                areas_map[gc] = gn
+            if sc_cod:
+                subgrupos_map[sc_cod] = sn
+
+    return {
+        "cbo": cbo_norm,
+        "descricao": desc_cbo,
+        "especialidades": filtradas,
+        "areas": [{"codigo": k, "nome": v} for k, v in sorted(areas_map.items())],
+        "subgrupos": [{"codigo": k, "nome": v} for k, v in sorted(subgrupos_map.items())],
+    }
+
+
+@router.post("/especialidades/unificar-duplicados")
+def unificar_especialidades_duplicadas(
+    db: Session = Depends(get_db),
+    _=Depends(need_perm("tfd_catalogo", "editar")),
+):
+    """Normaliza e unifica cadastros duplicados de CBOs/especialidades no banco de dados."""
+    from app.services.cbo_normalizacao import unificar_cbos_duplicados
+
+    return unificar_cbos_duplicados(db)
 
 
 @router.post("/especialidades", response_model=EspecialidadeOut, status_code=201)
 def criar_especialidade(data: EspecialidadeIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_catalogo", "criar"))):
-    cbo = (data.codigo_cbo or "").strip()
-    if cbo:
-        if db.exec(select(Especialidade).where(Especialidade.codigo_cbo == cbo)).first():
-            raise HTTPException(400, "CBO já cadastrado")
-    obj = Especialidade(codigo_cbo=cbo, nome=data.nome.strip(), ativo=data.ativo)
+    from app.services.cbo_normalizacao import encontrar_especialidade_equivalente, limpar_codigo_cbo
+
+    cbo = limpar_codigo_cbo(data.codigo_cbo)
+    nome = " ".join((data.nome or "").strip().split())
+    dup, motivo = encontrar_especialidade_equivalente(db, nome, cbo)
+    if dup:
+        raise HTTPException(400, motivo or "CBO já cadastrado")
+    obj = Especialidade(codigo_cbo=cbo, nome=nome, ativo=data.ativo)
     db.add(obj)
     db.commit()
     db.refresh(obj)
     return obj
 
 
-
 @router.put("/especialidades/{eid}", response_model=EspecialidadeOut)
 def atualizar_especialidade(eid: int, data: EspecialidadeIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_catalogo", "editar"))):
+    from app.services.cbo_normalizacao import encontrar_especialidade_equivalente, limpar_codigo_cbo
+
     obj = db.get(Especialidade, eid)
     if not obj:
         raise HTTPException(404, "Especialidade não encontrada")
-    cbo = (data.codigo_cbo or "").strip()
-    if cbo:
-        dup = db.exec(select(Especialidade).where(Especialidade.codigo_cbo == cbo, Especialidade.id != eid)).first()
-        if dup:
-            raise HTTPException(400, "CBO já cadastrado")
+    cbo = limpar_codigo_cbo(data.codigo_cbo)
+    nome = " ".join((data.nome or "").strip().split())
+    dup, motivo = encontrar_especialidade_equivalente(db, nome, cbo, exclude_id=eid)
+    if dup:
+        raise HTTPException(400, motivo or "CBO já cadastrado")
     obj.codigo_cbo = cbo
-    obj.nome = data.nome.strip()
+    obj.nome = nome
     obj.ativo = data.ativo
     db.add(obj)
     db.commit()

@@ -8,6 +8,7 @@ import {
   tfdBuscarCids,
   tfdBuscarPacientesPec,
   tfdCatalogoExames,
+  tfdCboEspecialidades,
   tfdConsultarExamePublico,
   tfdCriarExame,
   tfdEspecialidades,
@@ -249,15 +250,20 @@ export default function FilaExames() {
   const [prio, setPrio] = useState("");
   const [tipoFila, setTipoFila] = useState("");
   const [proc, setProc] = useState("");
+  const [filtroCbo, setFiltroCbo] = useState("");
   const [espCbo, setEspCbo] = useState("");
   const [opTipos, setOpTipos] = useState<OpcaoFiltro[]>([]);
   const [opProcs, setOpProcs] = useState<OpcaoFiltro[]>([]);
   const [opEsps, setOpEsps] = useState<OpcaoFiltro[]>([]);
+  const [opCbos, setOpCbos] = useState<OpcaoFiltro[]>([]);
   const [dest, setDest] = useState("");
   const [filtroUnidadeId, setFiltroUnidadeId] = useState("");
   const [de, setDe] = useState("");
   const [ate, setAte] = useState("");
+  const [idadeMin, setIdadeMin] = useState("");
+  const [idadeMax, setIdadeMax] = useState("");
   const [filtroJustificativa, setFiltroJustificativa] = useState("");
+  const [espsCboModal, setEspsCboModal] = useState<{ codigo_cbo: string; nome: string }[]>([]);
   const [pageSize, setPageSize] = useState(100);
   const [modalConfirmacaoLancamento, setModalConfirmacaoLancamento] = useState(false);
   const [modal, setModal] = useState(false);
@@ -567,14 +573,32 @@ export default function FilaExames() {
     }
   }
 
-  async function carregar(p = page, over?: { tipo?: string; proc?: string; esp?: string; meus?: boolean; ordenacao?: string; justificativa?: string; limit?: number }) {
+  async function carregar(
+    p = page,
+    over?: {
+      tipo?: string;
+      proc?: string;
+      esp?: string;
+      cbo?: string;
+      meus?: boolean;
+      ordenacao?: string;
+      justificativa?: string;
+      idadeMin?: string;
+      idadeMax?: string;
+      limit?: number;
+    },
+  ) {
     const tipoAtual = over?.tipo !== undefined ? over.tipo : tipoFila;
     const procAtual = over?.proc !== undefined ? over.proc : proc;
+    const cboAtual = over?.cbo !== undefined ? over.cbo : filtroCbo;
     const espAtual = over?.esp !== undefined ? over.esp : espCbo;
     const meusAtual = over?.meus !== undefined ? over.meus : soMeus;
     const ordAtual = over?.ordenacao !== undefined ? over.ordenacao : ordem;
     const justAtual = over?.justificativa !== undefined ? over.justificativa : filtroJustificativa;
+    const idadeMinAtual = over?.idadeMin !== undefined ? over.idadeMin : idadeMin;
+    const idadeMaxAtual = over?.idadeMax !== undefined ? over.idadeMax : idadeMax;
     const limitAtual = over?.limit !== undefined ? over.limit : pageSize;
+    const codEspFiltro = espAtual.trim() || cboAtual.trim() || undefined;
     const params: FilaExamesParams = {
       status: filtro || undefined,
       meus: meusAtual || undefined,
@@ -583,11 +607,13 @@ export default function FilaExames() {
       prioridade: prio || undefined,
       tipo_fila: tipoAtual.trim() || undefined,
       procedimento: procAtual.trim() || undefined,
-      codigo_especialidade: espAtual.trim() || undefined,
+      codigo_especialidade: codEspFiltro,
       destino: dest.trim() || undefined,
       unidade_id: filtroUnidadeId ? Number(filtroUnidadeId) : undefined,
       data_de: de || undefined,
       data_ate: ate || undefined,
+      idade_min: idadeMinAtual.trim() ? Number(idadeMinAtual) : undefined,
+      idade_max: idadeMaxAtual.trim() ? Number(idadeMaxAtual) : undefined,
       ordenacao: ordAtual,
       page: p,
       limit: limitAtual,
@@ -611,23 +637,25 @@ export default function FilaExames() {
     }
   }
 
-  async function carregarOpcoes(st = filtro, tf = tipoFila) {
+  async function carregarOpcoes(st = filtro, tf = tipoFila, cboSel = filtroCbo) {
     try {
-      const o = await tfdFiltrosOpcoes(st || undefined, tf || undefined);
+      const o = await tfdFiltrosOpcoes(st || undefined, tf || undefined, cboSel || undefined);
       setOpTipos(o.tipos ?? []);
       setOpProcs(o.procedimentos ?? []);
       setOpEsps(o.especialidades ?? []);
+      setOpCbos(o.cbos ?? []);
       return o;
     } catch {
       setOpTipos([]);
       setOpProcs([]);
       setOpEsps([]);
-      return { tipos: [], procedimentos: [], especialidades: [] };
+      setOpCbos([]);
+      return { tipos: [], procedimentos: [], especialidades: [], cbos: [] };
     }
   }
 
   useEffect(() => {
-    carregarOpcoes(filtro, tipoFila).then((novas) => {
+    carregarOpcoes(filtro, tipoFila, filtroCbo).then((novas) => {
       if (espCbo && novas?.especialidades) {
         const existe = novas.especialidades.some((e) => e.value === espCbo);
         if (!existe) {
@@ -636,7 +664,7 @@ export default function FilaExames() {
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tipoFila]);
+  }, [tipoFila, filtroCbo]);
 
   useEffect(() => {
     // Marca o body durante a impressão p/ CSS isolar só o comprovante.
@@ -826,6 +854,7 @@ export default function FilaExames() {
   }
   const opcoesTipo = useMemo(() => paraCombo(opTipos), [opTipos]);
   const opcoesProc = useMemo(() => paraCombo(opProcs), [opProcs]);
+  const opcoesCbo = useMemo(() => paraCombo(opCbos), [opCbos]);
   const opcoesEsp = useMemo(() => paraCombo(opEsps), [opEsps]);
 
   useEffect(() => {
@@ -867,6 +896,29 @@ export default function FilaExames() {
     });
   }, [buscaExame, procsDoTipo]);
 
+  useEffect(() => {
+    if (!modal) {
+      setEspsCboModal([]);
+      return;
+    }
+    const cod = (form.codigo_especialidade || "").replace(/\D/g, "");
+    if (cod.length < 4) {
+      setEspsCboModal([]);
+      return;
+    }
+    let cancel = false;
+    tfdCboEspecialidades(cod)
+      .then((res) => {
+        if (!cancel) setEspsCboModal(res?.especialidades ?? []);
+      })
+      .catch(() => {
+        if (!cancel) setEspsCboModal([]);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [modal, form.codigo_especialidade]);
+
   const especialidadesDoTipo = useMemo(() => {
     const mapa = new Map<string, { nome: string; cbo: string }>();
     for (const e of listaEspecialidades) {
@@ -881,8 +933,26 @@ export default function FilaExames() {
         mapa.set(nome, { nome, cbo });
       }
     }
-    return Array.from(mapa.values()).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
-  }, [procsDoTipo, listaEspecialidades]);
+    for (const ec of espsCboModal) {
+      if (ec.nome && !mapa.has(ec.nome)) {
+        mapa.set(ec.nome, { nome: ec.nome, cbo: ec.codigo_cbo || "" });
+      }
+    }
+    const todas = Array.from(mapa.values()).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+    const cboModal = (form.codigo_especialidade || "").replace(/\D/g, "");
+    if (cboModal.length >= 4) {
+      const nomesAutorizadosCbo = new Set(espsCboModal.map((x) => x.nome.toLowerCase()));
+      const filtradas = todas.filter((item) => {
+        const ic = (item.cbo || "").replace(/\D/g, "");
+        if (ic && (ic === cboModal || (cboModal.length >= 4 && ic.startsWith(cboModal.slice(0, 4))))) {
+          return true;
+        }
+        return nomesAutorizadosCbo.has(item.nome.toLowerCase());
+      });
+      if (filtradas.length > 0) return filtradas;
+    }
+    return todas;
+  }, [procsDoTipo, listaEspecialidades, espsCboModal, form.codigo_especialidade]);
 
   function abrirModal(id?: number) {
     setErro("");
@@ -1267,7 +1337,7 @@ export default function FilaExames() {
               />
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
               <div>
                 <Label>Status</Label>
                 <Select value={filtro} onChange={(e) => setFiltro(e.target.value)}>
@@ -1299,7 +1369,26 @@ export default function FilaExames() {
                 />
               </div>
               <div>
-                <Label>Especialidade</Label>
+                <Label>CBO</Label>
+                <Combobox
+                  value={filtroCbo}
+                  onChange={(v) => {
+                    setFiltroCbo(v);
+                    setEspCbo("");
+                    setPage(1);
+                    setErro("");
+                    carregar(1, { cbo: v, esp: "" }).catch(() => setErro("Falha ao carregar fila."));
+                  }}
+                  options={opcoesCbo}
+                  placeholder="Todos os CBOs"
+                  emptyText="Nenhum CBO encontrado"
+                  searchPlaceholder="Buscar código ou ocupação CBO…"
+                />
+              </div>
+              <div>
+                <Label>
+                  Especialidade {filtroCbo ? <span className="text-[10px] font-normal text-teal">(do CBO)</span> : ""}
+                </Label>
                 <Combobox
                   value={espCbo}
                   onChange={(v) => {
@@ -1312,7 +1401,7 @@ export default function FilaExames() {
                     carregar(1, { esp: v }).catch(() => setErro("Falha ao carregar fila."));
                   }}
                   options={opcoesEsp}
-                  placeholder="Todas as especialidades"
+                  placeholder={filtroCbo ? "Especialidades deste CBO" : "Todas as especialidades"}
                   emptyText="Nenhuma especialidade encontrada"
                   searchPlaceholder="Buscar especialidade…"
                 />
@@ -1364,7 +1453,29 @@ export default function FilaExames() {
                   <Label>Até</Label>
                   <Input type="date" value={ate} onChange={(e) => setAte(e.target.value)} />
                 </div>
-                <div className="sm:col-span-2 md:col-span-4">
+                <div>
+                  <Label>Idade Mínima (anos)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={130}
+                    placeholder="Ex: 60"
+                    value={idadeMin}
+                    onChange={(e) => setIdadeMin(e.target.value.replace(/\D/g, "").slice(0, 3))}
+                  />
+                </div>
+                <div>
+                  <Label>Idade Máxima (anos)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={130}
+                    placeholder="Ex: 120"
+                    value={idadeMax}
+                    onChange={(e) => setIdadeMax(e.target.value.replace(/\D/g, "").slice(0, 3))}
+                  />
+                </div>
+                <div className="sm:col-span-2 md:col-span-2">
                   <Label>Buscar por Justificativa Clínica / Médica</Label>
                   <Input
                     placeholder="Pesquise por termos na justificativa médica (ex: dor pré-cordial, suspeita, neoplasia, urgência...)"
@@ -1433,7 +1544,27 @@ export default function FilaExames() {
                 </Button>
                 <button
                   type="button"
-                  onClick={() => { setQ(""); setPrio(""); setTipoFila(""); setProc(""); setEspCbo(""); setDest(""); setFiltroUnidadeId(""); setDe(""); setAte(""); setFiltro("aguardando"); setSoMeus(false); setFiltrosAvancados(false); setPage(1); carregar(1, { tipo: "", proc: "", esp: "" }).catch(() => {}); }}
+                  onClick={() => {
+                    setQ("");
+                    setPrio("");
+                    setTipoFila("");
+                    setProc("");
+                    setFiltroCbo("");
+                    setEspCbo("");
+                    setDest("");
+                    setFiltroUnidadeId("");
+                    setDe("");
+                    setAte("");
+                    setIdadeMin("");
+                    setIdadeMax("");
+                    setFiltroJustificativa("");
+                    setFiltro("aguardando");
+                    setSoMeus(false);
+                    setFiltrosAvancados(false);
+                    setPage(1);
+                    carregarOpcoes("aguardando", "", "").catch(() => {});
+                    carregar(1, { tipo: "", proc: "", esp: "", cbo: "", idadeMin: "", idadeMax: "", justificativa: "" }).catch(() => {});
+                  }}
                   className="rounded-xl px-3 py-2 text-xs font-semibold text-ink/70 hover:bg-sus-900/5 transition"
                 >
                   Limpar
@@ -2381,7 +2512,44 @@ export default function FilaExames() {
                     </datalist>
                   </div>
                   <div>
-                    <Label>Especialidade</Label>
+                    <Label>CBO</Label>
+                    <Input
+                      value={form.codigo_especialidade}
+                      onChange={(e) => {
+                        const novoCbo = e.target.value.replace(/\D/g, "").slice(0, 6);
+                        const matchLista = listaEspecialidades.filter((esp) => (esp.codigo_cbo || "") === novoCbo);
+                        setForm({
+                          ...form,
+                          codigo_especialidade: novoCbo,
+                          ...(matchLista.length === 1
+                            ? { nome_especialidade: matchLista[0].nome, especialidade: matchLista[0].nome }
+                            : novoCbo.length >= 6
+                              ? { nome_especialidade: "", especialidade: "" }
+                              : {}),
+                        });
+                      }}
+                      placeholder="Ex: 225285"
+                      inputMode="numeric"
+                      list="cbos-datalist"
+                    />
+                    <datalist id="cbos-datalist">
+                      {Array.from(
+                        new Map(
+                          listaEspecialidades
+                            .filter((esp) => esp.codigo_cbo)
+                            .map((esp) => [esp.codigo_cbo, { cbo: esp.codigo_cbo, nome: esp.nome }]),
+                        ).values(),
+                      ).map((esp) => (
+                        <option key={esp.cbo} value={esp.cbo}>
+                          {esp.nome}
+                        </option>
+                      ))}
+                    </datalist>
+                  </div>
+                  <div>
+                    <Label>
+                      Especialidade {form.codigo_especialidade ? <span className="text-[10px] font-normal text-teal">(filtrada pelo CBO)</span> : ""}
+                    </Label>
                     <Input
                       value={form.nome_especialidade || form.especialidade}
                       onChange={(e) => setForm({ ...form, nome_especialidade: e.target.value, especialidade: e.target.value })}
@@ -2390,25 +2558,8 @@ export default function FilaExames() {
                     />
                     <datalist id="especialidades-datalist">
                       {especialidadesDoTipo.map((esp) => (
-                        <option key={esp.nome} value={esp.nome}>
+                        <option key={`${esp.cbo}-${esp.nome}`} value={esp.nome}>
                           {esp.cbo ? `CBO ${esp.cbo} · ` : ""}{esp.nome}
-                        </option>
-                      ))}
-                    </datalist>
-                  </div>
-                  <div>
-                    <Label>CBO</Label>
-                    <Input
-                      value={form.codigo_especialidade}
-                      onChange={(e) => setForm({ ...form, codigo_especialidade: e.target.value.replace(/\D/g, "").slice(0, 6) })}
-                      placeholder="Ex: 225285"
-                      inputMode="numeric"
-                      list="cbos-datalist"
-                    />
-                    <datalist id="cbos-datalist">
-                      {especialidadesDoTipo.filter((esp) => esp.cbo).map((esp) => (
-                        <option key={esp.cbo} value={esp.cbo}>
-                          {esp.nome}
                         </option>
                       ))}
                     </datalist>
@@ -2961,11 +3112,13 @@ export default function FilaExames() {
                       prioridade: prio || undefined,
                       tipo_fila: tipoFila.trim() || undefined,
                       procedimento: proc.trim() || undefined,
-                      codigo_especialidade: espCbo.trim() || undefined,
+                      codigo_especialidade: espCbo.trim() || filtroCbo.trim() || undefined,
                       destino: dest.trim() || undefined,
                       unidade_id: filtroUnidadeId ? Number(filtroUnidadeId) : undefined,
                       data_de: de || undefined,
                       data_ate: ate || undefined,
+                      idade_min: idadeMin.trim() ? Number(idadeMin) : undefined,
+                      idade_max: idadeMax.trim() ? Number(idadeMax) : undefined,
                       meus: soMeus || undefined,
                       ordenacao: ordem,
                       colunas: colunasExport.join(","),

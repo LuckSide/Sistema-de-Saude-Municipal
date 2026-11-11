@@ -1,10 +1,16 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
+from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from app.core.deps import get_current_user_senha_ok as get_current_user, get_db
-from app.models.lab_exames import LabSolicitacao, SigtapCbo, SigtapProcedimento
+from app.models.lab_exames import (
+    LabSolicitacao,
+    SigtapCbo,
+    SigtapOcupacao,
+    SigtapProcedimento,
+)
 from app.models.tfd import Paciente
 from app.core.pagination import Pagina, paginar
 from app.schemas.lab import (
@@ -73,23 +79,90 @@ def resumo(
 
 
 # ---------- SIGTAP ----------
+def _sigtap_para_out(r: SigtapProcedimento) -> SigtapOut:
+    from app.services.sigtap_hierarquia import decompor_codigo_sigtap
+
+    d = r.model_dump()
+    if not d.get("grupo_codigo") or not d.get("subgrupo_codigo") or not d.get("grupo_nome"):
+        info = decompor_codigo_sigtap(r.codigo)
+        d["grupo_codigo"] = d.get("grupo_codigo") or info["grupo_codigo"]
+        d["grupo_nome"] = d.get("grupo_nome") or info["grupo_nome"]
+        d["subgrupo_codigo"] = d.get("subgrupo_codigo") or info["subgrupo_codigo"]
+        d["subgrupo_nome"] = d.get("subgrupo_nome") or info["subgrupo_nome"]
+        d["forma_organizacao_codigo"] = d.get("forma_organizacao_codigo") or info["forma_organizacao"]
+    return SigtapOut(**d)
+
+
+@router.get("/sigtap/arvore")
+def arvore_sigtap(
+    grupo_codigo: str = Query(default="", max_length=2),
+    subgrupo_codigo: str = Query(default="", max_length=4),
+    cbo: str = Query(default="", max_length=10),
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_sigtap", "lab_fila", "lab_marcacao", "lab", "tfd_exames", "tfd_fila_lancamento", "tfd", "tfd_catalogo")),
+):
+    """Retorna a árvore hierárquica completa do SIGTAP dividida por Área (Grupo), Subgrupo e CBO."""
+    from app.services.sigtap_hierarquia import obter_arvore_sigtap
+
+    return obter_arvore_sigtap(
+        db,
+        grupo_codigo=grupo_codigo if isinstance(grupo_codigo, str) else "",
+        subgrupo_codigo=subgrupo_codigo if isinstance(subgrupo_codigo, str) else "",
+        cbo=cbo if isinstance(cbo, str) else "",
+    )
+
+
 @router.get("/sigtap", response_model=Pagina[SigtapOut])
 def listar_sigtap(
     q: str = "",
-    instrumento: str | None = Query(default=None, pattern="^(BPA-C|BPA-I|BPA-F)?$"),
+    instrumento: str | None = Query(default=None, pattern="^(BPA-C|BPA-I|BPA-F|AIH|APAC|RAAS)?$"),
     apenas_laboratoriais: bool = Query(default=False),
+    grupo_codigo: str = Query(default="", max_length=2),
+    subgrupo_codigo: str = Query(default="", max_length=4),
+    cbo: str = Query(default="", max_length=10),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
     _=Depends(need_any_perm("lab_sigtap", "lab_fila", "lab_marcacao", "lab", "tfd_exames", "tfd_fila_lancamento", "tfd")),
 ):
     from app.models.settings import SystemSettings
+    from app.services.cbo_normalizacao import limpar_codigo_cbo
+
+    p_q = q if isinstance(q, str) else ""
+    p_inst = instrumento if isinstance(instrumento, str) and instrumento else None
+    p_apenas_lab = apenas_laboratoriais if isinstance(apenas_laboratoriais, bool) else False
+    p_page = page if isinstance(page, int) and page > 0 else 1
+    p_limit = limit if isinstance(limit, int) and limit > 0 else 100
 
     base = select(SigtapProcedimento).order_by(SigtapProcedimento.codigo)
-    if instrumento:
-        base = base.where(SigtapProcedimento.instrumento == instrumento)
+    if p_inst:
+        base = base.where(SigtapProcedimento.instrumento == p_inst)
 
-    if apenas_laboratoriais:
+    g_limpo = (grupo_codigo if isinstance(grupo_codigo, str) else "").strip()[:2]
+    sg_limpo = (subgrupo_codigo if isinstance(subgrupo_codigo, str) else "").strip()[:4]
+    cbo_limpo = limpar_codigo_cbo(cbo if isinstance(cbo, str) else "")
+    if sg_limpo:
+        base = base.where(
+            (SigtapProcedimento.subgrupo_codigo == sg_limpo)
+            | (SigtapProcedimento.codigo.like(f"{sg_limpo}%"))
+        )
+    elif g_limpo:
+        base = base.where(
+            (SigtapProcedimento.grupo_codigo == g_limpo)
+            | (SigtapProcedimento.codigo.like(f"{g_limpo}%"))
+        )
+
+    if cbo_limpo:
+        cods_cbo = list({
+            c.procedimento_codigo
+            for c in db.exec(select(SigtapCbo).where(SigtapCbo.cbo == cbo_limpo)).all()
+            if c.procedimento_codigo
+        })
+        if not cods_cbo:
+            return {"data": [], "total": 0, "page": 1, "pages": 1}
+        base = base.where(SigtapProcedimento.codigo.in_(cods_cbo))
+
+    if p_apenas_lab:
         cfg = db.get(SystemSettings, 1)
         raw_habilitados = getattr(cfg, "exames_habilitados_sigtap", "") or ""
         codigos_permitidos = [c.strip() for c in raw_habilitados.split(",") if c.strip()]
@@ -99,7 +172,7 @@ def listar_sigtap(
             base = base.where(SigtapProcedimento.codigo.like("0202%"))
 
     rows = list(db.exec(base).all())
-    if q.strip():
+    if p_q.strip():
         # Busca tolerante: remove acentos + espaços p/ "hemogra" achar HEMOGRAMA
         import unicodedata
 
@@ -108,7 +181,7 @@ def listar_sigtap(
                 c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn"
             )
 
-        termo = norm(q.strip()).upper()
+        termo = norm(p_q.strip()).upper()
         rows = [
             r
             for r in rows
@@ -116,9 +189,10 @@ def listar_sigtap(
             or termo in norm(r.descricao).upper()
         ]
     total = len(rows)
-    meta = paginar(total, page, limit)
+    meta = paginar(total, p_page, p_limit)
+    fatia = rows[meta["offset"]:meta["offset"] + p_limit]
     return {
-        "data": rows[meta["offset"]:meta["offset"] + limit],
+        "data": [_sigtap_para_out(r) for r in fatia],
         "total": total,
         "page": meta["page"],
         "pages": meta["pages"],
@@ -148,21 +222,39 @@ def criar_sigtap(
 @router.get("/sigtap/cbos")
 def listar_cbos_sigtap(
     procedimento_codigo: str = Query(default="", max_length=20),
+    grupo_codigo: str = Query(default="", max_length=2),
+    subgrupo_codigo: str = Query(default="", max_length=4),
     q: str = Query(default="", max_length=80),
     limit: int = Query(default=1000, ge=1, le=10000),
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    """CBOs autorizados por procedimento (Tabela Unificada SIGTAP).
-
-    Suporta múltiplos CBOs por procedimento e busca universal de CBOs no sistema.
-    """
+    """CBOs autorizados por procedimento (Tabela Unificada SIGTAP) e busca unificada sem duplicatas."""
     from app.models.tfd import Especialidade as _Esp
     from app.api.v1.tfd import MAPA_ESPECIALIDADES_CANONICAS
+    from app.services.cbo_normalizacao import limpar_codigo_cbo, sanitizar_texto_cbo, comparar_nomes_cbo
 
-    cod = "".join(c for c in (procedimento_codigo or "") if c.isdigit())
-    termo = (q or "").strip().lower()
+    cod = "".join(c for c in (procedimento_codigo if isinstance(procedimento_codigo, str) else "") if c.isdigit())
+    g_cod = (grupo_codigo if isinstance(grupo_codigo, str) else "").strip()[:2]
+    sg_cod = (subgrupo_codigo if isinstance(subgrupo_codigo, str) else "").strip()[:4]
+    termo_raw = (q if isinstance(q, str) else "").strip()
+    p_limit = limit if isinstance(limit, int) and limit > 0 else 1000
+    termo = sanitizar_texto_cbo(termo_raw)
     out: list[dict] = []
+
+    def _deduplicar_cbos(itens: list[dict]) -> list[dict]:
+        por_cbo: dict[str, dict] = {}
+        for item in itens:
+            cbo_norm = limpar_codigo_cbo(item.get("cbo")) or (item.get("cbo") or "").strip()
+            if not cbo_norm:
+                continue
+            desc_atual = (item.get("descricao") or "").strip()
+            if cbo_norm not in por_cbo:
+                por_cbo[cbo_norm] = {"cbo": cbo_norm, "descricao": desc_atual, "origem": item.get("origem", "sigtap")}
+            else:
+                if len(desc_atual) > len(por_cbo[cbo_norm]["descricao"]) and not desc_atual.startswith("CBO "):
+                    por_cbo[cbo_norm]["descricao"] = desc_atual
+        return list(por_cbo.values())[:p_limit]
 
     if cod:
         # Quando um procedimento é informado, traz estritamente os CBOs autorizados para ele no SIGTAP
@@ -173,55 +265,61 @@ def listar_cbos_sigtap(
 
         if out:
             if termo:
-                out = [c for c in out if termo in (c["cbo"] or "").lower() or termo in (c["descricao"] or "").lower()]
-            vistos: set[str] = set()
-            unicos: list[dict] = []
-            for c in out:
-                cbo_str = (c["cbo"] or "").strip()
-                if not cbo_str:
-                    continue
-                chave = f"{cbo_str}|{c['descricao'].strip().lower()}"
-                if chave not in vistos:
-                    vistos.add(chave)
-                    unicos.append(c)
-            return unicos[:limit]
+                out = [
+                    c for c in out
+                    if termo in sanitizar_texto_cbo(c["cbo"])
+                    or termo in sanitizar_texto_cbo(c["descricao"])
+                    or comparar_nomes_cbo(termo_raw, c["descricao"]) >= 0.85
+                ]
+            return _deduplicar_cbos(out)
+
+    # Filtro opcional por Área / Subgrupo SIGTAP quando nenhum procedimento específico foi passado
+    if not cod and (sg_cod or g_cod):
+        pref = sg_cod or g_cod
+        procs_esc = list(
+            db.exec(
+                select(SigtapProcedimento.codigo).where(
+                    (SigtapProcedimento.subgrupo_codigo == sg_cod)
+                    if sg_cod
+                    else (SigtapProcedimento.grupo_codigo == g_cod)
+                )
+            ).all()
+        )
+        if not procs_esc:
+            procs_esc = list(
+                db.exec(select(SigtapProcedimento.codigo).where(SigtapProcedimento.codigo.like(f"{pref}%"))).all()
+            )
+        if procs_esc:
+            for ini in range(0, len(procs_esc), 400):
+                bloco = procs_esc[ini : ini + 400]
+                for sc in db.exec(select(SigtapCbo).where(SigtapCbo.procedimento_codigo.in_(bloco))).all():
+                    out.append({"cbo": sc.cbo, "descricao": sc.descricao or "", "origem": "sigtap"})
 
     if not out and not cod:
-        # Busca universal em TODOS os CBOs do SIGTAP
+        # Busca universal em TODOS os CBOs do SIGTAP e ocupações normalizadas
+        for oc in db.exec(select(SigtapOcupacao).where(SigtapOcupacao.ativo == True).limit(p_limit)).all():  # noqa: E712
+            out.append({"cbo": oc.cbo, "descricao": oc.descricao or "", "origem": "sigtap"})
+
         sigtap_query = select(SigtapCbo.cbo, SigtapCbo.descricao).distinct()
-        if termo:
-            sigtap_query = sigtap_query.where(
-                (SigtapCbo.cbo.ilike(f"%{termo}%")) | (SigtapCbo.descricao.ilike(f"%{termo}%"))
-            )
-        for cbo, desc in db.exec(sigtap_query.limit(limit)).all():
+        for cbo, desc in db.exec(sigtap_query.limit(p_limit)).all():
             out.append({"cbo": cbo, "descricao": desc or "", "origem": "sigtap"})
 
     # Incluir especialidades locais cadastradas e mapa canônico para cobertura completa
-    esp_query = select(_Esp).where(_Esp.ativo == True)
-    if termo:
-        esp_query = esp_query.where((_Esp.codigo_cbo.ilike(f"%{termo}%")) | (_Esp.nome.ilike(f"%{termo}%")))
-    for e in db.exec(esp_query.limit(500)).all():
+    for e in db.exec(select(_Esp).where(_Esp.ativo == True).limit(500)).all():  # noqa: E712
         out.append({"cbo": e.codigo_cbo, "descricao": e.nome or "", "origem": "catalogo"})
 
     for _, cbo_canon, nome_canon in MAPA_ESPECIALIDADES_CANONICAS:
-        if not termo or (termo in cbo_canon.lower() or termo in nome_canon.lower()):
-            out.append({"cbo": cbo_canon, "descricao": nome_canon, "origem": "canonico"})
+        out.append({"cbo": cbo_canon, "descricao": nome_canon, "origem": "canonico"})
 
     if termo and out:
-        out = [c for c in out if termo in (c["cbo"] or "").lower() or termo in (c["descricao"] or "").lower()]
+        out = [
+            c for c in out
+            if termo in sanitizar_texto_cbo(c["cbo"])
+            or termo in sanitizar_texto_cbo(c["descricao"])
+            or comparar_nomes_cbo(termo_raw, c["descricao"]) >= 0.85
+        ]
 
-    vistos: set[str] = set()
-    unicos: list[dict] = []
-    for c in out:
-        cbo_str = (c["cbo"] or "").strip()
-        if not cbo_str:
-            continue
-        chave = f"{cbo_str}|{c['descricao'].strip().lower()}"
-        if chave in vistos:
-            continue
-        vistos.add(chave)
-        unicos.append(c)
-    return unicos[:limit]
+    return _deduplicar_cbos(out)
 
 
 # ---------- Solicitações ----------
@@ -381,12 +479,16 @@ def exportar_lote(
 @router.get("/sigtap/exportar")
 def exportar_sigtap(
     q: str = "",
-    instrumento: str | None = Query(default=None, pattern="^(BPA-C|BPA-I|BPA-F)?$"),
+    instrumento: str | None = Query(default=None, pattern="^(BPA-C|BPA-I|BPA-F|AIH|APAC|RAAS)?$"),
+    grupo_codigo: str = Query(default="", max_length=2),
+    subgrupo_codigo: str = Query(default="", max_length=4),
+    cbo: str = Query(default="", max_length=10),
     db: Session = Depends(get_db),
     ator=Depends(need_perm("lab_sigtap")),
 ):
-    """Tabela SIGTAP em XLSX respeitando busca/instrumento ativos."""
+    """Tabela SIGTAP em XLSX respeitando busca/instrumento/área/subgrupo/CBO ativos."""
     from app.services.export_xlsx import resposta_xlsx
+    from app.services.cbo_normalizacao import limpar_codigo_cbo
 
     import unicodedata
 
@@ -397,9 +499,17 @@ def exportar_sigtap(
 
     base = select(SigtapProcedimento).order_by(SigtapProcedimento.codigo)
     if instrumento:
-        base = select(SigtapProcedimento).where(
-            SigtapProcedimento.instrumento == instrumento
-        ).order_by(SigtapProcedimento.codigo)
+        base = base.where(SigtapProcedimento.instrumento == instrumento)
+    sg_limpo = (subgrupo_codigo or "").strip()[:4]
+    g_limpo = (grupo_codigo or "").strip()[:2]
+    cbo_limpo = limpar_codigo_cbo(cbo)
+    if sg_limpo:
+        base = base.where((SigtapProcedimento.subgrupo_codigo == sg_limpo) | (SigtapProcedimento.codigo.like(f"{sg_limpo}%")))
+    elif g_limpo:
+        base = base.where((SigtapProcedimento.grupo_codigo == g_limpo) | (SigtapProcedimento.codigo.like(f"{g_limpo}%")))
+    if cbo_limpo:
+        cods_cbo = list({c.procedimento_codigo for c in db.exec(select(SigtapCbo).where(SigtapCbo.cbo == cbo_limpo)).all() if c.procedimento_codigo})
+        base = base.where(SigtapProcedimento.codigo.in_(cods_cbo)) if cods_cbo else base.where(SigtapProcedimento.id == -1)
     rows = list(db.exec(base).all())
     if q.strip():
         termo = norm(q.strip()).upper()
@@ -547,41 +657,11 @@ def buscar_sigtap_automatico(
     retorna exceção amigável e informativa orientando o uso do upload manual como fallback.
     Fonte oficial: http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp
     """
-    import urllib.request
-    import urllib.error
-    import ssl
     from app.services.sigtap_import import importar_sigtap as _importar
+    from app.services.sigtap_sync import baixar_tabela_unificada_datasus
 
-    partes = competencia.split("-")
-    ano, mes = partes[0], partes[1]
-
-    urls_tentativas = [
-        f"http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp",
-        f"ftp://ftp.datasus.gov.br/dissemin/publicos/SIASUS/200801_/TabelaUnificada/TabelaUnificada_{ano}{mes}.zip",
-        f"http://ftp.datasus.gov.br/dissemin/publicos/SIASUS/200801_/TabelaUnificada/TabelaUnificada_{ano}{mes}.zip",
-    ]
-
-    raw_bytes = None
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-
-    for url in urls_tentativas:
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-            )
-            with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
-                conteudo = resp.read()
-                # Valida se é um arquivo compactado ZIP real
-                if conteudo and conteudo.startswith(b"PK"):
-                    raw_bytes = conteudo
-                    break
-        except Exception:
-            continue
-
-    if not raw_bytes:
+    pacote = baixar_tabela_unificada_datasus(competencia=competencia, timeout=5)
+    if not pacote:
         raise HTTPException(
             status_code=503,
             detail=(
@@ -592,12 +672,85 @@ def buscar_sigtap_automatico(
             ),
         )
 
+    comp_encontrada, nome_arq, raw_bytes = pacote
     stats = _importar(
         db,
-        [(f"TabelaUnificada_{ano}{mes}.zip", raw_bytes)],
-        competencia,
+        [(nome_arq, raw_bytes)],
+        comp_encontrada or competencia,
         getattr(ator, "nome", "") or getattr(ator, "username", ""),
         simular,
+        origem="datasus_auto" if not simular else "simulacao",
     )
     return SigtapImportOut(**stats)
+
+
+class SigtapAutoSyncConfigIn(BaseModel):
+    sigtap_sync_automatica: bool | None = None
+    sigtap_sync_intervalo_horas: int | None = Field(default=None, ge=1, le=720)
+
+
+@router.get("/sigtap/auto-sync")
+def status_auto_sync_sigtap(
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_sigtap", "tfd_catalogo", "usuarios", "cfg_geral", "tfd")),
+):
+    """Status e agendamento da rotina periódica de atualização automática do SIGTAP/DATASUS."""
+    from app.models.integracoes import IntegrationSettings
+    from app.services.sigtap_sync import is_sigtap_sync_running
+
+    cfg = db.exec(select(IntegrationSettings).where(IntegrationSettings.id == 1)).first()
+    if not cfg:
+        cfg = IntegrationSettings(id=1)
+        db.add(cfg)
+        db.commit()
+        db.refresh(cfg)
+    return {
+        "sigtap_sync_automatica": bool(getattr(cfg, "sigtap_sync_automatica", True)),
+        "sigtap_sync_intervalo_horas": int(getattr(cfg, "sigtap_sync_intervalo_horas", 24) or 24),
+        "sigtap_sync_ultima_execucao": (
+            cfg.sigtap_sync_ultima_execucao.isoformat()
+            if getattr(cfg, "sigtap_sync_ultima_execucao", None)
+            else None
+        ),
+        "sigtap_sync_ultimo_status": getattr(cfg, "sigtap_sync_ultimo_status", "") or "",
+        "sigtap_sync_ultima_competencia": getattr(cfg, "sigtap_sync_ultima_competencia", "") or "",
+        "sigtap_sync_ultimo_erro": getattr(cfg, "sigtap_sync_ultimo_erro", "") or "",
+        "em_execucao": is_sigtap_sync_running(),
+    }
+
+
+@router.put("/sigtap/auto-sync")
+def atualizar_config_auto_sync_sigtap(
+    data: SigtapAutoSyncConfigIn,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_sigtap", "tfd_catalogo", "usuarios", "cfg_geral", "tfd", acoes=("editar",))),
+):
+    """Atualiza periodicidade e ativação do serviço agendado SIGTAP/DATASUS."""
+    from app.models.integracoes import IntegrationSettings
+
+    cfg = db.exec(select(IntegrationSettings).where(IntegrationSettings.id == 1)).first()
+    if not cfg:
+        cfg = IntegrationSettings(id=1)
+    if data.sigtap_sync_automatica is not None:
+        cfg.sigtap_sync_automatica = data.sigtap_sync_automatica
+    if data.sigtap_sync_intervalo_horas is not None:
+        cfg.sigtap_sync_intervalo_horas = data.sigtap_sync_intervalo_horas
+    db.add(cfg)
+    db.commit()
+    db.refresh(cfg)
+    return {"ok": True, "sigtap_sync_automatica": cfg.sigtap_sync_automatica, "sigtap_sync_intervalo_horas": cfg.sigtap_sync_intervalo_horas}
+
+
+@router.post("/sigtap/auto-sync/executar")
+def executar_auto_sync_sigtap_agora(
+    competencia: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+    forcar: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    ator=Depends(need_any_perm("lab_sigtap", "tfd_catalogo", "usuarios", "cfg_geral", "tfd")),
+):
+    """Dispara verificação/importação imediata do portal DATASUS/SIGTAP."""
+    from app.services.sigtap_sync import executar_sync_automatica_sigtap
+
+    nome_op = getattr(ator, "nome", "") or getattr(ator, "username", "") or "Operador"
+    return executar_sync_automatica_sigtap(db, competencia=competencia, usuario=nome_op, forcar=forcar)
 

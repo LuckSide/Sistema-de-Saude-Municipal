@@ -12,6 +12,7 @@ import {
   fetchUnidadesSaude,
   pagData,
   sigtapCbos,
+  tfdCboEspecialidades,
   tfdEspecialidades,
   updateMedico,
 } from "../services/api";
@@ -62,6 +63,7 @@ export default function Medicos() {
   const [buscaUnidade, setBuscaUnidade] = useState("");
   const [buscaEsp, setBuscaEsp] = useState("");
   const [especialidadesCadastradas, setEspecialidadesCadastradas] = useState<EspecialidadeCat[]>([]);
+  const [espsPorCbo, setEspsPorCbo] = useState<{ codigo_cbo: string; nome: string }[]>([]);
 
   // Filtros de busca instantânea na listagem (Requisito 3)
   const [buscaTabela, setBuscaTabela] = useState("");
@@ -126,6 +128,48 @@ export default function Medicos() {
     }, 250);
     return () => clearTimeout(t);
   }, [modal, buscaCbo]);
+  useEffect(() => {
+    if (!modal) {
+      setEspsPorCbo([]);
+      return;
+    }
+    const cbo = (form.cbo_codigo || "").replace(/\D/g, "");
+    if (cbo.length < 4) {
+      setEspsPorCbo([]);
+      return;
+    }
+    let cancel = false;
+    tfdCboEspecialidades(cbo)
+      .then((res) => {
+        if (!cancel) setEspsPorCbo(res?.especialidades ?? []);
+      })
+      .catch(() => {
+        if (!cancel) setEspsPorCbo([]);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [modal, form.cbo_codigo]);
+
+  const especialidadesFiltradasModal = useMemo(() => {
+    const cbo = (form.cbo_codigo || "").replace(/\D/g, "");
+    if (cbo.length < 4) return especialidadesCadastradas.slice(0, 12);
+    const prefix = cbo.slice(0, 4);
+    const mapa = new Map<string, { id: number | string; nome: string; codigo_cbo: string }>();
+    for (const e of espsPorCbo) {
+      if (e.nome && !mapa.has(e.nome.toLowerCase())) {
+        mapa.set(e.nome.toLowerCase(), { id: `${e.codigo_cbo}-${e.nome}`, nome: e.nome, codigo_cbo: e.codigo_cbo });
+      }
+    }
+    for (const e of especialidadesCadastradas) {
+      const ec = (e.codigo_cbo || "").replace(/\D/g, "");
+      if (ec && (ec === cbo || ec.startsWith(prefix)) && !mapa.has(e.nome.toLowerCase())) {
+        mapa.set(e.nome.toLowerCase(), { id: e.id, nome: e.nome, codigo_cbo: ec });
+      }
+    }
+    return Array.from(mapa.values());
+  }, [form.cbo_codigo, espsPorCbo, especialidadesCadastradas]);
+
   useEffect(() => {
     const rid = Number(sp.get("registro"));
     if (!rid || modal) return;
@@ -389,7 +433,14 @@ export default function Medicos() {
                 </div>
               )}
               <div className="md:col-span-2">
-                <Label>Especialidade(s)</Label>
+                <Label>
+                  Especialidade(s){" "}
+                  {form.cbo_codigo.replace(/\D/g, "").length >= 4 && (
+                    <span className="ml-1 text-[10px] font-normal text-teal">
+                      (vinculadas ao CBO {form.cbo_codigo})
+                    </span>
+                  )}
+                </Label>
                 <div className="relative">
                   <Input
                     value={form.especialidades}
@@ -397,9 +448,9 @@ export default function Medicos() {
                     placeholder="Digite ou selecione uma especialidade (separar por vírgula)"
                   />
                 </div>
-                {especialidadesCadastradas.length > 0 && (
+                {especialidadesFiltradasModal.length > 0 ? (
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    {especialidadesCadastradas.slice(0, 10).map((esp) => {
+                    {especialidadesFiltradasModal.slice(0, 12).map((esp) => {
                       const jaTem = (form.especialidades || "")
                         .split(",")
                         .map((s) => s.trim().toLowerCase())
@@ -435,7 +486,11 @@ export default function Medicos() {
                       );
                     })}
                   </div>
-                )}
+                ) : form.cbo_codigo.replace(/\D/g, "").length >= 4 ? (
+                  <p className="mt-1 text-[11px] text-ink/55">
+                    Nenhuma especialidade correspondente encontrada para o CBO {form.cbo_codigo}.
+                  </p>
+                ) : null}
               </div>
               <div><Label>Telefone</Label><Input value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} placeholder="DDD + número" className={borda("telefone")} />{msg("telefone")}</div>
               <div><Label>E-mail</Label><Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="usuario@dominio.ext" className={borda("email")} />{msg("email")}</div>

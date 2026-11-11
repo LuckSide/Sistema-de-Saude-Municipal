@@ -22,6 +22,12 @@ class SigtapOut(SigtapIn):
     valor_sp: float = 0
     valor_sh: float = 0
     competencia: str = ""
+    grupo_codigo: str = ""
+    grupo_nome: str = ""
+    subgrupo_codigo: str = ""
+    subgrupo_nome: str = ""
+    forma_organizacao_codigo: str = ""
+    forma_organizacao_nome: str = ""
 
 
 class SigtapVersaoOut(BaseModel):

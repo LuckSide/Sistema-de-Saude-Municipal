@@ -369,7 +369,7 @@ def expandir_aliases_busca(termo: str) -> list[str]:
     }
     resultados = []
     for chave, sinonimos in mapa.items():
-        if chave == t or chave in t or t in chave:
+        if chave == t or (len(t) >= 3 and chave.startswith(t)) or (len(chave) >= 4 and len(t) >= 4 and chave in t):
             resultados.extend(sinonimos)
     return list(dict.fromkeys(resultados))
 
@@ -976,3 +976,207 @@ def _ler_vivver_catalogo_csv_cached() -> tuple[dict, ...]:
 def carregar_vivver_catalogo_csv() -> list[dict]:
     """Lê em memória (cacheado) o catálogo oficial exportado do Vivver para fallback caso tfd_procedimentos esteja incompleto."""
     return [dict(item) for item in _ler_vivver_catalogo_csv_cached()]
+
+
+def seed_arvore_sigtap(db: Session) -> dict:
+    """Garante a estruturação completa da Árvore SIGTAP (Área/Grupo, Subgrupo e CBO)
+    no banco e preenche colunas hierárquicas em `sigtap_procedimentos` existentes.
+    """
+    from app.models.lab_exames import SigtapGrupo, SigtapOcupacao, SigtapSubgrupo
+    from app.services.cbo_normalizacao import CBO_ESPECIALIDADES_CANONICAS, limpar_codigo_cbo, sanitizar_texto_cbo
+
+    grupos_exist = {g.codigo: g for g in db.exec(select(SigtapGrupo)).all()}
+    for cod, nome in GRUPOS_SIGTAP.items():
+        if cod not in grupos_exist:
+            g = SigtapGrupo(codigo=cod, nome=nome[:150])
+            db.add(g)
+            grupos_exist[cod] = g
+
+    subgrupos_exist = {s.codigo: s for s in db.exec(select(SigtapSubgrupo)).all()}
+    for cod, nome in SUBGRUPOS_SIGTAP.items():
+        g_cod = cod[:2]
+        if cod not in subgrupos_exist:
+            sg = SigtapSubgrupo(codigo=cod, grupo_codigo=g_cod, nome=nome[:180])
+            db.add(sg)
+            subgrupos_exist[cod] = sg
+
+    ocup_exist = {
+        limpar_codigo_cbo(o.cbo): o
+        for o in db.exec(select(SigtapOcupacao)).all()
+        if limpar_codigo_cbo(o.cbo)
+    }
+    for cbo_cod, nome_desc, _rad, _t in CBO_ESPECIALIDADES_CANONICAS:
+        if cbo_cod not in ocup_exist:
+            db.add(SigtapOcupacao(
+                cbo=cbo_cod,
+                descricao=nome_desc[:150],
+                descricao_normalizada=sanitizar_texto_cbo(nome_desc)[:150],
+                ativo=True,
+            ))
+            ocup_exist[cbo_cod] = True  # type: ignore[assignment]
+
+    procs_sem_hier = db.exec(
+        select(SigtapProcedimento).where(
+            (SigtapProcedimento.grupo_codigo == "")
+            | (SigtapProcedimento.subgrupo_codigo == "")
+        )
+    ).all()
+    atualizados = 0
+    for p in procs_sem_hier:
+        info = decompor_codigo_sigtap(p.codigo)
+        if info["grupo_codigo"]:
+            p.grupo_codigo = info["grupo_codigo"]
+            p.grupo_nome = (
+                grupos_exist[info["grupo_codigo"]].nome
+                if info["grupo_codigo"] in grupos_exist
+                else info["grupo_nome"]
+            )[:150]
+        if info["subgrupo_codigo"]:
+            p.subgrupo_codigo = info["subgrupo_codigo"]
+            p.subgrupo_nome = (
+                subgrupos_exist[info["subgrupo_codigo"]].nome
+                if info["subgrupo_codigo"] in subgrupos_exist
+                else info["subgrupo_nome"]
+            )[:180]
+        if info["forma_organizacao"] and not p.forma_organizacao_codigo:
+            p.forma_organizacao_codigo = info["forma_organizacao"]
+        db.add(p)
+        atualizados += 1
+
+    db.commit()
+    return {
+        "grupos": len(grupos_exist),
+        "subgrupos": len(subgrupos_exist),
+        "ocupacoes": len(ocup_exist),
+        "procedimentos_atualizados": atualizados,
+    }
+
+
+def obter_arvore_sigtap(
+    db: Session,
+    grupo_codigo: str = "",
+    subgrupo_codigo: str = "",
+    cbo: str = "",
+) -> dict:
+    """Retorna a Árvore SIGTAP completa (Áreas/Grupos, Subgrupos, Formas e CBOs vinculados)
+    com filtragem em cascata opcional por Área -> Subgrupo -> CBO.
+    """
+    from app.models.lab_exames import SigtapFormaOrganizacao, SigtapGrupo, SigtapOcupacao, SigtapSubgrupo
+    from app.models.tfd import Especialidade
+    from app.services.cbo_normalizacao import CBO_ESPECIALIDADES_CANONICAS, limpar_codigo_cbo
+
+    g_filtro = (grupo_codigo or "").strip()[:2]
+    sg_filtro = (subgrupo_codigo or "").strip()[:4]
+    cbo_filtro = limpar_codigo_cbo(cbo)
+
+    grupos_db = list(db.exec(select(SigtapGrupo).order_by(SigtapGrupo.codigo)).all())
+    grupos_out = [{"codigo": g.codigo, "nome": g.nome} for g in grupos_db] or [
+        {"codigo": k, "nome": v} for k, v in sorted(GRUPOS_SIGTAP.items())
+    ]
+
+    sg_query = select(SigtapSubgrupo).order_by(SigtapSubgrupo.codigo)
+    if g_filtro:
+        sg_query = sg_query.where(SigtapSubgrupo.grupo_codigo == g_filtro)
+    elif sg_filtro:
+        sg_query = sg_query.where(SigtapSubgrupo.grupo_codigo == sg_filtro[:2])
+    subgrupos_db = list(db.exec(sg_query).all())
+    subgrupos_out = [
+        {"codigo": s.codigo, "grupo_codigo": s.grupo_codigo, "nome": s.nome}
+        for s in subgrupos_db
+    ]
+    if not subgrupos_out:
+        subgrupos_out = [
+            {"codigo": k, "grupo_codigo": k[:2], "nome": v}
+            for k, v in sorted(SUBGRUPOS_SIGTAP.items())
+            if not g_filtro or k.startswith(g_filtro)
+        ]
+
+    # Se filtro por CBO estiver presente, restringe áreas/subgrupos aos procedimentos compatíveis (quando houver carga SIGTAP)
+    procs_do_cbo: set[str] = set()
+    if cbo_filtro:
+        procs_do_cbo = {
+            c.procedimento_codigo
+            for c in db.exec(select(SigtapCbo).where(SigtapCbo.cbo == cbo_filtro)).all()
+            if c.procedimento_codigo
+        }
+
+    formas_query = select(SigtapFormaOrganizacao).order_by(SigtapFormaOrganizacao.codigo)
+    if sg_filtro:
+        formas_query = formas_query.where(SigtapFormaOrganizacao.subgrupo_codigo == sg_filtro)
+    elif g_filtro:
+        formas_query = formas_query.where(SigtapFormaOrganizacao.grupo_codigo == g_filtro)
+    formas_out = [
+        {
+            "codigo": f.codigo,
+            "grupo_codigo": f.grupo_codigo,
+            "subgrupo_codigo": f.subgrupo_codigo,
+            "nome": f.nome,
+        }
+        for f in db.exec(formas_query.limit(500)).all()
+    ]
+
+    # CBOs disponíveis para a Área / Subgrupo selecionado
+    cods_escopo: list[str] = []
+    if sg_filtro or g_filtro:
+        pref = sg_filtro or g_filtro
+        cods_escopo = list(
+            db.exec(
+                select(SigtapProcedimento.codigo).where(
+                    (SigtapProcedimento.subgrupo_codigo == sg_filtro)
+                    if sg_filtro
+                    else (SigtapProcedimento.grupo_codigo == g_filtro)
+                )
+            ).all()
+        )
+        if not cods_escopo:
+            cods_escopo = list(
+                db.exec(
+                    select(SigtapProcedimento.codigo).where(SigtapProcedimento.codigo.like(f"{pref}%"))
+                ).all()
+            )
+
+    cbos_map: dict[str, str] = {}
+    if cods_escopo:
+        for ini in range(0, len(cods_escopo), 400):
+            bloco = cods_escopo[ini : ini + 400]
+            for sc in db.exec(select(SigtapCbo).where(SigtapCbo.procedimento_codigo.in_(bloco))).all():
+                cod_c = limpar_codigo_cbo(sc.cbo)
+                if cod_c and (cod_c not in cbos_map or not cbos_map[cod_c]):
+                    cbos_map[cod_c] = (sc.descricao or "").strip()
+
+    # Enriquece descrições com sigtap_ocupacoes e tfd_especialidades
+    ocup_map = {
+        limpar_codigo_cbo(o.cbo): o.descricao
+        for o in db.exec(select(SigtapOcupacao).where(SigtapOcupacao.ativo == True)).all()  # noqa: E712
+        if limpar_codigo_cbo(o.cbo)
+    }
+    for cod_c, nome_c, _r, _t in CBO_ESPECIALIDADES_CANONICAS:
+        ocup_map.setdefault(cod_c, nome_c)
+
+    if not cbos_map and not (sg_filtro or g_filtro):
+        cbos_map.update(ocup_map)
+        for sc in db.exec(select(SigtapCbo.cbo, SigtapCbo.descricao).distinct()).all():
+            cod_c = limpar_codigo_cbo(sc[0])
+            if cod_c and cod_c not in cbos_map:
+                cbos_map[cod_c] = (sc[1] or "").strip()
+    elif not cbos_map and (sg_filtro or g_filtro):
+        # Fallback contextual por subgrupo quando sigtap_cbos ainda não foi carregado para aquele subgrupo
+        for e in db.exec(select(Especialidade).where(Especialidade.ativo == True)).all():  # noqa: E712
+            cod_c = limpar_codigo_cbo(e.codigo_cbo)
+            if cod_c:
+                cbos_map.setdefault(cod_c, e.nome)
+        for cod_c, nome_c, _r, _t in CBO_ESPECIALIDADES_CANONICAS:
+            cbos_map.setdefault(cod_c, nome_c)
+
+    cbos_out = [
+        {"cbo": k, "descricao": cbos_map[k] or ocup_map.get(k, f"CBO {k}")}
+        for k in sorted(cbos_map.keys())
+    ]
+
+    return {
+        "grupos": grupos_out,
+        "subgrupos": subgrupos_out,
+        "formas": formas_out,
+        "cbos": cbos_out,
+        "procedimentos_cbo_total": len(procs_do_cbo),
+    }

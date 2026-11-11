@@ -27,6 +27,7 @@ from app.core.audit import AuditMiddleware
 from app.db.session import engine, init_db
 from app.services.users import ensure_first_superuser
 from app.services.pec_worker import iniciar_worker_pec, parar_worker_pec
+from app.services.sigtap_worker import iniciar_worker_sigtap, parar_worker_sigtap
 from app.services.whatsapp_reminder_worker import (
     iniciar_worker_lembretes_whatsapp,
     parar_worker_lembretes_whatsapp,
@@ -59,11 +60,13 @@ async def lifespan(app: FastAPI):
             db, settings.FIRST_SUPERUSER, settings.FIRST_SUPERUSER_PASSWORD
         )
     iniciar_worker_pec()
+    iniciar_worker_sigtap()
     iniciar_worker_lembretes_whatsapp()
     try:
         yield
     finally:
         parar_worker_pec()
+        parar_worker_sigtap()
         parar_worker_lembretes_whatsapp()
 
 

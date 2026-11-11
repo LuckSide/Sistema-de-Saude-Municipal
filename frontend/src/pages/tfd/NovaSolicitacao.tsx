@@ -38,8 +38,10 @@ import {
   tfdCriarExamesLote,
   tfdTipos,
   tfdEspecialidades,
+  tfdCboEspecialidades,
   tfdBuscarCids,
   labSigtap,
+  sigtapArvore,
   sigtapCbos,
   pagData,
   msgErro,
@@ -49,6 +51,7 @@ import {
   type ExameLoteCriarOut,
   type Medico,
   type Paciente,
+  type SigtapArvore,
   type SigtapCbo,
   type SigtapCidItem,
   type SigtapProc,
@@ -111,6 +114,13 @@ export default function NovaSolicitacao() {
   const [espManual, setEspManual] = useState(false);
   const [cbosAutorizados, setCbosAutorizados] = useState<SigtapCbo[]>([]);
   const [carregandoCbos, setCarregandoCbos] = useState(false);
+
+  // Árvore SIGTAP completa (Área -> Subgrupo -> CBO) e Especialidades filtradas pelo CBO
+  const [arvoreSigtap, setArvoreSigtap] = useState<SigtapArvore | null>(null);
+  const [grupoSig, setGrupoSig] = useState("");
+  const [subgrupoSig, setSubgrupoSig] = useState("");
+  const [cboFiltroSig, setCboFiltroSig] = useState("");
+  const [espsCboSel, setEspsCboSel] = useState<{ id: number | null; codigo_cbo: string; nome: string; ativo: boolean }[]>([]);
 
   // Origem e Data
   const [unidadeId, setUnidadeId] = useState<string>("");
@@ -538,10 +548,53 @@ export default function NovaSolicitacao() {
     }
   }, [isTfdCentral, user]);
 
-  // Regra 3: Hierarquia de Seleção (Serviço -> Procedimento)
-  // Regra 3: Carregamento e filtragem contextual de procedimentos ao selecionar Tipo de Serviço
-  // Nota: não refiltra o catálogo por `especialidade` quando ela foi autopreenchida pelo procedimento,
-  // para não ocultar os demais procedimentos daquela fila.
+  // Carrega Árvore SIGTAP completa em cascata: Área (Grupo) -> Subgrupo -> CBO
+  useEffect(() => {
+    let cancel = false;
+    sigtapArvore({
+      grupo_codigo: grupoSig || undefined,
+      subgrupo_codigo: subgrupoSig || undefined,
+      cbo: cboFiltroSig || undefined,
+    })
+      .then((res) => {
+        if (!cancel) setArvoreSigtap(res);
+      })
+      .catch(() => {});
+    return () => {
+      cancel = true;
+    };
+  }, [grupoSig, subgrupoSig, cboFiltroSig]);
+
+  // Filtro hierárquico: quando um CBO é selecionado, carrega apenas especialidades correspondentes/autorizadas
+  useEffect(() => {
+    if (!cboFiltroSig) {
+      setEspsCboSel([]);
+      return;
+    }
+    let cancel = false;
+    tfdCboEspecialidades(cboFiltroSig)
+      .then((res) => {
+        if (cancel) return;
+        const lista = res?.especialidades ?? [];
+        setEspsCboSel(lista);
+        setEspecialidade((atual) => {
+          const atualNorm = normalizarTexto(atual);
+          const aindaValida = atual && lista.some((x) => normalizarTexto(x.nome) === atualNorm);
+          if (aindaValida) return atual;
+          if (lista.length === 1) return lista[0].nome;
+          return "";
+        });
+        setEspManual(false);
+      })
+      .catch(() => {
+        if (!cancel) setEspsCboSel([]);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [cboFiltroSig]);
+
+  // Regra 3: Hierarquia de Seleção (Serviço -> Área/Subgrupo/CBO -> Procedimento)
   const espFiltroCatalogo = espManual ? especialidade : "";
 
   useEffect(() => {
@@ -552,16 +605,25 @@ export default function NovaSolicitacao() {
     let cancel = false;
     setBuscandoProc(true);
 
-    tfdCatalogoExames("", tipoServico || undefined, undefined, espFiltroCatalogo || undefined)
+    const temFiltroHierarquia = Boolean(grupoSig || subgrupoSig || cboFiltroSig);
+    tfdCatalogoExames(
+      "",
+      tipoServico || undefined,
+      undefined,
+      espFiltroCatalogo || undefined,
+      grupoSig || undefined,
+      subgrupoSig || undefined,
+      cboFiltroSig || undefined,
+    )
       .then(async (res) => {
         if (cancel) return;
         setErroCatalogo("");
         let lista = res || [];
-        if (lista.length === 0 && espFiltroCatalogo && tipoServico) {
+        if (lista.length === 0 && espFiltroCatalogo && tipoServico && !temFiltroHierarquia) {
           lista = (await tfdCatalogoExames("", tipoServico)) || [];
         }
         if (cancel) return;
-        if (lista.length > 0) {
+        if (lista.length > 0 || temFiltroHierarquia) {
           setProcedimentosFiltrados(lista);
         } else if (!tipoServico && !espFiltroCatalogo) {
           setProcedimentosFiltrados(procedimentosTodos);
@@ -605,7 +667,7 @@ export default function NovaSolicitacao() {
     return () => {
       cancel = true;
     };
-  }, [tipoServico, espFiltroCatalogo, isConsulta, procedimentosTodos]);
+  }, [tipoServico, espFiltroCatalogo, grupoSig, subgrupoSig, cboFiltroSig, isConsulta, procedimentosTodos]);
 
   // Regra Dinâmica: Consultas vs Exames e Cirurgias
   // 1. Consultas Médicas Especializadas: define automaticamente o procedimento padrão 0301010072
@@ -695,13 +757,22 @@ export default function NovaSolicitacao() {
     }
     let ativo = true;
     setBuscandoProc(true);
+    const temHierarquia = Boolean(grupoSig || subgrupoSig || cboFiltroSig);
     const t = setTimeout(() => {
-      tfdCatalogoExames(termo, tipoServico || undefined, undefined, espFiltroCatalogo || undefined)
+      tfdCatalogoExames(
+        termo,
+        tipoServico || undefined,
+        undefined,
+        espFiltroCatalogo || undefined,
+        grupoSig || undefined,
+        subgrupoSig || undefined,
+        cboFiltroSig || undefined,
+      )
         .then(async (res) => {
           if (!ativo) return;
           setErroCatalogo("");
           let lista = res || [];
-          if (lista.length === 0 && espFiltroCatalogo && tipoServico) {
+          if (lista.length === 0 && espFiltroCatalogo && tipoServico && !temHierarquia) {
             lista = (await tfdCatalogoExames(termo, tipoServico)) || [];
           }
           if (ativo) {
@@ -724,13 +795,13 @@ export default function NovaSolicitacao() {
       ativo = false;
       clearTimeout(t);
     };
-  }, [buscaProc, tipoServico, espFiltroCatalogo]);
+  }, [buscaProc, tipoServico, espFiltroCatalogo, grupoSig, subgrupoSig, cboFiltroSig]);
 
   // Filtro inteligente de procedimentos: busca por nome, código SIGTAP, código curto, especialidade e aliases comuns
   const opcoesProcFiltradas = useMemo(() => {
     let base: CatalogoProc[] = [];
 
-    if (procedimentosFiltrados.length > 0) {
+    if (procedimentosFiltrados.length > 0 || grupoSig || subgrupoSig || cboFiltroSig) {
       base = procedimentosFiltrados;
     } else {
       const tNorm = normalizarTexto(tipoServico.trim());
@@ -820,7 +891,7 @@ export default function NovaSolicitacao() {
     });
 
     return listaFinal.slice(0, 100);
-  }, [buscaProc, procedimentosFiltrados, procedimentosTodos, espFiltroCatalogo, tipoServico, procedimentosDinamicos, termoDinamico]);
+  }, [buscaProc, procedimentosFiltrados, procedimentosTodos, espFiltroCatalogo, tipoServico, procedimentosDinamicos, termoDinamico, grupoSig, subgrupoSig, cboFiltroSig]);
 
   function aoMudarTipoServico(novo: string) {
     setTipoServico(novo);
@@ -830,11 +901,48 @@ export default function NovaSolicitacao() {
     setBuscaProc("");
     setEspecialidade("");
     setCodigoEspecialidade("");
+    setCboFiltroSig("");
+    setEspsCboSel([]);
     setEspManual(false);
     setCbosAutorizados([]);
     setProcedimentosDinamicos([]);
     setTermoDinamico("");
     setErroCatalogo("");
+  }
+
+  function aoSelecionarGrupoSig(novoGrupo: string) {
+    setGrupoSig(novoGrupo);
+    if (subgrupoSig && (!novoGrupo || !subgrupoSig.startsWith(novoGrupo))) {
+      setSubgrupoSig("");
+    }
+    if (!isConsulta) {
+      setProcedimentoSel(null);
+      setProcTexto("");
+      setCodigoProcedimento("");
+    }
+  }
+
+  function aoSelecionarSubgrupoSig(novoSubgrupo: string) {
+    setSubgrupoSig(novoSubgrupo);
+    if (novoSubgrupo.length >= 2 && !grupoSig) {
+      setGrupoSig(novoSubgrupo.slice(0, 2));
+    }
+    if (!isConsulta) {
+      setProcedimentoSel(null);
+      setProcTexto("");
+      setCodigoProcedimento("");
+    }
+  }
+
+  function aoSelecionarCboFiltro(novoCbo: string) {
+    const cboLimpo = (novoCbo || "").replace(/\D/g, "").slice(0, 6);
+    setCboFiltroSig(cboLimpo);
+    if (cboLimpo) {
+      setCodigoEspecialidade(cboLimpo);
+    } else {
+      setCodigoEspecialidade("");
+      setEspsCboSel([]);
+    }
   }
 
   function escolherProcedimento(p: CatalogoProc) {
@@ -1123,8 +1231,72 @@ export default function NovaSolicitacao() {
     [medicos],
   );
 
+  const opcoesCboArvore = useMemo(() => {
+    const base = arvoreSigtap?.cbos ?? [];
+    return base.map((c) => ({
+      value: c.cbo,
+      label: c.descricao ? `${c.cbo} · ${c.descricao}` : `CBO ${c.cbo}`,
+      sub: c.qtd_procedimentos ? `${c.qtd_procedimentos} proc.` : c.origem,
+      keywords: `${c.cbo} ${c.descricao}`,
+    }));
+  }, [arvoreSigtap]);
+
   const opcoesEspecialidades = useMemo(() => {
-    // Se não é consulta e há CBOs autorizados pelo SIGTAP para o procedimento selecionado:
+    // 1. Se há um CBO explicitamente selecionado na árvore/filtro, exibe APENAS as especialidades correspondentes/autorizadas para aquele CBO
+    if (cboFiltroSig) {
+      const cboPrefix = cboFiltroSig.slice(0, 4);
+      const mapaCbo = new Map<string, { nome: string; cbo?: string; autorizadoSigtap?: boolean }>();
+
+      for (const e of espsCboSel) {
+        const nome = (e.nome || "").trim();
+        if (nome && !mapaCbo.has(nome)) {
+          mapaCbo.set(nome, { nome, cbo: e.codigo_cbo || cboFiltroSig });
+        }
+      }
+      for (const e of especialidadesCadastradas) {
+        const ec = (e.codigo_cbo || "").replace(/\D/g, "");
+        if (ec && (ec === cboFiltroSig || (cboPrefix.length >= 4 && ec.startsWith(cboPrefix)))) {
+          const nome = (e.nome || "").trim();
+          if (nome && !mapaCbo.has(nome)) {
+            mapaCbo.set(nome, { nome, cbo: ec });
+          }
+        }
+      }
+      if (!isConsulta && cbosAutorizados.length > 0) {
+        const autorizadosSet = new Set(cbosAutorizados.map((c) => c.cbo));
+        for (const c of cbosAutorizados) {
+          if (c.cbo === cboFiltroSig || (cboPrefix.length >= 4 && c.cbo.startsWith(cboPrefix))) {
+            const nome = (c.descricao || `CBO ${c.cbo}`).trim();
+            if (!mapaCbo.has(nome)) {
+              mapaCbo.set(nome, { nome, cbo: c.cbo, autorizadoSigtap: true });
+            }
+          }
+        }
+        const filtradosSigtap = Array.from(mapaCbo.values()).filter(
+          (item) => !item.cbo || autorizadosSet.has(item.cbo) || item.cbo === cboFiltroSig,
+        );
+        if (filtradosSigtap.length > 0) {
+          return filtradosSigtap
+            .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"))
+            .map((e) => ({
+              value: e.nome,
+              label: e.nome,
+              sub: `CBO ${e.cbo || cboFiltroSig} · Correspondente ao CBO`,
+              keywords: `${e.nome} ${e.cbo || cboFiltroSig}`,
+            }));
+        }
+      }
+      return Array.from(mapaCbo.values())
+        .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"))
+        .map((e) => ({
+          value: e.nome,
+          label: e.nome,
+          sub: `CBO ${e.cbo || cboFiltroSig} · Autorizada p/ CBO`,
+          keywords: `${e.nome} ${e.cbo || cboFiltroSig}`,
+        }));
+    }
+
+    // 2. Se não é consulta e há CBOs autorizados pelo SIGTAP para o procedimento selecionado:
     if (!isConsulta && cbosAutorizados.length > 0) {
       return cbosAutorizados.map((c) => ({
         value: c.descricao || `CBO ${c.cbo}`,
@@ -1135,14 +1307,14 @@ export default function NovaSolicitacao() {
     }
 
     const mapa = new Map<string, { nome: string; cbo?: string }>();
-    // 1. Especialidades cadastradas e oficiais na base
+    // 3. Especialidades cadastradas e oficiais na base
     for (const e of especialidadesCadastradas) {
       const nome = (e.nome || "").trim();
       if (nome && !mapa.has(nome)) {
         mapa.set(nome, { nome, cbo: e.codigo_cbo });
       }
     }
-    // 2. Especialidades complementares presentes no catálogo de procedimentos
+    // 4. Especialidades complementares presentes no catálogo de procedimentos
     for (const p of procedimentosTodos) {
       const esp = (p.especialidade || p.nome_especialidade || "").trim();
       if (esp && !mapa.has(esp)) {
@@ -1157,7 +1329,184 @@ export default function NovaSolicitacao() {
         sub: e.cbo ? `CBO ${e.cbo}` : undefined,
         keywords: `${e.nome} ${e.cbo || ""}`,
       }));
-  }, [isConsulta, cbosAutorizados, especialidadesCadastradas, procedimentosTodos]);
+  }, [cboFiltroSig, espsCboSel, isConsulta, cbosAutorizados, especialidadesCadastradas, procedimentosTodos]);
+
+  function renderPainelHierarquiaSigtap(contexto: "individual" | "lote") {
+    const grupos = arvoreSigtap?.grupos ?? [];
+    const subgrupos = (arvoreSigtap?.subgrupos ?? []).filter(
+      (s) => !grupoSig || s.grupo_codigo === grupoSig || s.codigo.startsWith(grupoSig),
+    );
+    return (
+      <div className="mt-4 rounded-xl border border-sus-900/10 bg-sand/30 p-3">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-sus-900">
+            <Layers className="h-3.5 w-3.5 text-teal" /> Hierarquia SIGTAP (Área → Subgrupo → CBO)
+          </span>
+          {(grupoSig || subgrupoSig || cboFiltroSig) && (
+            <button
+              type="button"
+              onClick={() => {
+                setGrupoSig("");
+                setSubgrupoSig("");
+                aoSelecionarCboFiltro("");
+              }}
+              className="text-[11px] font-semibold text-red-600 hover:underline"
+            >
+              Limpar filtro SIGTAP
+            </button>
+          )}
+        </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div>
+            <Label className="text-[11px] font-bold text-sus-950">Área (Grupo SIGTAP)</Label>
+            <Select
+              value={grupoSig}
+              onChange={(e) => aoSelecionarGrupoSig(e.target.value)}
+              className="mt-1 h-9 text-xs font-medium"
+            >
+              <option value="">Todas as áreas SIGTAP…</option>
+              {grupos.map((g) => (
+                <option key={g.codigo} value={g.codigo}>
+                  {g.codigo} · {g.nome}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label className="text-[11px] font-bold text-sus-950">Subgrupo SIGTAP</Label>
+            <Select
+              value={subgrupoSig}
+              onChange={(e) => aoSelecionarSubgrupoSig(e.target.value)}
+              className="mt-1 h-9 text-xs font-medium"
+            >
+              <option value="">
+                {grupoSig ? `Todos os subgrupos do Grupo ${grupoSig}…` : "Todos os subgrupos SIGTAP…"}
+              </option>
+              {subgrupos.map((s) => (
+                <option key={s.codigo} value={s.codigo}>
+                  {s.codigo} · {s.nome}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label className="text-[11px] font-bold text-sus-950">
+              CBO (Ocupação SIGTAP)
+            </Label>
+            <div className="mt-1">
+              <Combobox
+                value={cboFiltroSig}
+                onChange={(v) => aoSelecionarCboFiltro(v)}
+                options={opcoesCboArvore}
+                placeholder={
+                  contexto === "lote"
+                    ? "Selecione o CBO para filtrar especialidades e procedimentos…"
+                    : "Selecione o CBO (ex: 225120 Cardiologista)…"
+                }
+                searchPlaceholder="Digite o código CBO ou nome da ocupação…"
+                emptyText="Nenhum CBO encontrado nessa área/subgrupo"
+                showAll={true}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function renderCampoCboEspecialidade(contexto: "individual" | "lote") {
+    return (
+      <div>
+        <div className="flex items-center justify-between gap-2">
+          <Label className="text-xs font-bold text-sus-950">
+            {isConsulta ? "Especialidade Médica *" : "Especialidade Autorizada"}
+          </Label>
+          <div className="flex items-center gap-2">
+            {cboFiltroSig && (
+              <span className="text-[10px] font-bold text-teal bg-teal/10 px-2 py-0.5 rounded">
+                Filtrada p/ CBO {cboFiltroSig}
+              </span>
+            )}
+            {cbosAutorizados.length > 0 && !isConsulta && !cboFiltroSig && (
+              <span className="text-[10px] font-bold text-teal bg-teal/10 px-2 py-0.5 rounded">
+                {cbosAutorizados.length} CBO(s) no SIGTAP
+              </span>
+            )}
+            {(especialidade || cboFiltroSig) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEspecialidade("");
+                  setCodigoEspecialidade("");
+                  setCboFiltroSig("");
+                  setEspsCboSel([]);
+                  setEspManual(false);
+                }}
+                className="text-[10px] text-red-600 font-semibold hover:underline"
+              >
+                Limpar
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="mt-1">
+          <Combobox
+            value={especialidade}
+            onChange={(v) => {
+              setEspecialidade(v);
+              setEspManual(Boolean(v));
+              const cboItem = cbosAutorizados.find(
+                (c) => (c.descricao || `CBO ${c.cbo}`) === v || c.descricao === v,
+              );
+              if (cboItem) {
+                setCodigoEspecialidade(cboItem.cbo);
+                return;
+              }
+              const opt = opcoesEspecialidades.find((o) => o.value === v);
+              if (opt?.sub) {
+                const cboMatch = opt.sub.match(/\d{4,6}/);
+                if (cboMatch) setCodigoEspecialidade(cboMatch[0]);
+              }
+              const it = procedimentosTodos.find((p) => (p.especialidade || p.nome_especialidade) === v);
+              if (it?.codigo_especialidade) setCodigoEspecialidade(it.codigo_especialidade);
+            }}
+            options={opcoesEspecialidades}
+            placeholder={
+              cboFiltroSig
+                ? `Especialidades autorizadas para o CBO ${cboFiltroSig}…`
+                : isConsulta
+                  ? contexto === "lote"
+                    ? "Buscar especialidade médica ou CBO para o lote…"
+                    : "Buscar CBO ou especialidade médica (ex: Cardiologia, Ortopedia)…"
+                  : !codigoProcedimento
+                    ? "Selecione o CBO acima ou o procedimento abaixo…"
+                    : carregandoCbos
+                      ? "Consultando CBOs autorizados no SIGTAP…"
+                      : "Buscar especialidade médica ou CBO autorizado…"
+            }
+            searchPlaceholder="Digite o nome da especialidade ou CBO…"
+            emptyText={
+              cboFiltroSig
+                ? "Nenhuma especialidade vinculada a este CBO"
+                : !isConsulta && codigoProcedimento && cbosAutorizados.length > 0
+                  ? "Nenhum CBO autorizado correspondente"
+                  : "Nenhuma especialidade encontrada"
+            }
+            showAll={Boolean(cboFiltroSig)}
+          />
+        </div>
+        <p className="mt-1 text-[11px] text-ink/60">
+          {cboFiltroSig
+            ? "Exibindo exclusivamente as especialidades correspondentes e autorizadas ao CBO selecionado."
+            : isConsulta
+              ? "Para consultas, selecione o CBO acima ou escolha diretamente a especialidade médica."
+              : cbosAutorizados.length > 0
+                ? "Especialidades restritas estritamente aos CBOs autorizados no SIGTAP para o procedimento."
+                : "Preenchida automaticamente pelo CBO ou procedimento selecionado."}
+        </p>
+      </div>
+    );
+  }
 
   const unidNomeAtual = useMemo(() => {
     const u = unidades.find((x) => String(x.id) === String(unidadeId));
@@ -1484,79 +1833,10 @@ export default function NovaSolicitacao() {
             </div>
 
             {/* Especialidade Médica / CBO */}
-            <div>
-              <div className="flex items-center justify-between">
-                <Label className="text-xs font-bold text-sus-950">
-                  {isConsulta ? "CBO / Especialidade Médica *" : "CBO / Especialidade Autorizada"}
-                </Label>
-                {cbosAutorizados.length > 0 && !isConsulta && (
-                  <span className="text-[10px] font-bold text-teal bg-teal/10 px-2 py-0.5 rounded">
-                    {cbosAutorizados.length} CBO(s) no SIGTAP
-                  </span>
-                )}
-                {especialidade && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEspecialidade("");
-                      setCodigoEspecialidade("");
-                      setEspManual(false);
-                    }}
-                    className="text-[10px] text-red-600 font-semibold hover:underline"
-                  >
-                    Limpar
-                  </button>
-                )}
-              </div>
-              <div className="mt-1">
-                <Combobox
-                  value={especialidade}
-                  onChange={(v) => {
-                    setEspecialidade(v);
-                    setEspManual(Boolean(v));
-                    const cboItem = cbosAutorizados.find(
-                      (c) => (c.descricao || `CBO ${c.cbo}`) === v || c.descricao === v,
-                    );
-                    if (cboItem) {
-                      setCodigoEspecialidade(cboItem.cbo);
-                      return;
-                    }
-                    const opt = opcoesEspecialidades.find((o) => o.value === v);
-                    if (opt?.sub) {
-                      const cboMatch = opt.sub.match(/\d+/);
-                      if (cboMatch) setCodigoEspecialidade(cboMatch[0]);
-                    }
-                    const it = procedimentosTodos.find((p) => (p.especialidade || p.nome_especialidade) === v);
-                    if (it?.codigo_especialidade) setCodigoEspecialidade(it.codigo_especialidade);
-                  }}
-                  options={opcoesEspecialidades}
-                  placeholder={
-                    isConsulta
-                      ? "Buscar CBO ou especialidade médica (ex: Cardiologia, Ortopedia)…"
-                      : !codigoProcedimento
-                      ? "Selecione o procedimento primeiro para carregar os CBOs autorizados…"
-                      : carregandoCbos
-                      ? "Consultando CBOs autorizados no SIGTAP…"
-                      : "Buscar especialidade médica ou CBO autorizado…"
-                  }
-                  searchPlaceholder="Digite o nome da especialidade ou CBO…"
-                  emptyText={
-                    !isConsulta && codigoProcedimento && cbosAutorizados.length > 0
-                      ? "Nenhum CBO autorizado correspondente"
-                      : "Nenhuma especialidade encontrada"
-                  }
-                  showAll={false}
-                />
-              </div>
-              <p className="mt-1 text-[11px] text-ink/60">
-                {isConsulta
-                  ? "Para consultas, o direcionamento é determinado exclusivamente pelo CBO selecionado."
-                  : cbosAutorizados.length > 0
-                  ? "CBOs restritos estritamente aos autorizados no SIGTAP para o procedimento selecionado."
-                  : "Preenchida automaticamente ao selecionar o procedimento ou escolhida conforme autorização SIGTAP."}
-              </p>
-            </div>
+            {renderCampoCboEspecialidade("individual")}
           </div>
+
+          {renderPainelHierarquiaSigtap("individual")}
 
           {/* Se for Consulta Especializada: exibe o banner de procedimento padrão SUS 0301010072 */}
           {isConsulta ? (
@@ -2532,79 +2812,10 @@ export default function NovaSolicitacao() {
                 </div>
 
                 {/* Especialidade Médica / CBO */}
-                <div>
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs font-bold text-sus-950">
-                      {isConsulta ? "CBO / Especialidade Médica *" : "CBO / Especialidade Autorizada"}
-                    </Label>
-                    {cbosAutorizados.length > 0 && !isConsulta && (
-                      <span className="text-[10px] font-bold text-teal bg-teal/10 px-2 py-0.5 rounded">
-                        {cbosAutorizados.length} CBO(s) no SIGTAP
-                      </span>
-                    )}
-                    {especialidade && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEspecialidade("");
-                          setCodigoEspecialidade("");
-                          setEspManual(false);
-                        }}
-                        className="text-[10px] text-red-600 font-semibold hover:underline"
-                      >
-                        Limpar
-                      </button>
-                    )}
-                  </div>
-                  <div className="mt-1">
-                    <Combobox
-                      value={especialidade}
-                      onChange={(v) => {
-                        setEspecialidade(v);
-                        setEspManual(Boolean(v));
-                        const cboItem = cbosAutorizados.find(
-                          (c) => (c.descricao || `CBO ${c.cbo}`) === v || c.descricao === v,
-                        );
-                        if (cboItem) {
-                          setCodigoEspecialidade(cboItem.cbo);
-                          return;
-                        }
-                        const opt = opcoesEspecialidades.find((o) => o.value === v);
-                        if (opt?.sub) {
-                          const cboMatch = opt.sub.match(/\d+/);
-                          if (cboMatch) setCodigoEspecialidade(cboMatch[0]);
-                        }
-                        const it = procedimentosTodos.find((p) => (p.especialidade || p.nome_especialidade) === v);
-                        if (it?.codigo_especialidade) setCodigoEspecialidade(it.codigo_especialidade);
-                      }}
-                      options={opcoesEspecialidades}
-                      placeholder={
-                        isConsulta
-                          ? "Buscar CBO ou especialidade médica para o lote…"
-                          : !codigoProcedimento
-                          ? "Selecione o procedimento primeiro para carregar os CBOs autorizados…"
-                          : carregandoCbos
-                          ? "Consultando CBOs autorizados no SIGTAP…"
-                          : "Buscar especialidade médica ou CBO autorizado…"
-                      }
-                      searchPlaceholder="Digite o nome da especialidade ou CBO…"
-                      emptyText={
-                        !isConsulta && codigoProcedimento && cbosAutorizados.length > 0
-                          ? "Nenhum CBO autorizado correspondente"
-                          : "Nenhuma especialidade encontrada"
-                      }
-                      showAll={false}
-                    />
-                  </div>
-                  <p className="mt-1 text-[11px] text-ink/60">
-                    {isConsulta
-                      ? "Para consultas especializadas no lote, o direcionamento é determinado exclusivamente pelo CBO selecionado."
-                      : cbosAutorizados.length > 0
-                      ? "CBOs restritos estritamente aos autorizados no SIGTAP para o procedimento selecionado."
-                      : "Preenchida automaticamente ao selecionar o procedimento ou escolhida conforme autorização SIGTAP."}
-                  </p>
-                </div>
+                {renderCampoCboEspecialidade("lote")}
               </div>
+
+              {renderPainelHierarquiaSigtap("lote")}
 
               {/* Se for Consulta Especializada no Lote: banner padronizado */}
               {isConsulta ? (

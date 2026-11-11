@@ -22,6 +22,58 @@ class SigtapProcedimento(SQLModel, table=True):
     valor_sp: float = Field(default=0)
     valor_sh: float = Field(default=0)
     competencia: str = Field(default="", max_length=7, index=True)  # AAAA-MM da carga
+    # Hierarquia completa Tabela Unificada SIGTAP (Área/Grupo -> Subgrupo -> Forma de Organização)
+    grupo_codigo: str = Field(default="", max_length=2, index=True)
+    grupo_nome: str = Field(default="", max_length=150)
+    subgrupo_codigo: str = Field(default="", max_length=4, index=True)
+    subgrupo_nome: str = Field(default="", max_length=180)
+    forma_organizacao_codigo: str = Field(default="", max_length=6, index=True)
+    forma_organizacao_nome: str = Field(default="", max_length=180)
+
+
+class SigtapGrupo(SQLModel, table=True):
+    """Área / Grupo principal da Tabela Unificada SIGTAP (2 dígitos)."""
+
+    __tablename__ = "sigtap_grupos"
+
+    id: int | None = Field(default=None, primary_key=True)
+    codigo: str = Field(max_length=2, unique=True, index=True)
+    nome: str = Field(max_length=150)
+
+
+class SigtapSubgrupo(SQLModel, table=True):
+    """Subgrupo da Tabela Unificada SIGTAP vinculado à Área/Grupo (4 dígitos)."""
+
+    __tablename__ = "sigtap_subgrupos"
+
+    id: int | None = Field(default=None, primary_key=True)
+    codigo: str = Field(max_length=4, unique=True, index=True)
+    grupo_codigo: str = Field(max_length=2, index=True)
+    nome: str = Field(max_length=180)
+
+
+class SigtapFormaOrganizacao(SQLModel, table=True):
+    """Forma de organização do SIGTAP (6 dígitos)."""
+
+    __tablename__ = "sigtap_formas_organizacao"
+
+    id: int | None = Field(default=None, primary_key=True)
+    codigo: str = Field(max_length=6, unique=True, index=True)
+    grupo_codigo: str = Field(max_length=2, index=True)
+    subgrupo_codigo: str = Field(max_length=4, index=True)
+    nome: str = Field(max_length=180)
+
+
+class SigtapOcupacao(SQLModel, table=True):
+    """Cadastro único e normalizado de CBOs (ocupações) no SIGTAP."""
+
+    __tablename__ = "sigtap_ocupacoes"
+
+    id: int | None = Field(default=None, primary_key=True)
+    cbo: str = Field(max_length=10, unique=True, index=True)
+    descricao: str = Field(default="", max_length=150)
+    descricao_normalizada: str = Field(default="", max_length=150, index=True)
+    ativo: bool = Field(default=True, index=True)
 
 
 class SigtapCbo(SQLModel, table=True):
