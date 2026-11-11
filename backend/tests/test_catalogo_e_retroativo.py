@@ -107,6 +107,22 @@ def test_catalogo_procedimentos_cirurgias_fallback_acentos_e_retorno(session: Se
             r = client.get("/api/tfd/exames/catalogo", params={"tipo_fila": tf} if tf else {})
             assert r.status_code == 200, (tf, r.text)
             assert len(r.json()) > 0, f"Catálogo vazio para tipo_fila={tf!r}"
+
+        # 6. Digitar termo dentro de um tipo não deve retornar itens não relacionados por causa de sigla_canonico ou alias curto
+        r_filtro = client.get("/api/tfd/exames/catalogo", params={"q": "prostata", "tipo_fila": "CIRURGIAS"})
+        assert r_filtro.status_code == 200
+        itens_filtro = r_filtro.json()
+        assert len(itens_filtro) >= 1
+        assert all("prostata" in (i["nome_procedimento"] or "").lower().replace("ó", "o") for i in itens_filtro)
+
+        r_vazio = client.get("/api/tfd/exames/catalogo", params={"q": "termoinexistentexyz", "tipo_fila": "CIRURGIAS"})
+        assert r_vazio.status_code == 200
+        assert r_vazio.json() == []
+
+        r_curto = client.get("/api/tfd/exames/catalogo", params={"q": "ra", "tipo_fila": "BIOPSIA"})
+        assert r_curto.status_code == 200
+        # Não pode trazer todos os itens de BIOPSIA se não contiver "ra"
+        assert len(r_curto.json()) < 5
     finally:
         app.dependency_overrides.clear()
 

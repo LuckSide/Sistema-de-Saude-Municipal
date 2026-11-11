@@ -3266,9 +3266,8 @@ def catalogo_procedimentos(
     conds_base_cat = _condicao_tipo_catalogo(ativo_apenas=True)
     base = select(ProcedimentoCatalogo).where(*conds_base_cat).order_by(ProcedimentoCatalogo.nome)
 
+    palavras_q = [w for w in ql.split() if w]
     aliases_q = [remover_acentos(a).lower() for a in expandir_aliases_busca(ql)] if ql else []
-    if sigla_canonico and sigla_canonico.lower() not in aliases_q:
-        aliases_q.append(sigla_canonico.lower())
 
     candidatos_procs = db.exec(base.limit(2000)).all()
 
@@ -3319,9 +3318,22 @@ def catalogo_procedimentos(
             if p_tf_up in MAPA_TIPO_ESPECIALIDADE:
                 esp_nome, esp_cod = MAPA_TIPO_ESPECIALIDADE[p_tf_up]
 
-        hay = remover_acentos(f"{p.codigo} {p.nome} {sigla_p} {p.tipo_fila} {esp_nome} {esp_cod}").lower()
-        if ql and (ql not in hay and not any(a in hay for a in aliases_q)):
-            continue
+        # Quando o tipo de serviço já está selecionado, não incluímos tipo_fila nem sigla_p
+        # no texto buscável para evitar que digitar letras do próprio tipo (ex: "ci", "ra", "ex")
+        # impeça o filtro de restringir pelos nomes dos procedimentos.
+        hay = remover_acentos(
+            f"{p.codigo} {p.nome} {esp_nome} {esp_cod}"
+            if tf_up
+            else f"{p.codigo} {p.nome} {sigla_p} {p.tipo_fila} {esp_nome} {esp_cod}"
+        ).lower()
+        if ql:
+            bate_direto = (
+                all(w in hay for w in palavras_q)
+                or (bool(sigla_p) and ql == sigla_p.lower())
+            )
+            bate_alias = any(a in hay for a in aliases_q)
+            if not bate_direto and not bate_alias:
+                continue
         if esp_filtro and not corresponde_especialidade_sigtap(p.codigo or "", p.nome or "", esp_filtro, esp_nome):
             continue
 
@@ -3414,13 +3426,20 @@ def catalogo_procedimentos(
 
         if ql:
             desc_sig_col = coluna_sem_acento(db, SigtapProcedimento.descricao)
-            termos_sig = [ql] + aliases_q
-            conds_busca_sig = []
-            for t in termos_sig:
-                like = f"%{t}%"
+            conds_palavras_sig = [
+                or_(
+                    SigtapProcedimento.codigo.ilike(f"%{w}%"),
+                    desc_sig_col.ilike(f"%{w}%"),
+                )
+                for w in palavras_q
+            ]
+            conds_busca_sig = [and_(*conds_palavras_sig)] if conds_palavras_sig else []
+            for t_al in aliases_q:
+                like = f"%{t_al}%"
                 conds_busca_sig.append(SigtapProcedimento.codigo.ilike(like))
                 conds_busca_sig.append(desc_sig_col.ilike(like))
-            filtros_sig.append(or_(*conds_busca_sig))
+            if conds_busca_sig:
+                filtros_sig.append(or_(*conds_busca_sig))
 
         base_sig = select(SigtapProcedimento).where(*filtros_sig).order_by(SigtapProcedimento.descricao)
         limite_sig = 250 if ql else 100
@@ -3519,7 +3538,7 @@ def catalogo_procedimentos(
             nome_l = remover_acentos(item.get("nome_procedimento") or "").lower()
             cod_l = (item.get("codigo_procedimento") or "").lower()
             curto_l = (item.get("codigo_curto") or "").lower()
-            comeca_direto = (nome_l.startswith(ql) or cod_l.startswith(ql) or curto_l.startswith(ql))
+            comeca_direto = (nome_l.startswith(ql) or cod_l.startswith(ql) or (bool(curto_l) and curto_l == ql))
             comeca_alias = any(nome_l.startswith(a) for a in aliases_q)
             if comeca_direto:
                 prioridade = 0

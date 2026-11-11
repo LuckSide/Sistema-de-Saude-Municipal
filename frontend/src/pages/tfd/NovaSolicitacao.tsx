@@ -164,6 +164,7 @@ export default function NovaSolicitacao() {
 
   const [especialidadesCadastradas, setEspecialidadesCadastradas] = useState<EspecialidadeCat[]>([]);
   const [procedimentosDinamicos, setProcedimentosDinamicos] = useState<CatalogoProc[]>([]);
+  const [termoDinamico, setTermoDinamico] = useState("");
   const [buscandoProc, setBuscandoProc] = useState(false);
   const [erroCatalogo, setErroCatalogo] = useState("");
 
@@ -686,8 +687,9 @@ export default function NovaSolicitacao() {
   // Busca inteligente via API quando o operador digita no campo de procedimento
   useEffect(() => {
     const termo = buscaProc.trim();
+    setProcedimentosDinamicos([]);
+    setTermoDinamico("");
     if (!termo) {
-      setProcedimentosDinamicos([]);
       setBuscandoProc(false);
       return;
     }
@@ -702,12 +704,16 @@ export default function NovaSolicitacao() {
           if (lista.length === 0 && espFiltroCatalogo && tipoServico) {
             lista = (await tfdCatalogoExames(termo, tipoServico)) || [];
           }
-          if (ativo) setProcedimentosDinamicos(lista);
+          if (ativo) {
+            setProcedimentosDinamicos(lista);
+            setTermoDinamico(normalizarTexto(termo));
+          }
         })
         .catch((err) => {
           if (ativo) {
             setErroCatalogo(msgErro(err, "Erro ao pesquisar procedimentos no servidor."));
             setProcedimentosDinamicos([]);
+            setTermoDinamico("");
           }
         })
         .finally(() => {
@@ -763,25 +769,37 @@ export default function NovaSolicitacao() {
       mapa: ["mapa", "monitorizacao ambulatorial", "pressao arterial"],
       eco: ["ecocardiograma", "ecocardiografia", "doppler"],
       usg: ["ultrassonografia", "ecografia"],
+      ultrassom: ["ultrassonografia", "ecografia"],
       tc: ["tomografia"],
       rm: ["ressonancia"],
       rnm: ["ressonancia"],
       rx: ["raio", "radiografia"],
+      eda: ["endoscopia"],
+      eeg: ["eletroencefalograma"],
     };
-    const termosLocais = [t, ...(aliasesLocais[t] || [])];
+    const palavras = t.split(/\s+/).filter(Boolean);
+    const aliasesExact = aliasesLocais[t] || [];
 
     const locais = base.filter((p) => {
+      const codCurto = normalizarTexto(p.codigo_curto || "");
+      // Evita que digitar letras do próprio tipo de serviço (ex: "ci", "ra", "ex") case todos os itens da fila
       const txt = normalizarTexto(
-        `${p.codigo_curto || ""} ${p.codigo_procedimento || ""} ${p.exame || p.nome_procedimento || ""} ${p.especialidade || p.nome_especialidade || ""} ${p.tipo_fila || ""}`,
+        tipoServico
+          ? `${p.codigo_procedimento || ""} ${p.exame || p.nome_procedimento || ""} ${p.especialidade || p.nome_especialidade || ""}`
+          : `${p.codigo_curto || ""} ${p.codigo_procedimento || ""} ${p.exame || p.nome_procedimento || ""} ${p.especialidade || p.nome_especialidade || ""} ${p.tipo_fila || ""}`,
       );
-      return termosLocais.some((termo) => txt.includes(termo));
+      if (palavras.length > 0 && palavras.every((w) => txt.includes(w))) return true;
+      if (codCurto && t === codCurto) return true;
+      return aliasesExact.some((al) => txt.includes(al));
     });
 
     const mapaProcs = new Map<string, CatalogoProc>();
-    // Dinâmicos vindos da API (busca no SIGTAP e catálogo completo) têm alta prioridade
-    for (const p of procedimentosDinamicos) {
-      const k = p.codigo_procedimento || p.exame || p.nome_procedimento;
-      if (k) mapaProcs.set(k, p);
+    // Dinâmicos vindos da API só são mesclados se corresponderem exatamente ao termo atual digitado
+    if (termoDinamico === t) {
+      for (const p of procedimentosDinamicos) {
+        const k = p.codigo_procedimento || p.exame || p.nome_procedimento;
+        if (k) mapaProcs.set(k, p);
+      }
     }
     // Adiciona os locais
     for (const p of locais) {
@@ -791,8 +809,8 @@ export default function NovaSolicitacao() {
 
     const listaFinal = Array.from(mapaProcs.values());
     listaFinal.sort((a, b) => {
-      const nomeA = normalizarTexto(a.exame || a.nome_procedimento || "");
-      const nomeB = normalizarTexto(b.exame || b.nome_procedimento || "");
+      const nomeA = normalizarTexto(a.nome_procedimento || a.exame || "");
+      const nomeB = normalizarTexto(b.nome_procedimento || b.exame || "");
       const codA = (a.codigo_procedimento || a.codigo_curto || "").toLowerCase();
       const codB = (b.codigo_procedimento || b.codigo_curto || "").toLowerCase();
       const comecaA = nomeA.startsWith(t) || codA.startsWith(t) ? 0 : 1;
@@ -802,7 +820,7 @@ export default function NovaSolicitacao() {
     });
 
     return listaFinal.slice(0, 100);
-  }, [buscaProc, procedimentosFiltrados, procedimentosTodos, espFiltroCatalogo, tipoServico, procedimentosDinamicos]);
+  }, [buscaProc, procedimentosFiltrados, procedimentosTodos, espFiltroCatalogo, tipoServico, procedimentosDinamicos, termoDinamico]);
 
   function aoMudarTipoServico(novo: string) {
     setTipoServico(novo);
@@ -815,6 +833,7 @@ export default function NovaSolicitacao() {
     setEspManual(false);
     setCbosAutorizados([]);
     setProcedimentosDinamicos([]);
+    setTermoDinamico("");
     setErroCatalogo("");
   }
 
