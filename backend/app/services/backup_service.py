@@ -2,10 +2,11 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 import json
-from typing import Any
+import logging
+from typing import Any, get_args
 from uuid import UUID
 
-from sqlalchemy import insert, inspect, text
+from sqlalchemy import column, insert, inspect, text
 from sqlmodel import Session, SQLModel, delete, select
 
 from app.models.apac import (  # noqa: F401
@@ -74,9 +75,10 @@ from app.models.tfd import (
 )
 from app.models.user import User
 
-# Tabelas extras que NÃO estão no backup mas têm FK para tabelas do backup.
-# Devem ser limpas (filhos primeiro) antes de deletar dados das tabelas do backup.
-# Não são restauradas (não existem no dump), apenas limpas para evitar violação de FK.
+logger = logging.getLogger("backup")
+
+# Tabelas extras que NÃO existiam nos backups v1 legados (29 tabelas), mas têm FK para elas.
+# Mantido para compatibilidade ao restaurar backups antigos.
 MODELOS_LIMPEZA_EXTRA = [
     TrocaCilindroHistorico,       # referencia oxigenio_emprestimos + tfd_pacientes + oxigenio_empresas
     ItemEmprestimoOxigenio,       # referencia oxigenio_emprestimos + oxigenio_equipamentos
@@ -88,8 +90,8 @@ MODELOS_LIMPEZA_EXTRA = [
     LabPedidoAjuste,              # referencia lab_solic_mestre + lab_laboratorios
 ]
 
-# Ordem de inserção: pais primeiro, depois dependentes/filhos (apenas tabelas do backup)
-MODELOS_ORDENADOS = [
+# Conjunto legado de 29 tabelas (compatibilidade com backups antigos que não incluem módulos novos)
+MODELOS_LEGADOS = [
     SystemSettings,
     IntegrationSettings,
     User,
@@ -120,6 +122,46 @@ MODELOS_ORDENADOS = [
     ItemSolic,
     AuditLog,
 ]
+TABELAS_LEGADAS: frozenset[str] = frozenset(m.__tablename__ for m in MODELOS_LEGADOS)
+
+# Todos os modelos persistidos do sistema (52 tabelas: núcleo + TFD + SIGTAP + Lab + APAC + Oxigênio + Farmácia + Integrações)
+TODOS_MODELOS: list[type[SQLModel]] = [
+    *MODELOS_LEGADOS,
+    LabPedidoAjuste,
+    FaixaNumeracaoAPAC,
+    SolicitacaoAPAC,
+    ProcedimentoSecundarioAPAC,
+    AnexoLaudoAPAC,
+    LoteFaturamentoAPAC,
+    EmpresaOxigenio,
+    LicitacaoContratoOxigenio,
+    EntradaCompraOxigenio,
+    EquipamentoRespiratorio,
+    EmprestimoOxigenio,
+    TrocaCilindroHistorico,
+    ItemEmprestimoOxigenio,
+    CilindroVazioRecolhimento,
+    CilindroComodatoMovimentacao,
+    Medicamento,
+    MovimentacaoMedicamento,
+    InsumoInterno,
+    MovimentacaoInsumo,
+    FarmaciaLinkPublico,
+    PecSyncLog,
+    PecIndicadorCache,
+    WhatsAppLog,
+]
+
+MODELO_POR_TABELA: dict[str, type[SQLModel]] = {
+    m.__tablename__: m for m in TODOS_MODELOS
+}
+
+# Ordem topológica garantida pelo grafo real de FKs (pais antes de filhos)
+MODELOS_ORDENADOS: list[type[SQLModel]] = [
+    MODELO_POR_TABELA[t.name]
+    for t in SQLModel.metadata.sorted_tables
+    if t.name in MODELO_POR_TABELA
+]
 
 
 def _serializar_valor(val: Any) -> Any:
@@ -149,26 +191,55 @@ def _serializar_entidade(obj: Any) -> dict[str, Any]:
 def gerar_dump_dados(session: Session) -> dict[str, Any]:
     """Coleta e serializa todas as tabelas do sistema em um dicionário de dump.
 
-    Retorna metadados (versao='1.0', data_geracao=ISO8601, total_registros)
-    e os dados agrupados por nome da tabela.
+    Lê diretamente as colunas existentes no banco em savepoints isolados para que
+    nenhuma tabela falhe silenciosamente ou aborte a transação das tabelas seguintes.
+    Em caso de erro de leitura em qualquer tabela existente, interrompe com exceção
+    explícita para nunca gerar um backup incompleto como se fosse válido.
     """
     tabelas_dump: dict[str, list[dict[str, Any]]] = {}
     total_registros = 0
 
+    insp = inspect(session.connection())
+    tabelas_existentes = set(insp.get_table_names())
+
     for model in MODELOS_ORDENADOS:
         nome_tabela = model.__tablename__
-        try:
-            # Ordena por id se existir a coluna id
-            stmt = select(model)
-            if hasattr(model, "id"):
-                stmt = stmt.order_by(model.id)
-            rows = session.exec(stmt).all()
-            registros = [_serializar_entidade(r) for r in rows]
-            tabelas_dump[nome_tabela] = registros
-            total_registros += len(registros)
-        except Exception:
-            # Se a tabela não existir ainda no banco ou der erro de leitura, registra vazia
+        if nome_tabela not in tabelas_existentes:
             tabelas_dump[nome_tabela] = []
+            continue
+
+        try:
+            with session.begin_nested():
+                cols_db = [c["name"] for c in insp.get_columns(nome_tabela)]
+                if not cols_db:
+                    tabelas_dump[nome_tabela] = []
+                    continue
+
+                table = model.__table__
+                select_cols = [
+                    table.c[c] if c in table.c else column(c) for c in cols_db
+                ]
+                stmt = select(*select_cols).select_from(table)
+                pk_order = [
+                    table.c[pk.name]
+                    for pk in table.primary_key.columns
+                    if pk.name in cols_db
+                ]
+                if pk_order:
+                    stmt = stmt.order_by(*pk_order)
+
+                rows = session.execute(stmt).mappings().all()
+                registros = [
+                    {col_name: _serializar_valor(row[col_name]) for col_name in cols_db}
+                    for row in rows
+                ]
+                tabelas_dump[nome_tabela] = registros
+                total_registros += len(registros)
+        except Exception as e:
+            logger.exception("Falha ao exportar tabela '%s' no backup", nome_tabela)
+            raise ValueError(
+                f"Falha ao exportar dados da tabela '{nome_tabela}': {e}"
+            ) from e
 
     return {
         "versao": "1.0",
@@ -178,15 +249,16 @@ def gerar_dump_dados(session: Session) -> dict[str, Any]:
     }
 
 
-def _tabelas_limpeza_ordenadas(session: Session) -> list[Any]:
+def _tabelas_limpeza_ordenadas(
+    session: Session, tabelas_base: set[str] | None = None
+) -> list[Any]:
     """Retorna tabelas existentes no banco em ordem reversa de dependências (filhos -> pais).
 
-    Inclui todas as tabelas do backup e quaisquer tabelas extras que possuam FK
+    Inclui todas as tabelas alvo e quaisquer outras tabelas que possuam FK
     direta ou transitiva apontando para elas (ex.: oxigênio, APAC, ajustes de lab).
     """
-    tabelas_alvo = {m.__tablename__ for m in MODELOS_ORDENADOS} | {
-        m.__tablename__ for m in MODELOS_LIMPEZA_EXTRA
-    }
+    tabelas_alvo = set(tabelas_base) if tabelas_base is not None else set(MODELO_POR_TABELA)
+    tabelas_alvo |= {m.__tablename__ for m in MODELOS_LIMPEZA_EXTRA}
 
     mudou = True
     while mudou:
@@ -219,6 +291,15 @@ def _inserir_lote_tabela(
     pk_keys = [c.key for c in table.primary_key.columns]
     batch_size = max(1, min(1000, max_params // max(1, len(cols))))
 
+    campos_default_nao_nulo = {
+        fname
+        for fname, finfo in model.model_fields.items()
+        if not finfo.is_required()
+        and (finfo.default is not None or finfo.default_factory is not None)
+        and type(None) not in get_args(finfo.annotation)
+        and finfo.annotation is not type(None)
+    }
+
     linhas_lote: list[dict[str, Any]] = []
     inseridos = 0
 
@@ -236,8 +317,17 @@ def _inserir_lote_tabela(
     for item in rows_data:
         if not isinstance(item, dict):
             continue
+        item_validacao = item
+        if campos_default_nao_nulo and any(
+            k in item and item[k] is None for k in campos_default_nao_nulo
+        ):
+            item_validacao = {
+                k: v
+                for k, v in item.items()
+                if not (v is None and k in campos_default_nao_nulo)
+            }
         try:
-            obj = model.model_validate(item)
+            obj = model.model_validate(item_validacao)
         except Exception as e:
             raise ValueError(
                 f"Falha ao restaurar registro na tabela '{nome_tabela}': {e}"
@@ -329,10 +419,18 @@ def restaurar_dump_dados(session: Session, dump: dict[str, Any], autor_id: int) 
     is_sqlite = bool(bind and bind.dialect.name == "sqlite")
     max_params = 900 if is_sqlite else 30000
 
+    tabelas_no_dump = {
+        model.__tablename__
+        for model in MODELOS_ORDENADOS
+        if model.__tablename__ in dados_tabelas or model.__name__ in dados_tabelas
+    }
+    tabelas_base_limpeza = set(TABELAS_LEGADAS) | tabelas_no_dump
+
     # Savepoint atômico: qualquer exceção faz rollback apenas deste ponto
     with session.begin_nested():
         # 1. Limpeza na ordem reversa de dependências (filhos -> pais)
-        for table in _tabelas_limpeza_ordenadas(session):
+        tabelas_limpas = _tabelas_limpeza_ordenadas(session, tabelas_base_limpeza)
+        for table in tabelas_limpas:
             try:
                 session.execute(delete(table))
             except Exception as e:
@@ -340,13 +438,13 @@ def restaurar_dump_dados(session: Session, dump: dict[str, Any], autor_id: int) 
                     f"Falha ao limpar tabela '{table.name}': {e}"
                 ) from e
 
-        # 2. Inserção na ordem correta (pais primeiro) — apenas tabelas do backup
+        # 2. Inserção na ordem correta (pais primeiro)
         for model in MODELOS_ORDENADOS:
             nome_tabela = model.__tablename__
             rows_data = dados_tabelas.get(nome_tabela)
             if rows_data is None:
                 # Tenta pelo nome da classe
-                rows_data = dados_tabelas.get(model.__name__, [])
+                rows_data = dados_tabelas.get(model.__name__)
 
             if not isinstance(rows_data, list):
                 continue
@@ -359,8 +457,18 @@ def restaurar_dump_dados(session: Session, dump: dict[str, Any], autor_id: int) 
         session.flush()
         session.expire_all()
 
-        # 3. Atualizar sequences no PostgreSQL
-        _atualizar_sequences_postgres(session, modelos_inseridos)
+        # 3. Atualizar sequences no PostgreSQL (todas as tabelas limpas e/ou restauradas)
+        modelos_sequence = list(
+            dict.fromkeys(
+                [
+                    MODELO_POR_TABELA[t.name]
+                    for t in tabelas_limpas
+                    if t.name in MODELO_POR_TABELA
+                ]
+                + modelos_inseridos
+            )
+        )
+        _atualizar_sequences_postgres(session, modelos_sequence)
 
         # 4. Registrar evento na auditoria
         log_auditoria = AuditLog(

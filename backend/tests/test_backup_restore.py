@@ -4,11 +4,12 @@ import json
 
 from fastapi.testclient import TestClient
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, inspect, text
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.core.deps import get_db, require_senha_ok, require_superuser
+from app.db.session import _sincronizar_colunas_faltantes
 from app.main import app
 from app.models.apac import (
     AnexoLaudoAPAC,
@@ -18,6 +19,8 @@ from app.models.apac import (
 from app.models.audit import AuditLog
 from app.models.cadastros_saude import Medico
 from app.models.dashboard_prefs import UserDashboardPrefs
+from app.models.farmacia import Medicamento, MovimentacaoMedicamento
+from app.models.integracoes import IntegrationSettings, PecSyncLog, WhatsAppLog
 from app.models.lab_exames import SigtapProcedimento
 from app.models.lab_fase6 import (
     FilaPsf,
@@ -35,10 +38,14 @@ from app.models.oxigenio import (
     LicitacaoContratoOxigenio,
     TrocaCilindroHistorico,
 )
-from app.models.tfd import Paciente
+from app.models.tfd import ExameFila, Paciente
 from app.models.user import User
 from app.services.backup_crypto import criptografar_dados
-from app.services.backup_service import gerar_dump_dados, restaurar_dump_dados
+from app.services.backup_service import (
+    MODELOS_ORDENADOS,
+    gerar_dump_dados,
+    restaurar_dump_dados,
+)
 
 
 @pytest.fixture(name="engine_fk")
@@ -376,3 +383,231 @@ def test_endpoint_restaurar_backup_bak(engine_fk):
         assert [(p.id, p.nome) for p in pacs] == [(77, "Restaurado via Endpoint")]
         roundtrip = gerar_dump_dados(verify_db)
         assert len(roundtrip["tabelas"]["tfd_pacientes"]) == 1
+
+
+def test_backup_cobre_todas_as_tabelas_do_sistema():
+    assert {m.__tablename__ for m in MODELOS_ORDENADOS} == set(
+        SQLModel.metadata.tables.keys()
+    )
+
+
+def test_gerar_dump_com_coluna_ausente_nao_zera_tabelas_seguintes():
+    legacy_engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    with legacy_engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE tfd_pacientes (id INTEGER PRIMARY KEY, nome VARCHAR(150) NOT NULL)"
+            )
+        )
+        # Simula banco legado onde 'instrucoes_transporte' ainda não existe em tfd_exames_fila
+        conn.execute(
+            text(
+                "CREATE TABLE tfd_exames_fila (id INTEGER PRIMARY KEY, paciente_id INTEGER NOT NULL, exame VARCHAR(120) NOT NULL, data_pedido DATE NOT NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE sigtap_procedimentos (id INTEGER PRIMARY KEY, codigo VARCHAR(20) NOT NULL, descricao VARCHAR(255) NOT NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE lab_laboratorios (id INTEGER PRIMARY KEY, nome VARCHAR(120) NOT NULL, ativo BOOLEAN NOT NULL)"
+            )
+        )
+        conn.execute(
+            text("INSERT INTO tfd_pacientes (id, nome) VALUES (1, 'Maria Teste')")
+        )
+        conn.execute(
+            text(
+                "INSERT INTO tfd_exames_fila (id, paciente_id, exame, data_pedido) VALUES (5, 1, 'Raio-X', '2026-11-09')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO sigtap_procedimentos (id, codigo, descricao) VALUES (1, '020101', 'Exame SIGTAP')"
+            )
+        )
+        conn.execute(
+            text("INSERT INTO lab_laboratorios (id, nome, ativo) VALUES (1, 'Lab Central', 1)")
+        )
+
+    with Session(legacy_engine) as db:
+        dump = gerar_dump_dados(db)
+
+    assert len(dump["tabelas"]["tfd_exames_fila"]) == 1
+    assert dump["tabelas"]["tfd_exames_fila"][0]["exame"] == "Raio-X"
+    assert len(dump["tabelas"]["sigtap_procedimentos"]) == 1
+    assert len(dump["tabelas"]["lab_laboratorios"]) == 1
+
+
+def test_gerar_dump_falha_explicita_quando_tabela_quebra(engine_fk, monkeypatch):
+    with Session(engine_fk) as db:
+        db.add(Paciente(id=1, nome="Teste"))
+        db.commit()
+
+        orig_execute = db.execute
+
+        def _fail_exame(stmt, *args, **kwargs):
+            if "tfd_exames_fila" in str(stmt):
+                raise RuntimeError("Erro simulado de leitura")
+            return orig_execute(stmt, *args, **kwargs)
+
+        monkeypatch.setattr(db, "execute", _fail_exame)
+        with pytest.raises(ValueError, match="tfd_exames_fila"):
+            gerar_dump_dados(db)
+
+
+def test_sincronizar_colunas_faltantes_adiciona_colunas_em_banco_legado():
+    legacy_engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    with legacy_engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE tfd_exames_fila (id INTEGER PRIMARY KEY, paciente_id INTEGER NOT NULL, exame VARCHAR(120) NOT NULL, data_pedido DATE NOT NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE lab_solic_mestre (id INTEGER PRIMARY KEY, paciente_id INTEGER NOT NULL, data_agendada DATE NOT NULL, laboratorio_id INTEGER NOT NULL)"
+            )
+        )
+        conn.execute(text("CREATE TABLE integration_settings (id INTEGER PRIMARY KEY)"))
+
+    _sincronizar_colunas_faltantes(legacy_engine)
+
+    insp = inspect(legacy_engine)
+    cols_exames = {c["name"] for c in insp.get_columns("tfd_exames_fila")}
+    cols_mestre = {c["name"] for c in insp.get_columns("lab_solic_mestre")}
+    cols_int = {c["name"] for c in insp.get_columns("integration_settings")}
+
+    assert "instrucoes_transporte" in cols_exames
+    assert "instrucoes_transporte" in cols_mestre
+    assert "whatsapp_habilitado" in cols_int
+
+
+def test_roundtrip_completo_todos_os_modulos(engine_fk):
+    with Session(engine_fk) as db:
+        db.add(
+            User(
+                id=1,
+                username="admin",
+                password_hash="hash",
+                nome="Admin",
+                is_superuser=True,
+                is_active=True,
+                must_change_password=False,
+            )
+        )
+        db.add(Paciente(id=10, nome="Paciente Completo"))
+        db.add(Medico(id=20, nome="Dr. Completo"))
+        db.add(Laboratorio(id=30, nome="Lab Completo"))
+        db.add(
+            ExameFila(
+                id=100,
+                paciente_id=10,
+                exame="Ressonância",
+                data_pedido=date(2026, 11, 8),
+                instrucoes_transporte="Sair às 05:30",
+            )
+        )
+        db.add(EmpresaOxigenio(id=1, razao_social="Gas Guape"))
+        db.add(
+            LicitacaoContratoOxigenio(
+                id=1,
+                empresa_id=1,
+                numero_licitacao="002/2026",
+                data_inicio=None,
+                data_fim=None,
+            )
+        )
+        db.add(
+            EmprestimoOxigenio(
+                id=1,
+                paciente_id=10,
+                paciente_nome="Paciente Completo",
+                tipo_servico="OXIGENIO",
+                empresa_id=1,
+                licitacao_id=1,
+                data_instalacao=date(2026, 11, 1),
+            )
+        )
+        db.add(
+            SolicitacaoAPAC(
+                id=1,
+                paciente_id=10,
+                paciente_nome="Paciente Completo",
+                medico_solicitante_id=20,
+                medico_solicitante_nome="Dr. Completo",
+                procedimento_principal_codigo="0305010107",
+                procedimento_principal_nome="Hemodialise",
+                cid_principal_codigo="N180",
+                data_solicitacao=date(2026, 11, 2),
+            )
+        )
+        db.add(
+            AnexoLaudoAPAC(
+                id=1,
+                solicitacao_apac_id=1,
+                titulo="Laudo",
+                nome_arquivo="laudo.pdf",
+            )
+        )
+        db.add(Medicamento(id=1, codigo="MED-01", nome="Dipirona 500mg"))
+        db.add(
+            MovimentacaoMedicamento(
+                id=1, medicamento_id=1, medicamento_nome="Dipirona 500mg", tipo="ENTRADA_COMPRA"
+            )
+        )
+        db.add(PecSyncLog(id=1, status="SUCESSO", total_lidos=10))
+        db.add(WhatsAppLog(id=1, paciente_id=10, mensagem="Confirmado"))
+        db.add(IntegrationSettings(id=1))
+        db.commit()
+
+        dump = gerar_dump_dados(db)
+
+    assert len(dump["tabelas"]) == len(MODELOS_ORDENADOS)
+    assert len(dump["tabelas"]["tfd_exames_fila"]) == 1
+    assert len(dump["tabelas"]["oxigenio_emprestimos"]) == 1
+    assert len(dump["tabelas"]["apac_anexos"]) == 1
+    assert len(dump["tabelas"]["farmacia_movimentacoes"]) == 1
+    assert len(dump["tabelas"]["pec_sync_logs"]) == 1
+    assert len(dump["tabelas"]["whatsapp_logs"]) == 1
+
+    # Restaura em um banco limpo e confirma preservação integral de todos os módulos
+    engine_destino = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    @event.listens_for(engine_destino, "connect")
+    def _enable_fk_dest(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    SQLModel.metadata.create_all(engine_destino)
+
+    with Session(engine_destino) as dest_db:
+        res = restaurar_dump_dados(dest_db, dump, autor_id=1)
+        assert res["ok"] is True
+
+    with Session(engine_destino) as verify_db:
+        exames = verify_db.exec(select(ExameFila)).all()
+        assert [(e.id, e.exame, e.instrucoes_transporte) for e in exames] == [
+            (100, "Ressonância", "Sair às 05:30")
+        ]
+        assert len(verify_db.exec(select(LicitacaoContratoOxigenio)).all()) == 1
+        assert len(verify_db.exec(select(EmprestimoOxigenio)).all()) == 1
+        assert len(verify_db.exec(select(AnexoLaudoAPAC)).all()) == 1
+        assert len(verify_db.exec(select(MovimentacaoMedicamento)).all()) == 1
+        assert len(verify_db.exec(select(PecSyncLog)).all()) == 1
+        assert len(verify_db.exec(select(WhatsAppLog)).all()) == 1

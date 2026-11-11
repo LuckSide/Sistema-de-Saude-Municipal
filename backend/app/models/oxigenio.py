@@ -47,8 +47,8 @@ class LicitacaoContratoOxigenio(SQLModel, table=True):
     numero_licitacao: str = Field(max_length=100, index=True)
     numero_contrato: str = Field(default="", max_length=100, index=True)
     ano: int = Field(default=2026, index=True)
-    data_inicio: date = Field(default=None, sa_column=Column(Date))
-    data_fim: date = Field(default=None, sa_column=Column(Date))
+    data_inicio: date | None = Field(default=None, sa_column=Column(Date))
+    data_fim: date | None = Field(default=None, sa_column=Column(Date))
     objeto: str = Field(default="", sa_column=Column(Text))
 
     # Quantidades Contratadas por cilindro

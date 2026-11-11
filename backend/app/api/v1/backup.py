@@ -45,11 +45,16 @@ def exportar_backup(
         # 3. Criptografa com AES-256-GCM + PBKDF2
         arquivo_bak = criptografar_dados(dados_comprimidos, payload.senha.strip())
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Erro de validação. Verifique os parâmetros.")
+        logger.warning("Erro ao gerar backup: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e) or "Erro de validação. Verifique os parâmetros.",
+        )
     except Exception as e:
+        logger.exception("Falha interna ao gerar backup")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Falha interna ao gerar backup. Consulte os logs.",
+            detail=str(e) or "Falha interna ao gerar backup. Consulte os logs.",
         )
 
     data_formatada = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -1,3 +1,4 @@
+from sqlalchemy import inspect, text
 from sqlmodel import SQLModel, create_engine
 
 from app.core.config import settings
@@ -18,6 +19,58 @@ engine = create_engine(
 )
 
 
+def _sincronizar_colunas_faltantes(target_engine) -> None:
+    """Adiciona automaticamente colunas dos modelos SQLModel ausentes em bancos antigos.
+
+    Cada DDL roda em savepoint isolado para que nenhuma falha pontual aborte
+    a transação PostgreSQL e impeça os demais ajustes de schema.
+    """
+    with target_engine.begin() as conn:
+        insp = inspect(conn)
+        existing_tables = set(insp.get_table_names())
+        for table in SQLModel.metadata.sorted_tables:
+            if table.name not in existing_tables:
+                continue
+            try:
+                existing_cols = {c["name"] for c in insp.get_columns(table.name)}
+            except Exception:
+                continue
+
+            for col in table.columns:
+                if col.primary_key or col.name in existing_cols:
+                    continue
+                try:
+                    col_type_sql = col.type.compile(dialect=conn.dialect)
+                    if (
+                        col.default is not None
+                        and getattr(col.default, "is_scalar", False)
+                        and isinstance(col.default.arg, (str, int, float, bool))
+                    ):
+                        arg = col.default.arg
+                        if isinstance(arg, bool):
+                            default_sql = "TRUE" if arg else "FALSE"
+                        elif isinstance(arg, (int, float)):
+                            default_sql = str(arg)
+                        else:
+                            default_sql = "'" + arg.replace("'", "''") + "'"
+                        not_null = " NOT NULL" if not col.nullable else ""
+                        ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col_type_sql} DEFAULT {default_sql}{not_null}"
+                    else:
+                        ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col_type_sql}"
+
+                    with conn.begin_nested():
+                        conn.execute(text(ddl))
+                        if col.index:
+                            conn.execute(
+                                text(
+                                    f"CREATE INDEX IF NOT EXISTS ix_{table.name}_{col.name} "
+                                    f"ON {table.name} ({col.name})"
+                                )
+                            )
+                except Exception:
+                    pass
+
+
 def init_db() -> None:
     from app.models.lab_exames import (  # noqa: F401
         LabSolicitacao,
@@ -30,10 +83,12 @@ def init_db() -> None:
         FilaPsf,
         ItemSolic,
         Laboratorio,
+        LabPedidoAjuste,
         SolicitacaoMestre,
         VagaLab,
     )
     from app.models.tfd import (  # noqa: F401
+        Destino,
         Especialidade,
         ExameFila,
         Faturamento,
@@ -48,7 +103,12 @@ def init_db() -> None:
     )
     from app.models.user import User  # noqa: F401
     from app.models.settings import SystemSettings  # noqa: F401
-    from app.models.integracoes import IntegrationSettings, PecSyncLog, PecIndicadorCache  # noqa: F401
+    from app.models.integracoes import (  # noqa: F401
+        IntegrationSettings,
+        PecIndicadorCache,
+        PecSyncLog,
+        WhatsAppLog,
+    )
     from app.models.dashboard_prefs import UserDashboardPrefs  # noqa: F401
     from app.models.audit import AuditLog  # noqa: F401
     from app.models.cadastros_saude import Medico, UnidadeSaude  # noqa: F401
@@ -433,6 +493,7 @@ def init_db() -> None:
             "motivo_remocao": "VARCHAR(500) DEFAULT '' NOT NULL",
             "removido_em": "TIMESTAMP",
             "removido_por": "VARCHAR(120) DEFAULT '' NOT NULL",
+            "instrucoes_transporte": "VARCHAR(500) DEFAULT '' NOT NULL",
         }.items():
             if col not in cols_ex3:
                 try:
@@ -630,6 +691,7 @@ def init_db() -> None:
             "unidade_saude_id": "INTEGER",
             "unidade_psf": "VARCHAR(150) DEFAULT '' NOT NULL",
             "justificativa": "VARCHAR(500) DEFAULT '' NOT NULL",
+            "instrucoes_transporte": "VARCHAR(500) DEFAULT '' NOT NULL",
         }.items():
             if col not in cols_sm:
                 try:
@@ -704,12 +766,22 @@ def init_db() -> None:
             "pec_sync_ultima_execucao": "TIMESTAMP",
             "pec_sync_ultimo_status": "VARCHAR(30) DEFAULT '' NOT NULL",
             "pec_sync_total_pacientes": "INTEGER DEFAULT 0 NOT NULL",
+            "whatsapp_habilitado": "BOOLEAN DEFAULT FALSE NOT NULL",
+            "whatsapp_provedor": "VARCHAR(50) DEFAULT 'api_oficial' NOT NULL",
+            "whatsapp_api_url": "VARCHAR(500) DEFAULT '' NOT NULL",
+            "whatsapp_api_token": "VARCHAR(500) DEFAULT '' NOT NULL",
+            "whatsapp_instancia_id": "VARCHAR(150) DEFAULT '' NOT NULL",
+            "whatsapp_notificar_entrada_fila": "BOOLEAN DEFAULT TRUE NOT NULL",
+            "whatsapp_notificar_agendamento": "BOOLEAN DEFAULT TRUE NOT NULL",
+            "whatsapp_ddd_padrao": "VARCHAR(5) DEFAULT '35' NOT NULL",
         }.items():
             if col not in cols_int:
                 try:
                     conn.execute(text(f"ALTER TABLE integration_settings ADD COLUMN {col} {ddl}"))
                 except Exception:
                     pass
+
+    _sincronizar_colunas_faltantes(engine)
 
     from sqlmodel import Session, select
 
