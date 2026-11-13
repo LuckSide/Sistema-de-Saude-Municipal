@@ -24,6 +24,14 @@ from app.schemas.lab import (
     SolicitacaoIn,
     SolicitacaoOut,
 )
+from app.schemas.lab_fase6 import (
+    LabLoteConsolidarIn,
+    LabLoteOut,
+    LabLotePreviaIn,
+    LabLotePreviaOut,
+    LabOrcamentoIn,
+    LabOrcamentoOut,
+)
 from app.services.lab import (
     competencia_of,
     lote_bpa,
