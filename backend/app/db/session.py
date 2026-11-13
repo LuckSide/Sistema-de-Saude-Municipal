@@ -25,50 +25,58 @@ def _sincronizar_colunas_faltantes(target_engine) -> None:
     Cada DDL roda em savepoint isolado para que nenhuma falha pontual aborte
     a transação PostgreSQL e impeça os demais ajustes de schema.
     """
-    with target_engine.begin() as conn:
-        insp = inspect(conn)
-        existing_tables = set(insp.get_table_names())
-        for table in SQLModel.metadata.sorted_tables:
-            if table.name not in existing_tables:
-                continue
+    try:
+        with target_engine.begin() as conn:
+            insp = inspect(conn)
+            existing_tables = set(insp.get_table_names())
             try:
-                existing_cols = {c["name"] for c in insp.get_columns(table.name)}
+                tables_list = SQLModel.metadata.sorted_tables
             except Exception:
-                continue
+                tables_list = list(SQLModel.metadata.tables.values())
 
-            for col in table.columns:
-                if col.primary_key or col.name in existing_cols:
+            for table in tables_list:
+                if table.name not in existing_tables:
                     continue
                 try:
-                    col_type_sql = col.type.compile(dialect=conn.dialect)
-                    if (
-                        col.default is not None
-                        and getattr(col.default, "is_scalar", False)
-                        and isinstance(col.default.arg, (str, int, float, bool))
-                    ):
-                        arg = col.default.arg
-                        if isinstance(arg, bool):
-                            default_sql = "TRUE" if arg else "FALSE"
-                        elif isinstance(arg, (int, float)):
-                            default_sql = str(arg)
-                        else:
-                            default_sql = "'" + arg.replace("'", "''") + "'"
-                        not_null = " NOT NULL" if not col.nullable else ""
-                        ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col_type_sql} DEFAULT {default_sql}{not_null}"
-                    else:
-                        ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col_type_sql}"
-
-                    with conn.begin_nested():
-                        conn.execute(text(ddl))
-                        if col.index:
-                            conn.execute(
-                                text(
-                                    f"CREATE INDEX IF NOT EXISTS ix_{table.name}_{col.name} "
-                                    f"ON {table.name} ({col.name})"
-                                )
-                            )
+                    existing_cols = {c["name"] for c in insp.get_columns(table.name)}
                 except Exception:
-                    pass
+                    continue
+
+                for col in table.columns:
+                    if col.primary_key or col.name in existing_cols:
+                        continue
+                    try:
+                        col_type_sql = col.type.compile(dialect=conn.dialect)
+                        if (
+                            col.default is not None
+                            and getattr(col.default, "is_scalar", False)
+                            and isinstance(col.default.arg, (str, int, float, bool))
+                        ):
+                            arg = col.default.arg
+                            if isinstance(arg, bool):
+                                default_sql = "TRUE" if arg else "FALSE"
+                            elif isinstance(arg, (int, float)):
+                                default_sql = str(arg)
+                            else:
+                                default_sql = "'" + str(arg).replace("'", "''") + "'"
+                            not_null = " NOT NULL" if not col.nullable else ""
+                            ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col_type_sql} DEFAULT {default_sql}{not_null}"
+                        else:
+                            ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col_type_sql}"
+
+                        with conn.begin_nested():
+                            conn.execute(text(ddl))
+                            if col.index:
+                                conn.execute(
+                                    text(
+                                        f"CREATE INDEX IF NOT EXISTS ix_{table.name}_{col.name} "
+                                        f"ON {table.name} ({col.name})"
+                                    )
+                                )
+                    except Exception:
+                        pass
+    except Exception:
+        pass
 
 
 def init_db() -> None:
@@ -117,6 +125,10 @@ def _init_db_impl() -> None:
     from app.models.lab_fase6 import (  # noqa: F401
         FilaPsf,
         ItemSolic,
+        LabLoteArtefato,
+        LabLoteItem,
+        LabLoteLiberacao,
+        LabOrcamentoMensal,
         Laboratorio,
         LabPedidoAjuste,
         SolicitacaoMestre,
@@ -1082,6 +1094,98 @@ def _init_db_impl() -> None:
         if "lote_id" not in cols_solic_mestre:
             try:
                 conn.execute(text("ALTER TABLE lab_solic_mestre ADD COLUMN lote_id INTEGER NULL"))
+            except Exception:
+                pass
+
+        # Garante criação idempotente das tabelas do motor de liberação em lote
+        is_pg = conn.dialect.name == "postgresql"
+        pk_type = "SERIAL PRIMARY KEY" if is_pg else "INTEGER PRIMARY KEY AUTOINCREMENT"
+        bytea_type = "BYTEA" if is_pg else "BLOB"
+        float_type = "DOUBLE PRECISION" if is_pg else "REAL"
+
+        ddls_tabelas_lote = [
+            f"""CREATE TABLE IF NOT EXISTS lab_orcamentos_mensais (
+                id {pk_type},
+                competencia VARCHAR(7) NOT NULL,
+                teto_mensal {float_type} DEFAULT 0.0 NOT NULL,
+                valor_consumido {float_type} DEFAULT 0.0 NOT NULL,
+                observacoes VARCHAR(500) DEFAULT '' NOT NULL,
+                atualizado_por VARCHAR(120) DEFAULT '' NOT NULL,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP
+            )""",
+            f"""CREATE TABLE IF NOT EXISTS lab_lotes_liberacao (
+                id {pk_type},
+                codigo_lote VARCHAR(32) NOT NULL,
+                orcamento_id INTEGER,
+                competencia VARCHAR(7) NOT NULL,
+                laboratorio_id INTEGER NOT NULL,
+                laboratorio_nome VARCHAR(120) DEFAULT '' NOT NULL,
+                valor_solicitado {float_type} DEFAULT 0.0 NOT NULL,
+                valor_consumido {float_type} DEFAULT 0.0 NOT NULL,
+                qtd_pacientes INTEGER DEFAULT 0 NOT NULL,
+                qtd_exames INTEGER DEFAULT 0 NOT NULL,
+                datas_alocacao_json TEXT DEFAULT '[]' NOT NULL,
+                status VARCHAR(20) DEFAULT 'consolidado' NOT NULL,
+                observacoes VARCHAR(500) DEFAULT '' NOT NULL,
+                arquivo_comprovantes_nome VARCHAR(200) DEFAULT '' NOT NULL,
+                arquivo_comprovantes_sha256 VARCHAR(64) DEFAULT '' NOT NULL,
+                arquivo_excel_nome VARCHAR(200) DEFAULT '' NOT NULL,
+                arquivo_excel_sha256 VARCHAR(64) DEFAULT '' NOT NULL,
+                criado_por VARCHAR(120) DEFAULT '' NOT NULL,
+                created_at TIMESTAMP
+            )""",
+            f"""CREATE TABLE IF NOT EXISTS lab_lote_itens (
+                id {pk_type},
+                lote_id INTEGER NOT NULL,
+                fila_psf_id INTEGER NOT NULL,
+                solicitacao_mestre_id INTEGER NOT NULL,
+                paciente_id INTEGER NOT NULL,
+                paciente_nome VARCHAR(150) DEFAULT '' NOT NULL,
+                paciente_cpf VARCHAR(20) DEFAULT '' NOT NULL,
+                paciente_prontuario VARCHAR(30) DEFAULT '' NOT NULL,
+                data_agendada DATE NOT NULL,
+                ordem_selecao INTEGER DEFAULT 1 NOT NULL,
+                prioridade_fila VARCHAR(20) DEFAULT 'rotina' NOT NULL,
+                valor_consumido {float_type} DEFAULT 0.0 NOT NULL,
+                exames_snapshot_json TEXT DEFAULT '[]' NOT NULL
+            )""",
+            f"""CREATE TABLE IF NOT EXISTS lab_lote_artefatos (
+                id {pk_type},
+                lote_id INTEGER NOT NULL,
+                tipo VARCHAR(30) NOT NULL,
+                nome_arquivo VARCHAR(200) NOT NULL,
+                mime_type VARCHAR(120) NOT NULL,
+                tamanho_bytes INTEGER DEFAULT 0 NOT NULL,
+                sha256 VARCHAR(64) DEFAULT '' NOT NULL,
+                conteudo {bytea_type},
+                created_at TIMESTAMP
+            )""",
+        ]
+        for ddl_tbl in ddls_tabelas_lote:
+            try:
+                conn.execute(text(ddl_tbl))
+            except Exception:
+                pass
+
+        for idx_lote in [
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_lab_orcamento_competencia ON lab_orcamentos_mensais (competencia)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_orcamentos_mensais_competencia ON lab_orcamentos_mensais (competencia)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_lab_lotes_liberacao_codigo_lote ON lab_lotes_liberacao (codigo_lote)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_lotes_liberacao_competencia ON lab_lotes_liberacao (competencia)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_lotes_liberacao_laboratorio_id ON lab_lotes_liberacao (laboratorio_id)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_lotes_liberacao_orcamento_id ON lab_lotes_liberacao (orcamento_id)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_lote_itens_lote_id ON lab_lote_itens (lote_id)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_lote_itens_fila_psf_id ON lab_lote_itens (fila_psf_id)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_lote_itens_solicitacao_mestre_id ON lab_lote_itens (solicitacao_mestre_id)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_lote_itens_paciente_id ON lab_lote_itens (paciente_id)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_lote_itens_data_agendada ON lab_lote_itens (data_agendada)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_lote_artefatos_lote_id ON lab_lote_artefatos (lote_id)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_lote_artefatos_tipo ON lab_lote_artefatos (tipo)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_lab_lote_artefato_tipo ON lab_lote_artefatos (lote_id, tipo)",
+        ]:
+            try:
+                conn.execute(text(idx_lote))
             except Exception:
                 pass
 
