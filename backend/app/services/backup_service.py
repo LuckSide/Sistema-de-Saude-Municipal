@@ -47,6 +47,10 @@ from app.models.lab_fase6 import (
     FilaPsf,
     ItemSolic,
     Laboratorio,
+    LabLoteArtefato,
+    LabLoteItem,
+    LabLoteLiberacao,
+    LabOrcamentoMensal,
     LabPedidoAjuste,
     SolicitacaoMestre,
     VagaLab,
@@ -161,6 +165,10 @@ TODOS_MODELOS: list[type[SQLModel]] = [
     SigtapSubgrupo,
     SigtapFormaOrganizacao,
     SigtapOcupacao,
+    LabOrcamentoMensal,
+    LabLoteLiberacao,
+    LabLoteItem,
+    LabLoteArtefato,
 ]
 
 MODELO_POR_TABELA: dict[str, type[SQLModel]] = {
@@ -187,6 +195,9 @@ def _serializar_valor(val: Any) -> Any:
         return str(val)
     if isinstance(val, Enum):
         return val.value
+    if isinstance(val, bytes):
+        import base64
+        return base64.b64encode(val).decode("ascii")
     return val
 
 

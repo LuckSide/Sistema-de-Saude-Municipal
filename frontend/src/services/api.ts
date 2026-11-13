@@ -517,6 +517,9 @@ export type Paciente = {
   data_obito?: string | null;
   motivo_situacao?: string;
   situacao_atualizada_em?: string | null;
+  fila_aguardando_qtd?: number;
+  fila_agendado_qtd?: number;
+  fila_total_qtd?: number;
 };
 
 export type PacienteHistoricoItem = {
@@ -2012,6 +2015,157 @@ export function expandirSigtapIds(itens: ExameLoteItem[]): number[] {
   return out;
 }
 
+// ---------- Orçamento & Lotes de Liberação de Exames ----------
+export type LabOrcamento = {
+  id: number;
+  competencia: string;
+  teto_mensal: number;
+  valor_consumido: number;
+  saldo_disponivel: number;
+  percentual_consumido: number;
+  observacoes: string;
+  atualizado_por: string;
+  created_at: string;
+  updated_at: string;
+  lotes_count: number;
+};
+
+export type LabLotePreviaProcedimento = {
+  sigtap_id: number;
+  codigo: string;
+  descricao: string;
+  valor_unitario: number;
+  quantidade: number;
+  valor_total: number;
+};
+
+export type LabLotePreviaItem = {
+  fila_id: number;
+  paciente_id: number;
+  paciente_nome: string;
+  paciente_cpf: string;
+  paciente_prontuario: string;
+  data_solicitacao: string;
+  prioridade: string;
+  unidade_psf: string;
+  medico_solicitante: string;
+  justificativa: string;
+  data_agendada_sugerida?: string | null;
+  procedimentos: LabLotePreviaProcedimento[];
+  valor_total: number;
+};
+
+export type LabLoteDiaDistribuicao = {
+  data: string;
+  pacientes_alocados: number;
+  valor_dia: number;
+  vagas_totais: number;
+  vagas_ocupadas: number;
+  vagas_livres: number;
+  vagas_restantes_apos: number;
+  deficit: number;
+  status: "ok" | "deficit" | "sem_vaga_cadastrada" | string;
+};
+
+export type LabLotePrevia = {
+  competencia: string;
+  laboratorio_id: number;
+  laboratorio_nome: string;
+  valor_solicitado: number;
+  valor_consumido_estimado: number;
+  saldo_orcamento_atual: number;
+  saldo_orcamento_apos: number;
+  total_pacientes_contemplados: number;
+  total_exames_contemplados: number;
+  pacientes: LabLotePreviaItem[];
+  distribuicao_dias: LabLoteDiaDistribuicao[];
+  tem_deficit_vagas: boolean;
+  deficit_total_vagas: number;
+  bloqueado: boolean;
+  motivos_bloqueio: string[];
+  sugestao_acao: string;
+};
+
+export type LabLoteItem = {
+  id: number;
+  lote_id: number;
+  fila_psf_id: number;
+  solicitacao_mestre_id: number;
+  paciente_id: number;
+  paciente_nome: string;
+  paciente_cpf: string;
+  paciente_prontuario: string;
+  data_agendada: string;
+  ordem_selecao: number;
+  prioridade_fila: string;
+  valor_consumido: number;
+  exames: any[];
+};
+
+export type LabLote = {
+  id: number;
+  codigo_lote: string;
+  orcamento_id?: number | null;
+  competencia: string;
+  laboratorio_id: number;
+  laboratorio_nome: string;
+  valor_solicitado: number;
+  valor_consumido: number;
+  qtd_pacientes: number;
+  qtd_exames: number;
+  datas_alocacao: { data: string; pacientes: number; valor: number }[];
+  status: string;
+  observacoes: string;
+  arquivo_comprovantes_nome?: string;
+  arquivo_excel_nome?: string;
+  tem_comprovantes: boolean;
+  tem_excel: boolean;
+  criado_por: string;
+  created_at: string;
+  itens?: LabLoteItem[];
+};
+
+export const labListarOrcamentos = (ano?: number) =>
+  api.get<LabOrcamento[]>("/api/lab/orcamentos", { params: { ano } }).then((r) => r.data);
+
+export const labObterOrcamento = (competencia: string) =>
+  api.get<LabOrcamento>(`/api/lab/orcamentos/${competencia}`).then((r) => r.data);
+
+export const labDefinirOrcamento = (p: { competencia: string; teto_mensal: number; observacoes?: string }) =>
+  api.post<LabOrcamento>("/api/lab/orcamentos", p).then((r) => r.data);
+
+export const labCalcularPreviaLote = (p: {
+  competencia: string;
+  laboratorio_id: number;
+  valor_limite: number;
+  datas_agendamento: string[];
+  hora_padrao?: string;
+  unidade_psf?: string;
+}) => api.post<LabLotePrevia>("/api/lab/lotes/previa", p).then((r) => r.data);
+
+export const labConsolidarLote = (p: {
+  competencia: string;
+  laboratorio_id: number;
+  valor_solicitado: number;
+  datas_agendamento: string[];
+  hora_padrao?: string;
+  fila_ids_confirmados?: number[];
+  observacoes?: string;
+}) => api.post<LabLote>("/api/lab/lotes/consolidar", p).then((r) => r.data);
+
+export const labListarLotes = (competencia?: string, laboratorio_id?: number) =>
+  api.get<LabLote[]>("/api/lab/lotes", { params: { competencia, laboratorio_id } }).then((r) => r.data);
+
+export const labObterLote = (lote_id: number) =>
+  api.get<LabLote>(`/api/lab/lotes/${lote_id}`).then((r) => r.data);
+
+export const labBaixarArtefatoUrl = (lote_id: number, tipo: "comprovantes_zip" | "relatorio_xlsx") =>
+  `/api/lab/lotes/${lote_id}/artefatos/${tipo}`;
+
+export const labBaixarArtefato = (lote_id: number, tipo: "comprovantes_zip" | "relatorio_xlsx") =>
+  api.get<Blob>(`/api/lab/lotes/${lote_id}/artefatos/${tipo}`, { responseType: "blob" }).then((r) => r.data);
+
+
 export function normalizarItens(itens: ExameLoteItem[]): ExameLoteItem[] {
   const total = new Map<number, number>();
   for (const it of itens) {
@@ -2760,6 +2914,7 @@ export interface ItemEmprestimo {
   finalidade_cilindro?: string | null;
   quantidade: number;
   posse_cilindro: "PROPRIO" | "COMODATO" | string;
+  acompanha_equipamento?: boolean;
   status?: string;
   observacoes?: string;
 }
@@ -2774,7 +2929,7 @@ export interface EmprestimoOxigenio {
   paciente_prontuario: string;
   paciente_telefone: string;
   paciente_endereco: string;
-  tipo_servico: "MAQUINA" | "OXIGENIO";
+  tipo_servico: "MAQUINA" | "OXIGENIO" | "EQUIPAMENTO" | "MISTO" | string;
   equipamento_id?: number | null;
   tipo_equipamento?: "CPAP" | "BiPAP" | "CONCENTRADOR" | "CONCENTRADOR_5L" | "CONCENTRADOR_10L" | string | null;
   equipamento_patrimonio?: string | null;
@@ -2881,6 +3036,7 @@ export interface EstoqueOxigenioResumo {
   vazios_3m3?: number;
   vazios_1m3?: number;
   total_cilindros_cheios_disponiveis?: number;
+  seed_habilitado?: boolean;
 }
 
 export interface ItemRequisicaoAF {

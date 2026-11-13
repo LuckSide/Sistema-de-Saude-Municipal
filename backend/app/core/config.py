@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     UPDATE_BRANCH: str = "main"
     # Seguro por padrão: auto-update só liga com UPDATE_ENABLED=true explícito (compose).
     UPDATE_ENABLED: bool = False
+    # Seguro por padrão: carga automática da planilha oficial de oxigênio (Guapé) só liga se explicitamente habilitada.
+    OXIGENIO_SEED_ENABLED: bool = False
     GITHUB_TOKEN: str = ""
 
 

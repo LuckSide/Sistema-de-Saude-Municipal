@@ -49,11 +49,12 @@ def get_db():
 def enriquecer_medicamento(m: Medicamento) -> MedicamentoOut:
     status_val, texto_val, dias_restantes = calcular_contagem_regressiva(m.validade)
 
+    minimo = m.estoque_minimo if m.estoque_minimo is not None else 10
     if m.estoque_atual <= 0:
         status_est = "ZERADO"
-    elif m.estoque_atual <= (m.estoque_minimo // 2):
+    elif minimo > 0 and m.estoque_atual <= (minimo // 2):
         status_est = "CRITICO"
-    elif m.estoque_atual <= m.estoque_minimo:
+    elif m.estoque_atual <= minimo:
         status_est = "BAIXO"
     else:
         status_est = "NORMAL"
@@ -71,7 +72,7 @@ def enriquecer_medicamento(m: Medicamento) -> MedicamentoOut:
         lote=m.lote or "",
         validade=m.validade,
         estoque_atual=m.estoque_atual,
-        estoque_minimo=m.estoque_minimo,
+        estoque_minimo=minimo,
         requer_receita=m.requer_receita,
         controlado=m.controlado,
         localizacao_prateleira=m.localizacao_prateleira or "",
@@ -89,11 +90,12 @@ def enriquecer_medicamento(m: Medicamento) -> MedicamentoOut:
 def enriquecer_insumo(ins: InsumoInterno) -> InsumoInternoOut:
     status_val, texto_val, dias_restantes = calcular_contagem_regressiva(ins.validade)
 
+    minimo = ins.estoque_minimo if ins.estoque_minimo is not None else 10
     if ins.estoque_atual <= 0:
         status_est = "ZERADO"
-    elif ins.estoque_atual <= (ins.estoque_minimo // 2):
+    elif minimo > 0 and ins.estoque_atual <= (minimo // 2):
         status_est = "CRITICO"
-    elif ins.estoque_atual <= ins.estoque_minimo:
+    elif ins.estoque_atual <= minimo:
         status_est = "BAIXO"
     else:
         status_est = "NORMAL"
@@ -346,12 +348,15 @@ def obter_resumo_farmacia(
                 total_prox_venc += 1
 
     # Movimentações do mês
-    inicio_mes = hoje.replace(day=1)
-    movs = db.exec(
-        select(MovimentacaoMedicamento).where(
-            func.date(MovimentacaoMedicamento.created_at) >= inicio_mes
-        )
-    ).all()
+    inicio_mes_dt = datetime(hoje.year, hoje.month, 1)
+    try:
+        movs = db.exec(
+            select(MovimentacaoMedicamento).where(
+                MovimentacaoMedicamento.created_at >= inicio_mes_dt
+            )
+        ).all()
+    except Exception:
+        movs = []
 
     total_dispensacoes = sum(1 for mv in movs if mv.tipo.startswith("SAIDA"))
     total_entradas = sum(1 for mv in movs if mv.tipo.startswith("ENTRADA"))

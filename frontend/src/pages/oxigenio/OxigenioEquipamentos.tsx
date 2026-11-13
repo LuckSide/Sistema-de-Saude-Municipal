@@ -855,9 +855,9 @@ export default function OxigenioEquipamentos() {
                         </div>
                       </td>
                       <td className="py-3 px-3">
-                        {emp.tipo_servico === "MAQUINA" ? (
+                        {emp.tipo_servico === "MAQUINA" || emp.tipo_servico === "EQUIPAMENTO" || emp.tipo_servico === "MISTO" ? (
                           <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-100 text-indigo-800">
-                            {emp.tipo_equipamento} (Série: {emp.equipamento_serie || "—"})
+                            {emp.tipo_equipamento || "Equipamento"} (Série: {emp.equipamento_serie || "—"})
                           </span>
                         ) : (
                           <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-sky-100 text-sky-800">

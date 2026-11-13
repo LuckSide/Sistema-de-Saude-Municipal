@@ -880,11 +880,13 @@ def _init_db_impl() -> None:
             except Exception:
                 pass
         try:
-            from app.services.seed_oxigenio import seed_oxigenio_dados_reais
-            from app.models.oxigenio import EmpresaOxigenio
-            qtd_empresas = len(db.exec(select(EmpresaOxigenio)).all())
-            if qtd_empresas < 3:
-                seed_oxigenio_dados_reais(db, force_clean=True)
+            from app.core.config import settings
+            if getattr(settings, "OXIGENIO_SEED_ENABLED", False):
+                from app.services.seed_oxigenio import seed_oxigenio_dados_reais
+                from app.models.oxigenio import EmpresaOxigenio
+                qtd_empresas = len(db.exec(select(EmpresaOxigenio)).all())
+                if qtd_empresas == 0:
+                    seed_oxigenio_dados_reais(db, force_clean=False)
         except Exception:
             pass
         try:
@@ -1046,6 +1048,42 @@ def _init_db_impl() -> None:
                     conn.execute(text(f"ALTER TABLE oxigenio_emprestimos ADD COLUMN {col} {ddl}"))
                 except Exception:
                     pass
+
+        try:
+            cols_item_ox = [c["name"] for c in inspect(conn).get_columns("oxigenio_emprestimo_itens")]
+        except Exception:
+            cols_item_ox = []
+        if "acompanha_equipamento" not in cols_item_ox:
+            try:
+                conn.execute(text("ALTER TABLE oxigenio_emprestimo_itens ADD COLUMN acompanha_equipamento BOOLEAN DEFAULT FALSE NOT NULL"))
+            except Exception:
+                pass
+
+        # Laboratório: colunas para motor de liberação em lote e prioridade na fila
+        try:
+            cols_fila_psf = [c["name"] for c in inspect(conn).get_columns("lab_fila_psf")]
+        except Exception:
+            cols_fila_psf = []
+        for col, ddl in {
+            "prioridade": "VARCHAR(20) DEFAULT 'rotina' NOT NULL",
+            "sigtap_ids_json": "TEXT DEFAULT '[]' NOT NULL",
+            "lote_id": "INTEGER NULL",
+        }.items():
+            if col not in cols_fila_psf:
+                try:
+                    conn.execute(text(f"ALTER TABLE lab_fila_psf ADD COLUMN {col} {ddl}"))
+                except Exception:
+                    pass
+
+        try:
+            cols_solic_mestre = [c["name"] for c in inspect(conn).get_columns("lab_solic_mestre")]
+        except Exception:
+            cols_solic_mestre = []
+        if "lote_id" not in cols_solic_mestre:
+            try:
+                conn.execute(text("ALTER TABLE lab_solic_mestre ADD COLUMN lote_id INTEGER NULL"))
+            except Exception:
+                pass
 
     # Garante extensão unaccent (quando o usuário do banco tem permissão) e índices únicos
     with engine.begin() as conn:

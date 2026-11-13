@@ -244,6 +244,7 @@ class ItemEmprestimoIn(BaseModel):
     finalidade_cilindro: str | None = None
     quantidade: int = Field(default=1, ge=1)
     posse_cilindro: str = Field(default="PROPRIO", pattern=r"^(PROPRIO|COMODATO)$")
+    acompanha_equipamento: bool = Field(default=False)
     observacoes: str = Field(default="")
 
 
@@ -261,6 +262,7 @@ class ItemEmprestimoOut(BaseModel):
     finalidade_cilindro: str | None = None
     quantidade: int = 1
     posse_cilindro: str = "PROPRIO"
+    acompanha_equipamento: bool = False
     status: str = "ATIVO"
     observacoes: str = ""
 
@@ -460,6 +462,7 @@ class EstoqueOxigenioResumoOut(BaseModel):
     vazios_3m3: int = 0
     vazios_1m3: int = 0
     total_cilindros_cheios_disponiveis: int = 0
+    seed_habilitado: bool = False
 
 
 # ==========================================

@@ -69,9 +69,13 @@ export default function VagasAgenda() {
     if (!month) return;
     setCarregando(true);
     try {
+      const [ano, mes] = month.split("-").map(Number);
+      const ultimoDia = new Date(ano, mes, 0).getDate();
+      const ateData = `${month}-${String(ultimoDia).padStart(2, "0")}`;
+
       const [g, v] = await Promise.all([
         vagasGrade(month, undefined, labId ? Number(labId) : undefined),
-        vagasListar(`${month}-01`, `${month}-31`, labId ? Number(labId) : undefined),
+        vagasListar(`${month}-01`, ateData, labId ? Number(labId) : undefined),
       ]);
       setGrade(g);
       const arr = pagData<any>(v);

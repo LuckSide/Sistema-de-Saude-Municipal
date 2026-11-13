@@ -604,7 +604,7 @@ def importar_filas(
     if len(linhas) > MAX_LINHAS:
         raise HTTPException(status_code=400, detail=f"Acima de {MAX_LINHAS} linhas — divida o arquivo")
     try:
-        resumo = processar_linhas(linhas, db)
+        resumo = processar_linhas(linhas, db, simular=simular)
         if simular:
             db.rollback()
         else:

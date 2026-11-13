@@ -238,12 +238,16 @@ export default function ComprovanteEmprestimoModal({
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {dados.itens.map((it: ItemEmprestimo, idx: number) => {
-                          const isMaquina = it.tipo_servico === "MAQUINA" || it.tipo_item === "MAQUINA";
+                          const isMaquina = it.tipo_servico === "MAQUINA" || it.tipo_servico === "EQUIPAMENTO" || it.tipo_item === "MAQUINA";
                           const descMaquina = it.tipo_equipamento || it.equipamento_tipo || "Máquina Respiratória";
                           return (
                             <tr key={idx} className="hover:bg-slate-50">
                               <td className="py-1.5 px-2.5 font-medium text-slate-900">
-                                {isMaquina ? `Equipamento Respiratório (${descMaquina})` : "Cilindro de Oxigênio Medicinal"}
+                                {isMaquina
+                                  ? `Equipamento Respiratório (${descMaquina})`
+                                  : it.acompanha_equipamento
+                                  ? "Cilindro de Apoio (Acompanha Concentrador)"
+                                  : "Cilindro de Oxigênio Medicinal"}
                               </td>
                               <td className="py-1.5 px-2.5">
                                 {isMaquina ? descMaquina : `Cilindro ${it.tipo_cilindro?.replace("m3", "m³")}`}

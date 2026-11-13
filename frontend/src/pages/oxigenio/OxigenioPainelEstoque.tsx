@@ -561,16 +561,18 @@ export default function OxigenioPainelEstoque() {
             <Plus className="w-4 h-4" />
             <span>Nova Licitação</span>
           </Button>
-          <Button
-            onClick={handleSincronizarPlanilhaOficial}
-            disabled={sincronizando}
-            variant="outline"
-            className="border-slate-300 text-slate-700 hover:bg-slate-100 flex items-center gap-2 text-sm"
-            title="Importa dados da planilha oficial (Concentradores, CPAP, BiPAP e Abastecimentos)"
-          >
-            <Database className={`w-4 h-4 text-emerald-600 ${sincronizando ? "animate-spin" : ""}`} />
-            <span>{sincronizando ? "Importando..." : "Importar Planilha Oficial"}</span>
-          </Button>
+          {resumo?.seed_habilitado && (
+            <Button
+              onClick={handleSincronizarPlanilhaOficial}
+              disabled={sincronizando}
+              variant="outline"
+              className="border-slate-300 text-slate-700 hover:bg-slate-100 flex items-center gap-2 text-sm"
+              title="Importa dados da planilha oficial (Concentradores, CPAP, BiPAP e Abastecimentos)"
+            >
+              <Database className={`w-4 h-4 text-emerald-600 ${sincronizando ? "animate-spin" : ""}`} />
+              <span>{sincronizando ? "Importando..." : "Importar Planilha Oficial"}</span>
+            </Button>
+          )}
           <ExportarExcel
             url="/api/oxigenio/exportar"
             params={{ tipo: "estoque", empresa_id: filtroEmpresaId }}

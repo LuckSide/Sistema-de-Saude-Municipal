@@ -318,14 +318,26 @@ def _montar_filtros_busca_paciente(
     return None, and_(*lista_and), ordem_relevancia
 
 
+def _prioridade_paciente_listagem(p: Paciente, limpar_cpf_fn, limpar_cns_fn) -> tuple:
+    sit = (getattr(p, "situacao_cadastral", None) or "ativo").strip().lower()
+    return (
+        1 if sit in ("ativo", "") else 0,
+        1 if getattr(p, "co_seq_cidadao_pec", None) else 0,
+        1 if limpar_cpf_fn(p.cpf) else 0,
+        1 if limpar_cns_fn(p.cns) else 0,
+        1 if getattr(p, "nascimento", None) else 0,
+        1 if getattr(p, "codigo_prontuario", "") else 0,
+        -(p.id or 0),
+    )
+
+
 def _deduplicar_lista_pacientes(rows: list[Paciente]) -> list[Paciente]:
-    """Garante unicidade na listagem/autocomplete mesmo se houver registros legados sobrepostos."""
+    """Garante unicidade na listagem/autocomplete priorizando o cidadão ativo do PEC."""
     from app.services.pec_sync import limpar_cns, limpar_cpf, normalizar_nome_sem_prep
 
-    vistos: set[str] = set()
-    unicos: list[Paciente] = []
+    ordem_chaves: list[str] = []
+    melhor_por_chave: dict[str, tuple[tuple, Paciente]] = {}
     for p in rows:
-        sit = (getattr(p, "situacao_cadastral", None) or "ativo").strip().lower()
         cpf_c = limpar_cpf(p.cpf)
         cns_c = limpar_cns(p.cns)
         n_sp = normalizar_nome_sem_prep(p.nome)
@@ -338,14 +350,138 @@ def _deduplicar_lista_pacientes(rows: list[Paciente]) -> list[Paciente]:
                 else (f"nn:{n_sp}|{p.nascimento}" if n_sp and p.nascimento else f"id:{p.id}")
             )
         )
-        # Se houver dois registros idênticos, prioriza o ativo/mais completo já ordenado
-        if chave in vistos and sit != "ativo":
+        prio = _prioridade_paciente_listagem(p, limpar_cpf, limpar_cns)
+        if chave not in melhor_por_chave:
+            ordem_chaves.append(chave)
+            melhor_por_chave[chave] = (prio, p)
+        elif prio > melhor_por_chave[chave][0]:
+            melhor_por_chave[chave] = (prio, p)
+    return [melhor_por_chave[k][1] for k in ordem_chaves]
+
+
+def _mapa_siblings_cpf_cns(db: Session, pacs: list[Paciente]) -> dict[int, int]:
+    """Mapeia IDs de eventuais cadastros irmãos (mesmo CPF/CNS limpos, co_seq_cidadao_pec ou chave demográfica) para o ID principal exibido."""
+    from app.services.pec_sync import limpar_cns, limpar_cpf, normalizar_nome_sem_prep
+
+    sibling_to_canon: dict[int, int] = {}
+    cpf_canon: dict[str, int] = {}
+    cns_canon: dict[str, int] = {}
+    pec_canon: dict[int, int] = {}
+    nn_canon: dict[tuple[str, str], int] = {}
+    cpf_variantes: set[str] = set()
+    cns_variantes: set[str] = set()
+    pec_ids: set[int] = set()
+
+    for p in pacs:
+        if not p.id:
             continue
-        if chave in vistos:
-            continue
-        vistos.add(chave)
-        unicos.append(p)
-    return unicos
+        sibling_to_canon[p.id] = p.id
+        c = limpar_cpf(p.cpf)
+        if c:
+            cpf_canon.setdefault(c, p.id)
+            cpf_variantes.add(c)
+            cpf_variantes.add(f"{c[:3]}.{c[3:6]}.{c[6:9]}-{c[9:]}")
+        n = limpar_cns(p.cns)
+        if n:
+            cns_canon.setdefault(n, p.id)
+            cns_variantes.add(n)
+        if p.co_seq_cidadao_pec:
+            pec_canon.setdefault(p.co_seq_cidadao_pec, p.id)
+            pec_ids.add(p.co_seq_cidadao_pec)
+        n_sp = normalizar_nome_sem_prep(p.nome)
+        if n_sp and p.nascimento:
+            nn_canon.setdefault((n_sp, str(p.nascimento)), p.id)
+
+    conds = []
+    if cpf_variantes:
+        conds.append(Paciente.cpf.in_(cpf_variantes))
+    if cns_variantes:
+        conds.append(Paciente.cns.in_(cns_variantes))
+    if pec_ids:
+        conds.append(Paciente.co_seq_cidadao_pec.in_(pec_ids))
+
+    if conds:
+        for outro in db.exec(select(Paciente).where(or_(*conds))).all():
+            if not outro.id or outro.id in sibling_to_canon:
+                continue
+            oc = limpar_cpf(outro.cpf)
+            on = limpar_cns(outro.cns)
+            opec = outro.co_seq_cidadao_pec
+            on_sp = normalizar_nome_sem_prep(outro.nome)
+            onasc = str(outro.nascimento) if outro.nascimento else ""
+
+            if opec and opec in pec_canon:
+                sibling_to_canon[outro.id] = pec_canon[opec]
+            elif oc and oc in cpf_canon:
+                sibling_to_canon[outro.id] = cpf_canon[oc]
+            elif on and on in cns_canon:
+                sibling_to_canon[outro.id] = cns_canon[on]
+            elif on_sp and onasc and (on_sp, onasc) in nn_canon:
+                sibling_to_canon[outro.id] = nn_canon[(on_sp, onasc)]
+
+    if nn_canon:
+        for (nome_sp, dt_nasc_str), canon_id in nn_canon.items():
+            for cand in db.exec(select(Paciente).where(Paciente.nascimento == dt_nasc_str)).all():
+                if not cand.id or cand.id in sibling_to_canon:
+                    continue
+                if normalizar_nome_sem_prep(cand.nome) == nome_sp:
+                    sibling_to_canon[cand.id] = canon_id
+
+    return sibling_to_canon
+
+
+def _enriquecer_pacientes_com_fila(db: Session, pacs: list[Paciente]) -> list[PacienteOut]:
+    if not pacs:
+        return []
+    sibling_to_canon = _mapa_siblings_cpf_cns(db, pacs)
+    todos_ids = list(sibling_to_canon.keys())
+    contagens: dict[int, dict[str, int]] = {}
+    if todos_ids:
+        linhas = db.exec(
+            select(ExameFila.paciente_id, ExameFila.status, func.count(ExameFila.id))
+            .where(ExameFila.paciente_id.in_(todos_ids), ExameFila.ativo == True)  # noqa: E712
+            .group_by(ExameFila.paciente_id, ExameFila.status)
+        ).all()
+        for pac_id, st, qtd in linhas:
+            canon_id = sibling_to_canon.get(pac_id, pac_id)
+            bucket = contagens.setdefault(canon_id, {"aguardando": 0, "agendado": 0, "total": 0})
+            st_l = (st or "").strip().lower()
+            n_qtd = int(qtd or 0)
+            bucket["total"] += n_qtd
+            if st_l == "aguardando":
+                bucket["aguardando"] += n_qtd
+            elif st_l == "agendado":
+                bucket["agendado"] += n_qtd
+
+        try:
+            from app.models.lab_fase6 import FilaPsf
+            linhas_lab = db.exec(
+                select(FilaPsf.paciente_id, FilaPsf.status, func.count(FilaPsf.id))
+                .where(FilaPsf.paciente_id.in_(todos_ids))
+                .group_by(FilaPsf.paciente_id, FilaPsf.status)
+            ).all()
+            for pac_id, st, qtd in linhas_lab:
+                canon_id = sibling_to_canon.get(pac_id, pac_id)
+                bucket = contagens.setdefault(canon_id, {"aguardando": 0, "agendado": 0, "total": 0})
+                st_l = (st or "").strip().lower()
+                n_qtd = int(qtd or 0)
+                bucket["total"] += n_qtd
+                if st_l in ("na_fila", "aguardando"):
+                    bucket["aguardando"] += n_qtd
+                elif st_l == "agendado":
+                    bucket["agendado"] += n_qtd
+        except Exception:
+            pass
+
+    out_lista: list[PacienteOut] = []
+    for p in pacs:
+        item = PacienteOut.model_validate(p, from_attributes=True)
+        b = contagens.get(p.id or 0, {})
+        item.fila_aguardando_qtd = b.get("aguardando", 0)
+        item.fila_agendado_qtd = b.get("agendado", 0)
+        item.fila_total_qtd = b.get("total", 0)
+        out_lista.append(item)
+    return out_lista
 
 
 # ---------- Pacientes ----------
@@ -397,7 +533,7 @@ def listar_pacientes(
             registrar_log_pesquisa("pacientes", q_limpo, u_id, u_nome, ua, len(exatos))
         except Exception:
             pass
-        return {"data": exatos, "total": len(exatos), "page": 1, "pages": 1}
+        return {"data": _enriquecer_pacientes_com_fila(db, exatos), "total": len(exatos), "page": 1, "pages": 1}
 
     where_cond = filtro_and if p_incluir_inativos else and_(filtro_and, filtro_ativo)
     base = select(Paciente).where(where_cond).order_by(ordem_relevancia, Paciente.nome)
@@ -418,7 +554,7 @@ def listar_pacientes(
     except Exception:
         pass
 
-    return {"data": rows, "total": total, "page": meta["page"], "pages": meta["pages"]}
+    return {"data": _enriquecer_pacientes_com_fila(db, rows), "total": total, "page": meta["page"], "pages": meta["pages"]}
 
 
 @router.get("/pacientes/buscar")
@@ -663,11 +799,12 @@ def perfil_paciente(
             unidade_nome = ""
     rank = _rank_por_especialidade(db)
     rank_geral = _rank_fila_geral(db)
+    ids_relacionados = list(_mapa_siblings_cpf_cns(db, [obj]).keys()) or [pid]
     itens = list(
         db.exec(
             select(ExameFila)
             .where(
-                ExameFila.paciente_id == pid,
+                ExameFila.paciente_id.in_(ids_relacionados),
                 ExameFila.ativo == True,  # noqa: E712
             )
             .order_by(ExameFila.created_at.desc(), ExameFila.data_pedido.desc(), ExameFila.id.desc())
@@ -714,6 +851,70 @@ def perfil_paciente(
                 realizado_em=realizado_em,
             )
         )
+
+    # Agrega também solicitações da Fila de Sangue do PSF (Laboratório Municipal)
+    try:
+        import json
+        from app.models.lab_fase6 import FilaPsf, LabSigtapItem
+
+        itens_psf = list(
+            db.exec(
+                select(FilaPsf)
+                .where(FilaPsf.paciente_id.in_(ids_relacionados))
+                .order_by(FilaPsf.data_solicitacao.desc(), FilaPsf.id.desc())
+            ).all()
+        )
+        for fp in itens_psf:
+            st = (fp.status or "").lower()
+            st_unificado = "aguardando" if st in ("na_fila", "aguardando") else ("agendado" if st == "agendado" else ("realizado" if st in ("coletado", "concluido", "realizado") else st))
+
+            desc_exames = "Exames Laboratoriais (Sangue)"
+            if fp.sigtap_ids_json:
+                try:
+                    s_ids = json.loads(fp.sigtap_ids_json)
+                    if isinstance(s_ids, list) and s_ids:
+                        nomes_procs = []
+                        for sid in s_ids[:5]:
+                            sig_item = db.get(LabSigtapItem, sid) if isinstance(sid, int) else None
+                            if sig_item:
+                                nomes_procs.append(sig_item.nome)
+                        if nomes_procs:
+                            desc_exames = ", ".join(nomes_procs)
+                            if len(s_ids) > 5:
+                                desc_exames += f" (+{len(s_ids) - 5} exames)"
+                except Exception:
+                    pass
+
+            demanda.append(
+                DemandaItemOut(
+                    id=fp.id or 0,
+                    exame=desc_exames[:120],
+                    especialidade="Patologia Clínica / Análises Clínicas",
+                    nome_especialidade="Laboratório Municipal PSF",
+                    tipo_fila="EXAMES DE SANGUE (PSF)",
+                    prioridade=fp.prioridade or "rotina",
+                    classificacao_risco=_risco_rotulo(fp.prioridade or "rotina"),
+                    data_pedido=fp.data_solicitacao,
+                    data_inclusao=fp.data_solicitacao.strftime("%d/%m/%Y") if fp.data_solicitacao else "",
+                    posicao_especialidade=None,
+                    total_fila_especialidade=None,
+                    posicao_fila_geral=None,
+                    total_fila_geral=None,
+                    status=st_unificado,
+                    status_rotulo="Na Fila" if st_unificado == "aguardando" else ("Agendado" if st_unificado == "agendado" else st_unificado.capitalize()),
+                    data_agendada=None,
+                    hora_agendada="",
+                    medico_nome=fp.medico_solicitante or "",
+                    unidade_nome=fp.unidade_psf or "Laboratório Municipal",
+                    resultado="",
+                    realizado_em=None,
+                )
+            )
+    except Exception:
+        pass
+
+    # Ordena a demanda unificada por data do pedido decrescente
+    demanda.sort(key=lambda d: d.data_pedido or date.min, reverse=True)
     hist_rows = list(
         db.exec(
             select(PacienteHistorico)
@@ -4573,7 +4774,7 @@ def gerar_dados_comprovante_tfd(db: Session, exame: ExameFila) -> dict:
         "paciente_cpf": getattr(pac, "cpf", "") or "",
         "paciente_cns": getattr(pac, "cns", "") or "",
         "paciente_prontuario": prontuario,
-        "paciente_nascimento": pac.data_nascimento.isoformat() if pac and getattr(pac, "data_nascimento", None) else "",
+        "paciente_nascimento": (pac.nascimento.isoformat() if getattr(pac, "nascimento", None) else "") if pac else "",
         "data_agendada": data_ag_str,
         "hora_agendada": exame.hora_agendada or "07:30",
         "laboratorio_id": exame.unidade_saude_id or 1,
@@ -4600,7 +4801,7 @@ def gerar_dados_comprovante_tfd(db: Session, exame: ExameFila) -> dict:
 def emitir_comprovante_unificado_tfd(
     eid: int,
     db: Session = Depends(get_db),
-    ator: User = Depends(need_any_perm("tfd_exames", "tfd_fila_leitura", "lab_recepcao", "lab_marcacao", "usuarios")),
+    ator: User = Depends(need_any_perm("tfd_exames", "tfd_fila_leitura", "tfd_fila_lancamento", "tfd_pacientes", "lab_recepcao", "lab_marcacao", "usuarios")),
 ):
     """Emite o comprovante unificado de agendamento/solicitação agrupando todos os exames do mesmo pedido."""
     exame = db.get(ExameFila, eid)
@@ -4613,7 +4814,7 @@ def emitir_comprovante_unificado_tfd(
 def emitir_comprovante_por_pedido(
     numero_pedido: str,
     db: Session = Depends(get_db),
-    ator: User = Depends(need_any_perm("tfd_exames", "tfd_fila_leitura", "lab_recepcao", "lab_marcacao", "usuarios")),
+    ator: User = Depends(need_any_perm("tfd_exames", "tfd_fila_leitura", "tfd_fila_lancamento", "tfd_pacientes", "lab_recepcao", "lab_marcacao", "usuarios")),
 ):
     """Emite o comprovante unificado a partir do número do pedido."""
     exame = db.exec(

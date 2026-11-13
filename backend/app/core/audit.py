@@ -56,6 +56,9 @@ ENTIDADES = {
     "resumo": "REPORT",
     "filtros-opcoes": "REPORT",
     "grade": "REPORT",
+    "farmacia": "PHARMACY",
+    "medicamentos": "MEDICATION",
+    "insumos": "SUPPLY",
 }
 
 VERBOS_ENTIDADE = {
@@ -110,6 +113,8 @@ _DIFF_IGNORE = {
     "USER": (("app.models.user", "User"), {"password_hash"}),
     "DOCTOR": (("app.models.cadastros_saude", "Medico"), set()),
     "UNIT": (("app.models.cadastros_saude", "UnidadeSaude"), set()),
+    "MEDICATION": (("app.models.farmacia", "Medicamento"), set()),
+    "SUPPLY": (("app.models.farmacia", "InsumoInterno"), set()),
 }
 
 

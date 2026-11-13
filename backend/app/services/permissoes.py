@@ -42,6 +42,7 @@ PAI_DE: dict[str, str] = {
     "lab_faturamento": "lab",
     "lab_sigtap": "lab",
     "lab_recepcao": "lab",
+    "lab_orcamento": "lab",
     "cfg_geral": "integracoes",
     "cfg_filas": "integracoes",
     "cfg_pec": "integracoes",

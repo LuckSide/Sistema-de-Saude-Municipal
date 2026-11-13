@@ -8,6 +8,7 @@ import {
   CalendarDays,
   ChartColumn,
   ClipboardList,
+  Coins,
   Database,
   FileCheck,
   FileSpreadsheet,
@@ -102,6 +103,7 @@ export const MODULOS: NoPermissao[] = [
       { codigo: "lab_audit", rotulo: "Auditoria", icone: ShieldCheck, rota: "/lab/auditoria" },
       { codigo: "lab_faturamento", rotulo: "Faturamento BPA", icone: ReceiptText, rota: "/lab/faturamento" },
       { codigo: "lab_sigtap", rotulo: "Tabela SIGTAP", icone: Microscope, rota: "/lab/sigtap" },
+      { codigo: "lab_orcamento", rotulo: "Controle de Orçamento e Lotes", icone: Coins, rota: "/lab/orcamento" },
     ],
   },
   {

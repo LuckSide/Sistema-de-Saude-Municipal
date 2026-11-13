@@ -168,22 +168,44 @@ def grade_vagas(
     ]
 
 
+def _parse_data_segura(val: str | date | None) -> date | None:
+    if not val:
+        return None
+    if isinstance(val, date):
+        return val
+    s = str(val).strip()[:10]
+    try:
+        return date.fromisoformat(s)
+    except Exception:
+        import re
+        from calendar import monthrange
+        m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", s)
+        if m:
+            ano, mes, dia = map(int, m.groups())
+            if 1 <= mes <= 12:
+                _, max_dia = monthrange(ano, mes)
+                return date(ano, mes, min(dia, max_dia))
+    return None
+
+
 # ---------- Vagas CRUD admin ----------
 @router.get("/vagas", response_model=Pagina[VagaOut])
 def listar_vagas(
-    de: date | None = None,
-    ate: date | None = None,
+    de: str | None = None,
+    ate: str | None = None,
     laboratorio_id: int | None = None,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
     _=Depends(need_perm("lab_vagas")),
 ):
+    dt_de = _parse_data_segura(de)
+    dt_ate = _parse_data_segura(ate)
     filtros = []
-    if de:
-        filtros.append(VagaLab.data >= de)
-    if ate:
-        filtros.append(VagaLab.data <= ate)
+    if dt_de:
+        filtros.append(VagaLab.data >= dt_de)
+    if dt_ate:
+        filtros.append(VagaLab.data <= dt_ate)
     if laboratorio_id:
         filtros.append(VagaLab.laboratorio_id == laboratorio_id)
     base = select(VagaLab).order_by(VagaLab.data)

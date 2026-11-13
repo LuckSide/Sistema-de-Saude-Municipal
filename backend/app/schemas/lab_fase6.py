@@ -53,6 +53,7 @@ class FilaPsfIn(BaseModel):
     unidade_psf: str = Field(min_length=1, max_length=120)
     medico_solicitante: str = Field(min_length=1, max_length=120)
     data_solicitacao: date | None = None
+    prioridade: str = Field(default="rotina", pattern="^(urgente|alta|rotina)$")
     justificativa: str = Field(default="", max_length=500)
     observacoes: str = Field(default="", max_length=500)
     sigtap_ids: list[int] = Field(default_factory=list)
@@ -69,11 +70,13 @@ class FilaPsfIn(BaseModel):
 class FilaPsfOut(FilaPsfIn):
     id: int
     status: str = "na_fila"
+    prioridade: str = "rotina"
     paciente_nome: str = ""
     paciente_cpf: str = ""
     paciente_cns: str = ""
     paciente_prontuario: str = ""
     exames_nomes: list[str] = Field(default_factory=list)
+    lote_id: int | None = None
 
 
 class FilaPsfStatusIn(BaseModel):
@@ -84,6 +87,7 @@ class FilaPsfUpdateIn(BaseModel):
     unidade_psf: str | None = None
     medico_solicitante: str | None = None
     data_solicitacao: date | None = None
+    prioridade: str | None = Field(default=None, pattern="^(urgente|alta|rotina)$")
     justificativa: str | None = None
     observacoes: str | None = None
     sigtap_ids: list[int] | None = None
@@ -316,4 +320,140 @@ class PedidoDuplicadoLabOut(BaseModel):
 class VerificarDuplicidadeLabOut(BaseModel):
     duplicado: bool
     pedido: PedidoDuplicadoLabOut | None = None
+
+
+# ---------- Orçamento e Lotes de Liberação ----------
+class LabOrcamentoIn(BaseModel):
+    competencia: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    teto_mensal: float = Field(ge=0.0)
+    observacoes: str = Field(default="", max_length=500)
+
+
+class LabOrcamentoOut(BaseModel):
+    id: int
+    competencia: str
+    teto_mensal: float
+    valor_consumido: float
+    saldo_disponivel: float
+    percentual_consumido: float = 0.0
+    observacoes: str = ""
+    atualizado_por: str = ""
+    created_at: datetime
+    updated_at: datetime
+    lotes_count: int = 0
+
+
+class LabLotePreviaIn(BaseModel):
+    competencia: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    laboratorio_id: int
+    valor_limite: float = Field(gt=0.0)
+    datas_agendamento: list[date] = Field(min_length=1)
+    hora_padrao: str = Field(default="07:00", max_length=10)
+    unidade_psf: str | None = None
+
+
+class LabLotePreviaProcedimento(BaseModel):
+    sigtap_id: int
+    codigo: str
+    descricao: str
+    valor_unitario: float
+    quantidade: int = 1
+    valor_total: float
+
+
+class LabLotePreviaItemOut(BaseModel):
+    fila_id: int
+    paciente_id: int
+    paciente_nome: str
+    paciente_cpf: str
+    paciente_prontuario: str
+    data_solicitacao: date
+    prioridade: str
+    unidade_psf: str
+    medico_solicitante: str = ""
+    justificativa: str = ""
+    data_agendada_sugerida: date | None = None
+    procedimentos: list[LabLotePreviaProcedimento] = []
+    valor_total: float
+
+
+class LabLoteDiaDistribuicaoOut(BaseModel):
+    data: date
+    pacientes_alocados: int
+    valor_dia: float
+    vagas_totais: int
+    vagas_ocupadas: int
+    vagas_livres: int
+    vagas_restantes_apos: int
+    deficit: int
+    status: str  # "ok" | "deficit" | "sem_vaga_cadastrada"
+
+
+class LabLotePreviaOut(BaseModel):
+    competencia: str
+    laboratorio_id: int
+    laboratorio_nome: str
+    valor_solicitado: float
+    valor_consumido_estimado: float
+    saldo_orcamento_atual: float
+    saldo_orcamento_apos: float
+    total_pacientes_contemplados: int
+    total_exames_contemplados: int
+    pacientes: list[LabLotePreviaItemOut]
+    distribuicao_dias: list[LabLoteDiaDistribuicaoOut]
+    tem_deficit_vagas: bool
+    deficit_total_vagas: int
+    bloqueado: bool
+    motivos_bloqueio: list[str] = []
+    sugestao_acao: str = ""
+
+
+class LabLoteConsolidarIn(BaseModel):
+    competencia: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    laboratorio_id: int
+    valor_solicitado: float = Field(gt=0.0)
+    datas_agendamento: list[date] = Field(min_length=1)
+    hora_padrao: str = Field(default="07:00", max_length=10)
+    fila_ids_confirmados: list[int] | None = None
+    observacoes: str = Field(default="", max_length=500)
+
+
+class LabLoteItemOut(BaseModel):
+    id: int
+    lote_id: int
+    fila_psf_id: int
+    solicitacao_mestre_id: int
+    paciente_id: int
+    paciente_nome: str
+    paciente_cpf: str
+    paciente_prontuario: str
+    data_agendada: date
+    ordem_selecao: int
+    prioridade_fila: str
+    valor_consumido: float
+    exames: list[dict] = []
+
+
+class LabLoteOut(BaseModel):
+    id: int
+    codigo_lote: str
+    orcamento_id: int | None
+    competencia: str
+    laboratorio_id: int
+    laboratorio_nome: str
+    valor_solicitado: float
+    valor_consumido: float
+    qtd_pacientes: int
+    qtd_exames: int
+    datas_alocacao: list[dict] = []
+    status: str
+    observacoes: str
+    arquivo_comprovantes_nome: str = ""
+    arquivo_excel_nome: str = ""
+    tem_comprovantes: bool = False
+    tem_excel: bool = False
+    criado_por: str
+    created_at: datetime
+    itens: list[LabLoteItemOut] = []
+
 

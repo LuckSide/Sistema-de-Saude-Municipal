@@ -622,23 +622,31 @@ export default function OxigenioEmprestimos() {
                           <div className="text-[11px] text-slate-500 truncate max-w-xs">{emp.paciente_endereco}</div>
                         </td>
                         <td className="py-3 px-3">
-                          {emp.itens_resumo ? (
+                          {(emp.tipo_servico === "MAQUINA" || emp.tipo_servico === "EQUIPAMENTO" || emp.tipo_servico === "MISTO") ? (
+                            <div className="space-y-1">
+                              <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-indigo-100 text-indigo-800 inline-block">
+                                Máquina: {emp.tipo_equipamento === "CONCENTRADOR_5L" ? "Concentrador 5L" :
+                                          emp.tipo_equipamento === "CONCENTRADOR_10L" ? "Concentrador 10L" :
+                                          emp.tipo_equipamento === "CONCENTRADOR" ? "Concentrador 5L" :
+                                          emp.tipo_equipamento || "Equipamento"}
+                              </span>
+                              <div className="text-[11px] text-slate-600 font-mono">
+                                Série: {emp.equipamento_serie || "—"}
+                              </div>
+                              {emp.itens && emp.itens.filter((it) => it.acompanha_equipamento).map((it, idx) => (
+                                <div key={idx} className="text-[11px] text-emerald-700 font-medium">
+                                  + Cilindro de apoio {it.tipo_cilindro?.replace("m3", "m³")} ({it.quantidade}x — acompanha concentrador)
+                                </div>
+                              ))}
+                              {(!emp.itens || emp.itens.length === 0) && emp.itens_resumo && (
+                                <div className="text-[11px] text-slate-600">{emp.itens_resumo}</div>
+                              )}
+                            </div>
+                          ) : emp.itens_resumo ? (
                             <div>
                               <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-sky-100 text-sky-800">
                                 {emp.itens_resumo}
                               </span>
-                            </div>
-                          ) : emp.tipo_servico === "MAQUINA" ? (
-                            <div>
-                              <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-indigo-100 text-indigo-800">
-                                Máquina: {emp.tipo_equipamento === "CONCENTRADOR_5L" ? "Concentrador 5L" :
-                                          emp.tipo_equipamento === "CONCENTRADOR_10L" ? "Concentrador 10L" :
-                                          emp.tipo_equipamento === "CONCENTRADOR" ? "Concentrador 5L" :
-                                          emp.tipo_equipamento}
-                              </span>
-                              <div className="text-[11px] text-slate-600 font-mono mt-0.5">
-                                Série: {emp.equipamento_serie || "—"}
-                              </div>
                             </div>
                           ) : (
                             <div>

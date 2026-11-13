@@ -121,6 +121,7 @@ const MODULOS_NAV: ModuloNav[] = [
       { to: "/lab/marcacao", label: "Marcação de exames de sangue", icon: ClipboardCheck, tela: "lab_marcacao", ou: ["lab"] },
       { to: "/lab/fila", label: "Fila de exames", icon: ListOrdered, tela: "lab_fila", ou: ["lab"] },
       { to: "/lab/agenda", label: "Vagas e Agenda", icon: CalendarDays, tela: "lab_agenda", ou: ["lab", "lab_vagas"] },
+      { to: "/lab/orcamento", label: "Orçamento e Lotes", icon: Coins, tela: "lab_orcamento", ou: ["lab", "lab_marcacao"] },
       { to: "/lab/faturamento", label: "Faturamento BPA", icon: ReceiptText, tela: "lab_faturamento", ou: ["lab"] },
       { to: "/lab/sigtap", label: "Tabela SIGTAP", icon: BookOpenText, tela: "lab_sigtap", ou: ["lab", "tfd", "usuarios"] },
     ],

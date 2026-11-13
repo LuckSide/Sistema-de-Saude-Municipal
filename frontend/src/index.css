@@ -70,14 +70,18 @@ body.modal-aberto {
     size: auto;
     margin: 15mm;
   }
-  /* Isolamento total: comprovante renderiza em portal direto no body,
-     fora do layout. Esconde app inteiro, mostra só o card. */
-  body.imprimindo-comprovante #root {
+  /* Isolamento seguro para impressão de comprovantes */
+  body.imprimindo-comprovante header,
+  body.imprimindo-comprovante aside,
+  body.imprimindo-comprovante nav,
+  body.imprimindo-comprovante .no-print {
     display: none !important;
   }
-  body.imprimindo-comprovante #comprovante-overlay {
+  body.imprimindo-comprovante #comprovante-overlay,
+  body.imprimindo-comprovante #area-comprovante-print {
     position: static !important;
     display: block !important;
+    visibility: visible !important;
     inset: auto !important;
     z-index: auto !important;
     background: #fff !important;

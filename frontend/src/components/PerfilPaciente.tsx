@@ -71,7 +71,11 @@ export default function PerfilPaciente({
 
   const historico = useMemo(() => perfil?.historico ?? [], [perfil]);
 
-  const abrirExame = (id: number) => {
+  const abrirExame = (id: number, tipoFila?: string) => {
+    if (tipoFila && (tipoFila.includes("PSF") || tipoFila.includes("SANGUE"))) {
+      navigate(`/lab/fila?q=${id}`);
+      return;
+    }
     if (onVerExame) {
       onVerExame(id);
     } else {
@@ -295,7 +299,7 @@ export default function PerfilPaciente({
                               {ordenados.map((d) => (
                                 <tr
                                   key={d.id}
-                                  onClick={() => abrirExame(d.id)}
+                                  onClick={() => abrirExame(d.id, d.tipo_fila)}
                                   className="group cursor-pointer border-b border-sus-900/5 transition-colors last:border-0 hover:bg-teal/10"
                                   title="Clique para abrir e gerenciar na Fila de Exames"
                                 >
@@ -348,7 +352,7 @@ export default function PerfilPaciente({
                                       type="button"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        abrirExame(d.id);
+                                        abrirExame(d.id, d.tipo_fila);
                                       }}
                                       className="inline-flex items-center gap-1 rounded-lg border border-sus-900/15 bg-white px-2 py-1 text-[11px] font-bold text-sus-900 shadow-2xs transition-colors hover:bg-sus-900 hover:text-white"
                                       title="Abrir solicitação na fila"
@@ -401,7 +405,7 @@ export default function PerfilPaciente({
                             {itens.map((d) => (
                               <tr
                                 key={d.id}
-                                onClick={() => abrirExame(d.id)}
+                                onClick={() => abrirExame(d.id, d.tipo_fila)}
                                 className="group cursor-pointer border-b border-sus-900/5 transition-colors last:border-0 hover:bg-teal/10"
                                 title="Clique para visualizar e gerenciar esta solicitação na Fila de Exames"
                               >
@@ -440,7 +444,7 @@ export default function PerfilPaciente({
                                     type="button"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      abrirExame(d.id);
+                                      abrirExame(d.id, d.tipo_fila);
                                     }}
                                     className="inline-flex items-center gap-1.5 rounded-lg border border-sus-900/15 bg-white px-2.5 py-1 text-[11px] font-bold text-sus-900 shadow-2xs transition-colors hover:bg-sus-900 hover:text-white"
                                     title="Abrir solicitação na fila"
@@ -517,7 +521,7 @@ export default function PerfilPaciente({
                           return (
                             <tr
                               key={d.id}
-                              onClick={() => abrirExame(d.id)}
+                              onClick={() => abrirExame(d.id, d.tipo_fila)}
                               className="group cursor-pointer border-b border-sus-900/5 transition-colors last:border-0 hover:bg-emerald-50/50"
                               title="Clique para abrir detalhes do registro"
                             >
@@ -576,7 +580,7 @@ export default function PerfilPaciente({
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    abrirExame(d.id);
+                                    abrirExame(d.id, d.tipo_fila);
                                   }}
                                   className="inline-flex items-center gap-1 rounded-lg border border-sus-900/15 bg-white px-2 py-1 text-[11px] font-bold text-sus-900 shadow-2xs transition-colors hover:bg-sus-900 hover:text-white"
                                   title="Ver detalhes da solicitação"

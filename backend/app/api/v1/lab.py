@@ -754,3 +754,120 @@ def executar_auto_sync_sigtap_agora(
     nome_op = getattr(ator, "nome", "") or getattr(ator, "username", "") or "Operador"
     return executar_sync_automatica_sigtap(db, competencia=competencia, usuario=nome_op, forcar=forcar)
 
+
+# ==============================================================================
+# ORÇAMENTO E LANÇAMENTO EM LOTE DE EXAMES (MOTOR ATÔMICO)
+# ==============================================================================
+
+@router.get("/orcamentos", response_model=list[LabOrcamentoOut])
+def api_listar_orcamentos(
+    ano: int | None = Query(default=None, ge=2020, le=2100),
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "lab_marcacao", "lab", "usuarios")),
+):
+    """Lista todos os tetos orçamentários mensais cadastrados."""
+    from app.services.lab_lote_service import listar_orcamentos
+
+    return listar_orcamentos(db, ano=ano)
+
+
+@router.get("/orcamentos/{competencia}", response_model=LabOrcamentoOut)
+def api_obter_orcamento(
+    competencia: str,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "lab_marcacao", "lab", "usuarios")),
+):
+    """Retorna o orçamento mensal e saldo disponível para uma competência (AAAA-MM)."""
+    from app.services.lab_lote_service import obter_orcamento_competencia
+
+    orc = obter_orcamento_competencia(db, competencia)
+    if not orc:
+        raise HTTPException(404, f"Nenhum orçamento definido para a competência {competencia}.")
+    return orc
+
+
+@router.post("/orcamentos", response_model=LabOrcamentoOut, status_code=201)
+def api_definir_orcamento(
+    dados: LabOrcamentoIn,
+    db: Session = Depends(get_db),
+    ator=Depends(need_any_perm("lab_orcamento", "lab_marcacao", "lab", "usuarios", acoes=("criar", "editar"))),
+):
+    """Define ou atualiza o teto financeiro mensal para exames laboratoriais."""
+    from app.services.lab_lote_service import definir_orcamento_mensal
+
+    usuario_nome = getattr(ator, "nome", "") or getattr(ator, "username", "") or "Secretaria de Saúde"
+    return definir_orcamento_mensal(db, dados, usuario_nome=usuario_nome)
+
+
+@router.post("/lotes/previa", response_model=LabLotePreviaOut)
+def api_calcular_previa_lote(
+    dados: LabLotePreviaIn,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "lab_marcacao", "lab", "usuarios")),
+):
+    """Calcula a prévia da liberação em lote (seleção da fila + cálculo SIGTAP + cruzamento com vagas)."""
+    from app.services.lab_lote_service import calcular_previa_lote
+
+    return calcular_previa_lote(db, dados)
+
+
+@router.post("/lotes/consolidar", response_model=LabLoteOut, status_code=201)
+def api_consolidar_lote(
+    dados: LabLoteConsolidarIn,
+    db: Session = Depends(get_db),
+    ator=Depends(need_any_perm("lab_orcamento", "lab_marcacao", "lab", "usuarios", acoes=("criar",))),
+):
+    """Executa a liberação atômica com lock pessimista, gerando agendamentos e artefatos."""
+    from app.services.lab_lote_service import consolidar_lote_atomico, obter_lote_detalhe
+
+    usuario_nome = getattr(ator, "nome", "") or getattr(ator, "username", "") or "Operador Lab"
+    lote = consolidar_lote_atomico(db, dados, usuario_nome=usuario_nome)
+    return obter_lote_detalhe(db, lote.id or 0)
+
+
+@router.get("/lotes", response_model=list[LabLoteOut])
+def api_listar_lotes(
+    competencia: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+    laboratorio_id: int | None = None,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "lab_marcacao", "lab", "usuarios")),
+):
+    """Lista o histórico de lotes liberados."""
+    from app.services.lab_lote_service import listar_lotes_liberacao
+
+    return listar_lotes_liberacao(db, competencia=competencia, laboratorio_id=laboratorio_id)
+
+
+@router.get("/lotes/{lote_id}", response_model=LabLoteOut)
+def api_obter_lote(
+    lote_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "lab_marcacao", "lab", "usuarios")),
+):
+    """Retorna os detalhes de um lote específico com os exames e pacientes contemplados."""
+    from app.services.lab_lote_service import obter_lote_detalhe
+
+    return obter_lote_detalhe(db, lote_id)
+
+
+@router.get("/lotes/{lote_id}/artefatos/{tipo}")
+def api_baixar_artefato_lote(
+    lote_id: int,
+    tipo: str,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "lab_marcacao", "lab", "usuarios")),
+):
+    """Faz download do artefato gerado para o lote (comprovantes_zip ou relatorio_xlsx)."""
+    from app.services.lab_lote_service import obter_artefato_lote
+
+    conteudo, nome_arquivo, mime_type = obter_artefato_lote(db, lote_id, tipo)
+    return Response(
+        content=conteudo,
+        media_type=mime_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{nome_arquivo}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+

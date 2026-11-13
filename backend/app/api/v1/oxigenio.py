@@ -1,4 +1,6 @@
 import json
+import os
+import re
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -8,7 +10,9 @@ from sqlalchemy import desc, func, or_
 from sqlmodel import Session, select
 
 from app.api.v1.auth import get_current_user
+from app.core.config import settings
 from app.db.session import engine
+from app.services.pec_sync import normalizar_nome
 from app.models.oxigenio import (
     CilindroComodatoMovimentacao,
     CilindroVazioRecolhimento,
@@ -105,12 +109,48 @@ def listar_empresas(
     return resultado
 
 
+def _so_digitos(valor: str | None) -> str:
+    return re.sub(r"\D", "", valor or "")
+
+
+def _validar_empresa_unica(
+    db: Session,
+    razao_social: str,
+    nome_fantasia: str,
+    cnpj: str,
+    ignorar_id: int | None = None,
+) -> None:
+    cnpj_num = _so_digitos(cnpj)
+    raz_norm = normalizar_nome(razao_social)
+    fan_norm = normalizar_nome(nome_fantasia)
+
+    for existente in db.exec(select(EmpresaOxigenio)).all():
+        if ignorar_id and existente.id == ignorar_id:
+            continue
+        if cnpj_num and _so_digitos(existente.cnpj) == cnpj_num:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Já existe uma empresa cadastrada com este CNPJ ({existente.nome_fantasia or existente.razao_social}).",
+            )
+        if raz_norm and normalizar_nome(existente.razao_social) == raz_norm:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Já existe uma empresa cadastrada com esta Razão Social ({existente.razao_social}).",
+            )
+        if fan_norm and normalizar_nome(existente.nome_fantasia) == fan_norm:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Já existe uma empresa cadastrada com este Nome Fantasia ({existente.nome_fantasia}).",
+            )
+
+
 @router.post("/empresas", response_model=EmpresaOxigenioOut, status_code=201)
 def criar_empresa(
     data: EmpresaOxigenioIn,
     db: Session = Depends(get_db),
     ator: User = Depends(need_perm("oxigenio_empresas", "criar")),
 ):
+    _validar_empresa_unica(db, data.razao_social, data.nome_fantasia, data.cnpj)
     emp = EmpresaOxigenio(
         razao_social=data.razao_social.strip(),
         nome_fantasia=data.nome_fantasia.strip(),
@@ -168,6 +208,8 @@ def atualizar_empresa(
     emp = db.get(EmpresaOxigenio, empresa_id)
     if not emp:
         raise HTTPException(status_code=404, detail="Empresa não encontrada.")
+
+    _validar_empresa_unica(db, data.razao_social, data.nome_fantasia, data.cnpj, ignorar_id=empresa_id)
 
     emp.razao_social = data.razao_social.strip()
     emp.nome_fantasia = data.nome_fantasia.strip()
@@ -624,7 +666,7 @@ def listar_equipamentos(
     # Mapa de empréstimos ativos para vincular o paciente atual
     emp_ativos = db.exec(
         select(EmprestimoOxigenio).where(
-            EmprestimoOxigenio.tipo_servico == "MAQUINA",
+            EmprestimoOxigenio.tipo_servico.in_(["MAQUINA", "EQUIPAMENTO", "MISTO"]),
             EmprestimoOxigenio.status == "ATIVO",
         )
     ).all()
@@ -829,7 +871,11 @@ def listar_emprestimos(
             stmt = stmt.where(EmprestimoOxigenio.status == status.upper())
 
     if tipo_servico:
-        stmt = stmt.where(EmprestimoOxigenio.tipo_servico == tipo_servico.upper())
+        ts_up = tipo_servico.upper()
+        if ts_up == "MAQUINA":
+            stmt = stmt.where(EmprestimoOxigenio.tipo_servico.in_(["MAQUINA", "EQUIPAMENTO", "MISTO"]))
+        else:
+            stmt = stmt.where(EmprestimoOxigenio.tipo_servico == ts_up)
     if tipo_equipamento:
         if tipo_equipamento.upper() == "CONCENTRADOR":
             stmt = stmt.where(EmprestimoOxigenio.tipo_equipamento.in_(["CONCENTRADOR", "CONCENTRADOR_5L", "CONCENTRADOR_10L"]))
@@ -924,7 +970,11 @@ def criar_emprestimo(
                 resumo_txt = f"1x {item_eq.tipo} ({item_eq.marca_modelo or 'Patr: ' + item_eq.patrimonio})"
             else:
                 c_tipo_fmt = (item_in.tipo_cilindro or "10m³").replace("m3", "m³")
-                resumo_txt = f"{item_in.quantidade}x Cilindro {c_tipo_fmt} ({'Comodato' if item_in.posse_cilindro == 'COMODATO' else 'Próprio/Licitado'})"
+                sufixo_acomp = " — Acompanha concentrador" if item_in.acompanha_equipamento else ""
+                resumo_txt = (
+                    f"{item_in.quantidade}x Cilindro {c_tipo_fmt} "
+                    f"({'Comodato' if item_in.posse_cilindro == 'COMODATO' else 'Próprio/Licitado'}{sufixo_acomp})"
+                )
 
             itens_resumo_lista.append(resumo_txt)
             itens_processados.append({
@@ -932,14 +982,16 @@ def criar_emprestimo(
                 "eq": item_eq,
             })
 
-        # Define campos primários para compatibilidade
-        p_item = itens_processados[0]
-        primeiro_tipo_servico = p_item["in"].tipo_servico
-        primeiro_eq = p_item["eq"]
-        primeiro_tipo_cilindro = p_item["in"].tipo_cilindro
-        primeiro_finalidade = p_item["in"].finalidade_cilindro
-        primeira_qtd = p_item["in"].quantidade
-        primeira_posse = p_item["in"].posse_cilindro
+        # Define campos primários para compatibilidade (prioriza equipamento quando houver máquina + cilindro)
+        p_maq = next((p for p in itens_processados if p["in"].tipo_servico == "MAQUINA"), None)
+        p_ox = next((p for p in itens_processados if p["in"].tipo_servico == "OXIGENIO" and not p["in"].acompanha_equipamento), None)
+        p_item = p_maq or itens_processados[0]
+        primeiro_tipo_servico = "MAQUINA" if p_maq else p_item["in"].tipo_servico
+        primeiro_eq = p_maq["eq"] if p_maq else p_item["eq"]
+        primeiro_tipo_cilindro = p_ox["in"].tipo_cilindro if p_ox else (None if p_maq else p_item["in"].tipo_cilindro)
+        primeiro_finalidade = p_ox["in"].finalidade_cilindro if p_ox else p_item["in"].finalidade_cilindro
+        primeira_qtd = p_ox["in"].quantidade if p_ox else p_item["in"].quantidade
+        primeira_posse = p_ox["in"].posse_cilindro if p_ox else p_item["in"].posse_cilindro
     else:
         # Modo clássico: item único
         if data.tipo_servico == "MAQUINA":
@@ -1029,10 +1081,23 @@ def criar_emprestimo(
     db.refresh(emprestimo)
 
     # Grava itens individuais vinculados a este empréstimo
+    tem_concentrador_no_termo = any(
+        (p["eq"] and "CONCENTRADOR" in (p["eq"].tipo or "").upper())
+        or (p["in"].tipo_equipamento and "CONCENTRADOR" in p["in"].tipo_equipamento.upper())
+        for p in itens_processados
+    )
     itens_salvos: list[ItemEmprestimoOut] = []
     for proc in itens_processados:
         it_in = proc["in"]
         eq_obj = proc["eq"]
+        eh_cil_acompanha = bool(getattr(it_in, "acompanha_equipamento", False))
+        if (
+            not eh_cil_acompanha
+            and tem_concentrador_no_termo
+            and it_in.tipo_servico == "OXIGENIO"
+            and it_in.finalidade_cilindro in ("FIXO_CONCENTRADOR", "SEMANAL_CONCENTRADOR")
+        ):
+            eh_cil_acompanha = True
         sub_item = ItemEmprestimoOxigenio(
             emprestimo_id=emprestimo.id,
             tipo_servico=it_in.tipo_servico,
@@ -1044,6 +1109,7 @@ def criar_emprestimo(
             finalidade_cilindro=it_in.finalidade_cilindro,
             quantidade=it_in.quantidade,
             posse_cilindro=it_in.posse_cilindro,
+            acompanha_equipamento=eh_cil_acompanha,
             status="ATIVO",
             observacoes=it_in.observacoes,
         )
@@ -1156,13 +1222,15 @@ def inativar_devolver_emprestimo(
             eq.status = "DISPONIVEL"
             db.add(eq)
 
-    # Se tinha cilindros vinculados, gera recolhimento de cilindro vazio pendente
-    itens_cil = db.exec(
+    # Se tinha cilindros avulsos vinculados, gera recolhimento de cilindro vazio pendente
+    # (cilindros que acompanham concentrador não entram como estoque avulso separado)
+    todos_itens_cil = db.exec(
         select(ItemEmprestimoOxigenio).where(
             ItemEmprestimoOxigenio.emprestimo_id == emp.id,
             ItemEmprestimoOxigenio.tipo_cilindro.is_not(None),
         )
     ).all()
+    itens_cil = [it for it in todos_itens_cil if not getattr(it, "acompanha_equipamento", False)]
     if itens_cil:
         for it in itens_cil:
             if it.tipo_cilindro:
@@ -1179,7 +1247,7 @@ def inativar_devolver_emprestimo(
                     observacoes=f"Devolvido no encerramento do empréstimo {emp.codigo_termo}",
                 )
                 db.add(vazio)
-    elif emp.tipo_cilindro:
+    elif emp.tipo_cilindro and not todos_itens_cil:
         vazio = CilindroVazioRecolhimento(
             paciente_id=emp.paciente_id,
             paciente_nome=emp.paciente_nome,
@@ -1299,6 +1367,7 @@ def obter_dados_comprovante(
             "finalidade_cilindro": si.finalidade_cilindro,
             "quantidade": si.quantidade,
             "posse_cilindro": si.posse_cilindro,
+            "acompanha_equipamento": bool(getattr(si, "acompanha_equipamento", False)),
             "status": si.status,
             "observacoes": si.observacoes,
         }
@@ -1385,18 +1454,45 @@ def resumo_estoque(
     tot_comp_3 = int(tot_comprado[1]) if tot_comprado else 0
     tot_comp_1 = int(tot_comprado[2]) if tot_comprado else 0
 
-    # 3. Empréstimos Ativos de Oxigênio (cilindros com pacientes)
-    emp_ox_stmt = select(EmprestimoOxigenio).where(
-        EmprestimoOxigenio.status == "ATIVO",
-        EmprestimoOxigenio.tipo_cilindro.is_not(None),
-    )
+    # 3. Empréstimos Ativos de Oxigênio (cilindros avulsos com pacientes; exclui cilindros acoplados a concentradores)
+    emp_ativos_q = select(EmprestimoOxigenio).where(EmprestimoOxigenio.status == "ATIVO")
     if empresa_id:
-        emp_ox_stmt = emp_ox_stmt.where(EmprestimoOxigenio.empresa_id == empresa_id)
-    emp_ox_ativos = db.exec(emp_ox_stmt).all()
+        emp_ativos_q = emp_ativos_q.where(EmprestimoOxigenio.empresa_id == empresa_id)
+    emp_ativos_filtrados = db.exec(emp_ativos_q).all()
+    emp_ativos_ids = [e.id for e in emp_ativos_filtrados if e.id is not None]
 
-    em_uso_10 = sum(e.quantidade for e in emp_ox_ativos if e.tipo_cilindro == "10m3")
-    em_uso_3 = sum(e.quantidade for e in emp_ox_ativos if e.tipo_cilindro == "3m3")
-    em_uso_1 = sum(e.quantidade for e in emp_ox_ativos if e.tipo_cilindro == "1m3")
+    itens_ativos_por_emp: dict[int, list[ItemEmprestimoOxigenio]] = {}
+    if emp_ativos_ids:
+        for si in db.exec(
+            select(ItemEmprestimoOxigenio).where(
+                ItemEmprestimoOxigenio.emprestimo_id.in_(emp_ativos_ids),
+                ItemEmprestimoOxigenio.status == "ATIVO",
+            )
+        ).all():
+            itens_ativos_por_emp.setdefault(si.emprestimo_id, []).append(si)
+
+    em_uso_10 = 0
+    em_uso_3 = 0
+    em_uso_1 = 0
+    for e in emp_ativos_filtrados:
+        sub_list = itens_ativos_por_emp.get(e.id or 0, [])
+        if sub_list:
+            for si in sub_list:
+                if getattr(si, "acompanha_equipamento", False):
+                    continue
+                if si.tipo_cilindro == "10m3":
+                    em_uso_10 += si.quantidade or 1
+                elif si.tipo_cilindro == "3m3":
+                    em_uso_3 += si.quantidade or 1
+                elif si.tipo_cilindro == "1m3":
+                    em_uso_1 += si.quantidade or 1
+        elif e.tipo_cilindro:
+            if e.tipo_cilindro == "10m3":
+                em_uso_10 += e.quantidade or 1
+            elif e.tipo_cilindro == "3m3":
+                em_uso_3 += e.quantidade or 1
+            elif e.tipo_cilindro == "1m3":
+                em_uso_1 += e.quantidade or 1
 
     # 3b. Cilindros Vazios (Retornados / Aguardando Recolhimento ou Troca)
     vazios_stmt = select(CilindroVazioRecolhimento).where(CilindroVazioRecolhimento.status == "PENDENTE")
@@ -1469,8 +1565,30 @@ def resumo_estoque(
     todos_emp_ativos = db.exec(
         select(EmprestimoOxigenio).where(EmprestimoOxigenio.status == "ATIVO")
     ).all()
-    pacs_ox_ativos = {e.paciente_id for e in todos_emp_ativos if e.tipo_servico == "OXIGENIO" or e.tipo_cilindro}
-    pacs_maq_ativos = {e.paciente_id for e in todos_emp_ativos if e.tipo_servico == "MAQUINA"}
+    todos_emp_ids = [e.id for e in todos_emp_ativos if e.id is not None]
+    itens_todos_por_emp: dict[int, list[ItemEmprestimoOxigenio]] = {}
+    if todos_emp_ids:
+        for si in db.exec(
+            select(ItemEmprestimoOxigenio).where(
+                ItemEmprestimoOxigenio.emprestimo_id.in_(todos_emp_ids),
+                ItemEmprestimoOxigenio.status == "ATIVO",
+            )
+        ).all():
+            itens_todos_por_emp.setdefault(si.emprestimo_id, []).append(si)
+
+    pacs_ox_ativos = set()
+    pacs_maq_ativos = set()
+    for e in todos_emp_ativos:
+        sub_list = itens_todos_por_emp.get(e.id or 0, [])
+        tem_cil_avulso = any(
+            si.tipo_cilindro and not getattr(si, "acompanha_equipamento", False)
+            for si in sub_list
+        ) if sub_list else bool(e.tipo_cilindro)
+        if e.tipo_servico == "OXIGENIO" or tem_cil_avulso:
+            pacs_ox_ativos.add(e.paciente_id)
+        if e.tipo_servico in ("MAQUINA", "EQUIPAMENTO", "MISTO") or e.equipamento_id is not None:
+            pacs_maq_ativos.add(e.paciente_id)
+
     pacs_conc = {e.paciente_id for e in todos_emp_ativos if e.tipo_equipamento in ["CONCENTRADOR", "CONCENTRADOR_5L", "CONCENTRADOR_10L"]}
     pacs_conc_5l = {e.paciente_id for e in todos_emp_ativos if e.tipo_equipamento in ["CONCENTRADOR_5L", "CONCENTRADOR"]}
     pacs_conc_10l = {e.paciente_id for e in todos_emp_ativos if e.tipo_equipamento == "CONCENTRADOR_10L"}
@@ -1675,6 +1793,7 @@ def resumo_estoque(
         vazios_3m3=vazios_3,
         vazios_1m3=vazios_1,
         total_cilindros_cheios_disponiveis=(disp_cheios_10 + disp_cheios_3 + disp_cheios_1),
+        seed_habilitado=bool(getattr(settings, "OXIGENIO_SEED_ENABLED", False)),
     )
 
 
@@ -2058,6 +2177,11 @@ def carregar_dados_reais_planilha(
     db: Session = Depends(get_db),
     ator: User = Depends(need_any_perm("oxigenio", "usuarios")),
 ):
+    if not getattr(settings, "OXIGENIO_SEED_ENABLED", False) and "PYTEST_CURRENT_TEST" not in os.environ:
+        raise HTTPException(
+            status_code=403,
+            detail="Carga inicial da planilha de oxigênio desabilitada neste ambiente (OXIGENIO_SEED_ENABLED=false).",
+        )
     from app.services.seed_oxigenio import seed_oxigenio_dados_reais
     resultado = seed_oxigenio_dados_reais(db, force_clean=force_clean)
     if not resultado.get("ok"):
@@ -2228,8 +2352,27 @@ def relatorio_faturamento_mensal(
         emp_stmt = emp_stmt.where(EmprestimoOxigenio.empresa_id == empresa_id)
     ativos = db.exec(emp_stmt).all()
 
+    ativos_ids = [e.id for e in ativos if e.id is not None]
+    itens_ativos_mes: dict[int, list[ItemEmprestimoOxigenio]] = {}
+    if ativos_ids:
+        for si in db.exec(
+            select(ItemEmprestimoOxigenio).where(
+                ItemEmprestimoOxigenio.emprestimo_id.in_(ativos_ids),
+                ItemEmprestimoOxigenio.status == "ATIVO",
+            )
+        ).all():
+            itens_ativos_mes.setdefault(si.emprestimo_id, []).append(si)
+
     pacs_total = len({e.paciente_id for e in ativos})
-    pacs_ox = len([e for e in ativos if e.tipo_servico == "OXIGENIO" or e.tipo_cilindro])
+    pacs_ox = 0
+    for e in ativos:
+        subs = itens_ativos_mes.get(e.id or 0, [])
+        tem_cil_avulso = any(
+            si.tipo_cilindro and not getattr(si, "acompanha_equipamento", False)
+            for si in subs
+        ) if subs else bool(e.tipo_cilindro)
+        if e.tipo_servico == "OXIGENIO" or tem_cil_avulso:
+            pacs_ox += 1
 
     n_conc_5l = len([e for e in ativos if e.tipo_equipamento in ["CONCENTRADOR_5L", "CONCENTRADOR"]])
     n_conc_10l = len([e for e in ativos if e.tipo_equipamento == "CONCENTRADOR_10L"])
@@ -2272,8 +2415,8 @@ def relatorio_faturamento_mensal(
     saldo_lic_3 = max(0, tot_lic_3 - acum_3)
     saldo_lic_1 = max(0, tot_lic_1 - acum_1)
 
-    # Cilindros em poder dos pacientes
-    itens_pacs = db.exec(
+    # Cilindros avulsos em poder dos pacientes (exclui cilindros de apoio acoplados ao concentrador)
+    todos_itens_ativos = db.exec(
         select(ItemEmprestimoOxigenio)
         .join(EmprestimoOxigenio, ItemEmprestimoOxigenio.emprestimo_id == EmprestimoOxigenio.id)
         .where(
@@ -2282,12 +2425,18 @@ def relatorio_faturamento_mensal(
             ItemEmprestimoOxigenio.status == "ATIVO",
         )
     ).all()
+    if empresa_id:
+        ids_emp_ativos = {e.id for e in ativos}
+        todos_itens_ativos = [it for it in todos_itens_ativos if it.emprestimo_id in ids_emp_ativos]
+
+    emp_ids_com_itens = {it.emprestimo_id for it in todos_itens_ativos}
+    itens_pacs = [it for it in todos_itens_ativos if not getattr(it, "acompanha_equipamento", False)]
     pacs_c10 = sum(it.quantidade for it in itens_pacs if it.tipo_cilindro == "10m3")
     pacs_c3 = sum(it.quantidade for it in itens_pacs if it.tipo_cilindro == "3m3")
     pacs_c1 = sum(it.quantidade for it in itens_pacs if it.tipo_cilindro == "1m3")
 
     for e in ativos:
-        if e.tipo_cilindro and not any(it.emprestimo_id == e.id for it in itens_pacs):
+        if e.tipo_cilindro and e.id not in emp_ids_com_itens:
             if e.tipo_cilindro == "10m3":
                 pacs_c10 += e.quantidade or 1
             elif e.tipo_cilindro == "3m3":

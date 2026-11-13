@@ -249,13 +249,14 @@ export default function TfdPacientes() {
               <th className="px-4 py-3">Nome / Endereço</th>
               <th className="px-4 py-3">CPF / CNS</th>
               <th className="px-4 py-3">Telefone / Unidade</th>
+              <th className="px-4 py-3">Fila de Espera</th>
               <th className="px-4 py-3 text-right">Ações</th>
             </tr>
           </thead>
           <tbody>
             {!q.trim() ? (
               <tr>
-                <td colSpan={5} className="px-4 py-16 text-center">
+                <td colSpan={6} className="px-4 py-16 text-center">
                   <div className="mx-auto flex max-w-md flex-col items-center justify-center text-center">
                     <div className="mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-sus-900/10 text-sus-900">
                       <Search className="h-6 w-6" />
@@ -269,13 +270,13 @@ export default function TfdPacientes() {
               </tr>
             ) : carregando ? (
               <tr>
-                <td colSpan={5} className="px-4 py-12 text-center text-sm text-ink/60">
+                <td colSpan={6} className="px-4 py-12 text-center text-sm text-ink/60">
                   Pesquisando pacientes...
                 </td>
               </tr>
             ) : lista.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-12 text-center text-ink/45">
+                <td colSpan={6} className="px-4 py-12 text-center text-ink/45">
                   Nenhum paciente encontrado para "{q}".
                 </td>
               </tr>
@@ -344,6 +345,34 @@ export default function TfdPacientes() {
                         <div className="mt-0.5 text-[11px] text-ink/60">
                           {ubsNome ? `🏥 ${ubsNome}` : ""}{p.equipe_esf ? ` (${p.equipe_esf})` : ""}
                         </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-xs align-middle">
+                      {(p.fila_total_qtd ?? 0) > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setPerfilId(p.id)}
+                          className="flex flex-wrap items-center gap-1 text-left hover:opacity-80"
+                          title="Clique para visualizar os exames e histórico deste paciente"
+                        >
+                          {(p.fila_aguardando_qtd ?? 0) > 0 && (
+                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">
+                              {p.fila_aguardando_qtd} aguardando
+                            </span>
+                          )}
+                          {(p.fila_agendado_qtd ?? 0) > 0 && (
+                            <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-bold text-sky-800">
+                              {p.fila_agendado_qtd} agendado
+                            </span>
+                          )}
+                          {(p.fila_aguardando_qtd ?? 0) === 0 && (p.fila_agendado_qtd ?? 0) === 0 && (
+                            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                              {p.fila_total_qtd} no histórico
+                            </span>
+                          )}
+                        </button>
+                      ) : (
+                        <span className="text-[11px] text-ink/40">Sem fila</span>
                       )}
                     </td>
                     <td className="px-4 py-3 align-middle">

@@ -94,7 +94,7 @@ class MedicamentoOut(MedicamentoBase):
     contagem_regressiva_texto: str = ""
     dias_para_vencer: Optional[int] = None
     created_at: datetime
-    updated_at: datetime
+    updated_at: Optional[datetime] = None
 
 
 # --- Schemas de Movimentação de Medicamentos ---
@@ -121,19 +121,19 @@ class MovimentacaoMedicamentoOut(BaseModel):
     medicamento_nome: str
     tipo: str
     quantidade: int
-    lote: str
-    validade: Optional[date]
-    saldo_anterior: int
-    saldo_posterior: int
-    documento_referencia: str
-    paciente_nome: str
-    paciente_cpf: str
-    paciente_cns: str
-    prescritor_nome: str
-    prescritor_crm: str
-    motivo_descarte: str
-    responsavel_usuario: str
-    observacoes: str
+    lote: Optional[str] = ""
+    validade: Optional[date] = None
+    saldo_anterior: int = 0
+    saldo_posterior: int = 0
+    documento_referencia: Optional[str] = ""
+    paciente_nome: Optional[str] = ""
+    paciente_cpf: Optional[str] = ""
+    paciente_cns: Optional[str] = ""
+    prescritor_nome: Optional[str] = ""
+    prescritor_crm: Optional[str] = ""
+    motivo_descarte: Optional[str] = ""
+    responsavel_usuario: Optional[str] = ""
+    observacoes: Optional[str] = ""
     created_at: datetime
 
 
@@ -177,7 +177,7 @@ class InsumoInternoOut(InsumoInternoBase):
     contagem_regressiva_texto: str = ""
     dias_para_vencer: Optional[int] = None
     created_at: datetime
-    updated_at: datetime
+    updated_at: Optional[datetime] = None
 
 
 class MovimentacaoInsumoCriar(BaseModel):
@@ -196,13 +196,13 @@ class MovimentacaoInsumoOut(BaseModel):
     insumo_nome: str
     tipo: str
     quantidade: int
-    saldo_anterior: int
-    saldo_posterior: int
-    unidade_destino: str
-    responsavel_recebimento: str
-    documento_referencia: str
-    responsavel_usuario: str
-    observacoes: str
+    saldo_anterior: int = 0
+    saldo_posterior: int = 0
+    unidade_destino: Optional[str] = ""
+    responsavel_recebimento: Optional[str] = ""
+    documento_referencia: Optional[str] = ""
+    responsavel_usuario: Optional[str] = ""
+    observacoes: Optional[str] = ""
     created_at: datetime
 
 

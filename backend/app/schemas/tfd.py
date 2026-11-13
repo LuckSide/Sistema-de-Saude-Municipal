@@ -94,6 +94,9 @@ class PacienteOut(PacienteBase):
     motivo_situacao: str = ""
     situacao_atualizada_em: datetime | None = None
     sincronizado_em: datetime | None = None
+    fila_aguardando_qtd: int = 0
+    fila_agendado_qtd: int = 0
+    fila_total_qtd: int = 0
 
 
 class PacienteHistoricoOut(BaseModel):

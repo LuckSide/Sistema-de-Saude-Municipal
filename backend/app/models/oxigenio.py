@@ -230,6 +230,7 @@ class ItemEmprestimoOxigenio(SQLModel, table=True):
     finalidade_cilindro: str | None = Field(default=None, max_length=50)
     quantidade: int = Field(default=1)
     posse_cilindro: str = Field(default="PROPRIO", max_length=30)  # PROPRIO, COMODATO
+    acompanha_equipamento: bool = Field(default=False, index=True)
     status: str = Field(default="ATIVO", max_length=30, index=True)
     observacoes: str = Field(default="", sa_column=Column(Text))
     created_at: datetime = Field(
