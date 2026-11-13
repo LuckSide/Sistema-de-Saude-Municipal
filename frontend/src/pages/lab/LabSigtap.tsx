@@ -20,7 +20,6 @@ import {
   sigtapAutoSyncConfig,
   sigtapAutoSyncExecutar,
   sigtapAutoSyncStatus,
-  sigtapBuscarAutomatico,
   sigtapImportar,
   sigtapVersoes,
   type SigtapArvore,
@@ -62,7 +61,6 @@ export default function LabSigtap() {
     return d.toISOString().slice(0, 7);
   });
   const [importando, setImportando] = useState(false);
-  const [buscandoAuto, setBuscandoAuto] = useState(false);
   const [avisoAuto, setAvisoAuto] = useState<{ mensagem: string; linkOficial?: string } | null>(null);
   const [preview, setPreview] = useState<SigtapImportOut | null>(null);
   const [versoes, setVersoes] = useState<SigtapVersao[]>([]);
@@ -143,13 +141,14 @@ export default function LabSigtap() {
     setSalvandoAutoSync(true);
     setErro("");
     try {
-      const novo = await sigtapAutoSyncConfig(patch);
+      const payload = { ...patch, sigtap_sync_intervalo_horas: 24 };
+      const novo = await sigtapAutoSyncConfig(payload);
       setAutoSync((prev) =>
         prev
           ? { ...prev, ...novo }
           : {
               sigtap_sync_automatica: novo.sigtap_sync_automatica,
-              sigtap_sync_intervalo_horas: novo.sigtap_sync_intervalo_horas,
+              sigtap_sync_intervalo_horas: 24,
               sigtap_sync_ultima_execucao: null,
               sigtap_sync_ultimo_status: "",
               sigtap_sync_ultima_competencia: "",
@@ -157,7 +156,7 @@ export default function LabSigtap() {
               em_execucao: false,
             },
       );
-      setOk("Configuração da rotina automática SIGTAP/DATASUS atualizada.");
+      setOk("Configuração de sincronização diária da Tabela Unificada atualizada.");
     } catch (e: unknown) {
       setErro(msgErro(e, "Falha ao atualizar configuração automática do SIGTAP."));
     } finally {
@@ -165,7 +164,7 @@ export default function LabSigtap() {
     }
   }
 
-  async function rodarSyncAgendadaAgora() {
+  async function sincronizarAgora() {
     setExecutandoAutoSync(true);
     setErro("");
     setOk("");
@@ -177,27 +176,32 @@ export default function LabSigtap() {
       if (st === "SUCESSO" && res.ok) {
         setPreview(res as unknown as SigtapImportOut);
         setOk(
-          `Atualização automática concluída (${String(res.competencia || competencia)}): ${Number(res.inseridos || 0)} inseridos, ${Number(res.atualizados || 0)} atualizados.`,
+          `Sincronização concluída com sucesso (${String(res.competencia || competencia)}): ${Number(res.inseridos || 0)} inseridos, ${Number(res.atualizados || 0)} atualizados.`,
         );
         carregarVersoes();
         buscar(1);
       } else if (st === "SEM_NOVIDADE") {
-        setOk(String(res.mensagem || `Verificação concluída: competência ${String(res.competencia || competencia)} já estava sincronizada.`));
+        setOk(
+          String(
+            res.mensagem ||
+              `A Tabela Unificada (${String(res.competencia || competencia)}) já está atualizada com a versão oficial do DATASUS.`,
+          ),
+        );
       } else if (st === "INDISPONIVEL" || st === "ERRO" || res.ok === false) {
         setAvisoAuto({
           mensagem: String(
             res.mensagem ||
-              "Portal DATASUS/SIGTAP indisponível no momento. Utilize o download manual abaixo.",
+              "O portal ou FTP do DATASUS/SIGTAP não respondeu no momento. Utilize o link oficial abaixo para download manual.",
           ),
-          linkOficial: "http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp",
+          linkOficial: String(res.link_oficial || "http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp"),
         });
       } else {
-        setOk(String(res.mensagem || "Verificação automática concluída."));
+        setOk(String(res.mensagem || "Sincronização concluída."));
       }
     } catch (e: unknown) {
       const detalhe = msgErro(
         e,
-        "Não foi possível conectar ao portal DATASUS no momento para atualização automática.",
+        "Não foi possível conectar ao portal do DATASUS no momento para sincronização automática.",
       );
       setAvisoAuto({
         mensagem: detalhe,
@@ -206,40 +210,6 @@ export default function LabSigtap() {
       carregarAutoSync();
     } finally {
       setExecutandoAutoSync(false);
-    }
-  }
-
-  async function buscarAutomatico(simular: boolean) {
-    if (!/^\d{4}-\d{2}$/.test(competencia)) {
-      setErro("Competência inválida (AAAA-MM).");
-      return;
-    }
-    setBuscandoAuto(true);
-    setErro("");
-    setOk("");
-    setAvisoAuto(null);
-    try {
-      const r = await sigtapBuscarAutomatico(competencia, simular);
-      setPreview(r);
-      if (!simular) {
-        setOk(
-          `Tabela do DATASUS (${competencia}) baixada e importada com sucesso: ${r.inseridos} inseridos, ${r.atualizados} atualizados.`,
-        );
-        carregarVersoes();
-        buscar(1);
-      } else {
-        setOk(`Simulação concluída com sucesso (${competencia}): ${r.processados} registros validados.`);
-      }
-    } catch (e: unknown) {
-      const detalhe =
-        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-        "O serviço de download automático do portal DATASUS/SIGTAP está temporariamente indisponível ou inacessível no momento. Por favor, acesse a fonte oficial do DATASUS (http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp), baixe o arquivo mensal compactado (.zip) da Tabela Unificada e utilize a importação manual de arquivo logo abaixo.";
-      setAvisoAuto({
-        mensagem: detalhe,
-        linkOficial: "http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp",
-      });
-    } finally {
-      setBuscandoAuto(false);
     }
   }
 
@@ -432,15 +402,15 @@ export default function LabSigtap() {
           </p>
         </div>
 
-        {/* Rotina Agendada de Atualização Automática do DATASUS */}
-        <div className="rounded-2xl border border-sus-900/15 bg-sand/40 p-4 space-y-3">
+        {/* Sincronização Automática com DATASUS (Rotina Diária + Disparo Imediato) */}
+        <div className="rounded-2xl border border-teal/25 bg-teal/5 p-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <p className="font-bold text-sm text-sus-950 flex items-center gap-1.5">
-                <Clock className="h-4 w-4 text-teal" /> Rotina Agendada de Busca Automática (DATASUS)
+                <Sparkles className="h-4 w-4 text-teal" /> Sincronização Automática Diária (SIGTAP / DATASUS)
               </p>
               <p className="text-xs text-ink/65 mt-0.5">
-                Verifica periodicamente no portal/FTP do DATASUS se há nova competência SIGTAP e importa a árvore completa automaticamente.
+                Verifica automaticamente <b>1 vez ao dia</b> no portal oficial do DATASUS se há nova versão da Tabela Unificada e atualiza os procedimentos.
               </p>
             </div>
             {autoSync && (
@@ -449,17 +419,17 @@ export default function LabSigtap() {
                   ["sucesso", "sem_novidade"].includes((autoSync.sigtap_sync_ultimo_status || "").toLowerCase())
                     ? "bg-emerald-100 text-emerald-800"
                     : ["erro", "indisponivel"].includes((autoSync.sigtap_sync_ultimo_status || "").toLowerCase())
-                      ? "bg-red-100 text-red-800"
+                      ? "bg-amber-100 text-amber-900 border border-amber-300"
                       : "bg-sus-900/10 text-sus-900"
                 }`}
               >
-                Status: {autoSync.sigtap_sync_ultimo_status || "aguardando"}
+                Status: {autoSync.sigtap_sync_ultimo_status || "Aguardando verificação"}
                 {autoSync.sigtap_sync_ultima_competencia ? ` (${autoSync.sigtap_sync_ultima_competencia})` : ""}
               </span>
             )}
           </div>
 
-          <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-wrap items-end gap-3 pt-1">
             <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-xs font-semibold text-sus-950">
               <input
                 type="checkbox"
@@ -468,117 +438,77 @@ export default function LabSigtap() {
                 onChange={(e) => atualizarConfigAutoSync({ sigtap_sync_automatica: e.target.checked })}
                 className="h-4 w-4 rounded border-sus-900/30 text-teal"
               />
-              Verificação periódica automática ativa
+              Sincronização diária automática ativa (1x ao dia)
             </label>
-            <div>
-              <Label className="text-[11px]">Periodicidade</Label>
-              <Select
-                value={String(autoSync?.sigtap_sync_intervalo_horas ?? 168)}
-                disabled={salvandoAutoSync}
-                onChange={(e) => atualizarConfigAutoSync({ sigtap_sync_intervalo_horas: Number(e.target.value) })}
-                className="mt-1 h-9 bg-white text-xs"
-              >
-                <option value="24">A cada 24 horas (Diária)</option>
-                <option value="72">A cada 3 dias (72h)</option>
-                <option value="168">Semanal (168h)</option>
-                <option value="720">Mensal (30 dias)</option>
-              </Select>
-            </div>
-            <Button
-              type="button"
-              onClick={rodarSyncAgendadaAgora}
-              disabled={executandoAutoSync || buscandoAuto || importando}
-              className="!w-auto text-xs"
-            >
-              <RefreshCw className={`h-4 w-4 ${executandoAutoSync ? "animate-spin" : ""}`} />
-              {executandoAutoSync ? "Verificando DATASUS…" : "Executar Verificação Agendada Agora"}
-            </Button>
-          </div>
-          {autoSync?.sigtap_sync_ultimo_erro && (
-            <p className="text-[11px] text-red-700">Último erro registrado: {autoSync.sigtap_sync_ultimo_erro}</p>
-          )}
-        </div>
 
-        {/* Bloco 1: Integração de Download Automático */}
-        <div className="rounded-2xl border border-teal/25 bg-teal/5 p-4 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="font-bold text-sm text-sus-950 flex items-center gap-1.5">
-                <Sparkles className="h-4 w-4 text-teal" /> Download Automático Direto do DATASUS
-              </p>
-              <p className="text-xs text-ink/65 mt-0.5">
-                Busca diretamente no portal oficial do SIGTAP a tabela unificada mensal da competência selecionada.
-              </p>
-            </div>
-            <a
-              href="http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp"
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-xl border border-sus-900/15 bg-white px-3 py-1.5 text-xs font-semibold text-sus-900 hover:bg-sand transition"
-            >
-              <ExternalLink className="h-3.5 w-3.5 text-sus-900/60" />
-              Fonte Oficial: DATASUS (download.jsp)
-            </a>
-          </div>
-
-          <div className="flex flex-wrap items-end gap-2.5 pt-1">
             <div>
               <Label className="text-xs">Competência (AAAA-MM)</Label>
               <Input
                 type="month"
                 value={competencia}
                 onChange={(e) => setCompetencia(e.target.value)}
-                className="mt-1 bg-white"
+                className="mt-1 bg-white h-9"
               />
             </div>
+
+            {/* Único botão para fazer agora */}
             <Button
               type="button"
-              onClick={() => buscarAutomatico(false)}
-              disabled={buscandoAuto || importando}
+              onClick={sincronizarAgora}
+              disabled={executandoAutoSync || importando}
               className="!bg-teal !text-sus-950 font-bold flex items-center gap-1.5 !w-auto"
             >
-              <Download className="h-4 w-4" />
-              {buscandoAuto ? "Conectando ao DATASUS…" : "Buscar Tabela Automática (SIGTAP/Datasus)"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => buscarAutomatico(true)}
-              disabled={buscandoAuto || importando}
-              className="!w-auto bg-white"
-            >
-              Simular Busca Automática
+              <RefreshCw className={`h-4 w-4 ${executandoAutoSync ? "animate-spin" : ""}`} />
+              {executandoAutoSync ? "Sincronizando com DATASUS…" : "Sincronizar Tabela Agora"}
             </Button>
           </div>
 
-          {/* Aviso informativo e amigável em caso de indisponibilidade da fonte DATASUS */}
+          {/* Banner de Erro/Indisponibilidade que leva diretamente ao link de download oficial do DATASUS */}
           {avisoAuto && (
-            <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-950 space-y-2 mt-3 animate-in fade-in">
+            <div className="rounded-xl border border-amber-400 bg-amber-50 p-4 text-xs text-amber-950 space-y-2.5 mt-3 animate-in fade-in">
               <div className="flex items-start gap-2.5">
                 <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
-                <div className="space-y-1.5 flex-1">
-                  <p className="font-bold text-sm text-amber-950">
-                    Aviso de Conexão com o Portal DATASUS
-                  </p>
-                  <p className="leading-relaxed text-amber-900">
-                    {avisoAuto.mensagem}
-                  </p>
-                  <div className="pt-2 flex flex-wrap items-center gap-3">
+                <div className="space-y-2 flex-1">
+                  <div>
+                    <p className="font-bold text-sm text-amber-950">
+                      Não foi possível conectar ao portal do DATASUS
+                    </p>
+                    <p className="leading-relaxed text-amber-900 mt-0.5">
+                      {avisoAuto.mensagem}
+                    </p>
+                  </div>
+                  <div className="pt-1 flex flex-wrap items-center gap-3">
                     <a
                       href={avisoAuto.linkOficial || "http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp"}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-amber-700 px-3 py-1.5 font-bold text-white hover:bg-amber-800 transition"
+                      className="inline-flex items-center gap-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white font-bold px-3.5 py-2 text-xs shadow-sm transition"
                     >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                      Acessar Portal Oficial SIGTAP (download.jsp)
+                      <Download className="h-4 w-4" />
+                      Baixar Tabela Oficial no DATASUS (download.jsp)
+                      <ExternalLink className="h-3.5 w-3.5 opacity-80" />
                     </a>
-                    <span className="text-[11px] font-medium text-amber-800">
-                      💡 <b>Como proceder:</b> Baixe o arquivo (.zip) mensal no link acima e faça o upload manual no formulário abaixo.
+                    <span className="text-[11px] text-amber-900/80">
+                      Após baixar o arquivo <b>.zip</b> no site oficial do DATASUS, utilize o campo de <b>Importação Manual</b> abaixo para carregar a tabela no sistema.
                     </span>
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Exibe último aviso registrado se não estiver exibindo aviso ativo */}
+          {!avisoAuto && autoSync?.sigtap_sync_ultimo_erro && (
+            <div className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2 text-[11px] text-amber-900">
+              <span>Último aviso registrado: {autoSync.sigtap_sync_ultimo_erro}</span>
+              <a
+                href="http://sigtap.datasus.gov.br/tabela-unificada/app/download.jsp"
+                target="_blank"
+                rel="noreferrer"
+                className="font-bold text-amber-800 underline hover:text-amber-950 flex items-center gap-1"
+              >
+                Link de Download DATASUS <ExternalLink className="h-3 w-3" />
+              </a>
             </div>
           )}
         </div>

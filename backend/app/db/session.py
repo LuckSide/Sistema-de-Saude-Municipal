@@ -865,6 +865,17 @@ def _init_db_impl() -> None:
                 except Exception:
                     pass
 
+        # Padroniza sincronização automática do SIGTAP para diária (1x ao dia - 24 horas)
+        try:
+            conn.execute(
+                text(
+                    "UPDATE integration_settings SET sigtap_sync_intervalo_horas = 24 "
+                    "WHERE sigtap_sync_intervalo_horas IS NULL OR sigtap_sync_intervalo_horas != 24"
+                )
+            )
+        except Exception:
+            pass
+
     _sincronizar_colunas_faltantes(engine)
 
     from sqlmodel import Session, select

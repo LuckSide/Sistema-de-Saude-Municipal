@@ -235,7 +235,12 @@ def executar_sync_automatica_sigtap(
                 cfg.sigtap_sync_ultimo_erro = msg
                 db.add(cfg)
                 db.commit()
-            return {"ok": False, "status": "INDISPONIVEL", "mensagem": msg}
+            return {
+                "ok": False,
+                "status": "INDISPONIVEL",
+                "mensagem": msg,
+                "link_oficial": PORTAL_SIGTAP_URL,
+            }
 
         comp_encontrada, nome_arq, raw_bytes = pacote
 
@@ -290,7 +295,7 @@ def executar_sync_automatica_sigtap(
                 db.commit()
         except Exception:
             pass
-        return {"ok": False, "status": "ERRO", "mensagem": str(e)[:500]}
+        return {"ok": False, "status": "ERRO", "mensagem": str(e)[:500], "link_oficial": PORTAL_SIGTAP_URL}
     finally:
         if is_pg_locked:
             try:
