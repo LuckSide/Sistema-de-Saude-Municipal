@@ -125,6 +125,12 @@ def _init_db_impl() -> None:
     from app.models.lab_fase6 import (  # noqa: F401
         FilaPsf,
         ItemSolic,
+        LabContrato,
+        LabContratoPrecoCustomizado,
+        LabFechamentoFaturamento,
+        LabFeriadoBloqueio,
+        LabFPOCompetencia,
+        LabFPOItem,
         LabLoteArtefato,
         LabLoteItem,
         LabLoteLiberacao,
@@ -1108,6 +1114,62 @@ def _init_db_impl() -> None:
             except Exception:
                 pass
 
+        # Colunas adicionais para Contratos, Agendas e Tipos de Serviço
+        try:
+            cols_lab = [c["name"] for c in inspect(conn).get_columns("lab_laboratorios")]
+        except Exception:
+            cols_lab = []
+        for col, ddl in {
+            "responsavel_tecnico": "VARCHAR(120) DEFAULT '' NOT NULL",
+            "horario_funcionamento": "VARCHAR(120) DEFAULT '' NOT NULL",
+        }.items():
+            if col not in cols_lab and cols_lab:
+                try:
+                    conn.execute(text(f"ALTER TABLE lab_laboratorios ADD COLUMN {col} {ddl}"))
+                except Exception:
+                    pass
+
+        try:
+            cols_vagas = [c["name"] for c in inspect(conn).get_columns("lab_vagas")]
+        except Exception:
+            cols_vagas = []
+        if "tipo_servico" not in cols_vagas and cols_vagas:
+            try:
+                conn.execute(text("ALTER TABLE lab_vagas ADD COLUMN tipo_servico VARCHAR(50) DEFAULT 'rotina' NOT NULL"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_vagas_tipo_servico ON lab_vagas (tipo_servico)"))
+            except Exception:
+                pass
+
+        if "data_pedido" not in cols_fila_psf and cols_fila_psf:
+            try:
+                conn.execute(text("ALTER TABLE lab_fila_psf ADD COLUMN data_pedido DATE"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_fila_psf_data_pedido ON lab_fila_psf (data_pedido)"))
+                conn.execute(text("UPDATE lab_fila_psf SET data_pedido = data_solicitacao WHERE data_pedido IS NULL"))
+            except Exception:
+                pass
+
+        if "contrato_id" not in cols_solic_mestre and cols_solic_mestre:
+            try:
+                conn.execute(text("ALTER TABLE lab_solic_mestre ADD COLUMN contrato_id INTEGER"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_solic_mestre_contrato_id ON lab_solic_mestre (contrato_id)"))
+            except Exception:
+                pass
+
+        try:
+            cols_solic_itens = [c["name"] for c in inspect(conn).get_columns("lab_solic_itens")]
+        except Exception:
+            cols_solic_itens = []
+        for col, ddl in {
+            "contrato_id": "INTEGER",
+            "valor_unitario_aplicado": f"{float_type} DEFAULT 0.0 NOT NULL",
+            "origem_preco": "VARCHAR(30) DEFAULT 'sigtap_padrao' NOT NULL",
+        }.items():
+            if col not in cols_solic_itens and cols_solic_itens:
+                try:
+                    conn.execute(text(f"ALTER TABLE lab_solic_itens ADD COLUMN {col} {ddl}"))
+                except Exception:
+                    pass
+
         # Garante criação idempotente das tabelas do motor de liberação em lote
         is_pg = conn.dialect.name == "postgresql"
         pk_type = "SERIAL PRIMARY KEY" if is_pg else "INTEGER PRIMARY KEY AUTOINCREMENT"
@@ -1172,6 +1234,89 @@ def _init_db_impl() -> None:
                 conteudo {bytea_type},
                 created_at TIMESTAMP
             )""",
+            f"""CREATE TABLE IF NOT EXISTS lab_contratos (
+                id {pk_type},
+                laboratorio_id INTEGER NOT NULL,
+                numero_contrato VARCHAR(50) NOT NULL,
+                processo_licitatorio VARCHAR(50) DEFAULT '' NOT NULL,
+                objeto VARCHAR(500) DEFAULT '' NOT NULL,
+                data_inicio DATE NOT NULL,
+                data_fim DATE NOT NULL,
+                valor_total_contrato {float_type} DEFAULT 0.0 NOT NULL,
+                valor_mensal_teto {float_type} DEFAULT 0.0 NOT NULL,
+                valor_total_gasto {float_type} DEFAULT 0.0 NOT NULL,
+                cota_exames_mensal INTEGER DEFAULT 0 NOT NULL,
+                status VARCHAR(20) DEFAULT 'ativo' NOT NULL,
+                gestor_contrato VARCHAR(120) DEFAULT '' NOT NULL,
+                observacoes VARCHAR(500) DEFAULT '' NOT NULL,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP
+            )""",
+            f"""CREATE TABLE IF NOT EXISTS lab_contratos_precos (
+                id {pk_type},
+                contrato_id INTEGER NOT NULL,
+                sigtap_id INTEGER NOT NULL,
+                codigo_sigtap VARCHAR(20) NOT NULL,
+                valor_customizado {float_type} DEFAULT 0.0 NOT NULL,
+                vigencia_inicio DATE NOT NULL,
+                vigencia_fim DATE,
+                ativo BOOLEAN DEFAULT TRUE NOT NULL,
+                justificativa VARCHAR(255) DEFAULT '' NOT NULL,
+                created_at TIMESTAMP
+            )""",
+            f"""CREATE TABLE IF NOT EXISTS lab_fpo_competencias (
+                id {pk_type},
+                laboratorio_id INTEGER NOT NULL,
+                contrato_id INTEGER,
+                competencia VARCHAR(7) NOT NULL,
+                cnes_prestador VARCHAR(20) DEFAULT '' NOT NULL,
+                numero_fpo VARCHAR(50) DEFAULT '' NOT NULL,
+                teto_fisico_programado INTEGER DEFAULT 0 NOT NULL,
+                teto_financeiro_programado {float_type} DEFAULT 0.0 NOT NULL,
+                total_fisico_executado INTEGER DEFAULT 0 NOT NULL,
+                total_financeiro_executado {float_type} DEFAULT 0.0 NOT NULL,
+                status VARCHAR(20) DEFAULT 'programada' NOT NULL,
+                exportado_em TIMESTAMP,
+                criado_por VARCHAR(120) DEFAULT '' NOT NULL,
+                created_at TIMESTAMP
+            )""",
+            f"""CREATE TABLE IF NOT EXISTS lab_fpo_itens (
+                id {pk_type},
+                fpo_id INTEGER NOT NULL,
+                sigtap_id INTEGER NOT NULL,
+                codigo_procedimento VARCHAR(20) NOT NULL,
+                descricao_procedimento VARCHAR(255) DEFAULT '' NOT NULL,
+                quantidade_orcada INTEGER DEFAULT 0 NOT NULL,
+                valor_orcado {float_type} DEFAULT 0.0 NOT NULL,
+                quantidade_aprovada INTEGER DEFAULT 0 NOT NULL,
+                valor_aprovado {float_type} DEFAULT 0.0 NOT NULL
+            )""",
+            f"""CREATE TABLE IF NOT EXISTS lab_faturamento_fechamentos (
+                id {pk_type},
+                laboratorio_id INTEGER NOT NULL,
+                contrato_id INTEGER,
+                competencia VARCHAR(7) NOT NULL,
+                qtd_solicitacoes INTEGER DEFAULT 0 NOT NULL,
+                qtd_exames INTEGER DEFAULT 0 NOT NULL,
+                valor_total_apurado {float_type} DEFAULT 0.0 NOT NULL,
+                valor_total_glosado {float_type} DEFAULT 0.0 NOT NULL,
+                valor_total_aprovado {float_type} DEFAULT 0.0 NOT NULL,
+                status VARCHAR(30) DEFAULT 'em_apuracao' NOT NULL,
+                liberado_visualizacao_lab BOOLEAN DEFAULT FALSE NOT NULL,
+                aprovado_por VARCHAR(120) DEFAULT '' NOT NULL,
+                aprovado_em TIMESTAMP,
+                parecer_secretaria VARCHAR(1000) DEFAULT '' NOT NULL,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP
+            )""",
+            f"""CREATE TABLE IF NOT EXISTS lab_feriados_bloqueios (
+                id {pk_type},
+                data DATE NOT NULL,
+                descricao VARCHAR(150) DEFAULT '' NOT NULL,
+                bloquear_agendamento BOOLEAN DEFAULT TRUE NOT NULL,
+                laboratorio_id INTEGER,
+                created_at TIMESTAMP
+            )""",
         ]
         for ddl_tbl in ddls_tabelas_lote:
             try:
@@ -1186,6 +1331,8 @@ def _init_db_impl() -> None:
             "CREATE INDEX IF NOT EXISTS ix_lab_lotes_liberacao_competencia ON lab_lotes_liberacao (competencia)",
             "CREATE INDEX IF NOT EXISTS ix_lab_lotes_liberacao_laboratorio_id ON lab_lotes_liberacao (laboratorio_id)",
             "CREATE INDEX IF NOT EXISTS ix_lab_lotes_liberacao_orcamento_id ON lab_lotes_liberacao (orcamento_id)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_feriados_bloqueios_data ON lab_feriados_bloqueios (data)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_feriados_bloqueios_lab ON lab_feriados_bloqueios (laboratorio_id)",
             "CREATE INDEX IF NOT EXISTS ix_lab_lote_itens_lote_id ON lab_lote_itens (lote_id)",
             "CREATE INDEX IF NOT EXISTS ix_lab_lote_itens_fila_psf_id ON lab_lote_itens (fila_psf_id)",
             "CREATE INDEX IF NOT EXISTS ix_lab_lote_itens_solicitacao_mestre_id ON lab_lote_itens (solicitacao_mestre_id)",
@@ -1194,6 +1341,18 @@ def _init_db_impl() -> None:
             "CREATE INDEX IF NOT EXISTS ix_lab_lote_artefatos_lote_id ON lab_lote_artefatos (lote_id)",
             "CREATE INDEX IF NOT EXISTS ix_lab_lote_artefatos_tipo ON lab_lote_artefatos (tipo)",
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_lab_lote_artefato_tipo ON lab_lote_artefatos (lote_id, tipo)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_lab_contratos_numero ON lab_contratos (numero_contrato)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_contratos_laboratorio_id ON lab_contratos (laboratorio_id)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_contratos_status ON lab_contratos (status)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_lab_contrato_proc_preco ON lab_contratos_precos (contrato_id, sigtap_id)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_contratos_precos_contrato_id ON lab_contratos_precos (contrato_id)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_contratos_precos_sigtap_id ON lab_contratos_precos (sigtap_id)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_lab_fpo_lab_competencia ON lab_fpo_competencias (laboratorio_id, competencia)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_fpo_competencias_competencia ON lab_fpo_competencias (competencia)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_lab_fpo_item_proc ON lab_fpo_itens (fpo_id, sigtap_id)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_fpo_itens_fpo_id ON lab_fpo_itens (fpo_id)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_lab_fat_fechamento_lab_comp ON lab_faturamento_fechamentos (laboratorio_id, competencia)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_fat_fechamentos_competencia ON lab_faturamento_fechamentos (competencia)",
         ]:
             try:
                 conn.execute(text(idx_lote))

@@ -10,6 +10,7 @@ import os
 import re
 import ssl
 import threading
+import time
 import urllib.parse
 import urllib.request
 from typing import Optional
@@ -128,69 +129,77 @@ def _baixar_arquivo_ftp(nome_arquivo: str, timeout: int = 10) -> Optional[bytes]
 def baixar_tabela_unificada_datasus(
     competencia: Optional[str] = None,
     timeout: int = 5,
+    max_retries: int = 3,
 ) -> Optional[tuple[str, str, bytes]]:
-    """Descobre e baixa o pacote .zip da Tabela Unificada do DATASUS/SIGTAP.
+    """Descobre e baixa o pacote .zip da Tabela Unificada do DATASUS/SIGTAP com retry automático.
 
     Retorna `(competencia_aaaa_mm, nome_arquivo, raw_bytes)` ou `None` se indisponível.
     """
     comp_alvo = (competencia or "").strip() or None
 
-    # 1. Tenta descobrir link direto na página oficial do SIGTAP DATASUS
-    try:
-        links = _descobrir_links_portal(comp_alvo, timeout=timeout)
-        for comp_link, url in links[:3]:
+    for tentativa in range(1, max_retries + 1):
+        try:
+            # 1. Tenta descobrir link direto na página oficial do SIGTAP DATASUS
             try:
-                raw = _baixar_url_zip(url, timeout=timeout)
-                if raw:
-                    nome = os.path.basename(urllib.parse.urlparse(url).path) or f"TabelaUnificada_{comp_link.replace('-', '')}.zip"
-                    return comp_link, nome, raw
+                links = _descobrir_links_portal(comp_alvo, timeout=timeout)
+                for comp_link, url in links[:3]:
+                    try:
+                        raw = _baixar_url_zip(url, timeout=timeout)
+                        if raw:
+                            nome = os.path.basename(urllib.parse.urlparse(url).path) or f"TabelaUnificada_{comp_link.replace('-', '')}.zip"
+                            return comp_link, nome, raw
+                    except Exception:
+                        continue
             except Exception:
-                continue
-    except Exception:
-        pass
+                pass
 
-    # 2. Tenta descobrir versão exata no diretório FTP DATASUS e baixar via HTTP/FTP
-    try:
-        arqs = _descobrir_arquivos_ftp(comp_alvo, timeout=timeout)
-        for comp_link, nome in arqs[:2]:
-            for url_dir in (f"http://{FTP_HOST}{FTP_DIR}/{nome}", f"ftp://{FTP_HOST}{FTP_DIR}/{nome}"):
-                try:
-                    raw = _baixar_url_zip(url_dir, timeout=timeout)
-                    if raw:
-                        return comp_link, nome, raw
-                except Exception:
-                    continue
+            # 2. Tenta descobrir versão exata no diretório FTP DATASUS e baixar via HTTP/FTP
             try:
-                raw = _baixar_arquivo_ftp(nome, timeout=max(timeout, 8))
-                if raw:
-                    return comp_link, nome, raw
+                arqs = _descobrir_arquivos_ftp(comp_alvo, timeout=timeout)
+                for comp_link, nome in arqs[:2]:
+                    for url_dir in (f"http://{FTP_HOST}{FTP_DIR}/{nome}", f"ftp://{FTP_HOST}{FTP_DIR}/{nome}"):
+                        try:
+                            raw = _baixar_url_zip(url_dir, timeout=timeout)
+                            if raw:
+                                return comp_link, nome, raw
+                        except Exception:
+                            continue
+                    try:
+                        raw = _baixar_arquivo_ftp(nome, timeout=max(timeout, 8))
+                        if raw:
+                            return comp_link, nome, raw
+                    except Exception:
+                        continue
             except Exception:
-                continue
-    except Exception:
-        pass
+                pass
 
-    # 3. Fallback direto para URLs padrão da competência solicitada (ou mês atual/anterior)
-    if not comp_alvo:
-        hoje = datetime.utcnow()
-        candidatos_comp = [hoje.strftime("%Y-%m")]
-        mes_ant = hoje.month - 1 or 12
-        ano_ant = hoje.year if hoje.month > 1 else hoje.year - 1
-        candidatos_comp.append(f"{ano_ant:04d}-{mes_ant:02d}")
-    else:
-        candidatos_comp = [comp_alvo]
+            # 3. Fallback direto para URLs padrão da competência solicitada (ou mês atual/anterior)
+            if not comp_alvo:
+                hoje = datetime.utcnow()
+                candidatos_comp = [hoje.strftime("%Y-%m")]
+                mes_ant = hoje.month - 1 or 12
+                ano_ant = hoje.year if hoje.month > 1 else hoje.year - 1
+                candidatos_comp.append(f"{ano_ant:04d}-{mes_ant:02d}")
+            else:
+                candidatos_comp = [comp_alvo]
 
-    for comp in candidatos_comp:
-        ano, mes = comp.split("-")
-        for url in (
-            f"ftp://{FTP_HOST}{FTP_DIR}/TabelaUnificada_{ano}{mes}.zip",
-            f"http://{FTP_HOST}{FTP_DIR}/TabelaUnificada_{ano}{mes}.zip",
-        ):
-            try:
-                raw = _baixar_url_zip(url, timeout=timeout)
-                if raw:
-                    return comp, f"TabelaUnificada_{ano}{mes}.zip", raw
-            except Exception:
-                continue
+            for comp in candidatos_comp:
+                ano, mes = comp.split("-")
+                for url in (
+                    f"ftp://{FTP_HOST}{FTP_DIR}/TabelaUnificada_{ano}{mes}.zip",
+                    f"http://{FTP_HOST}{FTP_DIR}/TabelaUnificada_{ano}{mes}.zip",
+                ):
+                    try:
+                        raw = _baixar_url_zip(url, timeout=timeout)
+                        if raw:
+                            return comp, f"TabelaUnificada_{ano}{mes}.zip", raw
+                    except Exception:
+                        continue
+        except Exception as e:
+            logger.warning(f"Tentativa {tentativa}/{max_retries} falhou ao conectar ao DATASUS: {e}")
+
+        if tentativa < max_retries:
+            time.sleep(2 * tentativa)
 
     return None
 

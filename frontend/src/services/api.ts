@@ -1478,7 +1478,19 @@ export type SigtapProc = {
   subgrupo_nome?: string;
   forma_organizacao_codigo?: string;
   forma_organizacao_nome?: string;
+  origem_manual?: boolean;
 };
+
+export const sigtapCriarManual = (p: {
+  codigo: string;
+  descricao: string;
+  complexidade?: string;
+  instrumento?: string;
+  valor_sa?: number;
+  valor_sp?: number;
+  valor_sh?: number;
+  sexo?: string;
+}) => api.post<SigtapProc>("/api/lab/sigtap", p).then((r) => r.data);
 
 export type SigtapArvore = {
   grupos: { codigo: string; nome: string }[];
@@ -1627,16 +1639,45 @@ export const labExportarLote = (competencia?: string) =>
     .then((r) => r.data);
 
 // ---------- Fila PSF / Agenda / Vagas / Auditoria ----------
-export type Laboratorio = { id: number; nome: string; cnes?: string; ativo: boolean };
+export type Laboratorio = {
+  id: number;
+  nome: string;
+  cnes?: string;
+  ativo: boolean;
+  responsavel_tecnico?: string;
+  horario_funcionamento?: string;
+  usuario_criado?: string;
+  senha_temporaria?: string;
+};
 
 export const labsListar = (somenteAtivos = true) =>
   api.get<Laboratorio[]>("/api/exames/laboratorios", {
     params: { somente_ativos: somenteAtivos },
   }).then((r) => r.data);
-export const labsAtualizar = (id: number, nome: string, ativo: boolean) =>
-  api.put<Laboratorio>(`/api/exames/laboratorios/${id}`, { nome, ativo }).then((r) => r.data);
-export const labsCriar = (nome: string, ativo = true) =>
-  api.post<Laboratorio>("/api/exames/laboratorios", { nome, ativo }).then((r) => r.data);
+
+export const labsAtualizar = (
+  id: number,
+  p: string | { nome: string; ativo?: boolean; responsavel_tecnico?: string; horario_funcionamento?: string },
+  ativo?: boolean
+) => {
+  const payload = typeof p === "string" ? { nome: p, ativo: ativo ?? true } : p;
+  return api.put<Laboratorio>(`/api/exames/laboratorios/${id}`, payload).then((r) => r.data);
+};
+
+export const labsCriar = (
+  p: string | {
+    nome: string;
+    ativo?: boolean;
+    responsavel_tecnico?: string;
+    horario_funcionamento?: string;
+    criar_usuario_acesso?: boolean;
+  },
+  ativo = true
+) => {
+  const payload = typeof p === "string" ? { nome: p, ativo } : p;
+  return api.post<Laboratorio>("/api/exames/laboratorios", payload).then((r) => r.data);
+};
+
 export const labsRemover = (id: number) =>
   api.delete<void>(`/api/exames/laboratorios/${id}`).then((r) => r.data);
 
@@ -1651,10 +1692,12 @@ export type FilaPsfItem = {
   medico_solicitante: string;
   medico: string;
   data_solicitacao: string;
+  data_pedido?: string;
   justificativa?: string;
   observacoes: string;
   obs: string;
   status: string;
+  prioridade?: string;
   criado_em: string;
   sigtap_ids?: number[];
   exames_nomes?: string[];
@@ -1672,10 +1715,12 @@ export function mapFila(o: any): FilaPsfItem {
     medico_solicitante: o.medico_solicitante ?? o.medico ?? "",
     medico: o.medico ?? o.medico_solicitante ?? "",
     data_solicitacao: o.data_solicitacao ?? "",
+    data_pedido: o.data_pedido ?? o.data_solicitacao ?? "",
     justificativa: o.justificativa ?? "",
     observacoes: o.observacoes ?? o.obs ?? "",
     obs: o.obs ?? o.observacoes ?? "",
     status: o.status ?? "",
+    prioridade: o.prioridade ?? "rotina",
     criado_em: o.data_solicitacao ?? "",
     sigtap_ids: o.sigtap_ids ?? [],
     exames_nomes: o.exames_nomes ?? [],
@@ -1726,6 +1771,8 @@ export const filaPsfCriar = (p: Record<string, unknown>) =>
       medico_solicitante: (p as any).medico_solicitante ?? (p as any).medico,
       data_solicitacao:
         (p as any).data_solicitacao ?? new Date().toISOString().slice(0, 10),
+      data_pedido: (p as any).data_pedido ?? (p as any).data_solicitacao ?? new Date().toISOString().slice(0, 10),
+      prioridade: (p as any).prioridade ?? "rotina",
       justificativa: (p as any).justificativa ?? "",
       observacoes: (p as any).observacoes ?? (p as any).obs ?? "",
       sigtap_ids: (p as any).sigtap_ids ?? [],
@@ -1738,6 +1785,8 @@ export const filaPsfAtualizar = (id: number, p: Record<string, unknown>) =>
       unidade_psf: p.unidade_psf,
       medico_solicitante: (p as any).medico_solicitante ?? (p as any).medico,
       data_solicitacao: (p as any).data_solicitacao,
+      data_pedido: (p as any).data_pedido ?? (p as any).data_solicitacao,
+      prioridade: (p as any).prioridade,
       justificativa: (p as any).justificativa ?? "",
       observacoes: (p as any).observacoes ?? (p as any).obs ?? "",
       sigtap_ids: (p as any).sigtap_ids,
@@ -1781,6 +1830,7 @@ export type Vaga = {
   vagas_ocupadas: number;
   ocupadas: number;
   vagas_livres: number;
+  tipo_servico?: string;
 };
 
 export function mapVaga(o: any): Vaga {
@@ -1795,6 +1845,7 @@ export function mapVaga(o: any): Vaga {
     vagas_ocupadas: o.vagas_ocupadas ?? o.ocupadas ?? 0,
     ocupadas: o.ocupadas ?? o.vagas_ocupadas ?? 0,
     vagas_livres: o.vagas_livres ?? Math.max(0, (o.vagas_totais ?? o.total ?? 0) - (o.vagas_ocupadas ?? o.ocupadas ?? 0)),
+    tipo_servico: o.tipo_servico ?? "rotina",
   };
 }
 
@@ -1815,13 +1866,17 @@ export const vagasCriar = (p: Record<string, unknown>) =>
 export const vagasAtualizar = (id: number, p: Record<string, unknown>) =>
   api.put(`/api/vagas/${id}`, p).then((r) => mapVaga(r.data));
 export const vagasExcluir = (id: number) => api.delete(`/api/vagas/${id}`);
+
 export type VagaLoteMes = {
   laboratorio_id: number;
   ano: number;
   mes: number;
   vagas_diarias: number;
   ignorar_fins_semana: boolean;
+  bloquear_feriados?: boolean;
+  tipo_servico?: string;
 };
+
 export type VagaLoteMesOut = {
   laboratorio_id: number;
   laboratorio_nome: string;
@@ -1830,11 +1885,37 @@ export type VagaLoteMesOut = {
   criadas: number;
   atualizadas: number;
   ignoradas_fim_semana: number;
+  ignoradas_feriados?: number;
   mantidas_conflito: number;
   ignoradas_passado?: number;
 };
+
 export const vagasLoteMes = (p: VagaLoteMes) =>
   api.post("/api/vagas/lote-mes", p).then((r) => r.data as VagaLoteMesOut);
+
+// Feriados e Bloqueios na Agenda Laboratorial
+export type LabFeriado = {
+  id: number;
+  data: string;
+  descricao: string;
+  bloquear_agendamento: boolean;
+  laboratorio_id?: number | null;
+  laboratorio_nome?: string;
+  created_at?: string;
+};
+
+export const labFeriadosListar = (laboratorio_id?: number) =>
+  api.get<LabFeriado[]>("/api/exames/feriados", { params: { laboratorio_id } }).then((r) => r.data);
+
+export const labFeriadoCriar = (p: {
+  data: string;
+  descricao: string;
+  bloquear_agendamento?: boolean;
+  laboratorio_id?: number | null;
+}) => api.post<LabFeriado>("/api/exames/feriados", p).then((r) => r.data);
+
+export const labFeriadoExcluir = (id: number) =>
+  api.delete(`/api/exames/feriados/${id}`).then(() => undefined);
 
 export type SolicMestre = {
   id: number;
@@ -2224,6 +2305,18 @@ export const labObterComprovante = (mid: number): Promise<ComprovanteExame> =>
 
 export const labCancelarSolicitacao = (mid: number): Promise<void> =>
   api.delete(`/api/exames/solicitacoes/${mid}`).then(() => undefined);
+
+export const labSolicitacaoTransferir = (
+  mid: number,
+  p: { nova_data: string; novo_laboratorio_id?: number; motivo?: string }
+): Promise<SolicMestre> =>
+  api.patch(`/api/exames/solicitacoes/${mid}/transferir`, p).then((r) => mapMestre(r.data));
+
+export const labSolicitacaoAlterarStatus = (
+  mid: number,
+  p: { status: string; motivo?: string }
+): Promise<SolicMestre> =>
+  api.patch(`/api/exames/solicitacoes/${mid}/status`, p).then((r) => mapMestre(r.data));
 
 export const labRecepcionarColeta = (mid: number): Promise<SolicMestre> =>
   api.post(`/api/exames/solicitacoes/${mid}/recepcionar`).then((r) => mapMestre(r.data));
@@ -3816,6 +3909,203 @@ export const farmaciaLinkRevogar = (id: number) =>
 
 export const farmaciaConsultarPublico = (token: string) =>
   api.get<FarmaciaPainelPublicoResponse>(`/api/farmacia/publico/${token}`).then((r) => r.data);
+
+// ============================================================================
+// CONTRATOS, PREÇOS CUSTOMIZADOS, FATURAMENTO & FPO/SIA (SUBAGENTE 3)
+// ============================================================================
+
+export type LabContrato = {
+  id: number;
+  laboratorio_id: number;
+  laboratorio_nome: string;
+  numero_contrato: string;
+  processo_licitatorio: string;
+  objeto: string;
+  data_inicio: string;
+  data_fim: string;
+  valor_total_contrato: number;
+  valor_mensal_teto: number;
+  cota_exames_mensal: number;
+  valor_total_gasto: number;
+  saldo_total_disponivel: number;
+  percentual_total_consumido: number;
+  valor_gasto_mes_atual: number;
+  saldo_mes_atual: number;
+  percentual_mes_consumido: number;
+  status: string;
+  gestor_contrato: string;
+  observacoes: string;
+  dias_restantes_vigencia: number;
+};
+
+export type LabContratosPainel = {
+  total_contratos_ativos: number;
+  valor_total_todos_contratos: number;
+  valor_total_gasto_global: number;
+  valor_gasto_mes_atual_global: number;
+  contratos: LabContrato[];
+};
+
+export type LabContratoPreco = {
+  id: number;
+  contrato_id: number;
+  sigtap_id: number;
+  codigo_sigtap: string;
+  descricao_procedimento: string;
+  valor_sigtap_padrao: number;
+  valor_customizado: number;
+  vigencia_inicio: string;
+  vigencia_fim?: string | null;
+  ativo: boolean;
+  justificativa: string;
+};
+
+export type LabFaturamentoItem = {
+  sigtap_id: number;
+  codigo_procedimento: string;
+  descricao_procedimento: string;
+  quantidade: number;
+  valor_unitario: number;
+  valor_total: number;
+  origem_preco: "sigtap_padrao" | "contrato_custom";
+};
+
+export type LabFaturamentoRelatorio = {
+  laboratorio_id: number;
+  laboratorio_nome: string;
+  cnes_laboratorio: string;
+  responsavel_tecnico: string;
+  horario_funcionamento: string;
+  contrato_id?: number | null;
+  numero_contrato: string;
+  competencia: string;
+  total_solicitacoes: number;
+  total_exames: number;
+  valor_total: number;
+  valor_glosado: number;
+  valor_aprovado: number;
+  status_fechamento: string;
+  liberado_visualizacao_lab: boolean;
+  aprovado_por: string;
+  aprovado_em?: string | null;
+  parecer_secretaria: string;
+  itens: LabFaturamentoItem[];
+};
+
+export type LabFPOItem = {
+  id: number;
+  fpo_id: number;
+  sigtap_id: number;
+  codigo_procedimento: string;
+  descricao_procedimento: string;
+  quantidade_orcada: number;
+  valor_orcado: number;
+  quantidade_aprovada: number;
+  valor_aprovado: number;
+};
+
+export type LabFPO = {
+  id: number;
+  laboratorio_id: number;
+  laboratorio_nome: string;
+  contrato_id?: number | null;
+  competencia: string;
+  cnes_prestador: string;
+  numero_fpo: string;
+  teto_fisico_programado: number;
+  teto_financeiro_programado: number;
+  total_fisico_executado: number;
+  total_financeiro_executado: number;
+  saldo_fisico: number;
+  saldo_financeiro: number;
+  status: string;
+  exportado_em?: string | null;
+  criado_por: string;
+  created_at: string;
+  itens: LabFPOItem[];
+};
+
+export const labContratosPainel = () =>
+  api.get<LabContratosPainel>("/api/lab/contratos").then((r) => r.data);
+
+export const labContratoCriar = (p: Record<string, unknown>) =>
+  api.post<LabContrato>("/api/lab/contratos", p).then((r) => r.data);
+
+export const labContratoAtualizar = (id: number, p: Record<string, unknown>) =>
+  api.put<LabContrato>(`/api/lab/contratos/${id}`, p).then((r) => r.data);
+
+export const labContratoPrecosListar = (contratoId: number) =>
+  api.get<LabContratoPreco[]>(`/api/lab/contratos/${contratoId}/precos`).then((r) => r.data);
+
+export const labContratoPrecoDefinir = (contratoId: number, p: Record<string, unknown>) =>
+  api.post<LabContratoPreco>(`/api/lab/contratos/${contratoId}/precos`, p).then((r) => r.data);
+
+export const labContratoPrecoRemover = (contratoId: number, precoId: number) =>
+  api.delete(`/api/lab/contratos/${contratoId}/precos/${precoId}`).then(() => undefined);
+
+export const labFaturamentoRelatorio = (laboratorio_id: number, competencia: string) =>
+  api.get<LabFaturamentoRelatorio>("/api/lab/faturamento/relatorio-prestador", {
+    params: { laboratorio_id, competencia },
+  }).then((r) => r.data);
+
+export const labFaturamentoAprovar = (p: {
+  laboratorio_id: number;
+  competencia: string;
+  liberado_visualizacao_lab: boolean;
+  parecer_secretaria?: string;
+}) => api.post("/api/lab/faturamento/aprovar", p).then((r) => r.data);
+
+export const labFpoListar = (competencia?: string, laboratorio_id?: number) =>
+  api.get<LabFPO[]>("/api/lab/fpo/competencias", { params: { competencia, laboratorio_id } }).then((r) => r.data);
+
+export const labFpoCriar = (p: Record<string, unknown>) =>
+  api.post<LabFPO>("/api/lab/fpo/competencias", p).then((r) => r.data);
+
+export const labFpoItemAdicionar = (fpoId: number, p: Record<string, unknown>) =>
+  api.post<LabFPOItem>(`/api/lab/fpo/itens?fpo_id=${fpoId}`, p).then((r) => r.data);
+
+export const labFpoExportarSia = (fpoId: number) =>
+  api.get(`/api/lab/fpo/exportar-sia/${fpoId}`, { responseType: "blob" }).then((r) => r.data);
+
+// ============================================================================
+// BI E AUDITORIA DE GASTOS POR PACIENTE (SUBAGENTE 4)
+// ============================================================================
+
+export type PacienteGastoItem = {
+  solicitacao_id: number;
+  data_agendada: string;
+  laboratorio_nome: string;
+  procedimento_codigo: string;
+  procedimento_descricao: string;
+  valor_unitario: number;
+  origem_preco: string;
+};
+
+export type PacienteGastosResumo = {
+  paciente_id: number;
+  paciente_nome: string;
+  paciente_cpf: string;
+  paciente_cns: string;
+  total_gasto: number;
+  qtd_exames: number;
+  itens: PacienteGastoItem[];
+};
+
+export type PacienteGastosGeraisItem = {
+  paciente_id: number;
+  paciente_nome: string;
+  paciente_cpf: string;
+  paciente_cns: string;
+  total_gasto: number;
+  qtd_exames: number;
+  ultimo_exame_data?: string | null;
+};
+
+export const labBiGastosRanking = (q = "", page = 1, limit = 50) =>
+  api.get<PacienteGastosGeraisItem[]>("/api/lab/bi/gastos-pacientes", { params: { q, page, limit } }).then((r) => r.data);
+
+export const labBiGastosPaciente = (pacienteId: number) =>
+  api.get<PacienteGastosResumo>(`/api/lab/bi/pacientes/${pacienteId}/gastos`).then((r) => r.data);
 
 export default api;
 

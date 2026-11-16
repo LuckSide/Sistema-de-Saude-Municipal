@@ -29,6 +29,7 @@ class SigtapProcedimento(SQLModel, table=True):
     subgrupo_nome: str = Field(default="", max_length=180)
     forma_organizacao_codigo: str = Field(default="", max_length=6, index=True)
     forma_organizacao_nome: str = Field(default="", max_length=180)
+    origem_manual: bool = Field(default=False, index=True)
 
 
 class SigtapGrupo(SQLModel, table=True):

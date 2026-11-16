@@ -412,6 +412,7 @@ export default function FilaPsf() {
           unidade_psf: form.unidade_psf.trim(),
           medico: form.medico.trim(),
           data_solicitacao: form.data_solicitacao,
+          data_pedido: form.data_solicitacao,
           justificativa: form.justificativa.trim(),
           obs: form.obs.trim(),
           sigtap_ids,
@@ -423,6 +424,7 @@ export default function FilaPsf() {
           unidade_psf: form.unidade_psf.trim(),
           medico: form.medico.trim(),
           data_solicitacao: form.data_solicitacao,
+          data_pedido: form.data_solicitacao,
           justificativa: form.justificativa.trim(),
           obs: form.obs.trim(),
           sigtap_ids,
@@ -764,7 +766,7 @@ export default function FilaPsf() {
                       />
                     </td>
                     <td className="px-4 py-3 text-xs font-semibold text-sus-950 whitespace-nowrap">
-                      {fmtData(f.data_solicitacao)}
+                      {fmtData(f.data_pedido || f.data_solicitacao)}
                     </td>
                     <td className="px-4 py-3">
                       <p className="font-semibold text-sus-950">{f.paciente_nome}</p>

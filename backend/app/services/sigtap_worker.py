@@ -40,9 +40,12 @@ def _sigtap_sync_loop():
                         if cfg and getattr(cfg, "sigtap_sync_automatica", True):
                             intervalo_horas = max(1, int(getattr(cfg, "sigtap_sync_intervalo_horas", 24) or 24))
                             ultima_exec = getattr(cfg, "sigtap_sync_ultima_execucao", None)
+                            agora = datetime.utcnow()
+                            eh_primeiro_dia_mes = (agora.day == 1 and (ultima_exec is None or ultima_exec.date() != agora.date()))
                             deve_rodar = (
                                 ultima_exec is None
-                                or datetime.utcnow() >= ultima_exec + timedelta(hours=intervalo_horas)
+                                or agora >= ultima_exec + timedelta(hours=intervalo_horas)
+                                or eh_primeiro_dia_mes
                             )
                             if deve_rodar and not is_sigtap_sync_running():
                                 logger.info("Verificando atualizações da Tabela Unificada no portal DATASUS/SIGTAP...")

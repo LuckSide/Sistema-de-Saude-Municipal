@@ -14,6 +14,8 @@ from app.models.lab_exames import SigtapProcedimento
 from app.models.lab_fase6 import (
     FilaPsf,
     ItemSolic,
+    LabContrato,
+    LabFeriadoBloqueio,
     Laboratorio,
     LabLoteArtefato,
     LabLoteItem,
@@ -182,8 +184,12 @@ def calcular_custo_exames_fila(
     db: Session,
     sigtap_ids: list[int],
     cache_procs: dict[int, SigtapProcedimento],
+    laboratorio_id: int | None = None,
+    data_referencia: date | None = None,
 ) -> tuple[float, list[LabLotePreviaProcedimento]]:
-    """Calcula o custo monetário total baseado no valor ambulatorial SIGTAP (valor_sa)."""
+    """Calcula o custo monetário considerando contrato do laboratório (se houver) ou SIGTAP."""
+    from app.services.lab_contratos_service import resolver_preco_procedimento
+
     procs_out: list[LabLotePreviaProcedimento] = []
     custo_total = 0.0
 
@@ -193,11 +199,18 @@ def calcular_custo_exames_fila(
             if p.id is not None:
                 cache_procs[p.id] = p
 
+    dt_ref = data_referencia or date.today()
+
     for sid in sigtap_ids:
         proc = cache_procs.get(sid)
         if not proc:
             continue
-        v_un = float(proc.valor_sa or proc.valor_sp or 0.0)
+        if laboratorio_id:
+            v_un, _, _ = resolver_preco_procedimento(
+                db, laboratorio_id, sid, dt_ref, proc_padrao=proc
+            )
+        else:
+            v_un = float(proc.valor_sa or proc.valor_sp or 0.0)
         v_un = round(v_un, 2)
         procs_out.append(
             LabLotePreviaProcedimento(
@@ -243,13 +256,29 @@ def calcular_previa_lote(db: Session, dados: LabLotePreviaIn) -> LabLotePreviaOu
     if not datas_validas:
         raise HTTPException(400, "Informe ao menos uma data futura válida para agendamento.")
 
-    # Busca fila pendente em ordem de prioridade clínica e cronológica
+    # Verifica feriados e bloqueios cadastrados
+    feriados = db.exec(
+        select(LabFeriadoBloqueio).where(
+            LabFeriadoBloqueio.data.in_(datas_validas),
+            LabFeriadoBloqueio.bloquear_agendamento == True,  # noqa: E712
+            or_(
+                LabFeriadoBloqueio.laboratorio_id == None,  # noqa: E711
+                LabFeriadoBloqueio.laboratorio_id == dados.laboratorio_id,
+            ),
+        )
+    ).all()
+    if feriados:
+        dias_bloq = ", ".join(f"{f.data.strftime('%d/%m/%Y')} ({f.descricao or 'Bloqueio'})" for f in feriados)
+        motivos_bloqueio.append(f"As seguintes datas estão bloqueadas na agenda (feriado/recesso): {dias_bloq}.")
+        bloqueado = True
+
+    # Busca fila pendente em ordem de prioridade clínica e cronológica (data_pedido como base)
     stmt_fila = (
         select(FilaPsf)
         .where(FilaPsf.status == "na_fila")
         .order_by(
             text("CASE WHEN prioridade = 'urgente' THEN 1 WHEN prioridade = 'alta' THEN 2 ELSE 3 END"),
-            FilaPsf.data_solicitacao.asc(),
+            func.coalesce(FilaPsf.data_pedido, FilaPsf.data_solicitacao).asc(),
             FilaPsf.id.asc(),
         )
     )
@@ -269,7 +298,13 @@ def calcular_previa_lote(db: Session, dados: LabLotePreviaIn) -> LabLotePreviaOu
         sids = extrair_sigtap_ids_fila(f)
         if not sids:
             continue
-        custo_paciente, procs = calcular_custo_exames_fila(db, sids, cache_procs)
+        custo_paciente, procs = calcular_custo_exames_fila(
+            db,
+            sids,
+            cache_procs,
+            laboratorio_id=dados.laboratorio_id,
+            data_referencia=datas_validas[0] if datas_validas else None,
+        )
         if not procs:
             continue
 
@@ -615,7 +650,7 @@ def consolidar_lote_atomico(
                 .where(FilaPsf.status == "na_fila")
                 .order_by(
                     text("CASE WHEN prioridade = 'urgente' THEN 1 WHEN prioridade = 'alta' THEN 2 ELSE 3 END"),
-                    FilaPsf.data_solicitacao.asc(),
+                    func.coalesce(FilaPsf.data_pedido, FilaPsf.data_solicitacao).asc(),
                     FilaPsf.id.asc(),
                 )
                 .with_for_update()
@@ -642,7 +677,13 @@ def consolidar_lote_atomico(
             sids = extrair_sigtap_ids_fila(f)
             if not sids:
                 continue
-            custo_pac, procs = calcular_custo_exames_fila(db, sids, cache_procs)
+            custo_pac, procs = calcular_custo_exames_fila(
+                db,
+                sids,
+                cache_procs,
+                laboratorio_id=dados.laboratorio_id,
+                data_referencia=datas_alvo[0] if datas_alvo else None,
+            )
             if not procs:
                 continue
 
@@ -716,6 +757,16 @@ def consolidar_lote_atomico(
         pac_ids = {item["fila"].paciente_id for item in selecionados}
         pacs_map = {p.id: p for p in db.exec(select(Paciente).where(Paciente.id.in_(pac_ids))).all()}
 
+        # Identifica se o laboratório possui contrato ativo na data para snapshot auditável
+        contrato_ativo_id = db.exec(
+            select(LabContrato.id).where(
+                LabContrato.laboratorio_id == dados.laboratorio_id,
+                LabContrato.status == "ativo",
+                LabContrato.data_inicio <= datas_alvo[0],
+                LabContrato.data_fim >= datas_alvo[0],
+            )
+        ).first()
+
         for ordem, item in enumerate(selecionados, start=1):
             f: FilaPsf = item["fila"]
             dt_agenda: date = item["data_agendada"]
@@ -732,6 +783,7 @@ def consolidar_lote_atomico(
                 data_agendada=dt_agenda,
                 hora_agendada=dados.hora_padrao or "07:00",
                 laboratorio_id=dados.laboratorio_id,
+                contrato_id=contrato_ativo_id,
                 status="agendado",
                 agendado_por=usuario_nome or "Liberação em Lote",
                 origem_fila_id=f.id,
@@ -744,13 +796,16 @@ def consolidar_lote_atomico(
             db.add(mestre)
             db.flush()
 
-            # Cria ItemSolic para cada SIGTAP
+            # Cria ItemSolic para cada SIGTAP com snapshot imutável de preço
             for p_info in procs:
                 db.add(
                     ItemSolic(
                         solicitacao_id=mestre.id,
                         sigtap_id=p_info.sigtap_id,
+                        contrato_id=contrato_ativo_id,
                         quantidade=1,
+                        valor_unitario_aplicado=float(p_info.valor_unitario or 0.0),
+                        origem_preco="contrato_custom" if contrato_ativo_id else "sigtap_padrao",
                         status_auditoria="pendente_conferencia",
                     )
                 )

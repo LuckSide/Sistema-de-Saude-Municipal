@@ -9,6 +9,7 @@ from app.models.lab_exames import SigtapProcedimento
 from app.models.lab_fase6 import (
     FilaPsf,
     ItemSolic,
+    LabFeriadoBloqueio,
     Laboratorio,
     LabPedidoAjuste,
     SolicitacaoMestre,
@@ -29,12 +30,16 @@ from app.schemas.lab_fase6 import (
     FilaPsfUpdateIn,
     LaboratorioIn,
     LaboratorioOut,
+    LabFeriadoBloqueioIn,
+    LabFeriadoBloqueioOut,
     PedidoAjusteIn,
     PedidoAjusteOut,
     PedidoDuplicadoLabOut,
     RespostaAjusteIn,
     SolicMestreIn,
     SolicMestreOut,
+    SolicMestreStatusIn,
+    SolicMestreTransferirIn,
     VagaIn,
     VagaLoteMesIn,
     VagaLoteMesOut,
@@ -84,14 +89,58 @@ def criar_lab(
     db: Session = Depends(get_db),
     _=Depends(need_any_perm("lab_vagas", "cfg_laboratorios", acoes=("criar",))),
 ):
+    from app.core.security import hash_password
+    from app.models.user import User
+    from app.services.users import gerar_temporaria
+
     nome = data.nome.strip()
     if db.exec(select(Laboratorio).where(Laboratorio.nome == nome)).first():
         raise HTTPException(400, "Laboratório já existe")
-    obj = Laboratorio(nome=nome, ativo=data.ativo)
+    obj = Laboratorio(
+        nome=nome,
+        ativo=data.ativo,
+        responsavel_tecnico=(data.responsavel_tecnico or "").strip(),
+        horario_funcionamento=(data.horario_funcionamento or "").strip(),
+    )
     db.add(obj)
     db.commit()
     db.refresh(obj)
-    return obj
+
+    usuario_criado = None
+    senha_temp = None
+
+    if data.criar_usuario_acesso:
+        import re
+        import unicodedata
+        base_login = unicodedata.normalize("NFKD", nome).encode("ascii", "ignore").decode("ascii").lower()
+        base_login = re.sub(r"[^a-z0-9]", "", base_login)[:15] or "lab"
+        login_usuario = f"lab_{base_login}"
+        sufixo = 1
+        while db.exec(select(User).where(User.username == login_usuario)).first():
+            login_usuario = f"lab_{base_login}{sufixo}"
+            sufixo += 1
+        senha_temp = gerar_temporaria()
+        novo_user = User(
+            username=login_usuario,
+            password_hash=hash_password(senha_temp),
+            nome=f"Recepção - {nome}",
+            area="painel",
+            telas="lab_recepcao,lab_portal,lab",
+            acoes="{}",
+            laboratorio_id=obj.id,
+            permite_retroativo=False,
+            is_superuser=False,
+            is_active=True,
+            must_change_password=True,
+        )
+        db.add(novo_user)
+        db.commit()
+        usuario_criado = login_usuario
+
+    out = LaboratorioOut.model_validate(obj)
+    out.usuario_criado = usuario_criado
+    out.senha_temporaria = senha_temp
+    return out
 
 
 @router.put("/exames/laboratorios/{lid}", response_model=LaboratorioOut)
@@ -110,6 +159,8 @@ def atualizar_lab(
         raise HTTPException(400, "Laboratório já existe")
     lab.nome = nome
     lab.ativo = data.ativo
+    lab.responsavel_tecnico = (data.responsavel_tecnico or "").strip()
+    lab.horario_funcionamento = (data.horario_funcionamento or "").strip()
     db.add(lab)
     db.commit()
     db.refresh(lab)
@@ -237,6 +288,20 @@ def criar_vaga(
         raise HTTPException(404, "Laboratório não encontrado")
     if not lab.ativo:
         raise HTTPException(400, "Laboratório inativo — reative em Configurações para abrir vagas")
+
+    feriado = db.exec(
+        select(LabFeriadoBloqueio).where(
+            LabFeriadoBloqueio.data == data.data,
+            LabFeriadoBloqueio.bloquear_agendamento == True,  # noqa: E712
+            or_(
+                LabFeriadoBloqueio.laboratorio_id == None,  # noqa: E711
+                LabFeriadoBloqueio.laboratorio_id == data.laboratorio_id,
+            ),
+        )
+    ).first()
+    if feriado:
+        raise HTTPException(400, f"A data {data.data.strftime('%d/%m/%Y')} está bloqueada na agenda: {feriado.descricao}")
+
     dup = db.exec(
         select(VagaLab).where(
             VagaLab.laboratorio_id == data.laboratorio_id, VagaLab.data == data.data
@@ -270,7 +335,7 @@ def liberar_mes(
         raise HTTPException(400, "Laboratório inativo — reative em Configurações para abrir vagas")
     _, ndays = monthrange(data.ano, data.mes)
     hoje = date.today()
-    criadas = atualizadas = ignoradas = mantidas = ignoradas_passado = 0
+    criadas = atualizadas = ignoradas = mantidas = ignoradas_passado = ignoradas_feriados = 0
     dias_alvo = 0
     for dia in range(1, ndays + 1):
         d = date(data.ano, data.mes, dia)
@@ -280,6 +345,20 @@ def liberar_mes(
         if data.ignorar_fins_semana and d.weekday() >= 5:
             ignoradas += 1
             continue
+        if data.bloquear_feriados:
+            feriado = db.exec(
+                select(LabFeriadoBloqueio).where(
+                    LabFeriadoBloqueio.data == d,
+                    LabFeriadoBloqueio.bloquear_agendamento == True,  # noqa: E712
+                    or_(
+                        LabFeriadoBloqueio.laboratorio_id == None,  # noqa: E711
+                        LabFeriadoBloqueio.laboratorio_id == data.laboratorio_id,
+                    ),
+                )
+            ).first()
+            if feriado:
+                ignoradas_feriados += 1
+                continue
         dias_alvo += 1
         ex = db.exec(
             select(VagaLab).where(
@@ -290,6 +369,7 @@ def liberar_mes(
             if data.vagas_diarias < ex.vagas_ocupadas:
                 mantidas += 1
                 continue
+            ex.tipo_servico = data.tipo_servico
             if ex.vagas_totais != data.vagas_diarias:
                 ex.vagas_totais = data.vagas_diarias
                 db.add(ex)
@@ -301,6 +381,7 @@ def liberar_mes(
                 data=d,
                 vagas_totais=data.vagas_diarias,
                 vagas_ocupadas=0,
+                tipo_servico=data.tipo_servico,
             )
         )
         criadas += 1
@@ -313,6 +394,7 @@ def liberar_mes(
         criadas=criadas,
         atualizadas=atualizadas,
         ignoradas_fim_semana=ignoradas,
+        ignoradas_feriados=ignoradas_feriados,
         mantidas_conflito=mantidas,
         ignoradas_passado=ignoradas_passado,
     )
@@ -346,6 +428,7 @@ def atualizar_vaga(
     obj.laboratorio_id = data.laboratorio_id
     obj.data = data.data
     obj.vagas_totais = data.vagas_totais
+    obj.tipo_servico = data.tipo_servico
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -366,6 +449,72 @@ def excluir_vaga(vid: int, db: Session = Depends(get_db), _=Depends(need_perm("l
         raise HTTPException(400, "Vaga com agendamentos não pode ser excluída")
     db.delete(obj)
     db.commit()
+
+
+# ---------- Feriados e Bloqueios de Agenda ----------
+@router.get("/exames/feriados", response_model=list[LabFeriadoBloqueioOut])
+def listar_feriados(
+    laboratorio_id: int | None = None,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_vagas", "lab_agenda", "lab")),
+):
+    stmt = select(LabFeriadoBloqueio).order_by(LabFeriadoBloqueio.data.asc())
+    if laboratorio_id:
+        stmt = stmt.where(or_(LabFeriadoBloqueio.laboratorio_id == None, LabFeriadoBloqueio.laboratorio_id == laboratorio_id))  # noqa: E711
+    linhas = db.exec(stmt).all()
+    out = []
+    for f in linhas:
+        lab_nome = ""
+        if f.laboratorio_id:
+            lab = db.get(Laboratorio, f.laboratorio_id)
+            if lab:
+                lab_nome = lab.nome
+        item = LabFeriadoBloqueioOut.model_validate(f)
+        item.laboratorio_nome = lab_nome
+        out.append(item)
+    return out
+
+
+@router.post("/exames/feriados", response_model=LabFeriadoBloqueioOut, status_code=201)
+def cadastrar_feriado(
+    data: LabFeriadoBloqueioIn,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_vagas", "cfg_laboratorios", acoes=("criar",))),
+):
+    dup = db.exec(
+        select(LabFeriadoBloqueio).where(
+            LabFeriadoBloqueio.data == data.data,
+            LabFeriadoBloqueio.laboratorio_id == data.laboratorio_id,
+        )
+    ).first()
+    if dup:
+        raise HTTPException(400, "Já existe um bloqueio cadastrado para esta data.")
+    obj = LabFeriadoBloqueio(**data.model_dump())
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    lab_nome = ""
+    if obj.laboratorio_id:
+        lab = db.get(Laboratorio, obj.laboratorio_id)
+        if lab:
+            lab_nome = lab.nome
+    item = LabFeriadoBloqueioOut.model_validate(obj)
+    item.laboratorio_nome = lab_nome
+    return item
+
+
+@router.delete("/exames/feriados/{fid}", status_code=204)
+def remover_feriado(
+    fid: int,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_vagas", "cfg_laboratorios", acoes=("excluir",))),
+):
+    obj = db.get(LabFeriadoBloqueio, fid)
+    if not obj:
+        raise HTTPException(404, "Bloqueio/feriado não encontrado.")
+    db.delete(obj)
+    db.commit()
+    return None
 
 
 def _formatar_fila_out(o: FilaPsf, pac: Paciente | None) -> FilaPsfOut:
@@ -393,9 +542,11 @@ def _formatar_fila_out(o: FilaPsf, pac: Paciente | None) -> FilaPsfOut:
         unidade_psf=o.unidade_psf,
         medico_solicitante=o.medico_solicitante,
         data_solicitacao=o.data_solicitacao,
+        data_pedido=o.data_pedido or o.data_solicitacao,
         justificativa=o.justificativa,
         observacoes=o.observacoes,
         status=o.status,
+        prioridade=o.prioridade,
         sigtap_ids=sids,
         exames_nomes=nomes,
         paciente_nome=pac.nome if pac else "?",
@@ -482,7 +633,7 @@ def listar_fila(
     if filtros:
         base = base.where(*filtros)
 
-    base = base.order_by(FilaPsf.data_solicitacao.desc(), FilaPsf.id.desc())
+    base = base.order_by(func.coalesce(FilaPsf.data_pedido, FilaPsf.data_solicitacao).desc(), FilaPsf.id.desc())
     total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
     meta = paginar(total, page, limit)
     out = []
@@ -514,11 +665,15 @@ def criar_fila(
             obs_final = obs_extra
         obs_final = obs_final[:500]
 
+    d_solic = data.data_solicitacao or date.today()
+    d_ped = data.data_pedido or d_solic
     obj = FilaPsf(
         paciente_id=data.paciente_id,
         unidade_psf=data.unidade_psf,
         medico_solicitante=data.medico_solicitante,
-        data_solicitacao=data.data_solicitacao,
+        data_solicitacao=d_solic,
+        data_pedido=d_ped,
+        prioridade=data.prioridade,
         justificativa=data.justificativa,
         observacoes=obs_final,
         status="na_fila",
@@ -577,6 +732,10 @@ def atualizar_fila(
         obj.medico_solicitante = data.medico_solicitante.strip()
     if data.data_solicitacao is not None:
         obj.data_solicitacao = data.data_solicitacao
+    if data.data_pedido is not None:
+        obj.data_pedido = data.data_pedido
+    if data.prioridade is not None:
+        obj.prioridade = data.prioridade
     if data.justificativa is not None:
         obj.justificativa = data.justificativa.strip()
     if data.observacoes is not None:
@@ -961,6 +1120,124 @@ def cancelar_solicitacao(
         )
         db.commit()
     return None
+
+
+@router.patch("/exames/solicitacoes/{mid}/transferir", response_model=SolicMestreOut)
+def transferir_agendamento(
+    mid: int,
+    data: SolicMestreTransferirIn,
+    db: Session = Depends(get_db),
+    ator=Depends(need_any_perm("lab_agenda", "lab_fila", "lab_orcamento", acoes=("editar",))),
+):
+    """Transfere uma solicitação já agendada para outra data e/ou laboratório com remanejamento de vaga."""
+    mestre = db.get(SolicitacaoMestre, mid)
+    if not mestre:
+        raise HTTPException(404, "Agendamento não encontrado.")
+    if mestre.status in ("cancelado", "coletado", "realizado"):
+        raise HTTPException(400, f"Não é possível transferir um agendamento com status '{mestre.status}'.")
+
+    hoje = date.today()
+    if data.nova_data < hoje:
+        raise HTTPException(400, "A nova data de agendamento não pode ser retroativa.")
+
+    novo_lab_id = data.novo_laboratorio_id or mestre.laboratorio_id
+    lab = db.get(Laboratorio, novo_lab_id)
+    if not lab or not lab.ativo:
+        raise HTTPException(400, "Laboratório inválido ou inativo.")
+
+    # Verifica feriado na nova data
+    feriado = db.exec(
+        select(LabFeriadoBloqueio).where(
+            LabFeriadoBloqueio.data == data.nova_data,
+            LabFeriadoBloqueio.bloquear_agendamento == True,  # noqa: E712
+            or_(
+                LabFeriadoBloqueio.laboratorio_id == None,  # noqa: E711
+                LabFeriadoBloqueio.laboratorio_id == novo_lab_id,
+            ),
+        )
+    ).first()
+    if feriado:
+        raise HTTPException(400, f"A data {data.nova_data.strftime('%d/%m/%Y')} está bloqueada na agenda: {feriado.descricao}")
+
+    # Libera vaga antiga
+    from sqlalchemy import text
+    db.exec(
+        text(
+            "UPDATE lab_vagas SET vagas_ocupadas = vagas_ocupadas - 1 "
+            "WHERE laboratorio_id = :lid AND data = :dt AND vagas_ocupadas > 0"
+        ).bindparams(lid=mestre.laboratorio_id, dt=mestre.data_agendada)
+    )
+
+    # Ocupa vaga nova
+    vaga_nova = db.exec(
+        select(VagaLab).where(VagaLab.laboratorio_id == novo_lab_id, VagaLab.data == data.nova_data)
+    ).first()
+    if vaga_nova:
+        vaga_nova.vagas_ocupadas += 1
+        db.add(vaga_nova)
+
+    # Atualiza dados do mestre
+    mestre.data_agendada = data.nova_data
+    mestre.laboratorio_id = novo_lab_id
+    mestre.status = "agendado"
+    if data.motivo:
+        usuario_nome = getattr(ator, "nome", "") or getattr(ator, "username", "") or "Operador"
+        obs_extra = f"[Transferido para {data.nova_data.strftime('%d/%m/%Y')} por {usuario_nome}: {data.motivo.strip()}]"
+        mestre.observacao_laboratorio = f"{mestre.observacao_laboratorio} | {obs_extra}" if mestre.observacao_laboratorio else obs_extra
+
+    db.add(mestre)
+    db.commit()
+    db.refresh(mestre)
+    return enriquecer_mestre(db, mestre)
+
+
+@router.patch("/exames/solicitacoes/{mid}/status", response_model=SolicMestreOut)
+def alterar_status_agendamento(
+    mid: int,
+    data: SolicMestreStatusIn,
+    db: Session = Depends(get_db),
+    ator=Depends(need_any_perm("lab_agenda", "lab_fila", "lab_orcamento", acoes=("editar",))),
+):
+    """Permite desativar, reativar ou cancelar agendamento já realizado com estorno seguro de vagas."""
+    mestre = db.get(SolicitacaoMestre, mid)
+    if not mestre:
+        raise HTTPException(404, "Agendamento não encontrado.")
+
+    status_antigo = mestre.status
+    if status_antigo == data.status:
+        return enriquecer_mestre(db, mestre)
+
+    from sqlalchemy import text
+    if data.status in ("cancelado", "desativado") and status_antigo == "agendado":
+        db.exec(
+            text(
+                "UPDATE lab_vagas SET vagas_ocupadas = vagas_ocupadas - 1 "
+                "WHERE laboratorio_id = :lid AND data = :dt AND vagas_ocupadas > 0"
+            ).bindparams(lid=mestre.laboratorio_id, dt=mestre.data_agendada)
+        )
+        if mestre.origem_fila_id and data.status == "cancelado":
+            fila = db.get(FilaPsf, mestre.origem_fila_id)
+            if fila:
+                fila.status = "cancelado"
+                db.add(fila)
+    elif data.status == "agendado" and status_antigo in ("cancelado", "desativado"):
+        vaga = db.exec(
+            select(VagaLab).where(VagaLab.laboratorio_id == mestre.laboratorio_id, VagaLab.data == mestre.data_agendada)
+        ).first()
+        if vaga:
+            vaga.vagas_ocupadas += 1
+            db.add(vaga)
+
+    mestre.status = data.status
+    if data.motivo:
+        usuario_nome = getattr(ator, "nome", "") or getattr(ator, "username", "") or "Operador"
+        obs_extra = f"[Status alterado para {data.status} por {usuario_nome}: {data.motivo.strip()}]"
+        mestre.observacao_laboratorio = f"{mestre.observacao_laboratorio} | {obs_extra}" if mestre.observacao_laboratorio else obs_extra
+
+    db.add(mestre)
+    db.commit()
+    db.refresh(mestre)
+    return enriquecer_mestre(db, mestre)
 
 
 @router.get("/exames/solicitacoes/{mid}/comprovante", response_model=ComprovanteExameOut)

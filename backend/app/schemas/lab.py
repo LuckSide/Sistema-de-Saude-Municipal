@@ -9,6 +9,10 @@ class SigtapIn(BaseModel):
     descricao: str = Field(min_length=2, max_length=255)
     complexidade: str = Field(default="MC", pattern="^(NA|AB|MC|AC)$")
     instrumento: str = Field(default="BPA-C", pattern="^(BPA-C|BPA-I|BPA-F|AIH|APAC|RAAS)$")
+    valor_sa: float = Field(default=0.0, ge=0)
+    valor_sp: float = Field(default=0.0, ge=0)
+    valor_sh: float = Field(default=0.0, ge=0)
+    sexo: str = Field(default="")
 
 
 class SigtapOut(SigtapIn):
@@ -28,6 +32,7 @@ class SigtapOut(SigtapIn):
     subgrupo_nome: str = ""
     forma_organizacao_codigo: str = ""
     forma_organizacao_nome: str = ""
+    origem_manual: bool = False
 
 
 class SigtapVersaoOut(BaseModel):

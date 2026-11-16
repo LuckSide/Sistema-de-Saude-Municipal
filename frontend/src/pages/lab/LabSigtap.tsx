@@ -7,9 +7,11 @@ import {
   Globe,
   History,
   Layers,
+  Plus,
   RefreshCw,
   Sparkles,
   Upload,
+  X,
 } from "lucide-react";
 import {
   labSigtap,
@@ -20,6 +22,7 @@ import {
   sigtapAutoSyncConfig,
   sigtapAutoSyncExecutar,
   sigtapAutoSyncStatus,
+  sigtapCriarManual,
   sigtapImportar,
   sigtapVersoes,
   type SigtapArvore,
@@ -68,6 +71,55 @@ export default function LabSigtap() {
   const [salvandoAutoSync, setSalvandoAutoSync] = useState(false);
   const [executandoAutoSync, setExecutandoAutoSync] = useState(false);
   const [ok, setOk] = useState("");
+
+  // Cadastro Manual de Procedimento SIGTAP
+  const [modalManual, setModalManual] = useState(false);
+  const [manualCodigo, setManualCodigo] = useState("");
+  const [manualDescricao, setManualDescricao] = useState("");
+  const [manualComplexidade, setManualComplexidade] = useState("MC");
+  const [manualInstrumento, setManualInstrumento] = useState("BPA-C");
+  const [manualValorSa, setManualValorSa] = useState("0");
+  const [manualValorSp, setManualValorSp] = useState("0");
+  const [manualValorSh, setManualValorSh] = useState("0");
+  const [manualSexo, setManualSexo] = useState("");
+  const [salvandoManual, setSalvandoManual] = useState(false);
+
+  async function salvarProcedimentoManual() {
+    if (!/^\d{10}$/.test(manualCodigo.trim())) {
+      setErro("O código SIGTAP deve conter exatamente 10 dígitos numéricos.");
+      return;
+    }
+    if (!manualDescricao.trim()) {
+      setErro("A descrição do procedimento é obrigatória.");
+      return;
+    }
+    setSalvandoManual(true);
+    setErro("");
+    try {
+      await sigtapCriarManual({
+        codigo: manualCodigo.trim(),
+        descricao: manualDescricao.trim(),
+        complexidade: manualComplexidade,
+        instrumento: manualInstrumento,
+        valor_sa: Number(manualValorSa) || 0,
+        valor_sp: Number(manualValorSp) || 0,
+        valor_sh: Number(manualValorSh) || 0,
+        sexo: manualSexo || undefined,
+      });
+      setOk(`Procedimento ${manualCodigo.trim()} cadastrado com sucesso.`);
+      setModalManual(false);
+      setManualCodigo("");
+      setManualDescricao("");
+      setManualValorSa("0");
+      setManualValorSp("0");
+      setManualValorSh("0");
+      buscar(1);
+    } catch (e: any) {
+      setErro(msgErro(e, "Erro ao cadastrar procedimento manual."));
+    } finally {
+      setSalvandoManual(false);
+    }
+  }
 
   function buscar(p = 1) {
     labSigtap(
@@ -245,7 +297,13 @@ export default function LabSigtap() {
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <h2 className="font-display text-lg font-bold text-sus-950">Tabela SIGTAP Completa</h2>
-        <span className="ml-auto">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <Button
+            onClick={() => setModalManual(true)}
+            className="!bg-teal !text-sus-950 font-bold flex items-center gap-1.5"
+          >
+            <Plus className="h-4 w-4" /> Cadastrar Procedimento Manual
+          </Button>
           <ExportarExcel
             url="/api/lab/sigtap/exportar"
             arquivo="sigtap"
@@ -258,7 +316,7 @@ export default function LabSigtap() {
               cbo: cboCodigo || undefined,
             }}
           />
-        </span>
+        </div>
       </div>
 
       <Card className="mb-4 p-4 space-y-3">
@@ -369,7 +427,14 @@ export default function LabSigtap() {
           <tbody>
             {lista.map((s) => (
               <tr key={s.id ?? s.codigo} className="border-b border-sus-900/5 last:border-0">
-                <td className="px-4 py-3 font-mono font-semibold">{s.codigo}</td>
+                <td className="px-4 py-3 font-mono font-semibold">
+                  <span>{s.codigo}</span>
+                  {s.origem_manual && (
+                    <span className="ml-2 inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">
+                      MANUAL
+                    </span>
+                  )}
+                </td>
                 <td className="px-4 py-3">
                   <p className="font-medium text-sus-950">{s.descricao}</p>
                   {(s.grupo_nome || s.subgrupo_nome) && (
@@ -619,6 +684,139 @@ export default function LabSigtap() {
         </table>
         </div>
       </Card>
+
+      {/* Modal de Cadastro Manual de Procedimento */}
+      {modalManual && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4"
+          onClick={() => setModalManual(false)}
+        >
+          <div
+            className="rise max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between border-b border-sus-900/10 pb-3">
+              <div>
+                <p className="font-display text-base font-bold text-sus-950 flex items-center gap-2">
+                  <Plus className="h-5 w-5 text-teal" /> Cadastrar Procedimento SIGTAP Manual
+                </p>
+                <p className="text-xs text-ink/60 mt-0.5">
+                  Adiciona um procedimento avulso compatível com a estrutura de 10 dígitos do SIGTAP / SUS.
+                </p>
+              </div>
+              <button
+                onClick={() => setModalManual(false)}
+                className="rounded-lg p-1.5 text-ink/50 hover:bg-sand"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <Label>Código SIGTAP (10 dígitos numéricos) *</Label>
+                <Input
+                  placeholder="Ex: 0202010183"
+                  maxLength={10}
+                  value={manualCodigo}
+                  onChange={(e) => setManualCodigo(e.target.value.replace(/\D/g, ""))}
+                />
+                <p className="mt-1 text-[11px] text-ink/50">
+                  Os 2 primeiros dígitos definem o Grupo (ex: 02 = Procedimentos com Finalidade Diagnóstica).
+                </p>
+              </div>
+
+              <div>
+                <Label>Descrição Completa do Procedimento *</Label>
+                <Input
+                  placeholder="Ex: DETERMINACAO DE CURVA GLICEMICA (4 DOSAGENS)"
+                  value={manualDescricao}
+                  onChange={(e) => setManualDescricao(e.target.value)}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Complexidade</Label>
+                  <Select value={manualComplexidade} onChange={(e) => setManualComplexidade(e.target.value)}>
+                    <option value="MC">Média Complexidade (MC)</option>
+                    <option value="AC">Alta Complexidade (AC)</option>
+                    <option value="AB">Atenção Básica (AB)</option>
+                    <option value="NA">Não se Aplica (NA)</option>
+                  </Select>
+                </div>
+                <div>
+                  <Label>Instrumento de Registro</Label>
+                  <Select value={manualInstrumento} onChange={(e) => setManualInstrumento(e.target.value)}>
+                    <option value="BPA-C">BPA Consolidado (BPA-C)</option>
+                    <option value="BPA-I">BPA Individualizado (BPA-I)</option>
+                    <option value="APAC">APAC</option>
+                    <option value="AIH">AIH</option>
+                    <option value="RAAS">RAAS</option>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <Label>Valor SA (R$)</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={manualValorSa}
+                    onChange={(e) => setManualValorSa(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label>Valor SP (R$)</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={manualValorSp}
+                    onChange={(e) => setManualValorSp(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label>Valor SH (R$)</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={manualValorSh}
+                    onChange={(e) => setManualValorSh(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <Label>Restrição de Sexo</Label>
+                <Select value={manualSexo} onChange={(e) => setManualSexo(e.target.value)}>
+                  <option value="">Ambos (Indiferente)</option>
+                  <option value="M">Masculino</option>
+                  <option value="F">Feminino</option>
+                </Select>
+              </div>
+
+              {erro && <p className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">{erro}</p>}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <Button variant="outline" onClick={() => setModalManual(false)}>
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={salvarProcedimentoManual}
+                  disabled={salvandoManual || !manualCodigo || !manualDescricao.trim()}
+                  className="!bg-teal !text-sus-950 font-bold"
+                >
+                  {salvandoManual ? "Salvando…" : "Salvar Procedimento"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -25,12 +25,26 @@ from app.schemas.lab import (
     SolicitacaoOut,
 )
 from app.schemas.lab_fase6 import (
+    LabAprovarFaturamentoIn,
+    LabContratoIn,
+    LabContratoOut,
+    LabContratoPrecoCustomizadoIn,
+    LabContratoPrecoCustomizadoOut,
+    LabContratoUpdateIn,
+    LabContratosPainelOut,
+    LabFaturamentoRelatorioPrestadorOut,
+    LabFPOCompetenciaIn,
+    LabFPOCompetenciaOut,
+    LabFPOItemIn,
+    LabFPOItemOut,
     LabLoteConsolidarIn,
     LabLoteOut,
     LabLotePreviaIn,
     LabLotePreviaOut,
     LabOrcamentoIn,
     LabOrcamentoOut,
+    PacienteGastosGeraisItemOut,
+    PacienteGastosResumoOut,
 )
 from app.services.lab import (
     competencia_of,
@@ -218,9 +232,15 @@ def criar_sigtap(
     codigo = data.codigo.strip()
     if db.exec(select(SigtapProcedimento).where(SigtapProcedimento.codigo == codigo)).first():
         raise HTTPException(400, "Código SIGTAP já cadastrado")
-    obj = SigtapProcedimento(
-        **{**data.model_dump(), "codigo": codigo, "descricao": data.descricao.strip().upper()}
-    )
+    dump = data.model_dump()
+    dump["codigo"] = codigo
+    dump["descricao"] = data.descricao.strip().upper()
+    dump["origem_manual"] = True
+    dump["grupo_codigo"] = codigo[:2]
+    dump["subgrupo_codigo"] = codigo[:4]
+    dump["forma_organizacao_codigo"] = codigo[:6]
+    dump["competencia"] = date.today().strftime("%Y-%m")
+    obj = SigtapProcedimento(**dump)
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -877,5 +897,244 @@ def api_baixar_artefato_lote(
             "Cache-Control": "no-store",
         },
     )
+
+
+# ============================================================================
+# SUBAGENTE 3: CONTRATOS, PREÇOS CUSTOMIZADOS, FATURAMENTO & FPO/SIA
+# ============================================================================
+
+@router.get("/contratos", response_model=LabContratosPainelOut)
+def api_listar_contratos_painel(
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "lab_marcacao", "lab", "usuarios")),
+):
+    """Painel gerencial de contratos por prestador com métricas de consumo mensal e limites globais."""
+    from app.services.lab_contratos_service import listar_contratos_painel
+
+    return listar_contratos_painel(db)
+
+
+@router.post("/contratos", response_model=LabContratoOut, status_code=201)
+def api_criar_contrato(
+    dados: LabContratoIn,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "usuarios", acoes=("criar",))),
+):
+    """Cadastra um novo contrato com metas financeiras e cotas mensais."""
+    from app.services.lab_contratos_service import criar_contrato
+
+    return criar_contrato(db, dados)
+
+
+@router.get("/contratos/{contrato_id}", response_model=LabContratoOut)
+def api_obter_contrato(
+    contrato_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "lab_marcacao", "lab", "usuarios")),
+):
+    """Detalhes de um contrato específico com métricas calculadas."""
+    from app.models.lab_fase6 import LabContrato
+    from app.services.lab_contratos_service import calcular_metricas_contrato
+
+    contrato = db.get(LabContrato, contrato_id)
+    if not contrato:
+        raise HTTPException(404, "Contrato não encontrado.")
+    return calcular_metricas_contrato(db, contrato)
+
+
+@router.put("/contratos/{contrato_id}", response_model=LabContratoOut)
+def api_atualizar_contrato(
+    contrato_id: int,
+    dados: LabContratoUpdateIn,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "usuarios", acoes=("editar",))),
+):
+    """Atualiza termos, valores e status de um contrato."""
+    from app.services.lab_contratos_service import atualizar_contrato
+
+    return atualizar_contrato(db, contrato_id, dados)
+
+
+@router.get("/contratos/{contrato_id}/precos", response_model=list[LabContratoPrecoCustomizadoOut])
+def api_listar_precos_contrato(
+    contrato_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "lab_marcacao", "lab", "usuarios")),
+):
+    """Lista os preços de procedimentos customizados que sobrepõem a tabela SIGTAP padrão."""
+    from app.services.lab_contratos_service import listar_precos_contrato
+
+    return listar_precos_contrato(db, contrato_id)
+
+
+@router.post("/contratos/{contrato_id}/precos", response_model=LabContratoPrecoCustomizadoOut, status_code=201)
+def api_definir_preco_contrato(
+    contrato_id: int,
+    dados: LabContratoPrecoCustomizadoIn,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "usuarios", acoes=("criar", "editar"))),
+):
+    """Cadastra ou atualiza o valor negociado de um procedimento para o contrato."""
+    from app.services.lab_contratos_service import definir_preco_customizado
+
+    if dados.contrato_id != contrato_id:
+        dados.contrato_id = contrato_id
+    return definir_preco_customizado(db, dados)
+
+
+@router.delete("/contratos/{contrato_id}/precos/{preco_id}", status_code=204)
+def api_remover_preco_contrato(
+    contrato_id: int,
+    preco_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "usuarios", acoes=("excluir",))),
+):
+    """Remove a personalização de preço de um procedimento (retorna ao SIGTAP oficial)."""
+    from app.services.lab_contratos_service import remover_preco_customizado
+
+    remover_preco_customizado(db, preco_id)
+    return None
+
+
+@router.get("/faturamento/relatorio-prestador", response_model=LabFaturamentoRelatorioPrestadorOut)
+def api_relatorio_faturamento_prestador(
+    laboratorio_id: int,
+    competencia: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Emite o espelho de faturamento e produção mensal do prestador.
+    
+    Perfil laboratorial restrito só acessa seu próprio laboratório e somente se liberado pela Secretaria.
+    """
+    from app.services.lab_faturamento_service import obter_relatorio_prestador
+
+    eh_perfil_lab = False
+    if not bool(getattr(user, "is_superuser", False)):
+        lab_vinculado = getattr(user, "laboratorio_id", None)
+        if lab_vinculado:
+            eh_perfil_lab = True
+            laboratorio_id = lab_vinculado
+
+    return obter_relatorio_prestador(
+        db,
+        laboratorio_id=laboratorio_id,
+        competencia=competencia,
+        eh_perfil_laboratorio=eh_perfil_lab,
+    )
+
+
+@router.post("/faturamento/aprovar", response_model=dict)
+def api_aprovar_faturamento_secretaria(
+    dados: LabAprovarFaturamentoIn,
+    db: Session = Depends(get_db),
+    ator=Depends(need_any_perm("lab_orcamento", "usuarios", acoes=("editar", "criar"))),
+):
+    """Aprovação formal e liberação da produção para visualização do prestador."""
+    from app.services.lab_faturamento_service import aprovar_faturamento_secretaria
+
+    usuario_nome = getattr(ator, "nome", "") or getattr(ator, "username", "") or "Secretaria de Saúde"
+    return aprovar_faturamento_secretaria(db, dados, usuario_nome=usuario_nome)
+
+
+@router.get("/fpo/competencias", response_model=list[LabFPOCompetenciaOut])
+def api_listar_fpo_competencias(
+    competencia: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+    laboratorio_id: int | None = None,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "lab_marcacao", "lab", "usuarios")),
+):
+    """Lista as Fichas de Programação Orçamentária (FPO) cadastradas."""
+    from app.models.lab_fase6 import LabFPOCompetencia
+    from app.services.lab_faturamento_service import formatar_fpo_out
+
+    stmt = select(LabFPOCompetencia)
+    if competencia:
+        stmt = stmt.where(LabFPOCompetencia.competencia == competencia)
+    if laboratorio_id:
+        stmt = stmt.where(LabFPOCompetencia.laboratorio_id == laboratorio_id)
+    stmt = stmt.order_by(LabFPOCompetencia.competencia.desc(), LabFPOCompetencia.id.desc())
+
+    fpos = list(db.exec(stmt).all())
+    return [formatar_fpo_out(db, f) for f in fpos]
+
+
+@router.post("/fpo/competencias", response_model=LabFPOCompetenciaOut, status_code=201)
+def api_criar_fpo_competencia(
+    dados: LabFPOCompetenciaIn,
+    db: Session = Depends(get_db),
+    ator=Depends(need_any_perm("lab_orcamento", "usuarios", acoes=("criar",))),
+):
+    """Cria ou atualiza a parametrização inicial da FPO para o prestador."""
+    from app.services.lab_faturamento_service import criar_ou_obter_fpo, formatar_fpo_out
+
+    usuario_nome = getattr(ator, "nome", "") or getattr(ator, "username", "") or "Gestor SUS"
+    fpo = criar_ou_obter_fpo(db, dados, criado_por=usuario_nome)
+    return formatar_fpo_out(db, fpo)
+
+
+@router.post("/fpo/itens", response_model=LabFPOItemOut, status_code=201)
+def api_adicionar_item_fpo(
+    dados: LabFPOItemIn,
+    fpo_id: int = Query(...),
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "usuarios", acoes=("criar", "editar"))),
+):
+    """Adiciona uma cota orçada de procedimento à FPO."""
+    from app.services.lab_faturamento_service import adicionar_item_fpo
+
+    return adicionar_item_fpo(db, fpo_id, dados)
+
+
+@router.get("/fpo/exportar-sia/{fpo_id}")
+def api_exportar_fpo_sia(
+    fpo_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "lab", "usuarios")),
+):
+    """Gera e exporta o arquivo de programação físico-orçamentária no layout do SIA/SUS."""
+    from app.services.lab_faturamento_service import exportar_fpo_sia
+
+    conteudo, nome_arquivo = exportar_fpo_sia(db, fpo_id)
+    return Response(
+        content=conteudo,
+        media_type="text/plain; charset=iso-8859-1",
+        headers={
+            "Content-Disposition": f'attachment; filename="{nome_arquivo}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+# ============================================================================
+# SUBAGENTE 4: BI E AUDITORIA DE GASTOS POR PACIENTE
+# ============================================================================
+
+@router.get("/bi/gastos-pacientes", response_model=list[PacienteGastosGeraisItemOut])
+def api_ranking_gastos_pacientes(
+    q: str = "",
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "lab_marcacao", "lab", "usuarios")),
+):
+    """Retorna o ranking de recursos municipais investidos em exames por cidadão."""
+    from app.services.lab_bi_service import listar_ranking_gastos_pacientes
+
+    offset = (page - 1) * limit
+    return listar_ranking_gastos_pacientes(db, q=q, limit=limit, offset=offset)
+
+
+@router.get("/bi/pacientes/{paciente_id}/gastos", response_model=PacienteGastosResumoOut)
+def api_obter_gastos_paciente(
+    paciente_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_orcamento", "lab_marcacao", "lab", "usuarios")),
+):
+    """Retorna o extrato detalhado de todos os exames realizados e valores despendidos para um paciente."""
+    from app.services.lab_bi_service import obter_gastos_paciente
+
+    return obter_gastos_paciente(db, paciente_id)
+
 
 

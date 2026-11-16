@@ -7,10 +7,15 @@ from pydantic import BaseModel, Field, field_validator
 class LaboratorioIn(BaseModel):
     nome: str = Field(min_length=2, max_length=120)
     ativo: bool = True
+    responsavel_tecnico: str = Field(default="", max_length=120)
+    horario_funcionamento: str = Field(default="", max_length=120)
+    criar_usuario_acesso: bool = True
 
 
 class LaboratorioOut(LaboratorioIn):
     id: int
+    usuario_criado: str | None = None
+    senha_temporaria: str | None = None
 
 
 # ---------- Vagas ----------
@@ -18,6 +23,7 @@ class VagaIn(BaseModel):
     laboratorio_id: int
     data: date
     vagas_totais: int = Field(ge=0, le=1000)
+    tipo_servico: str = Field(default="rotina", max_length=50)
 
 
 class VagaOut(VagaIn):
@@ -33,6 +39,8 @@ class VagaLoteMesIn(BaseModel):
     mes: int = Field(ge=1, le=12)
     vagas_diarias: int = Field(ge=0, le=1000)
     ignorar_fins_semana: bool = True
+    bloquear_feriados: bool = True
+    tipo_servico: str = Field(default="rotina", max_length=50)
 
 
 class VagaLoteMesOut(BaseModel):
@@ -43,8 +51,23 @@ class VagaLoteMesOut(BaseModel):
     criadas: int = 0
     atualizadas: int = 0
     ignoradas_fim_semana: int = 0
+    ignoradas_feriados: int = 0
     mantidas_conflito: int = 0
     ignoradas_passado: int = 0
+
+
+# ---------- Feriados e Bloqueios ----------
+class LabFeriadoBloqueioIn(BaseModel):
+    data: date
+    descricao: str = Field(default="", max_length=150)
+    bloquear_agendamento: bool = True
+    laboratorio_id: int | None = None
+
+
+class LabFeriadoBloqueioOut(LabFeriadoBloqueioIn):
+    id: int
+    laboratorio_nome: str = ""
+    created_at: datetime | None = None
 
 
 # ---------- Fila PSF ----------
@@ -53,6 +76,7 @@ class FilaPsfIn(BaseModel):
     unidade_psf: str = Field(min_length=1, max_length=120)
     medico_solicitante: str = Field(min_length=1, max_length=120)
     data_solicitacao: date | None = None
+    data_pedido: date | None = None
     prioridade: str = Field(default="rotina", pattern="^(urgente|alta|rotina)$")
     justificativa: str = Field(default="", max_length=500)
     observacoes: str = Field(default="", max_length=500)
@@ -87,6 +111,7 @@ class FilaPsfUpdateIn(BaseModel):
     unidade_psf: str | None = None
     medico_solicitante: str | None = None
     data_solicitacao: date | None = None
+    data_pedido: date | None = None
     prioridade: str | None = Field(default=None, pattern="^(urgente|alta|rotina)$")
     justificativa: str | None = None
     observacoes: str | None = None
@@ -455,5 +480,225 @@ class LabLoteOut(BaseModel):
     criado_por: str
     created_at: datetime
     itens: list[LabLoteItemOut] = []
+
+
+# ==============================================================================
+# SUBAGENTE 3: CONTRATOS, FATURAMENTO E FPO / SIA
+# ==============================================================================
+
+class LabContratoIn(BaseModel):
+    laboratorio_id: int
+    numero_contrato: str = Field(min_length=2, max_length=50)
+    processo_licitatorio: str = Field(default="", max_length=50)
+    objeto: str = Field(default="", max_length=500)
+    data_inicio: date
+    data_fim: date
+    valor_total_contrato: float = Field(ge=0.0)
+    valor_mensal_teto: float = Field(ge=0.0)
+    cota_exames_mensal: int = Field(default=0, ge=0)
+    status: str = Field(default="ativo", max_length=20)
+    gestor_contrato: str = Field(default="", max_length=120)
+    observacoes: str = Field(default="", max_length=500)
+
+
+class LabContratoUpdateIn(BaseModel):
+    numero_contrato: str | None = None
+    processo_licitatorio: str | None = None
+    objeto: str | None = None
+    data_inicio: date | None = None
+    data_fim: date | None = None
+    valor_total_contrato: float | None = None
+    valor_mensal_teto: float | None = None
+    cota_exames_mensal: int | None = None
+    status: str | None = None
+    gestor_contrato: str | None = None
+    observacoes: str | None = None
+
+
+class LabContratoOut(BaseModel):
+    id: int
+    laboratorio_id: int
+    laboratorio_nome: str = ""
+    numero_contrato: str
+    processo_licitatorio: str
+    objeto: str
+    data_inicio: date
+    data_fim: date
+    valor_total_contrato: float
+    valor_mensal_teto: float
+    valor_total_gasto: float
+    cota_exames_mensal: int
+    status: str
+    gestor_contrato: str
+    observacoes: str
+    created_at: datetime
+    updated_at: datetime
+    # Métricas computadas em tempo real
+    saldo_total_contrato: float = 0.0
+    valor_gasto_mes_atual: float = 0.0
+    saldo_mes_atual: float = 0.0
+    percentual_consumido_total: float = 0.0
+    percentual_consumido_mes: float = 0.0
+    precos_customizados_count: int = 0
+
+
+class LabContratosPainelOut(BaseModel):
+    contratos: list[LabContratoOut] = []
+    valor_total_todos_contratos: float = 0.0
+    valor_total_gasto_global: float = 0.0
+    valor_gasto_mes_corrente_global: float = 0.0
+    saldo_total_global: float = 0.0
+    total_contratos_ativos: int = 0
+
+
+class LabContratoPrecoCustomizadoIn(BaseModel):
+    sigtap_id: int
+    valor_customizado: float = Field(gt=0.0)
+    vigencia_inicio: date
+    vigencia_fim: date | None = None
+    justificativa: str = Field(default="", max_length=255)
+    ativo: bool = True
+
+
+class LabContratoPrecoCustomizadoOut(BaseModel):
+    id: int
+    contrato_id: int
+    sigtap_id: int
+    codigo_sigtap: str
+    descricao_procedimento: str = ""
+    valor_sigtap_padrao: float = 0.0
+    valor_customizado: float
+    vigencia_inicio: date
+    vigencia_fim: date | None = None
+    ativo: bool
+    justificativa: str
+    created_at: datetime
+
+
+class LabFaturamentoItemRelatorioOut(BaseModel):
+    sigtap_id: int
+    codigo_procedimento: str
+    descricao_procedimento: str
+    quantidade_executada: int
+    valor_unitario: float
+    valor_total: float
+    origem_preco: str  # sigtap_padrao | contrato_custom
+
+
+class LabFaturamentoRelatorioPrestadorOut(BaseModel):
+    laboratorio_id: int
+    laboratorio_nome: str
+    contrato_id: int | None
+    numero_contrato: str
+    competencia: str
+    qtd_solicitacoes: int
+    qtd_exames_total: int
+    valor_total_bruto: float
+    valor_glosas: float
+    valor_total_liquido: float
+    status_fechamento: str  # em_apuracao | aguardando_aprovacao | aprovado_secretaria | fechado
+    liberado_visualizacao_lab: bool
+    aprovado_por: str
+    aprovado_em: datetime | None
+    parecer_secretaria: str
+    itens_agrupados: list[LabFaturamentoItemRelatorioOut] = []
+
+
+class LabAprovarFaturamentoIn(BaseModel):
+    liberar_visualizacao_lab: bool = True
+    parecer: str = Field(default="", max_length=1000)
+
+
+class LabFPOCompetenciaIn(BaseModel):
+    laboratorio_id: int
+    competencia: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    numero_fpo: str = Field(default="", max_length=50)
+    cnes_prestador: str = Field(default="", max_length=20)
+    teto_fisico_programado: int = Field(default=0, ge=0)
+    teto_financeiro_programado: float = Field(default=0.0, ge=0.0)
+
+
+class LabFPOItemIn(BaseModel):
+    sigtap_id: int
+    quantidade_orcada: int = Field(ge=0)
+    valor_orcado: float = Field(ge=0.0)
+
+
+class LabFPOItemOut(BaseModel):
+    id: int
+    fpo_id: int
+    sigtap_id: int
+    codigo_procedimento: str
+    descricao_procedimento: str
+    quantidade_orcada: int
+    valor_orcado: float
+    quantidade_aprovada: int
+    valor_aprovado: float
+
+
+class LabFPOCompetenciaOut(BaseModel):
+    id: int
+    laboratorio_id: int
+    laboratorio_nome: str = ""
+    contrato_id: int | None
+    competencia: str
+    cnes_prestador: str
+    numero_fpo: str
+    teto_fisico_programado: int
+    teto_financeiro_programado: float
+    total_fisico_executado: int
+    total_financeiro_executado: float
+    saldo_fisico: int = 0
+    saldo_financeiro: float = 0.0
+    status: str
+    exportado_em: datetime | None
+    criado_por: str
+    created_at: datetime
+    itens: list[LabFPOItemOut] = []
+
+
+# ---------- Manejo de Agendamentos (Transferência / Status) ----------
+class SolicMestreTransferirIn(BaseModel):
+    nova_data: date
+    novo_laboratorio_id: int | None = None
+    motivo: str = Field(default="", max_length=255)
+
+
+class SolicMestreStatusIn(BaseModel):
+    status: str = Field(pattern="^(agendado|desativado|cancelado|realizado)$")
+    motivo: str = Field(default="", max_length=255)
+
+
+# ---------- BI / Custos de Exames por Paciente ----------
+class PacienteGastoItemOut(BaseModel):
+    solicitacao_id: int
+    data_agendada: date
+    laboratorio_nome: str
+    procedimento_codigo: str
+    procedimento_descricao: str
+    valor_unitario: float
+    origem_preco: str
+
+
+class PacienteGastosResumoOut(BaseModel):
+    paciente_id: int
+    paciente_nome: str
+    paciente_cpf: str
+    paciente_cns: str
+    total_gasto: float
+    qtd_exames: int
+    itens: list[PacienteGastoItemOut] = Field(default_factory=list)
+
+
+class PacienteGastosGeraisItemOut(BaseModel):
+    paciente_id: int
+    paciente_nome: str
+    paciente_cpf: str
+    paciente_cns: str = ""
+    total_gasto: float
+    qtd_exames: int
+    ultimo_exame_data: date | None = None
+
+
 
 

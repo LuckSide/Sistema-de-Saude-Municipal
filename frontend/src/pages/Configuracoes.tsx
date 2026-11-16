@@ -2268,8 +2268,12 @@ function AbaExamesPermitidos() {
 function AbaLaboratorios() {
   const { notificarUndo } = useUndo();
   const { confirmar } = useConfirm();
-  const [lista, setLista] = useState<{ id: number; nome: string; ativo: boolean }[]>([]);
+  const [lista, setLista] = useState<Laboratorio[]>([]);
   const [nome, setNome] = useState("");
+  const [responsavelTecnico, setResponsavelTecnico] = useState("");
+  const [horarioFuncionamento, setHorarioFuncionamento] = useState("07:00 às 17:00");
+  const [criarUsuarioAcesso, setCriarUsuarioAcesso] = useState(true);
+  const [credenciaisCriadas, setCredenciaisCriadas] = useState<{ usuario: string; senha: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
@@ -2287,7 +2291,7 @@ function AbaLaboratorios() {
     setErro("");
     setOk("");
     try {
-      await labsAtualizar(id, nomeAtual, true);
+      await labsAtualizar(id, { nome: nomeAtual, ativo: true });
       setOk("Laboratório reativado — volta aos seletores de marcação.");
       await carregar();
     } catch {
@@ -2302,16 +2306,27 @@ function AbaLaboratorios() {
 
   async function adicionar() {
     if (nome.trim().length < 2) {
-      setErro("Nome inválido.");
+      setErro("Nome do laboratório inválido.");
       return;
     }
     setBusy(true);
     setErro("");
     setOk("");
+    setCredenciaisCriadas(null);
     try {
-      await labsCriar(nome.trim(), true);
+      const res = await labsCriar({
+        nome: nome.trim(),
+        ativo: true,
+        responsavel_tecnico: responsavelTecnico.trim(),
+        horario_funcionamento: horarioFuncionamento.trim(),
+        criar_usuario_acesso: criarUsuarioAcesso,
+      });
       setNome("");
-      setOk("Laboratório adicionado.");
+      setResponsavelTecnico("");
+      setOk("Laboratório adicionado com sucesso.");
+      if (res.usuario_criado && res.senha_temporaria) {
+        setCredenciaisCriadas({ usuario: res.usuario_criado, senha: res.senha_temporaria });
+      }
       await carregar();
     } catch (e: unknown) {
       const d = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Falha.";
@@ -2340,7 +2355,7 @@ function AbaLaboratorios() {
         titulo: `Laboratório ${alvo?.nome ?? ""} inativado.`,
         descricao: "Desfazer reativa o laboratório nos seletores.",
         onUndo: async () => {
-          await labsAtualizar(id, alvo?.nome ?? "", true);
+          await labsAtualizar(id, { nome: alvo?.nome ?? "", ativo: true });
           await carregar();
         },
       });
@@ -2353,38 +2368,95 @@ function AbaLaboratorios() {
   }
 
   return (
-    <Card className="max-w-2xl p-6">
-      <p className="mb-1 flex items-center gap-2 font-display text-base font-bold text-sus-950">
-        <FlaskConical className="h-5 w-5" /> Laboratórios
-      </p>
-      <p className="mb-4 text-xs text-ink/55">
-        Cadastre e remova laboratórios usados na agenda de vagas, solicitações e BPA.
-        Inativos somem dos seletores de marcação, mas o histórico é preservado.
-      </p>
-      <div className="mb-4 flex gap-2">
-        <Input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome do laboratório" />
-        <Button disabled={busy} onClick={adicionar}>{busy ? "Salvando…" : "Adicionar"}</Button>
+    <Card className="max-w-3xl p-6 space-y-4">
+      <div>
+        <p className="flex items-center gap-2 font-display text-base font-bold text-sus-950">
+          <FlaskConical className="h-5 w-5 text-teal" /> Laboratórios e Prestadores de Exames
+        </p>
+        <p className="text-xs text-ink/55 mt-1">
+          Cadastre prestadores conveniados com horários, responsável técnico e perfil de acesso restrito gerado automaticamente.
+        </p>
       </div>
-      {erro && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
-      {ok && <p className="mb-3 rounded-xl bg-teal/10 px-3 py-2 text-sm text-teal">{ok}</p>}
+
+      <div className="p-4 bg-sand/30 border border-sus-900/10 rounded-xl space-y-3">
+        <p className="text-xs font-bold text-sus-950">Cadastrar Novo Laboratório</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <Label className="text-[11px]">Nome do Laboratório *</Label>
+            <Input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex: Laboratório São Lucas" className="text-xs" />
+          </div>
+          <div>
+            <Label className="text-[11px]">Responsável Técnico</Label>
+            <Input value={responsavelTecnico} onChange={(e) => setResponsavelTecnico(e.target.value)} placeholder="Ex: Dr. Roberto / Dra. Ana" className="text-xs" />
+          </div>
+          <div>
+            <Label className="text-[11px]">Horário de Funcionamento</Label>
+            <Input value={horarioFuncionamento} onChange={(e) => setHorarioFuncionamento(e.target.value)} placeholder="Ex: 07:00 às 17:00" className="text-xs" />
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+          <label className="flex items-center gap-2 text-xs font-medium text-sus-950 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={criarUsuarioAcesso}
+              onChange={(e) => setCriarUsuarioAcesso(e.target.checked)}
+              className="rounded border-sus-900/20 text-teal"
+            />
+            Gerar credenciais de acesso restrito automaticamente para recepção
+          </label>
+
+          <Button disabled={busy} onClick={adicionar} className="bg-teal text-white font-bold text-xs !h-9">
+            {busy ? "Salvando…" : "Adicionar Laboratório"}
+          </Button>
+        </div>
+      </div>
+
+      {credenciaisCriadas && (
+        <div className="rounded-xl border border-teal/20 bg-teal/10 p-4 text-xs space-y-1">
+          <p className="font-bold text-teal flex items-center gap-1.5">
+            Conta de Acesso Criada com Sucesso para o Laboratório:
+          </p>
+          <p className="text-sus-950 font-mono">
+            Usuário: <strong>{credenciaisCriadas.usuario}</strong> | Senha Provisória: <strong>{credenciaisCriadas.senha}</strong>
+          </p>
+          <p className="text-[11px] text-ink/60">
+            O prestador terá acesso restrito à recepção e conferência de sua produção.
+          </p>
+        </div>
+      )}
+
+      {erro && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
+      {ok && <p className="rounded-xl bg-teal/10 px-3 py-2 text-sm text-teal">{ok}</p>}
+
       <div className="overflow-x-auto rounded-xl border border-sus-900/10">
         <table className="w-full text-left text-sm">
-          <thead><tr className="bg-sand text-xs uppercase text-sus-900/60">
-            <th className="px-3 py-2">ID</th>
-            <th className="px-3 py-2">Laboratório</th>
-            <th className="px-3 py-2">Ativo</th>
-            <th className="px-3 py-2 text-right">Ações</th>
-          </tr></thead>
+          <thead>
+            <tr className="bg-sand text-xs uppercase text-sus-900/60">
+              <th className="px-3 py-2.5">ID</th>
+              <th className="px-3 py-2.5">Laboratório</th>
+              <th className="px-3 py-2.5">Responsável</th>
+              <th className="px-3 py-2.5">Horário</th>
+              <th className="px-3 py-2.5">Status</th>
+              <th className="px-3 py-2.5 text-right">Ações</th>
+            </tr>
+          </thead>
           <tbody>
             {lista.map((l) => (
-              <tr key={l.id} className="border-t border-sus-900/5">
-                <td className="px-3 py-2 font-mono text-xs">{l.id}</td>
-                <td className="px-3 py-2 font-medium">{l.nome}</td>
-                <td className="px-3 py-2 text-xs">{l.ativo ? "Sim" : "Não"}</td>
-                <td className="px-3 py-2 text-right">
+              <tr key={l.id} className="border-t border-sus-900/5 hover:bg-sand/20">
+                <td className="px-3 py-2.5 font-mono text-xs">{l.id}</td>
+                <td className="px-3 py-2.5 font-semibold text-sus-950">{l.nome}</td>
+                <td className="px-3 py-2.5 text-xs text-ink/70">{l.responsavel_tecnico || "—"}</td>
+                <td className="px-3 py-2.5 text-xs text-ink/70">{l.horario_funcionamento || "—"}</td>
+                <td className="px-3 py-2.5 text-xs">
+                  <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold ${l.ativo ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
+                    {l.ativo ? "Ativo" : "Inativo"}
+                  </span>
+                </td>
+                <td className="px-3 py-2.5 text-right">
                   {l.ativo ? (
                     <button onClick={() => remover(l.id)} className="rounded-lg px-2 py-1 text-xs font-bold text-red-700 hover:bg-red-50">
-                      Remover
+                      Desativar
                     </button>
                   ) : (
                     <button onClick={() => reativar(l.id, l.nome)} className="rounded-lg px-2 py-1 text-xs font-bold text-teal hover:bg-teal/10">
@@ -2394,7 +2466,7 @@ function AbaLaboratorios() {
                 </td>
               </tr>
             ))}
-            {lista.length === 0 && <tr><td colSpan={4} className="px-3 py-6 text-center text-ink/45">Nenhum laboratório.</td></tr>}
+            {lista.length === 0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-ink/45">Nenhum laboratório cadastrado.</td></tr>}
           </tbody>
         </table>
       </div>
