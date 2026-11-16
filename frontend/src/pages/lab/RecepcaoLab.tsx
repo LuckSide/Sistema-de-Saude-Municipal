@@ -1,12 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
+  AlertCircle,
   AlertTriangle,
   Calendar,
   CheckCircle2,
   Clock,
+  Eye,
+  FileCheck,
+  FileText,
+  FileUp,
   FlaskConical,
   QrCode,
+  RefreshCw,
   Search,
+  UploadCloud,
   X,
 } from "lucide-react";
 import {
@@ -14,8 +21,12 @@ import {
   mapMestre,
   labRecepcionarColeta,
   labPedirAjuste,
+  labUploadLaudo,
+  labJustificarInconsistencia,
+  labVisualizarLaudoPdfUrl,
   pagData,
   type SolicMestre,
+  type LabConferenciaResultado,
 } from "../../services/api";
 import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
 import ModalLeituraRapidaQR from "../../components/ModalLeituraRapidaQR";
@@ -42,12 +53,28 @@ export default function RecepcaoLab() {
   // Modais
   const [modalLeituraQR, setModalLeituraQR] = useState(false);
 
-  // Modal de Pedido de Ajuste
+  // Modal de Pedido de Ajuste (Divergência de Recepção)
   const [modalAjuste, setModalAjuste] = useState(false);
   const [itemAjuste, setItemAjuste] = useState<SolicMestre | null>(null);
   const [tipoAjuste, setTipoAjuste] = useState("divergencia_pedido");
   const [justificativaAjuste, setJustificativaAjuste] = useState("");
   const [enviandoAjuste, setEnviandoAjuste] = useState(false);
+
+  // Modal de Upload de Laudo PDF
+  const [modalUpload, setModalUpload] = useState(false);
+  const [itemUpload, setItemUpload] = useState<SolicMestre | null>(null);
+  const [arquivoUpload, setArquivoUpload] = useState<File | null>(null);
+  const [processandoUpload, setProcessandoUpload] = useState(false);
+  const [arrastando, setArrastando] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Modal de Justificativa de Inconsistência
+  const [modalInconsistencia, setModalInconsistencia] = useState(false);
+  const [itemInconsistencia, setItemInconsistencia] = useState<SolicMestre | null>(null);
+  const [dadosConferencia, setDadosConferencia] = useState<LabConferenciaResultado | null>(null);
+  const [motivoInconsistencia, setMotivoInconsistencia] = useState("divergencia_nomenclatura");
+  const [justificativaInconsistencia, setJustificativaInconsistencia] = useState("");
+  const [enviandoInconsistencia, setEnviandoInconsistencia] = useState(false);
 
   async function carregar() {
     setCarregando(true);
@@ -83,18 +110,22 @@ export default function RecepcaoLab() {
   }, [termoBusca]);
 
   async function confirmarRecepcao(item: SolicMestre) {
-    const ok = await confirmar({
+    const confirmou = await confirmar({
       titulo: `Confirmar recepção e coleta`,
       descricao: `Deseja registrar a recepção e coleta dos exames laboratoriais de ${item.paciente_nome}?`,
       textoConfirmar: "Confirmar Coleta",
       variante: "primary",
     });
-    if (!ok) return;
+    if (!confirmou) return;
     try {
       const atualizado = await labRecepcionarColeta(item.id);
       setOk(`Coleta de ${item.paciente_nome} confirmada com sucesso!`);
       setLista((antiga) =>
-        antiga.map((x) => (x.id === item.id ? { ...x, status: "coletado", coletado_em: atualizado.coletado_em, coletado_por: atualizado.coletado_por } : x))
+        antiga.map((x) =>
+          x.id === item.id
+            ? { ...x, status: "coletado", coletado_em: atualizado.coletado_em, coletado_por: atualizado.coletado_por }
+            : x
+        )
       );
     } catch (e: any) {
       setErro(e?.response?.data?.detail || "Erro ao registrar recepção e coleta.");
@@ -130,6 +161,96 @@ export default function RecepcaoLab() {
     }
   }
 
+  // Abertura do Modal de Upload
+  function abrirModalUpload(item: SolicMestre) {
+    setItemUpload(item);
+    setArquivoUpload(null);
+    setModalUpload(true);
+  }
+
+  // Abertura do Modal de Justificativa
+  function abrirModalJustificativa(item: SolicMestre, conf?: LabConferenciaResultado) {
+    setItemInconsistencia(item);
+    setDadosConferencia(conf || null);
+    setMotivoInconsistencia("divergencia_nomenclatura");
+    setJustificativaInconsistencia("");
+    setModalInconsistencia(true);
+  }
+
+  // Submissão do Upload do Laudo PDF
+  async function submeterUploadLaudo() {
+    if (!itemUpload || !arquivoUpload) {
+      setErro("Selecione um arquivo PDF de laudo para continuar.");
+      return;
+    }
+
+    if (!arquivoUpload.name.toLowerCase().endsWith(".pdf")) {
+      setErro("O arquivo deve estar no formato PDF (.pdf).");
+      return;
+    }
+
+    setProcessandoUpload(true);
+    setErro("");
+    setOk("");
+
+    try {
+      const resp = await labUploadLaudo(itemUpload.id, arquivoUpload);
+      setModalUpload(false);
+
+      if (resp.status_pedido === "realizado") {
+        setOk(`✓ Laudo validado com sucesso! Exames de ${itemUpload.paciente_nome} conferidos e pedido marcado como REALIZADO.`);
+        carregar();
+      } else {
+        // Inconsistência detectada: abre o modal de justificativa imediatamente
+        setOk("Laudo enviado. Inconsistências identificadas necessitam de justificativa técnica do laboratório.");
+        carregar();
+        abrirModalJustificativa(itemUpload, resp.conferencia);
+      }
+    } catch (e: any) {
+      setErro(e?.response?.data?.detail || "Falha ao processar e conferir o laudo PDF.");
+    } finally {
+      setProcessandoUpload(false);
+    }
+  }
+
+  // Submissão da Justificativa Técnica de Inconsistência
+  async function submeterJustificativaInconsistencia() {
+    if (!itemInconsistencia) return;
+    if (justificativaInconsistencia.trim().length < 10) {
+      setErro("A justificativa técnica deve conter no mínimo 10 caracteres explicativos.");
+      return;
+    }
+
+    setEnviandoInconsistencia(true);
+    setErro("");
+    try {
+      await labJustificarInconsistencia(itemInconsistencia.id, {
+        motivo_inconsistencia: motivoInconsistencia,
+        justificativa: justificativaInconsistencia.trim(),
+      });
+      setModalInconsistencia(false);
+      setOk(`Justificativa para o laudo de ${itemInconsistencia.paciente_nome} enviada com sucesso! O pedido está em Revisão pela Secretaria.`);
+      carregar();
+    } catch (e: any) {
+      setErro(e?.response?.data?.detail || "Erro ao registrar justificativa de inconsistência.");
+    } finally {
+      setEnviandoInconsistencia(false);
+    }
+  }
+
+  function handleFileDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setArrastando(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const f = e.dataTransfer.files[0];
+      if (f.name.toLowerCase().endsWith(".pdf")) {
+        setArquivoUpload(f);
+      } else {
+        setErro("Apenas arquivos PDF são aceitos.");
+      }
+    }
+  }
+
   return (
     <div className="space-y-5">
       {/* Topo do Módulo do Laboratório Conveniado */}
@@ -140,11 +261,11 @@ export default function RecepcaoLab() {
               <FlaskConical className="h-5 w-5" />
             </span>
             <h2 className="font-display text-xl font-bold text-sus-950">
-              Laboratório · Recepção e Coleta de Exames
+              Laboratório · Recepção, Coleta e Validação de Laudos
             </h2>
           </div>
           <p className="mt-1 text-xs text-ink/65">
-            Módulo de conferência de pedidos, realização de coleta e notificação de divergências.
+            Módulo de conferência de pedidos, coleta e upload de laudos PDF com conferência automatizada via OCR/NLP.
             {user?.laboratorio_nome && (
               <span className="ml-2 font-semibold text-teal">
                 · Unidade vinculada: {user.laboratorio_nome}
@@ -165,13 +286,19 @@ export default function RecepcaoLab() {
       </div>
 
       {erro && (
-        <div className="rounded-xl bg-red-50 p-3.5 text-sm font-medium text-red-700">
-          {erro}
+        <div className="rounded-xl bg-red-50 p-3.5 text-sm font-medium text-red-700 flex items-center justify-between">
+          <span>{erro}</span>
+          <button onClick={() => setErro("")} className="text-red-500 hover:text-red-800">
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
       {ok && (
-        <div className="rounded-xl bg-teal/10 p-3.5 text-sm font-medium text-teal">
-          {ok}
+        <div className="rounded-xl bg-teal/10 p-3.5 text-sm font-medium text-teal flex items-center justify-between">
+          <span>{ok}</span>
+          <button onClick={() => setOk("")} className="text-teal hover:opacity-75">
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 
@@ -233,7 +360,10 @@ export default function RecepcaoLab() {
             >
               <option value="todos">Todos os status</option>
               <option value="agendado">Aguardando Coleta (Agendados)</option>
-              <option value="coletado">Coleta Realizada (Recepcionados)</option>
+              <option value="coletado">Coletado / Aguardando Laudo</option>
+              <option value="aguardando_conferencia">Aguardando Justificativa de Laudo</option>
+              <option value="em_revisao_secretaria">Em Revisão da Secretaria</option>
+              <option value="realizado">Concluído (Laudo Validado)</option>
             </Select>
           </div>
         </div>
@@ -243,7 +373,7 @@ export default function RecepcaoLab() {
       {carregando ? (
         <div className="py-12 text-center text-ink/50">
           <div className="inline-block h-7 w-7 animate-spin rounded-full border-2 border-teal border-t-transparent mb-2" />
-          <p className="text-xs font-medium">Carregando agendamentos do laboratório...</p>
+          <p className="text-xs font-medium">Carregando atendimentos do laboratório...</p>
         </div>
       ) : lista.length === 0 ? (
         <Card className="p-10 text-center border-dashed">
@@ -256,12 +386,26 @@ export default function RecepcaoLab() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {lista.map((item) => {
-            const isColetado = item.status === "coletado";
+            const st = (item.status || "").toLowerCase();
+            const isAgendado = st === "agendado" || st === "solicitado";
+            const isColetado = st === "coletado" || st === "recepcionado";
+            const isAguardandoConf = st === "aguardando_conferencia";
+            const isEmRevisao = st === "em_revisao_secretaria";
+            const isRealizado = st === "realizado";
+
             return (
               <Card
                 key={item.id}
                 className={`p-5 border-sus-900/10 shadow-xs flex flex-col justify-between transition ${
-                  isColetado ? "bg-emerald-50/20 border-emerald-200/60" : "hover:border-teal/30"
+                  isRealizado
+                    ? "bg-emerald-50/20 border-emerald-300/70"
+                    : isEmRevisao
+                    ? "bg-indigo-50/20 border-indigo-200"
+                    : isAguardandoConf
+                    ? "bg-amber-50/30 border-amber-300"
+                    : isColetado
+                    ? "bg-teal-50/20 border-teal-200/60"
+                    : "hover:border-teal/30"
                 }`}
               >
                 <div>
@@ -285,15 +429,27 @@ export default function RecepcaoLab() {
                     <div className="text-right shrink-0">
                       <span className="font-mono text-xs font-bold text-ink/50">#{item.id}</span>
                       <div>
-                        <span
-                          className={`mt-1 inline-block rounded-md px-2 py-0.5 text-[10px] font-bold uppercase ${
-                            isColetado
-                              ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
-                              : "bg-teal/15 text-teal border border-teal/20"
-                          }`}
-                        >
-                          {isColetado ? "✓ Coletado" : "Aguardando Coleta"}
-                        </span>
+                        {isRealizado ? (
+                          <span className="mt-1 inline-block rounded-md px-2 py-0.5 text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-300">
+                            ✓ Realizado
+                          </span>
+                        ) : isEmRevisao ? (
+                          <span className="mt-1 inline-block rounded-md px-2 py-0.5 text-[10px] font-bold uppercase bg-indigo-100 text-indigo-800 border border-indigo-200">
+                            Em Revisão Secretaria
+                          </span>
+                        ) : isAguardandoConf ? (
+                          <span className="mt-1 inline-block rounded-md px-2 py-0.5 text-[10px] font-bold uppercase bg-amber-100 text-amber-800 border border-amber-300">
+                            Inconsistência Laudo
+                          </span>
+                        ) : isColetado ? (
+                          <span className="mt-1 inline-block rounded-md px-2 py-0.5 text-[10px] font-bold uppercase bg-teal/15 text-teal border border-teal/20">
+                            Coletado
+                          </span>
+                        ) : (
+                          <span className="mt-1 inline-block rounded-md px-2 py-0.5 text-[10px] font-bold uppercase bg-sand text-ink/65 border border-sus-900/10">
+                            Aguardando Coleta
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -358,43 +514,452 @@ export default function RecepcaoLab() {
                     <span className="font-bold">⏱️ Jejum Clínico:</span> {item.jejum_horas || "8 a 12 horas"}
                   </div>
 
-                  {/* Status de Coleta Realizada */}
-                  {isColetado && item.coletado_em && (
-                    <div className="rounded-lg bg-emerald-50 p-2 text-[11px] text-emerald-800 border border-emerald-200 mb-3">
+                  {/* Informações de Coleta e Laudo */}
+                  {item.coletado_em && (
+                    <div className="rounded-lg bg-teal-50/80 p-2 text-[11px] text-teal-900 border border-teal-200 mb-3">
                       ✓ Coleta registrada em <strong>{new Date(item.coletado_em).toLocaleString("pt-BR")}</strong>
                       {item.coletado_por && <span> por {item.coletado_por}</span>}.
                     </div>
                   )}
+
+                  {isAguardandoConf && (
+                    <div className="rounded-lg bg-amber-100/70 p-2.5 text-[11px] text-amber-900 border border-amber-300 mb-3 flex items-start gap-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <strong>Inconsistência identificada na leitura do laudo.</strong>
+                        <p className="mt-0.5 text-amber-800">
+                          O arquivo PDF foi carregado, mas há exames divergentes ou faltantes. O laboratório deve justificar para enviar à Secretaria.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {isEmRevisao && (
+                    <div className="rounded-lg bg-indigo-50 p-2.5 text-[11px] text-indigo-900 border border-indigo-200 mb-3 flex items-start gap-2">
+                      <FileCheck className="h-4 w-4 text-indigo-600 shrink-0 mt-0.5" />
+                      <div>
+                        <strong>Em Auditoria pela Secretaria de Saúde.</strong>
+                        <p className="mt-0.5 text-indigo-700">
+                          Justificativa enviada. O laudo está na fila de revisão da regulação municipal.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {isRealizado && (
+                    <div className="rounded-lg bg-emerald-100/70 p-2.5 text-[11px] text-emerald-900 border border-emerald-300 mb-3 flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+                        <span>Laudo Oficial conferido e vinculado ao Prontuário PEC.</span>
+                      </div>
+                      <a
+                        href={labVisualizarLaudoPdfUrl(item.id)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 rounded bg-white px-2 py-1 text-[11px] font-bold text-emerald-800 shadow-2xs hover:bg-emerald-50 border border-emerald-300"
+                      >
+                        <FileText className="h-3.5 w-3.5" /> Abrir PDF
+                      </a>
+                    </div>
+                  )}
                 </div>
 
-                {/* Ações da Recepção */}
-                {!isColetado && (
-                  <div className="flex flex-wrap items-center justify-end pt-3 border-t border-sus-900/10 gap-2">
-                    <Button
-                      type="button"
-                      onClick={() => abrirModalAjuste(item)}
-                      className="border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 !h-9 text-xs"
-                      title="Notificar divergência ou solicitar alteração"
-                    >
-                      <AlertTriangle className="h-3.5 w-3.5 text-amber-600" /> Solicitar Ajuste
-                    </Button>
+                {/* Ações da Recepção / Laboratório */}
+                <div className="flex flex-wrap items-center justify-end pt-3 border-t border-sus-900/10 gap-2">
+                  {/* Status 1: Aguardando Coleta */}
+                  {isAgendado && (
+                    <>
+                      <Button
+                        type="button"
+                        onClick={() => abrirModalAjuste(item)}
+                        className="border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 !h-9 text-xs"
+                        title="Notificar divergência ou solicitar alteração"
+                      >
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-600" /> Solicitar Ajuste
+                      </Button>
 
+                      <Button
+                        type="button"
+                        onClick={() => confirmarRecepcao(item)}
+                        className="!h-9 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                      >
+                        <CheckCircle2 className="h-4 w-4" /> Marcar Coleta Realizada
+                      </Button>
+                    </>
+                  )}
+
+                  {/* Status 2: Coletado (Aguardando Laudo) */}
+                  {isColetado && (
                     <Button
                       type="button"
-                      onClick={() => confirmarRecepcao(item)}
-                      className="!h-9 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                      onClick={() => abrirModalUpload(item)}
+                      className="!h-9 text-xs bg-teal hover:bg-teal/90 text-white font-bold flex items-center gap-1.5 shadow-xs"
                     >
-                      <CheckCircle2 className="h-4 w-4" /> Marcar Coleta Realizada
+                      <UploadCloud className="h-4 w-4" /> Upload Laudo PDF (Validação)
                     </Button>
-                  </div>
-                )}
+                  )}
+
+                  {/* Status 3: Aguardando Justificativa de Inconsistência */}
+                  {isAguardandoConf && (
+                    <>
+                      <Button
+                        type="button"
+                        onClick={() => abrirModalUpload(item)}
+                        className="border border-sus-900/15 bg-white text-ink hover:bg-sand !h-9 text-xs flex items-center gap-1"
+                        title="Enviar outro PDF para reprocessamento"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" /> Reenviar PDF
+                      </Button>
+
+                      <Button
+                        type="button"
+                        onClick={() => abrirModalJustificativa(item)}
+                        className="!h-9 text-xs bg-amber-600 hover:bg-amber-700 text-white font-bold flex items-center gap-1.5"
+                      >
+                        <AlertTriangle className="h-4 w-4" /> Justificar Inconsistências
+                      </Button>
+                    </>
+                  )}
+
+                  {/* Status 4: Em Revisão Secretaria */}
+                  {isEmRevisao && (
+                    <a
+                      href={labVisualizarLaudoPdfUrl(item.id)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-900 hover:bg-indigo-100"
+                    >
+                      <Eye className="h-3.5 w-3.5" /> Ver Laudo Enviado
+                    </a>
+                  )}
+
+                  {/* Status 5: Realizado */}
+                  {isRealizado && (
+                    <a
+                      href={labVisualizarLaudoPdfUrl(item.id)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-900 hover:bg-emerald-100 shadow-2xs"
+                    >
+                      <FileCheck className="h-4 w-4 text-emerald-700" /> Visualizar Laudo Oficial (PDF)
+                    </a>
+                  )}
+                </div>
               </Card>
             );
           })}
         </div>
       )}
 
-      {/* Modal de Pedido de Ajuste / Notificação de Divergência */}
+      {/* Modal 1: Upload de Laudo PDF com Leitura Automatizada */}
+      {modalUpload && itemUpload && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-sus-950/60 p-3 sm:p-5"
+          onClick={() => !processandoUpload && setModalUpload(false)}
+        >
+          <div
+            className="rise max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between border-b border-sus-900/10 pb-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-sus-950 flex items-center gap-2">
+                  <UploadCloud className="h-5 w-5 text-teal" />
+                  Conferência Automatizada de Laudo (PDF)
+                </h3>
+                <p className="mt-0.5 text-xs text-ink/65">
+                  Paciente: <strong>{itemUpload.paciente_nome}</strong> · Pedido #{itemUpload.id}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={processandoUpload}
+                onClick={() => setModalUpload(false)}
+                className="rounded-xl p-2 text-ink/50 hover:bg-sand transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div className="rounded-xl bg-teal/5 p-3.5 border border-teal/20 text-teal-950 space-y-1">
+                <p className="font-bold flex items-center gap-1.5">
+                  <FlaskConical className="h-4 w-4 text-teal" />
+                  Validação Cruzada de Procedimentos
+                </p>
+                <p className="text-[11px] text-ink/75 leading-relaxed">
+                  O sistema extrairá o texto do laudo, cruzará os dados do paciente (Nome, CPF ou CNS) e verificará automaticamente se todos os {itemUpload.itens?.length || 0} exames solicitados estão presentes no documento.
+                </p>
+              </div>
+
+              {/* Área de Drag & Drop */}
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setArrastando(true);
+                }}
+                onDragLeave={() => setArrastando(false)}
+                onDrop={handleFileDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`cursor-pointer rounded-2xl border-2 border-dashed p-6 text-center transition ${
+                  arrastando
+                    ? "border-teal bg-teal/10"
+                    : arquivoUpload
+                    ? "border-emerald-500 bg-emerald-50/50"
+                    : "border-sus-900/20 hover:border-teal/50 hover:bg-sand/30"
+                }`}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="application/pdf"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      setArquivoUpload(e.target.files[0]);
+                    }
+                  }}
+                />
+
+                {arquivoUpload ? (
+                  <div className="flex flex-col items-center gap-2">
+                    <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700">
+                      <FileCheck className="h-6 w-6" />
+                    </span>
+                    <p className="font-bold text-sm text-emerald-950">{arquivoUpload.name}</p>
+                    <p className="text-[11px] text-emerald-800">
+                      {(arquivoUpload.size / 1024).toFixed(1)} KB · Arquivo PDF pronto para conferência
+                    </p>
+                    <span className="text-[10px] text-ink/50 underline mt-1">Clique para escolher outro arquivo</span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-2">
+                    <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-teal/10 text-teal">
+                      <FileUp className="h-6 w-6" />
+                    </span>
+                    <p className="font-bold text-sm text-sus-950">
+                      Arraste e solte o arquivo PDF do laudo aqui
+                    </p>
+                    <p className="text-[11px] text-ink/55">
+                      ou clique para selecionar do computador (Máx 15MB)
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {processandoUpload && (
+                <div className="rounded-xl bg-sand p-3.5 text-center space-y-2">
+                  <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-teal border-t-transparent" />
+                  <p className="font-bold text-sus-950 text-xs">Processando documento...</p>
+                  <p className="text-[11px] text-ink/65">
+                    Extraindo texto, validando CPF/CNS e cruzando nomenclaturas clínicas dos exames.
+                  </p>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-sus-900/10">
+                <Button
+                  type="button"
+                  disabled={processandoUpload}
+                  onClick={() => setModalUpload(false)}
+                  className="border border-sus-900/15 bg-white text-ink hover:bg-sand"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={submeterUploadLaudo}
+                  disabled={!arquivoUpload || processandoUpload}
+                  className="bg-teal hover:bg-teal/90 text-white font-bold"
+                >
+                  {processandoUpload ? "Validando Laudo..." : "Processar e Validar Laudo"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 2: Inconsistência Detectada e Justificativa Técnica Obrigatória */}
+      {modalInconsistencia && itemInconsistencia && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-sus-950/60 p-3 sm:p-5"
+          onClick={() => !enviandoInconsistencia && setModalInconsistencia(false)}
+        >
+          <div
+            className="rise max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between border-b border-sus-900/10 pb-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-rose-950 flex items-center gap-2">
+                  <AlertCircle className="h-5 w-5 text-rose-600" />
+                  Inconsistência Detectada no Laudo
+                </h3>
+                <p className="mt-0.5 text-xs text-ink/65">
+                  Paciente: <strong>{itemInconsistencia.paciente_nome}</strong> · Pedido #{itemInconsistencia.id}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={enviandoInconsistencia}
+                onClick={() => setModalInconsistencia(false)}
+                className="rounded-xl p-2 text-ink/50 hover:bg-sand transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              {/* Alerta de Match do Paciente */}
+              {dadosConferencia && (
+                <div
+                  className={`p-3.5 rounded-xl border ${
+                    dadosConferencia.match_paciente_ok
+                      ? "bg-emerald-50 border-emerald-200 text-emerald-950"
+                      : "bg-red-50 border-red-200 text-red-950"
+                  }`}
+                >
+                  <p className="font-bold flex items-center gap-1.5 text-xs">
+                    {dadosConferencia.match_paciente_ok ? (
+                      <>
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                        Identificação do Paciente Confirmada no Laudo
+                      </>
+                    ) : (
+                      <>
+                        <AlertTriangle className="h-4 w-4 text-red-600" />
+                        Atenção Crítica: Paciente não identificado com certeza no cabeçalho do laudo!
+                      </>
+                    )}
+                  </p>
+                  <p className="text-[11px] mt-1 leading-relaxed opacity-90">
+                    {dadosConferencia.detalhes_paciente}
+                  </p>
+                </div>
+              )}
+
+              {/* Quadro comparativo de exames */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                {/* Exames Encontrados */}
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3 space-y-1.5">
+                  <p className="font-bold text-[11px] uppercase text-emerald-900 flex items-center gap-1">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                    Encontrados ({dadosConferencia?.exames_encontrados?.length || 0})
+                  </p>
+                  <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+                    {(dadosConferencia?.exames_encontrados || []).map((ex, i) => (
+                      <div key={i} className="text-[11px] bg-white p-1.5 rounded border border-emerald-100 text-emerald-900">
+                        {ex.descricao}
+                      </div>
+                    ))}
+                    {(!dadosConferencia || dadosConferencia.exames_encontrados.length === 0) && (
+                      <p className="text-[11px] text-ink/40 italic">Nenhum exame correspondente.</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Exames Faltantes */}
+                <div className="rounded-xl border border-red-200 bg-red-50/50 p-3 space-y-1.5">
+                  <p className="font-bold text-[11px] uppercase text-red-900 flex items-center gap-1">
+                    <AlertTriangle className="h-3.5 w-3.5 text-red-600" />
+                    Faltantes ({dadosConferencia?.exames_faltantes?.length || 0})
+                  </p>
+                  <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+                    {(dadosConferencia?.exames_faltantes || []).map((ex, i) => (
+                      <div key={i} className="text-[11px] bg-white p-1.5 rounded border border-red-200 text-red-900 font-medium">
+                        {ex.descricao}
+                      </div>
+                    ))}
+                    {(!dadosConferencia || dadosConferencia.exames_faltantes.length === 0) && (
+                      <p className="text-[11px] text-ink/40 italic">Nenhum exame faltante.</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Exames Adicionais / Particulares */}
+                <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-3 space-y-1.5">
+                  <p className="font-bold text-[11px] uppercase text-amber-900 flex items-center gap-1">
+                    <FileText className="h-3.5 w-3.5 text-amber-600" />
+                    Adicionais ({dadosConferencia?.exames_adicionais?.length || 0})
+                  </p>
+                  <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+                    {(dadosConferencia?.exames_adicionais || []).map((ex, i) => (
+                      <div key={i} className="text-[11px] bg-white p-1.5 rounded border border-amber-200 text-amber-900">
+                        {ex}
+                      </div>
+                    ))}
+                    {(!dadosConferencia || dadosConferencia.exames_adicionais.length === 0) && (
+                      <p className="text-[11px] text-ink/40 italic">Nenhum exame adicional.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Formulário de Justificativa */}
+              <div className="space-y-3 pt-2">
+                <div>
+                  <Label>Motivo Clínico / Técnico da Inconsistência *</Label>
+                  <Select
+                    value={motivoInconsistencia}
+                    onChange={(e) => setMotivoInconsistencia(e.target.value)}
+                  >
+                    <option value="divergencia_nomenclatura">
+                      Divergência de nomenclatura técnica / sinonímia de laboratório
+                    </option>
+                    <option value="exame_cancelado_clinico">
+                      Exame cancelado por condição clínica / jejum inadequado / amostra insuficiente
+                    </option>
+                    <option value="laudo_parcial_cultura">
+                      Laudo parcial / cultura microbiológica ou sorologia com prazo estendido
+                    </option>
+                    <option value="particular_associado">
+                      Exames adicionais realizados de forma particular pelo paciente
+                    </option>
+                    <option value="divergencia_dados_paciente">
+                      Divergência em dados cadastrais (nome social / casado / digitação)
+                    </option>
+                    <option value="outro">Outro motivo técnico / justificativa clínica</option>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label>Justificativa Detalhada para a Secretaria de Saúde *</Label>
+                  <textarea
+                    rows={4}
+                    value={justificativaInconsistencia}
+                    onChange={(e) => setJustificativaInconsistencia(e.target.value)}
+                    placeholder="Explique tecnicamente os exames ausentes ou adicionais para que o auditor da Secretaria de Saúde possa avaliar a liberação..."
+                    className="w-full rounded-xl border border-sus-900/15 bg-white p-3 text-sm text-ink outline-none focus:border-teal"
+                  />
+                  <p className="mt-1 text-[11px] text-ink/50">
+                    O pedido entrará na fila de "Revisão da Secretaria" e só será concluído após aprovação do auditor.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-sus-900/10">
+                <Button
+                  type="button"
+                  disabled={enviandoInconsistencia}
+                  onClick={() => setModalInconsistencia(false)}
+                  className="border border-sus-900/15 bg-white text-ink hover:bg-sand"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={submeterJustificativaInconsistencia}
+                  disabled={enviandoInconsistencia || justificativaInconsistencia.trim().length < 10}
+                  className="bg-amber-600 hover:bg-amber-700 text-white font-bold"
+                >
+                  {enviandoInconsistencia ? "Submetendo..." : "Enviar Justificativa para a Secretaria"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 3: Pedido de Ajuste Inicial de Recepção */}
       {modalAjuste && itemAjuste && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-sus-950/60 p-3 sm:p-5"

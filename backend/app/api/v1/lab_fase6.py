@@ -1,7 +1,8 @@
 import json
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlmodel import Session, func, select, or_
 
 from app.core.deps import get_current_user_senha_ok as get_current_user, get_db
@@ -9,9 +10,12 @@ from app.models.lab_exames import SigtapProcedimento
 from app.models.lab_fase6 import (
     FilaPsf,
     ItemSolic,
+    LabConferenciaAutomatica,
     LabFeriadoBloqueio,
+    LabInconsistenciaJustificativa,
     Laboratorio,
     LabPedidoAjuste,
+    LabResultadoArquivo,
     SolicitacaoMestre,
     VagaLab,
 )
@@ -28,10 +32,15 @@ from app.schemas.lab_fase6 import (
     FilaPsfOut,
     FilaPsfStatusIn,
     FilaPsfUpdateIn,
-    LaboratorioIn,
-    LaboratorioOut,
+    LabAuditoriaItemOut,
+    LabConferenciaResultadoOut,
+    LabDecisaoSecretariaIn,
+    LabExameItemMatch,
     LabFeriadoBloqueioIn,
     LabFeriadoBloqueioOut,
+    LabJustificativaIn,
+    LaboratorioIn,
+    LaboratorioOut,
     PedidoAjusteIn,
     PedidoAjusteOut,
     PedidoDuplicadoLabOut,
@@ -46,6 +55,8 @@ from app.schemas.lab_fase6 import (
     VagaOut,
     VerificarDuplicidadeLabOut,
 )
+from app.services.pdf_laudo_matcher import executar_conferencia_completa
+from app.services.laudo_storage import salvar_arquivo_laudo, obter_caminho_arquivo_laudo, vincular_laudo_prontuario
 from app.services.lab_fase6 import (
     agendar_lote_fila,
     analisar_pedido_ajuste,
@@ -1621,3 +1632,432 @@ def exportar_fila_psf(
         ],
         linhas, "fila_exames_sangue",
     )
+
+
+# ==============================================================================
+# CONFERÊNCIA AUTOMATIZADA DE EXAMES VIA PDF E AUDITORIA (SUBAGENTE 2)
+# ==============================================================================
+
+@router.post("/exames/solicitacoes/{mid}/upload-laudo", response_model=LabConferenciaResultadoOut)
+async def upload_e_conferir_laudo(
+    mid: int,
+    arquivo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Recebe o upload do PDF do laudo de resultados do laboratório, extrai o texto,
+    realiza o match do paciente e cruza os procedimentos solicitados com os encontrados.
+    """
+    m = db.get(SolicitacaoMestre, mid)
+    if not m:
+        raise HTTPException(404, "Solicitação de exame não encontrada.")
+
+    # Restrição de perfil: laboratório credenciado só pode manipular suas próprias coletas
+    if not bool(getattr(user, "is_superuser", False)):
+        lab_id = getattr(user, "laboratorio_id", None)
+        if lab_id and m.laboratorio_id != lab_id:
+            raise HTTPException(403, "Acesso não autorizado para laudos de outro laboratório.")
+
+    if not (arquivo.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(400, "Formato inválido. O arquivo do laudo deve ser obrigatoriamente um documento PDF.")
+
+    conteudo = await arquivo.read()
+    if len(conteudo) > 25 * 1024 * 1024:
+        raise HTTPException(400, "Arquivo muito grande. O limite máximo permitido para laudos é de 25MB.")
+
+    paciente = db.get(Paciente, m.paciente_id)
+    if not paciente:
+        raise HTTPException(404, "Paciente vinculado à solicitação não encontrado.")
+
+    itens = db.exec(select(ItemSolic).where(ItemSolic.solicitacao_id == mid)).all()
+    sigtap_ids = [it.sigtap_id for it in itens]
+    procs = (
+        db.exec(select(SigtapProcedimento).where(SigtapProcedimento.id.in_(sigtap_ids))).all()
+        if sigtap_ids
+        else []
+    )
+    procs_map = {p.id: p for p in procs}
+
+    # 1. Executa Motor de Processamento de PDF e Match
+    res_conf = executar_conferencia_completa(conteudo, paciente, itens, procs_map)
+
+    # 2. Armazena no Storage Seguro
+    nome_orig = arquivo.filename or f"laudo_SL_{mid:06d}.pdf"
+    usuario_nome = getattr(user, "nome", "") or getattr(user, "username", "") or "Laboratório"
+    arquivo_db = salvar_arquivo_laudo(
+        db=db,
+        solicitacao_id=mid,
+        paciente_id=paciente.id or 0,
+        laboratorio_id=m.laboratorio_id,
+        nome_original=nome_orig,
+        conteudo_bytes=conteudo,
+        usuario_nome=usuario_nome,
+    )
+    arquivo_db.texto_extraido = res_conf["texto_extraido"][:50000]
+    db.add(arquivo_db)
+    db.commit()
+    db.refresh(arquivo_db)
+
+    # 3. Registra Auditoria da Conferência
+    conf_db = LabConferenciaAutomatica(
+        solicitacao_id=mid,
+        arquivo_id=arquivo_db.id or 0,
+        match_paciente_ok=res_conf["match_paciente_ok"],
+        paciente_criterio_match=res_conf["paciente_criterio_match"],
+        dados_paciente_encontrados_json=json.dumps(res_conf["dados_paciente_encontrados"], ensure_ascii=False),
+        status_conferencia=res_conf["status_conferencia"],
+        exames_solicitados_json=json.dumps(res_conf["exames_solicitados_match"], ensure_ascii=False),
+        exames_encontrados_json=json.dumps(res_conf["exames_encontrados"], ensure_ascii=False),
+        exames_faltantes_json=json.dumps(res_conf["exames_faltantes"], ensure_ascii=False),
+        exames_adicionais_json=json.dumps(res_conf["exames_adicionais"], ensure_ascii=False),
+        total_solicitados=res_conf["total_solicitados"],
+        total_encontrados=res_conf["total_encontrados"],
+        total_faltantes=res_conf["total_faltantes"],
+        total_adicionais=res_conf["total_adicionais"],
+        score_confianca=res_conf["score_confianca"],
+    )
+    db.add(conf_db)
+    db.commit()
+    db.refresh(conf_db)
+
+    # 4. Transição de Status da Máquina de Estados
+    if res_conf["conferencia_limpa"]:
+        # Match 100% limpo: Avança diretamente para REALIZADO e vincula ao Prontuário PEC
+        vincular_laudo_prontuario(db, m, paciente, arquivo_db, usuario_nome)
+        novo_status = "realizado"
+    else:
+        # Divergência detectada: bloqueia conclusão e requer justificativa do laboratório
+        m.status = "aguardando_conferencia"
+        m.status_auditoria = "inconsistencia_detectada"
+        m.laudo_arquivo_id = arquivo_db.id
+        db.add(m)
+        db.commit()
+        db.refresh(m)
+        novo_status = "aguardando_conferencia"
+
+    exames_match_out = [
+        LabExameItemMatch(**it) for it in res_conf["exames_solicitados_match"]
+    ]
+
+    return LabConferenciaResultadoOut(
+        solicitacao_id=mid,
+        arquivo_id=arquivo_db.id or 0,
+        nome_arquivo=arquivo_db.nome_arquivo_original,
+        match_paciente_ok=res_conf["match_paciente_ok"],
+        paciente_criterio_match=res_conf["paciente_criterio_match"],
+        dados_paciente_encontrados=res_conf["dados_paciente_encontrados"],
+        status_conferencia=res_conf["status_conferencia"],
+        exames_solicitados=exames_match_out,
+        exames_encontrados=res_conf["exames_encontrados"],
+        exames_faltantes=res_conf["exames_faltantes"],
+        exames_adicionais=res_conf["exames_adicionais"],
+        requer_justificativa=res_conf["requer_justificativa"],
+        novo_status_solicitacao=novo_status,
+        mensagem=res_conf["mensagem"],
+    )
+
+
+@router.post("/exames/solicitacoes/{mid}/justificar-inconsistencia", response_model=dict)
+def submeter_justificativa_inconsistencia(
+    mid: int,
+    dados: LabJustificativaIn,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Permite ao laboratório justificar inconsistências (exames faltantes/adicionais).
+    Encaminha o pedido para a fila de Auditoria da Secretaria (status: EM_REVISAO_SECRETARIA).
+    """
+    m = db.get(SolicitacaoMestre, mid)
+    if not m:
+        raise HTTPException(404, "Solicitação não encontrada.")
+
+    if not bool(getattr(user, "is_superuser", False)):
+        lab_id = getattr(user, "laboratorio_id", None)
+        if lab_id and m.laboratorio_id != lab_id:
+            raise HTTPException(403, "Acesso não autorizado para solicitação de outro laboratório.")
+
+    # Localiza última conferência realizada para a solicitação
+    conf = db.exec(
+        select(LabConferenciaAutomatica)
+        .where(LabConferenciaAutomatica.solicitacao_id == mid)
+        .order_by(LabConferenciaAutomatica.id.desc())
+    ).first()
+    if not conf:
+        raise HTTPException(
+            400, "Nenhuma conferência automatizada encontrada para esta solicitação. Faça o upload do PDF primeiro."
+        )
+
+    usuario_nome = getattr(user, "nome", "") or getattr(user, "username", "") or "Laboratório"
+    just = LabInconsistenciaJustificativa(
+        solicitacao_id=mid,
+        conferencia_id=conf.id or 0,
+        motivo_inconsistencia=dados.motivo_inconsistencia,
+        justificativa_laboratorio=dados.justificativa.strip(),
+        registrado_por=usuario_nome,
+        status_revisao="pendente_secretaria",
+    )
+    db.add(just)
+
+    # Avança para a fila de Auditoria da Secretaria
+    m.status = "em_revisao_secretaria"
+    m.status_auditoria = "aguardando_revisao_secretaria"
+    db.add(m)
+    db.commit()
+
+    return {
+        "ok": True,
+        "status": "em_revisao_secretaria",
+        "mensagem": "Justificativa registrada com sucesso. O pedido foi encaminhado para a fila de Auditoria da Secretaria de Saúde.",
+    }
+
+
+@router.get("/exames/solicitacoes/{mid}/resultado-pdf")
+def visualizar_resultado_pdf(
+    mid: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Endpoint seguro para visualização/download do laudo em PDF.
+    Protegido por RBAC: acesso concedido apenas à Secretaria, profissionais de saúde e ao laboratório responsável.
+    """
+    m = db.get(SolicitacaoMestre, mid)
+    if not m:
+        raise HTTPException(404, "Solicitação de exame não encontrada.")
+
+    telas_user = (getattr(user, "telas", "") or "").split(",")
+    tem_acesso_saude = any(
+        t in telas_user
+        for t in ["lab", "lab_faturamento", "lab_orcamento", "usuarios", "tfd", "tfd_pacientes", "tfd_medico"]
+    )
+    if not bool(getattr(user, "is_superuser", False)) and not tem_acesso_saude:
+        lab_id = getattr(user, "laboratorio_id", None)
+        if not lab_id or m.laboratorio_id != lab_id:
+            raise HTTPException(403, "Sem permissão de segurança para acessar o laudo desta solicitação.")
+
+    arquivo = None
+    if m.laudo_arquivo_id:
+        arquivo = db.get(LabResultadoArquivo, m.laudo_arquivo_id)
+    if not arquivo:
+        arquivo = db.exec(
+            select(LabResultadoArquivo)
+            .where(LabResultadoArquivo.solicitacao_id == mid, LabResultadoArquivo.ativo == True)
+            .order_by(LabResultadoArquivo.id.desc())
+        ).first()
+
+    if not arquivo:
+        raise HTTPException(404, "Nenhum arquivo de laudo anexado a esta solicitação.")
+
+    caminho = obter_caminho_arquivo_laudo(arquivo)
+    if not caminho:
+        raise HTTPException(404, "Arquivo binário do laudo não encontrado no storage do servidor.")
+
+    return FileResponse(
+        path=str(caminho),
+        media_type="application/pdf",
+        filename=arquivo.nome_arquivo_sistema or f"laudo_SL_{mid:06d}.pdf",
+    )
+
+
+@router.get("/exames/auditoria-laudos", response_model=list[LabAuditoriaItemOut])
+def listar_auditoria_laudos(
+    q: str = Query(default="", max_length=100),
+    status: str = Query(default="em_revisao_secretaria"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Fila de Auditoria da Secretaria: lista pedidos retidos por inconsistências aguardando parecer da pasta."""
+    telas_user = (getattr(user, "telas", "") or "").split(",")
+    if not bool(getattr(user, "is_superuser", False)) and not any(t in telas_user for t in ["lab", "lab_orcamento", "lab_faturamento", "usuarios"]):
+        raise HTTPException(403, "Acesso restrito aos auditores da Secretaria de Saúde.")
+
+    stmt = (
+        select(SolicitacaoMestre)
+        .where(SolicitacaoMestre.status == status)
+        .order_by(SolicitacaoMestre.id.desc())
+    )
+    solics = list(db.exec(stmt).all())
+
+    pac_ids = {s.paciente_id for s in solics}
+    pacs = {p.id: p for p in db.exec(select(Paciente).where(Paciente.id.in_(pac_ids))).all()} if pac_ids else {}
+
+    lab_ids = {s.laboratorio_id for s in solics}
+    labs = {l.id: l for l in db.exec(select(Laboratorio).where(Laboratorio.id.in_(lab_ids))).all()} if lab_ids else {}
+
+    solic_ids = [s.id for s in solics if s.id]
+    confs = (
+        db.exec(
+            select(LabConferenciaAutomatica)
+            .where(LabConferenciaAutomatica.solicitacao_id.in_(solic_ids))
+            .order_by(LabConferenciaAutomatica.id.desc())
+        ).all()
+        if solic_ids
+        else []
+    )
+    confs_map: dict[int, LabConferenciaAutomatica] = {}
+    for c in confs:
+        if c.solicitacao_id not in confs_map:
+            confs_map[c.solicitacao_id] = c
+
+    justs = (
+        db.exec(
+            select(LabInconsistenciaJustificativa)
+            .where(LabInconsistenciaJustificativa.solicitacao_id.in_(solic_ids))
+            .order_by(LabInconsistenciaJustificativa.id.desc())
+        ).all()
+        if solic_ids
+        else []
+    )
+    justs_map: dict[int, LabInconsistenciaJustificativa] = {}
+    for j in justs:
+        if j.solicitacao_id not in justs_map:
+            justs_map[j.solicitacao_id] = j
+
+    arqs = (
+        db.exec(
+            select(LabResultadoArquivo)
+            .where(LabResultadoArquivo.solicitacao_id.in_(solic_ids))
+            .order_by(LabResultadoArquivo.id.desc())
+        ).all()
+        if solic_ids
+        else []
+    )
+    arqs_map: dict[int, LabResultadoArquivo] = {}
+    for a in arqs:
+        if a.solicitacao_id not in arqs_map:
+            arqs_map[a.solicitacao_id] = a
+
+    itens_out = []
+    termo = q.strip().lower()
+
+    for s in solics:
+        pac = pacs.get(s.paciente_id)
+        lab = labs.get(s.laboratorio_id)
+        conf = confs_map.get(s.id or 0)
+        just = justs_map.get(s.id or 0)
+        arq = arqs_map.get(s.id or 0)
+
+        p_nome = pac.nome if pac else ""
+        p_cpf = getattr(pac, "cpf", "") or ""
+        p_pront = getattr(pac, "codigo_prontuario", "") or f"PR-{s.paciente_id:05d}"
+
+        if termo:
+            match_termo = (
+                termo in p_nome.lower()
+                or termo in p_cpf.lower()
+                or termo in p_pront.lower()
+                or termo in (lab.nome if lab else "").lower()
+                or termo in f"sl-{s.id:06d}"
+            )
+            if not match_termo:
+                continue
+
+        faltantes = json.loads(conf.exames_faltantes_json) if conf and conf.exames_faltantes_json else []
+        adicionais = json.loads(conf.exames_adicionais_json) if conf and conf.exames_adicionais_json else []
+        encontrados = json.loads(conf.exames_encontrados_json) if conf and conf.exames_encontrados_json else []
+
+        itens_out.append(
+            LabAuditoriaItemOut(
+                solicitacao_id=s.id or 0,
+                codigo_solicitacao=f"SL-{s.id:06d}",
+                paciente_id=s.paciente_id,
+                paciente_nome=p_nome,
+                paciente_cpf=p_cpf,
+                paciente_cns=getattr(pac, "cns", "") or "",
+                paciente_prontuario=p_pront,
+                laboratorio_id=s.laboratorio_id,
+                laboratorio_nome=lab.nome if lab else "",
+                data_agendada=s.data_agendada,
+                status=s.status,
+                arquivo_id=arq.id if arq else None,
+                nome_arquivo=arq.nome_arquivo_original if arq else None,
+                conferencia_id=conf.id if conf else None,
+                match_paciente_ok=conf.match_paciente_ok if conf else False,
+                paciente_criterio_match=conf.paciente_criterio_match if conf else "",
+                exames_faltantes=faltantes,
+                exames_adicionais=adicionais,
+                exames_encontrados=encontrados,
+                justificativa_laboratorio=just.justificativa_laboratorio if just else None,
+                motivo_inconsistencia=just.motivo_inconsistencia if just else None,
+                justificado_por=just.registrado_por if just else None,
+                justificado_em=just.registrado_em if just else None,
+                parecer_secretaria=just.parecer_secretaria if just else None,
+            )
+        )
+
+    return itens_out
+
+
+@router.post("/exames/auditoria-laudos/{mid}/decisao", response_model=dict)
+def decidir_auditoria_laudo(
+    mid: int,
+    dados: LabDecisaoSecretariaIn,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Decisão do auditor da Secretaria: Aprovar laudo (avança para REALIZADO e anexa ao Prontuário)
+    ou Rejeitar laudo com parecer (retorna para o laboratório corrigir e reenviar).
+    """
+    telas_user = (getattr(user, "telas", "") or "").split(",")
+    if not bool(getattr(user, "is_superuser", False)) and not any(t in telas_user for t in ["lab", "lab_orcamento", "usuarios"]):
+        raise HTTPException(403, "Acesso restrito aos auditores da Secretaria de Saúde.")
+
+    m = db.get(SolicitacaoMestre, mid)
+    if not m:
+        raise HTTPException(404, "Solicitação não encontrada.")
+
+    just = db.exec(
+        select(LabInconsistenciaJustificativa)
+        .where(LabInconsistenciaJustificativa.solicitacao_id == mid)
+        .order_by(LabInconsistenciaJustificativa.id.desc())
+    ).first()
+
+    arq = db.exec(
+        select(LabResultadoArquivo)
+        .where(LabResultadoArquivo.solicitacao_id == mid, LabResultadoArquivo.ativo == True)
+        .order_by(LabResultadoArquivo.id.desc())
+    ).first()
+
+    paciente = db.get(Paciente, m.paciente_id)
+    usuario_nome = getattr(user, "nome", "") or getattr(user, "username", "") or "Auditor da Secretaria"
+
+    if dados.acao == "aprovar":
+        if not arq:
+            raise HTTPException(400, "Arquivo de laudo não localizado para homologação.")
+        if not paciente:
+            raise HTTPException(404, "Paciente não encontrado.")
+
+        # Homologa laudo e vincula ao prontuário do paciente
+        vincular_laudo_prontuario(db, m, paciente, arq, usuario_nome)
+        if just:
+            just.status_revisao = "aprovado"
+            just.parecer_secretaria = dados.parecer.strip()
+            just.revisado_por = usuario_nome
+            just.revisado_em = datetime.utcnow()
+            db.add(just)
+        m.status = "realizado"
+        m.status_auditoria = "aprovado_secretaria"
+        db.add(m)
+        db.commit()
+        return {
+            "ok": True,
+            "novo_status": "realizado",
+            "mensagem": "Laudo aprovado com sucesso pela Secretaria de Saúde. Exames homologados e anexados ao prontuário do paciente.",
+        }
+    else:
+        # Rejeição: retorna para o laboratório corrigir
+        m.status = "recepcionado"
+        m.status_auditoria = "rejeitado_secretaria"
+        if just:
+            just.status_revisao = "rejeitado"
+            just.parecer_secretaria = dados.parecer.strip()
+            just.revisado_por = usuario_nome
+            just.revisado_em = datetime.utcnow()
+            db.add(just)
+        db.add(m)
+        db.commit()
+        return {
+            "ok": True,
+            "novo_status": "recepcionado",
+            "mensagem": "Laudo rejeitado com parecer registrado. O pedido retornou para o laboratório corrigir a divergência e reenviar.",
+        }
+

@@ -224,6 +224,8 @@ def enriquecer_mestre(db: Session, m: SolicitacaoMestre) -> dict:
         "justificativa": getattr(m, "justificativa", ""),
         "coletado_em": getattr(m, "coletado_em", None),
         "coletado_por": getattr(m, "coletado_por", "") or "",
+        "laudo_arquivo_id": getattr(m, "laudo_arquivo_id", None),
+        "tem_laudo": bool(getattr(m, "laudo_arquivo_id", None)),
         "preparo_instrucoes": prep,
         "itens": itens_out,
     }
@@ -296,6 +298,8 @@ def enriquecer_mestre_lote(db: Session, mestres: list[SolicitacaoMestre]) -> lis
             "justificativa": getattr(m, "justificativa", ""),
             "coletado_em": getattr(m, "coletado_em", None),
             "coletado_por": getattr(m, "coletado_por", "") or "",
+            "laudo_arquivo_id": getattr(m, "laudo_arquivo_id", None),
+            "tem_laudo": bool(getattr(m, "laudo_arquivo_id", None)),
             "preparo_instrucoes": prep,
             "itens": itens_out,
         })

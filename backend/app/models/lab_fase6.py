@@ -77,7 +77,7 @@ class SolicitacaoMestre(SQLModel, table=True):
     data_agendada: date = Field(sa_column=Column(Date, index=True))
     laboratorio_id: int = Field(foreign_key="lab_laboratorios.id", index=True)
     contrato_id: int | None = Field(default=None, foreign_key="lab_contratos.id", index=True)
-    status: str = Field(default="agendado", max_length=20, index=True)
+    status: str = Field(default="agendado", max_length=40, index=True)
     agendado_por: str = Field(default="", max_length=120)
     origem_fila_id: int | None = Field(default=None, foreign_key="lab_fila_psf.id")
     lote_id: int | None = Field(default=None, foreign_key="lab_lotes_liberacao.id", index=True)
@@ -96,6 +96,7 @@ class SolicitacaoMestre(SQLModel, table=True):
         default=None, sa_column=Column(DateTime(timezone=False))
     )
     coletado_por: str = Field(default="", max_length=120)
+    laudo_arquivo_id: int | None = Field(default=None, index=True)
 
 
 class ItemSolic(SQLModel, table=True):
@@ -359,4 +360,89 @@ class LabFechamentoFaturamento(SQLModel, table=True):
     updated_at: datetime = Field(
         default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=False))
     )
+
+
+# ==============================================================================
+# CONFERÊNCIA AUTOMATIZADA DE LAUDOS VIA PDF (SUBAGENTE 2)
+# ==============================================================================
+
+class LabResultadoArquivo(SQLModel, table=True):
+    """Armazenamento seguro de arquivos de laudos de exames enviados pelo laboratório."""
+    __tablename__ = "lab_resultado_arquivos"
+
+    id: int | None = Field(default=None, primary_key=True)
+    solicitacao_id: int = Field(foreign_key="lab_solic_mestre.id", index=True)
+    paciente_id: int = Field(foreign_key="tfd_pacientes.id", index=True)
+    laboratorio_id: int = Field(foreign_key="lab_laboratorios.id", index=True)
+
+    nome_arquivo_original: str = Field(max_length=255)
+    nome_arquivo_sistema: str = Field(max_length=255)
+    caminho_storage: str = Field(default="", max_length=500)
+    sha256_hash: str = Field(max_length=64, index=True)
+    tamanho_bytes: int = Field(default=0)
+    mime_type: str = Field(default="application/pdf", max_length=100)
+    texto_extraido: str | None = Field(default=None)
+
+    enviado_por: str = Field(default="", max_length=120)
+    enviado_em: datetime = Field(
+        default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=False), index=True)
+    )
+    ativo: bool = Field(default=True, index=True)
+
+
+class LabConferenciaAutomatica(SQLModel, table=True):
+    """Registro auditável do match de dados do paciente e cruzamento de exames no PDF."""
+    __tablename__ = "lab_conferencias_automaticas"
+
+    id: int | None = Field(default=None, primary_key=True)
+    solicitacao_id: int = Field(foreign_key="lab_solic_mestre.id", index=True)
+    arquivo_id: int = Field(foreign_key="lab_resultado_arquivos.id", index=True)
+
+    match_paciente_ok: bool = Field(default=False, index=True)
+    paciente_criterio_match: str = Field(default="", max_length=200)
+    dados_paciente_encontrados_json: str = Field(default="{}")
+
+    # "aprovado_automatico" | "inconsistente" | "revisado_secretaria" | "rejeitado_secretaria"
+    status_conferencia: str = Field(default="inconsistente", max_length=50, index=True)
+
+    # Detalhamento de exames em formato JSON
+    exames_solicitados_json: str = Field(default="[]")
+    exames_encontrados_json: str = Field(default="[]")
+    exames_faltantes_json: str = Field(default="[]")
+    exames_adicionais_json: str = Field(default="[]")
+
+    total_solicitados: int = Field(default=0)
+    total_encontrados: int = Field(default=0)
+    total_faltantes: int = Field(default=0)
+    total_adicionais: int = Field(default=0)
+    score_confianca: float = Field(default=0.0)
+
+    executado_em: datetime = Field(
+        default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=False))
+    )
+
+
+class LabInconsistenciaJustificativa(SQLModel, table=True):
+    """Justificativa submetida pelo laboratório em caso de divergência e fluxo de aprovação da Secretaria."""
+    __tablename__ = "lab_inconsistencias_justificativas"
+
+    id: int | None = Field(default=None, primary_key=True)
+    solicitacao_id: int = Field(foreign_key="lab_solic_mestre.id", index=True)
+    conferencia_id: int = Field(foreign_key="lab_conferencias_automaticas.id", index=True)
+
+    motivo_inconsistencia: str = Field(default="divergencia_exames", max_length=60)
+    justificativa_laboratorio: str = Field(max_length=2000)
+    registrado_por: str = Field(default="", max_length=120)
+    registrado_em: datetime = Field(
+        default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=False))
+    )
+
+    # "pendente_secretaria" | "aprovado" | "rejeitado"
+    status_revisao: str = Field(default="pendente_secretaria", max_length=30, index=True)
+    parecer_secretaria: str = Field(default="", max_length=2000)
+    revisado_por: str = Field(default="", max_length=120)
+    revisado_em: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=False))
+    )
+
 

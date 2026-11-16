@@ -913,6 +913,59 @@ def perfil_paciente(
     except Exception:
         pass
 
+    # Agrega também pedidos diretos do laboratório (SolicitacaoMestre)
+    try:
+        from app.models.lab_fase6 import SolicitacaoMestre, SolicitacaoItem
+        mestres = list(
+            db.exec(
+                select(SolicitacaoMestre)
+                .where(SolicitacaoMestre.paciente_id.in_(ids_relacionados))
+                .order_by(SolicitacaoMestre.data_solicitacao.desc(), SolicitacaoMestre.id.desc())
+            ).all()
+        )
+        for sm in mestres:
+            st = (sm.status or "").lower()
+            st_unificado = (
+                "aguardando" if st in ("solicitado", "na_fila", "aguardando")
+                else ("agendado" if st in ("agendado", "coletado", "aguardando_conferencia", "em_revisao_secretaria")
+                else ("realizado" if st in ("realizado", "concluido") else st))
+            )
+            # Lista nomes dos exames vinculados
+            itens_sm = list(db.exec(select(SolicitacaoItem).where(SolicitacaoItem.mestre_id == sm.id)).all())
+            nomes = [it.procedimento_descricao or it.procedimento_codigo for it in itens_sm if it.procedimento_descricao or it.procedimento_codigo]
+            desc_mestres = ", ".join(nomes[:5]) if nomes else "Exames Laboratoriais"
+            if len(nomes) > 5:
+                desc_mestres += f" (+{len(nomes) - 5} exames)"
+
+            realizado_d = sm.data_agendada if st == "realizado" else None
+            demanda.append(
+                DemandaItemOut(
+                    id=sm.id or 0,
+                    exame=desc_mestres[:120],
+                    especialidade="Análises Clínicas / Laboratório",
+                    nome_especialidade="Laboratório Municipal",
+                    tipo_fila="EXAMES DE LABORATÓRIO",
+                    prioridade="rotina",
+                    classificacao_risco=_risco_rotulo("rotina"),
+                    data_pedido=sm.data_solicitacao,
+                    data_inclusao=sm.data_solicitacao.strftime("%d/%m/%Y") if sm.data_solicitacao else "",
+                    posicao_especialidade=None,
+                    total_fila_especialidade=None,
+                    posicao_fila_geral=None,
+                    total_fila_geral=None,
+                    status=st_unificado,
+                    status_rotulo="Realizado" if st == "realizado" else ("Em Auditoria" if st == "em_revisao_secretaria" else ("Coletado" if st == "coletado" else "Agendado")),
+                    data_agendada=sm.data_agendada,
+                    hora_agendada=sm.hora_agendada or "",
+                    medico_nome=sm.medico_solicitante or "",
+                    unidade_nome=sm.unidade_psf or "Laboratório",
+                    resultado="Laudo Validado (PDF Oficial Anexo)" if (st == "realizado" or sm.laudo_arquivo_id) else "",
+                    realizado_em=realizado_d,
+                )
+            )
+    except Exception:
+        pass
+
     # Ordena a demanda unificada por data do pedido decrescente
     demanda.sort(key=lambda d: d.data_pedido or date.min, reverse=True)
     hist_rows = list(

@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 from app.core.deps import get_db, require_superuser
 from app.core.pagination import paginar
 from app.models.audit import AuditLog
-from app.models.tfd import ExameFila, Paciente, Viagem, ViagemPaciente
+from app.models.tfd import ExameFila, Paciente, Viagem, ViagemPaciente, PacienteHistorico
 from app.models.user import User
 from app.services.permissoes import need_perm
 
@@ -268,6 +268,26 @@ def timeline_paciente(
             titulo=f"{lg.action} · {lg.entity}#{lg.entity_id or '—'}",
             detalhe=(lg.details or "")[:200], usuario=lg.user_name or "sistema",
         ))
+
+    # Histórico do Prontuário / Laudos Laboratoriais Validados (OCR/NLP)
+    historicos = db.exec(
+        select(PacienteHistorico)
+        .where(PacienteHistorico.paciente_id == pid)
+        .order_by(PacienteHistorico.registrado_em)
+    ).all()
+    for h in historicos:
+        dt = h.registrado_em.date().isoformat() if h.registrado_em else pac.created_at.date().isoformat()
+        is_laudo = h.tipo_evento == "LAUDO_EXAME_REALIZADO"
+        solic_ref = f" (Pedido #{h.exames_baixados_ids})" if (h.exames_baixados_ids and is_laudo) else ""
+        eventos.append(EventoOut(
+            data=dt,
+            tipo="laudo" if is_laudo else "movimentacao",
+            titulo=f"Laudo Laboratorial Validado{solic_ref}" if is_laudo else f"Prontuário: {h.tipo_evento}",
+            detalhe=f"{h.motivo or ''} · {h.descricao or ''}".strip(" · "),
+            usuario=h.registrado_por or "Laboratório Conveniado",
+            status="realizado" if is_laudo else None,
+        ))
+
     eventos.sort(key=lambda e: _chave_data(e.data))
     status_atual = ""
     ativos = [e for e in exames if e.ativo]

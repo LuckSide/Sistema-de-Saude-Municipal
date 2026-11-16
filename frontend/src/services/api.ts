@@ -1974,6 +1974,8 @@ export type SolicMestre = {
   observacoes: string;
   coletado_em?: string | null;
   coletado_por?: string;
+  laudo_arquivo_id?: number | null;
+  tem_laudo?: boolean;
   jejum_horas?: string;
   preparo_instrucoes?: string[];
   itens: { id: number; solicitacao_id: number; sigtap_id: number; quantidade: number; status_auditoria: string; observacao: string; procedimento_codigo: string; procedimento_descricao: string; codigo: string; descricao: string; conferido: boolean; divergente: boolean }[];
@@ -2085,6 +2087,8 @@ export function mapMestre(o: any): SolicMestre {
     observacoes: o.observacao_laboratorio ?? "",
     coletado_em: o.coletado_em ?? null,
     coletado_por: o.coletado_por ?? "",
+    laudo_arquivo_id: o.laudo_arquivo_id ?? null,
+    tem_laudo: Boolean(o.tem_laudo ?? o.laudo_arquivo_id),
     jejum_horas: o.jejum_horas ?? "8 a 12 horas",
     preparo_instrucoes: o.preparo_instrucoes ?? [],
     itens: (o.itens ?? []).map((it: any) => ({
@@ -2378,6 +2382,89 @@ export const labBpaExportarCsv = (competencia: string): Promise<Blob> =>
   api
     .get("/api/exames/bpa/exportar-csv", { params: { competencia }, responseType: "blob" })
     .then((r) => r.data as Blob);
+
+// ==============================================================================
+// CONFERÊNCIA AUTOMATIZADA DE LAUDOS VIA PDF (SUBAGENTE 2 & 4)
+// ==============================================================================
+
+export type LabExameItemMatch = {
+  codigo: string;
+  descricao: string;
+  encontrado: boolean;
+  termo_identificado?: string | null;
+};
+
+export type LabConferenciaResultado = {
+  solicitacao_id: number;
+  arquivo_id: number;
+  nome_arquivo: string;
+  match_paciente_ok: boolean;
+  paciente_criterio_match: string;
+  dados_paciente_encontrados: Record<string, unknown>;
+  status_conferencia: string;
+  exames_solicitados: LabExameItemMatch[];
+  exames_encontrados: string[];
+  exames_faltantes: string[];
+  exames_adicionais: string[];
+  requer_justificativa: boolean;
+  novo_status_solicitacao: string;
+  mensagem: string;
+};
+
+export type LabAuditoriaItem = {
+  solicitacao_id: number;
+  codigo_solicitacao: string;
+  paciente_id: number;
+  paciente_nome: string;
+  paciente_cpf: string;
+  paciente_cns: string;
+  paciente_prontuario: string;
+  laboratorio_id: number;
+  laboratorio_nome: string;
+  data_agendada: string;
+  status: string;
+  arquivo_id?: number | null;
+  nome_arquivo?: string | null;
+  conferencia_id?: number | null;
+  match_paciente_ok: boolean;
+  paciente_criterio_match: string;
+  exames_faltantes: string[];
+  exames_adicionais: string[];
+  exames_encontrados: string[];
+  justificativa_laboratorio?: string | null;
+  motivo_inconsistencia?: string | null;
+  justificado_por?: string | null;
+  justificado_em?: string | null;
+  parecer_secretaria?: string | null;
+};
+
+export const labUploadLaudo = (mid: number, file: File): Promise<LabConferenciaResultado> => {
+  const formData = new FormData();
+  formData.append("arquivo", file);
+  return api
+    .post<LabConferenciaResultado>(`/api/exames/solicitacoes/${mid}/upload-laudo`, formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    })
+    .then((r) => r.data);
+};
+
+export const labJustificarInconsistencia = (
+  mid: number,
+  payload: { motivo_inconsistencia: string; justificativa: string }
+): Promise<{ ok: boolean; status: string; mensagem: string }> =>
+  api.post(`/api/exames/solicitacoes/${mid}/justificar-inconsistencia`, payload).then((r) => r.data);
+
+export const labVisualizarLaudoPdfUrl = (mid: number): string =>
+  `/api/exames/solicitacoes/${mid}/resultado-pdf`;
+
+export const labAuditoriaLaudosListar = (params?: { q?: string; status?: string }): Promise<LabAuditoriaItem[]> =>
+  api.get<LabAuditoriaItem[]>("/api/exames/auditoria-laudos", { params }).then((r) => r.data);
+
+export const labAuditoriaLaudoDecidir = (
+  mid: number,
+  payload: { acao: "aprovar" | "rejeitar"; parecer?: string }
+): Promise<{ ok: boolean; novo_status: string; mensagem: string }> =>
+  api.post(`/api/exames/auditoria-laudos/${mid}/decisao`, payload).then((r) => r.data);
 
 export type AuditItemDet = {
   id: number;

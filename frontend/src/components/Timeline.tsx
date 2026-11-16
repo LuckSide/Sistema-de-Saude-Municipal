@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Building2, CalendarClock, Filter, Stethoscope, User } from "lucide-react";
-import { fetchTimeline, type TimelineEvento } from "../services/api";
+import { Building2, CalendarClock, Filter, Stethoscope, User, FileCheck, FileText } from "lucide-react";
+import { fetchTimeline, type TimelineEvento, labVisualizarLaudoPdfUrl } from "../services/api";
 import { cn } from "./ui/primitives";
 
 const COR_TIPO: Record<string, string> = {
@@ -10,6 +10,7 @@ const COR_TIPO: Record<string, string> = {
   transporte: "bg-violet-500",
   movimentacao: "bg-slate-400",
   remocao: "bg-red-500",
+  laudo: "bg-emerald-600",
 };
 
 /** Timeline do paciente. Quando `filtrarProcedimento` é informado, exibe
@@ -125,8 +126,43 @@ export default function Timeline({
               {e.data.split("-").reverse().join("/")}
             </p>
             <p className="text-sm font-bold text-sus-950">{e.titulo}</p>
-            {/* Destaque detalhado para cancelamentos e remoções (Subagente 2) */}
-            {(e.tipo === "remocao" || e.titulo.toLowerCase().includes("cancel") || e.titulo.toLowerCase().includes("remov")) ? (
+            {/* Destaque para Laudo Validado */}
+            {(e.tipo === "laudo" || e.titulo.toLowerCase().includes("laudo laboratorial")) ? (
+              <div className="mt-2 rounded-xl border border-emerald-300 bg-emerald-50/70 p-3 text-xs text-emerald-950 space-y-1.5 shadow-2xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 font-bold text-emerald-800">
+                    <FileCheck className="h-4 w-4 text-emerald-700" />
+                    Laudo Oficial Validado:
+                  </div>
+                  {(() => {
+                    const match = (e.detalhe + " " + e.titulo).match(/#(\d+)/);
+                    const solicId = match ? match[1] : null;
+                    if (solicId) {
+                      return (
+                        <a
+                          href={labVisualizarLaudoPdfUrl(Number(solicId))}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-[11px] font-bold shadow-2xs"
+                        >
+                          <FileText className="h-3 w-3" />
+                          <span>Visualizar Laudo (PDF)</span>
+                        </a>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
+                <p className="text-[11px] leading-relaxed text-emerald-900 font-medium">
+                  {e.detalhe}
+                </p>
+                {e.usuario && (
+                  <p className="text-[10px] text-emerald-800/80">
+                    Validador / Laboratório: <strong>{e.usuario}</strong>
+                  </p>
+                )}
+              </div>
+            ) : (e.tipo === "remocao" || e.titulo.toLowerCase().includes("cancel") || e.titulo.toLowerCase().includes("remov")) ? (
               <div className="mt-2 rounded-xl border border-rose-300 bg-rose-50/70 p-3 text-xs text-rose-950 space-y-1.5 shadow-2xs">
                 <div className="flex items-center gap-1.5 font-bold text-rose-800">
                   <span className="inline-block h-2 w-2 rounded-full bg-rose-600 animate-pulse" />

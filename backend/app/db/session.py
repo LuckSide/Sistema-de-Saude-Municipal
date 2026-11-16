@@ -128,18 +128,21 @@ def _init_db_impl() -> None:
     from app.models.lab_fase6 import (  # noqa: F401
         FilaPsf,
         ItemSolic,
+        LabConferenciaAutomatica,
         LabContrato,
         LabContratoPrecoCustomizado,
         LabFechamentoFaturamento,
         LabFeriadoBloqueio,
         LabFPOCompetencia,
         LabFPOItem,
+        LabInconsistenciaJustificativa,
         LabLoteArtefato,
         LabLoteItem,
         LabLoteLiberacao,
         LabOrcamentoMensal,
         Laboratorio,
         LabPedidoAjuste,
+        LabResultadoArquivo,
         SolicitacaoMestre,
         VagaLab,
     )
@@ -1398,6 +1401,70 @@ def _init_db_impl() -> None:
             "CREATE INDEX IF NOT EXISTS ix_prestadores_cnpj ON prestadores (cnpj)",
             "CREATE INDEX IF NOT EXISTS ix_prestadores_cnes ON prestadores (cnes)",
             "CREATE INDEX IF NOT EXISTS ix_prestadores_ativo ON prestadores (ativo)",
+            "ALTER TABLE lab_solic_mestre ALTER COLUMN status TYPE VARCHAR(40)",
+            "ALTER TABLE lab_solic_mestre ADD COLUMN IF NOT EXISTS laudo_arquivo_id INTEGER",
+            "CREATE INDEX IF NOT EXISTS ix_lab_solic_mestre_laudo_arquivo_id ON lab_solic_mestre (laudo_arquivo_id)",
+            """
+            CREATE TABLE IF NOT EXISTS lab_resultado_arquivos (
+                id SERIAL PRIMARY KEY,
+                solicitacao_id INTEGER NOT NULL REFERENCES lab_solic_mestre(id),
+                paciente_id INTEGER NOT NULL REFERENCES tfd_pacientes(id),
+                laboratorio_id INTEGER NOT NULL REFERENCES lab_laboratorios(id),
+                nome_arquivo_original VARCHAR(255) NOT NULL,
+                nome_arquivo_sistema VARCHAR(255) NOT NULL,
+                caminho_storage VARCHAR(500) NOT NULL DEFAULT '',
+                sha256_hash VARCHAR(64) NOT NULL,
+                tamanho_bytes INTEGER NOT NULL DEFAULT 0,
+                mime_type VARCHAR(100) NOT NULL DEFAULT 'application/pdf',
+                texto_extraido TEXT,
+                enviado_por VARCHAR(120) NOT NULL DEFAULT '',
+                enviado_em TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                ativo BOOLEAN NOT NULL DEFAULT TRUE
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_lab_resultado_arquivos_solicitacao_id ON lab_resultado_arquivos (solicitacao_id)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_resultado_arquivos_paciente_id ON lab_resultado_arquivos (paciente_id)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_resultado_arquivos_sha256_hash ON lab_resultado_arquivos (sha256_hash)",
+            """
+            CREATE TABLE IF NOT EXISTS lab_conferencias_automaticas (
+                id SERIAL PRIMARY KEY,
+                solicitacao_id INTEGER NOT NULL REFERENCES lab_solic_mestre(id),
+                arquivo_id INTEGER NOT NULL REFERENCES lab_resultado_arquivos(id),
+                match_paciente_ok BOOLEAN NOT NULL DEFAULT FALSE,
+                paciente_criterio_match VARCHAR(200) NOT NULL DEFAULT '',
+                dados_paciente_encontrados_json TEXT NOT NULL DEFAULT '{}',
+                status_conferencia VARCHAR(50) NOT NULL DEFAULT 'inconsistente',
+                exames_solicitados_json TEXT NOT NULL DEFAULT '[]',
+                exames_encontrados_json TEXT NOT NULL DEFAULT '[]',
+                exames_faltantes_json TEXT NOT NULL DEFAULT '[]',
+                exames_adicionais_json TEXT NOT NULL DEFAULT '[]',
+                total_solicitados INTEGER NOT NULL DEFAULT 0,
+                total_encontrados INTEGER NOT NULL DEFAULT 0,
+                total_faltantes INTEGER NOT NULL DEFAULT 0,
+                total_adicionais INTEGER NOT NULL DEFAULT 0,
+                score_confianca DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+                executado_em TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_lab_conferencias_solic_id ON lab_conferencias_automaticas (solicitacao_id)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_conferencias_status ON lab_conferencias_automaticas (status_conferencia)",
+            """
+            CREATE TABLE IF NOT EXISTS lab_inconsistencias_justificativas (
+                id SERIAL PRIMARY KEY,
+                solicitacao_id INTEGER NOT NULL REFERENCES lab_solic_mestre(id),
+                conferencia_id INTEGER NOT NULL REFERENCES lab_conferencias_automaticas(id),
+                motivo_inconsistencia VARCHAR(60) NOT NULL DEFAULT 'divergencia_exames',
+                justificativa_laboratorio VARCHAR(2000) NOT NULL,
+                registrado_por VARCHAR(120) NOT NULL DEFAULT '',
+                registrado_em TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                status_revisao VARCHAR(30) NOT NULL DEFAULT 'pendente_secretaria',
+                parecer_secretaria VARCHAR(2000) NOT NULL DEFAULT '',
+                revisado_por VARCHAR(120) NOT NULL DEFAULT '',
+                revisado_em TIMESTAMP WITHOUT TIME ZONE
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_lab_inconsistencias_solic_id ON lab_inconsistencias_justificativas (solicitacao_id)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_inconsistencias_status_revisao ON lab_inconsistencias_justificativas (status_revisao)",
         ]:
             try:
                 with conn.begin_nested():

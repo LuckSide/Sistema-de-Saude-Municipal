@@ -225,6 +225,8 @@ class SolicMestreOut(BaseModel):
     justificativa: str = ""
     coletado_em: datetime | None = None
     coletado_por: str = ""
+    laudo_arquivo_id: int | None = None
+    tem_laudo: bool = False
     preparo_instrucoes: list[str] = []
     itens: list[ItemOut] = []
 
@@ -705,6 +707,72 @@ class PacienteGastosGeraisItemOut(BaseModel):
     total_gasto: float
     qtd_exames: int
     ultimo_exame_data: date | None = None
+
+
+# ==============================================================================
+# SCHEMAS: CONFERÊNCIA AUTOMATIZADA DE LAUDOS VIA PDF (SUBAGENTE 2)
+# ==============================================================================
+
+class LabExameItemMatch(BaseModel):
+    codigo: str = ""
+    descricao: str = ""
+    encontrado: bool = False
+    termo_identificado: str | None = None
+
+
+class LabConferenciaResultadoOut(BaseModel):
+    solicitacao_id: int
+    arquivo_id: int
+    nome_arquivo: str
+    match_paciente_ok: bool
+    paciente_criterio_match: str
+    dados_paciente_encontrados: dict = Field(default_factory=dict)
+    status_conferencia: str  # "aprovado_automatico" | "inconsistente"
+    exames_solicitados: list[LabExameItemMatch] = Field(default_factory=list)
+    exames_encontrados: list[str] = Field(default_factory=list)
+    exames_faltantes: list[str] = Field(default_factory=list)
+    exames_adicionais: list[str] = Field(default_factory=list)
+    requer_justificativa: bool
+    novo_status_solicitacao: str
+    mensagem: str
+
+
+class LabJustificativaIn(BaseModel):
+    motivo_inconsistencia: str = Field(min_length=2, max_length=60)
+    justificativa: str = Field(min_length=8, max_length=2000)
+
+
+class LabDecisaoSecretariaIn(BaseModel):
+    acao: str = Field(pattern="^(aprovar|rejeitar)$")
+    parecer: str = Field(min_length=5, max_length=2000)
+
+
+class LabAuditoriaItemOut(BaseModel):
+    solicitacao_id: int
+    codigo_solicitacao: str = ""
+    paciente_id: int
+    paciente_nome: str
+    paciente_cpf: str = ""
+    paciente_cns: str = ""
+    paciente_prontuario: str = ""
+    laboratorio_id: int
+    laboratorio_nome: str = ""
+    data_agendada: date
+    status: str
+    arquivo_id: int | None = None
+    nome_arquivo: str | None = None
+    conferencia_id: int | None = None
+    match_paciente_ok: bool = False
+    paciente_criterio_match: str = ""
+    exames_faltantes: list[str] = Field(default_factory=list)
+    exames_adicionais: list[str] = Field(default_factory=list)
+    exames_encontrados: list[str] = Field(default_factory=list)
+    justificativa_laboratorio: str | None = None
+    motivo_inconsistencia: str | None = None
+    justificado_por: str | None = None
+    justificado_em: datetime | None = None
+    parecer_secretaria: str | None = None
+
 
 
 

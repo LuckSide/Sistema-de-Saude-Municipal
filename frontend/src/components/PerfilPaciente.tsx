@@ -15,12 +15,15 @@ import {
   DollarSign,
   Printer,
   ReceiptText,
+  FileText,
+  FileCheck,
 } from "lucide-react";
 import {
   tfdPerfilPaciente,
   type PacientePerfil,
   labBiGastosPaciente,
   type PacienteGastosResumo,
+  labVisualizarLaudoPdfUrl,
 } from "../services/api";
 import ExportarExcel from "./ExportarExcel";
 
@@ -596,13 +599,28 @@ export default function PerfilPaciente({
                                 </span>
                               </td>
                               <td className="px-3 py-2.5 text-ink/70">
-                                {d.resultado ? (
-                                  <span className="font-medium text-emerald-900 bg-emerald-50 px-1.5 py-0.5 rounded text-[11px]">
-                                    {d.resultado}
-                                  </span>
-                                ) : (
-                                  <span className="text-ink/40 text-[11px] italic">Sem laudo anexo</span>
-                                )}
+                                <div className="flex flex-col gap-1 items-start">
+                                  {d.resultado && (
+                                    <span className="font-medium text-emerald-900 bg-emerald-50 px-1.5 py-0.5 rounded text-[11px]">
+                                      {d.resultado}
+                                    </span>
+                                  )}
+                                  {((d.status || "").toLowerCase() === "realizado" || d.resultado) ? (
+                                    <a
+                                      href={labVisualizarLaudoPdfUrl(d.id)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="inline-flex items-center gap-1 rounded bg-teal/10 hover:bg-teal/20 text-teal px-2 py-0.5 text-[11px] font-bold border border-teal/30"
+                                      title="Abrir laudo oficial validado em PDF"
+                                    >
+                                      <FileText className="h-3 w-3" />
+                                      <span>Laudo Oficial (PDF)</span>
+                                    </a>
+                                  ) : (
+                                    <span className="text-ink/40 text-[11px] italic">Sem laudo anexo</span>
+                                  )}
+                                </div>
                               </td>
                               <td className="px-3 py-2.5 text-right">
                                 <button
@@ -643,23 +661,31 @@ export default function PerfilPaciente({
                 const ev = (h.tipo_evento || "").toLowerCase();
                 const isObitoEv = ev.includes("obito");
                 const isMudancaEv = ev.includes("mudanca");
+                const isLaudoEv = ev.includes("laudo") || h.tipo_evento === "LAUDO_EXAME_REALIZADO";
                 const rotulo = isObitoEv
                   ? "Baixa por Óbito"
                   : isMudancaEv
                     ? "Baixa por Mudança de Município"
-                    : h.tipo_evento;
+                    : isLaudoEv
+                      ? "✓ Laudo Laboratorial Validado"
+                      : h.tipo_evento;
                 const corBadge = isObitoEv
                   ? "bg-red-100 text-red-800 border-red-200"
                   : isMudancaEv
                     ? "bg-amber-100 text-amber-800 border-amber-200"
-                    : "bg-sus-900/10 text-sus-900 border-sus-900/15";
+                    : isLaudoEv
+                      ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                      : "bg-sus-900/10 text-sus-900 border-sus-900/15";
                 return (
                   <div
                     key={h.id ?? `${h.tipo_evento}-${idx}`}
-                    className="rounded-xl border border-sus-900/10 bg-white p-3 text-xs shadow-2xs"
+                    className={`rounded-xl border p-3 text-xs shadow-2xs ${
+                      isLaudoEv ? "border-emerald-300 bg-emerald-50/20" : "border-sus-900/10 bg-white"
+                    }`}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${corBadge}`}>
+                        {isLaudoEv && <FileCheck className="h-3 w-3" />}
                         {rotulo}
                       </span>
                       <span className="font-mono text-[11px] text-ink/55">
@@ -674,12 +700,28 @@ export default function PerfilPaciente({
                     )}
                     <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink/55">
                       <span>Origem: <strong className="text-ink/80">{h.origem || "—"}</strong></span>
-                      <span>Exames baixados: <strong className="text-ink/80">{h.exames_baixados_qtd ?? 0}</strong></span>
+                      <span>Exames validados: <strong className="text-ink/80">{h.exames_baixados_qtd ?? 0}</strong></span>
                       {h.exames_baixados_ids && (
-                        <span>Protocolos/IDs: <strong className="font-mono text-ink/80">{h.exames_baixados_ids}</strong></span>
+                        <span>Protocolo Pedido: <strong className="font-mono text-ink/80">#{h.exames_baixados_ids}</strong></span>
                       )}
                       <span>Registrado por: <strong className="text-ink/80">{h.registrado_por || "—"}</strong></span>
                     </div>
+
+                    {/* Botão de Acesso Direto ao PDF no Prontuário */}
+                    {isLaudoEv && h.exames_baixados_ids && (
+                      <div className="mt-2.5 pt-2 border-t border-emerald-200/60 flex items-center justify-between">
+                        <span className="text-[11px] text-emerald-800 font-medium">Documento anexado oficialmente ao histórico PEC</span>
+                        <a
+                          href={labVisualizarLaudoPdfUrl(Number(h.exames_baixados_ids))}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-[11px] font-bold shadow-2xs"
+                        >
+                          <FileText className="h-3.5 w-3.5" />
+                          <span>Visualizar Laudo Oficial (PDF)</span>
+                        </a>
+                      </div>
+                    )}
                   </div>
                 );
               })

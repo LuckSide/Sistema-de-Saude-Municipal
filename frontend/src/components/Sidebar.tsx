@@ -125,6 +125,7 @@ const MODULOS_NAV: ModuloNav[] = [
       { to: "/lab/orcamento", label: "Orçamento e Lotes", icon: Coins, tela: "lab_orcamento", ou: ["lab", "lab_marcacao"] },
       { to: "/lab/faturamento", label: "Faturamento BPA", icon: ReceiptText, tela: "lab_faturamento", ou: ["lab"] },
       { to: "/lab/portal-producao", label: "Portal do Laboratório", icon: FileCheck, tela: "lab_recepcao", ou: ["lab", "lab_faturamento", "lab_portal", "usuarios"] },
+      { to: "/lab/auditoria-laudos", label: "Auditoria de Laudos", icon: FileCheck, tela: "lab_audit", ou: ["lab", "lab_orcamento", "lab_faturamento", "usuarios"] },
       { to: "/lab/sigtap", label: "Tabela SIGTAP", icon: BookOpenText, tela: "lab_sigtap", ou: ["lab", "tfd", "usuarios"] },
     ],
   },
