@@ -81,7 +81,7 @@ export default function GestaoFilas() {
     ativo: true,
   });
 
-  const confirm = useConfirm();
+  const { confirmar } = useConfirm();
 
   async function carregarFilas(p = page) {
     setCarregando(true);
@@ -188,12 +188,12 @@ export default function GestaoFilas() {
   }
 
   async function handleExcluir(f: TipoFila) {
-    const ok = await confirm({
-      title: "Excluir Fila",
-      message: `Deseja realmente remover a fila "${f.nome}" (${f.codigo})? Procedimentos vinculados perderão essa categorização.`,
-      confirmLabel: "Excluir Fila",
-      cancelLabel: "Cancelar",
-      danger: true,
+    const ok = await confirmar({
+      titulo: "Excluir Fila",
+      descricao: `Deseja realmente remover a fila "${f.nome}" (${f.codigo})? Procedimentos vinculados perderão essa categorização.`,
+      textoConfirmar: "Excluir Fila",
+      textoCancelar: "Cancelar",
+      variante: "danger",
     });
     if (!ok) return;
 

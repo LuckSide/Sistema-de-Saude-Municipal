@@ -197,14 +197,14 @@ export default function RecepcaoLab() {
       const resp = await labUploadLaudo(itemUpload.id, arquivoUpload);
       setModalUpload(false);
 
-      if (resp.status_pedido === "realizado") {
+      if (resp.novo_status_solicitacao === "realizado" || resp.status_conferencia === "aprovado_automatico" || resp.status_pedido === "realizado") {
         setOk(`✓ Laudo validado com sucesso! Exames de ${itemUpload.paciente_nome} conferidos e pedido marcado como REALIZADO.`);
         carregar();
       } else {
         // Inconsistência detectada: abre o modal de justificativa imediatamente
         setOk("Laudo enviado. Inconsistências identificadas necessitam de justificativa técnica do laboratório.");
         carregar();
-        abrirModalJustificativa(itemUpload, resp.conferencia);
+        abrirModalJustificativa(itemUpload, resp.conferencia || resp);
       }
     } catch (e: any) {
       setErro(e?.response?.data?.detail || "Falha ao processar e conferir o laudo PDF.");
@@ -833,7 +833,7 @@ export default function RecepcaoLab() {
                     )}
                   </p>
                   <p className="text-[11px] mt-1 leading-relaxed opacity-90">
-                    {dadosConferencia.detalhes_paciente}
+                    {dadosConferencia.detalhes_paciente || dadosConferencia.paciente_criterio_match || dadosConferencia.mensagem}
                   </p>
                 </div>
               )}
@@ -849,7 +849,7 @@ export default function RecepcaoLab() {
                   <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
                     {(dadosConferencia?.exames_encontrados || []).map((ex, i) => (
                       <div key={i} className="text-[11px] bg-white p-1.5 rounded border border-emerald-100 text-emerald-900">
-                        {ex.descricao}
+                        {typeof ex === "string" ? ex : (ex as any).descricao || (ex as any).nome}
                       </div>
                     ))}
                     {(!dadosConferencia || dadosConferencia.exames_encontrados.length === 0) && (
@@ -867,7 +867,7 @@ export default function RecepcaoLab() {
                   <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
                     {(dadosConferencia?.exames_faltantes || []).map((ex, i) => (
                       <div key={i} className="text-[11px] bg-white p-1.5 rounded border border-red-200 text-red-900 font-medium">
-                        {ex.descricao}
+                        {typeof ex === "string" ? ex : (ex as any).descricao || (ex as any).nome}
                       </div>
                     ))}
                     {(!dadosConferencia || dadosConferencia.exames_faltantes.length === 0) && (

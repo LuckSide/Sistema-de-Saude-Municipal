@@ -772,6 +772,7 @@ class LabAuditoriaItemOut(BaseModel):
     justificado_por: str | None = None
     justificado_em: datetime | None = None
     parecer_secretaria: str | None = None
+    unidade_psf: str | None = None
 
 
 

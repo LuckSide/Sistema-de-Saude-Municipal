@@ -2417,6 +2417,9 @@ export type LabConferenciaResultado = {
   requer_justificativa: boolean;
   novo_status_solicitacao: string;
   mensagem: string;
+  status_pedido?: string;
+  conferencia?: LabConferenciaResultado;
+  detalhes_paciente?: string;
 };
 
 export type LabAuditoriaItem = {
@@ -2444,6 +2447,8 @@ export type LabAuditoriaItem = {
   justificado_por?: string | null;
   justificado_em?: string | null;
   parecer_secretaria?: string | null;
+  unidade_psf?: string | null;
+  unidade_nome?: string | null;
 };
 
 export const labUploadLaudo = (mid: number, file: File): Promise<LabConferenciaResultado> => {
@@ -2465,7 +2470,7 @@ export const labJustificarInconsistencia = (
 export const labVisualizarLaudoPdfUrl = (mid: number): string =>
   `/api/exames/solicitacoes/${mid}/resultado-pdf`;
 
-export const labAuditoriaLaudosListar = (params?: { q?: string; status?: string }): Promise<LabAuditoriaItem[]> =>
+export const labAuditoriaLaudosListar = (params?: { q?: string; status?: string; limit?: number }): Promise<LabAuditoriaItem[]> =>
   api.get<LabAuditoriaItem[]>("/api/exames/auditoria-laudos", { params }).then((r) => r.data);
 
 export const labAuditoriaLaudoDecidir = (

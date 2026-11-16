@@ -1981,6 +1981,7 @@ def listar_auditoria_laudos(
                 justificado_por=just.registrado_por if just else None,
                 justificado_em=just.registrado_em if just else None,
                 parecer_secretaria=just.parecer_secretaria if just else None,
+                unidade_psf=s.unidade_psf or getattr(pac, "unidade_saude_nome", "") or "",
             )
         )
 
