@@ -97,6 +97,9 @@ def init_db() -> None:
 
     try:
         _init_db_impl()
+    except Exception as exc:
+        import logging
+        logging.getLogger("uvicorn.error").error(f"Aviso não-impeditivo em _init_db_impl: {exc}", exc_info=True)
     finally:
         if lock_conn is not None:
             try:
@@ -1041,7 +1044,8 @@ def _init_db_impl() -> None:
         }.items():
             if col not in cols_empresa:
                 try:
-                    conn.execute(text(f"ALTER TABLE oxigenio_empresas ADD COLUMN {col} {ddl}"))
+                    with conn.begin_nested():
+                        conn.execute(text(f"ALTER TABLE oxigenio_empresas ADD COLUMN {col} {ddl}"))
                 except Exception:
                     pass
 
@@ -1060,7 +1064,8 @@ def _init_db_impl() -> None:
         }.items():
             if col not in cols_lic:
                 try:
-                    conn.execute(text(f"ALTER TABLE oxigenio_licitacoes ADD COLUMN {col} {ddl}"))
+                    with conn.begin_nested():
+                        conn.execute(text(f"ALTER TABLE oxigenio_licitacoes ADD COLUMN {col} {ddl}"))
                 except Exception:
                     pass
 
@@ -1074,7 +1079,8 @@ def _init_db_impl() -> None:
         }.items():
             if col not in cols_emp_ox:
                 try:
-                    conn.execute(text(f"ALTER TABLE oxigenio_emprestimos ADD COLUMN {col} {ddl}"))
+                    with conn.begin_nested():
+                        conn.execute(text(f"ALTER TABLE oxigenio_emprestimos ADD COLUMN {col} {ddl}"))
                 except Exception:
                     pass
 
@@ -1084,7 +1090,8 @@ def _init_db_impl() -> None:
             cols_item_ox = []
         if "acompanha_equipamento" not in cols_item_ox:
             try:
-                conn.execute(text("ALTER TABLE oxigenio_emprestimo_itens ADD COLUMN acompanha_equipamento BOOLEAN DEFAULT FALSE NOT NULL"))
+                with conn.begin_nested():
+                    conn.execute(text("ALTER TABLE oxigenio_emprestimo_itens ADD COLUMN acompanha_equipamento BOOLEAN DEFAULT FALSE NOT NULL"))
             except Exception:
                 pass
 
@@ -1100,7 +1107,8 @@ def _init_db_impl() -> None:
         }.items():
             if col not in cols_fila_psf:
                 try:
-                    conn.execute(text(f"ALTER TABLE lab_fila_psf ADD COLUMN {col} {ddl}"))
+                    with conn.begin_nested():
+                        conn.execute(text(f"ALTER TABLE lab_fila_psf ADD COLUMN {col} {ddl}"))
                 except Exception:
                     pass
 
@@ -1110,7 +1118,8 @@ def _init_db_impl() -> None:
             cols_solic_mestre = []
         if "lote_id" not in cols_solic_mestre:
             try:
-                conn.execute(text("ALTER TABLE lab_solic_mestre ADD COLUMN lote_id INTEGER NULL"))
+                with conn.begin_nested():
+                    conn.execute(text("ALTER TABLE lab_solic_mestre ADD COLUMN lote_id INTEGER NULL"))
             except Exception:
                 pass
 
@@ -1125,7 +1134,8 @@ def _init_db_impl() -> None:
         }.items():
             if col not in cols_lab and cols_lab:
                 try:
-                    conn.execute(text(f"ALTER TABLE lab_laboratorios ADD COLUMN {col} {ddl}"))
+                    with conn.begin_nested():
+                        conn.execute(text(f"ALTER TABLE lab_laboratorios ADD COLUMN {col} {ddl}"))
                 except Exception:
                     pass
 
@@ -1135,30 +1145,34 @@ def _init_db_impl() -> None:
             cols_vagas = []
         if "tipo_servico" not in cols_vagas and cols_vagas:
             try:
-                conn.execute(text("ALTER TABLE lab_vagas ADD COLUMN tipo_servico VARCHAR(50) DEFAULT 'rotina' NOT NULL"))
-                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_vagas_tipo_servico ON lab_vagas (tipo_servico)"))
+                with conn.begin_nested():
+                    conn.execute(text("ALTER TABLE lab_vagas ADD COLUMN tipo_servico VARCHAR(50) DEFAULT 'rotina' NOT NULL"))
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_vagas_tipo_servico ON lab_vagas (tipo_servico)"))
             except Exception:
                 pass
 
         if "data_pedido" not in cols_fila_psf and cols_fila_psf:
             try:
-                conn.execute(text("ALTER TABLE lab_fila_psf ADD COLUMN data_pedido DATE"))
-                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_fila_psf_data_pedido ON lab_fila_psf (data_pedido)"))
-                conn.execute(text("UPDATE lab_fila_psf SET data_pedido = data_solicitacao WHERE data_pedido IS NULL"))
+                with conn.begin_nested():
+                    conn.execute(text("ALTER TABLE lab_fila_psf ADD COLUMN data_pedido DATE"))
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_fila_psf_data_pedido ON lab_fila_psf (data_pedido)"))
+                    conn.execute(text("UPDATE lab_fila_psf SET data_pedido = data_solicitacao WHERE data_pedido IS NULL"))
             except Exception:
                 pass
 
         if "especialidade" not in cols_fila_psf and cols_fila_psf:
             try:
-                conn.execute(text("ALTER TABLE lab_fila_psf ADD COLUMN especialidade VARCHAR(120) DEFAULT '' NOT NULL"))
-                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_fila_psf_especialidade ON lab_fila_psf (especialidade)"))
+                with conn.begin_nested():
+                    conn.execute(text("ALTER TABLE lab_fila_psf ADD COLUMN especialidade VARCHAR(120) DEFAULT '' NOT NULL"))
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_fila_psf_especialidade ON lab_fila_psf (especialidade)"))
             except Exception:
                 pass
 
         if "contrato_id" not in cols_solic_mestre and cols_solic_mestre:
             try:
-                conn.execute(text("ALTER TABLE lab_solic_mestre ADD COLUMN contrato_id INTEGER"))
-                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_solic_mestre_contrato_id ON lab_solic_mestre (contrato_id)"))
+                with conn.begin_nested():
+                    conn.execute(text("ALTER TABLE lab_solic_mestre ADD COLUMN contrato_id INTEGER"))
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_solic_mestre_contrato_id ON lab_solic_mestre (contrato_id)"))
             except Exception:
                 pass
 
@@ -1173,7 +1187,8 @@ def _init_db_impl() -> None:
         }.items():
             if col not in cols_solic_itens and cols_solic_itens:
                 try:
-                    conn.execute(text(f"ALTER TABLE lab_solic_itens ADD COLUMN {col} {ddl}"))
+                    with conn.begin_nested():
+                        conn.execute(text(f"ALTER TABLE lab_solic_itens ADD COLUMN {col} {ddl}"))
                 except Exception:
                     pass
 
@@ -1327,7 +1342,8 @@ def _init_db_impl() -> None:
         ]
         for ddl_tbl in ddls_tabelas_lote:
             try:
-                conn.execute(text(ddl_tbl))
+                with conn.begin_nested():
+                    conn.execute(text(ddl_tbl))
             except Exception:
                 pass
 
@@ -1384,7 +1400,8 @@ def _init_db_impl() -> None:
             "CREATE INDEX IF NOT EXISTS ix_prestadores_ativo ON prestadores (ativo)",
         ]:
             try:
-                conn.execute(text(idx_lote))
+                with conn.begin_nested():
+                    conn.execute(text(idx_lote))
             except Exception:
                 pass
 
@@ -1404,6 +1421,7 @@ def _init_db_impl() -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_lab_solic_mestre_origem_fila_ativa ON lab_solic_mestre (origem_fila_id) WHERE origem_fila_id IS NOT NULL AND status != 'cancelado'",
         ]:
             try:
-                conn.execute(text(idx_sql))
+                with conn.begin_nested():
+                    conn.execute(text(idx_sql))
             except Exception:
                 pass
