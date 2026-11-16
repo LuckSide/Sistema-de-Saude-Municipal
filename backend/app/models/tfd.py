@@ -267,6 +267,7 @@ class TipoFila(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     codigo: str = Field(default="", max_length=10, index=True)  # servico_tipo_id ex: 31
     nome: str = Field(max_length=80, index=True, unique=True)  # servico_tipo_nome ex: ULTRASSONOGRAFIA
+    tipo_fila: str = Field(default="REGULACAO_GERAL", max_length=40, index=True)  # REGULACAO_GERAL, EXAME_LABORATORIAL, ALTA_COMPLEXIDADE
     ativo: bool = Field(default=True, index=True)
 
 

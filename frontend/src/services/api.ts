@@ -1065,6 +1065,8 @@ export type FilaExamesParams = {
   prioridade?: string;
   especialidade?: string;
   tipo_fila?: string;
+  excluir_laboratorio?: boolean;
+  apenas_laboratorio?: boolean;
   procedimento?: string;
   codigo_especialidade?: string;
   justificativa?: string;
@@ -1104,14 +1106,20 @@ export async function tfdFiltrosOpcoes(
     .then((r) => r.data);
 }
 
-export type TipoFila = { id: number; codigo: string; nome: string; ativo: boolean };
+export type TipoFila = {
+  id: number;
+  codigo: string;
+  nome: string;
+  tipo_fila?: "REGULACAO_GERAL" | "EXAME_LABORATORIAL" | "ALTA_COMPLEXIDADE" | string;
+  ativo: boolean;
+};
 export type ProcedimentoCat = {
   id: number; codigo: string; nome: string; tipo_fila: string;
   codigo_especialidade: string; nome_especialidade: string; codigo_curto: string; ativo: boolean;
 };
 export type EspecialidadeCat = { id: number; codigo_cbo: string; nome: string; ativo: boolean };
 
-export const tfdTipos = (params?: { q?: string; ativos?: boolean; page?: number; limit?: number }) =>
+export const tfdTipos = (params?: { q?: string; tipo_fila?: string; ativos?: boolean; page?: number; limit?: number }) =>
   api.get<Pagina<TipoFila> | TipoFila[]>("/api/tfd/tipos", { params }).then((r) => r.data);
 export const tfdCriarTipo = (p: Record<string, unknown>) =>
   api.post<TipoFila>("/api/tfd/tipos", p).then((r) => r.data);
@@ -3110,6 +3118,8 @@ export interface EquipamentoRespiratorio {
   tensao_eletrica: string;
   horas_uso: number;
   observacoes: string;
+  cilindro_incluso_tipo?: string | null;
+  cilindro_incluso_qtd?: number;
   ativo: boolean;
   created_at: string;
   paciente_atual_nome?: string | null;
@@ -3459,7 +3469,7 @@ export interface RelatorioFaturamento {
   }[];
 }
 
-export const oxigenioEmpresas = (params?: { q?: string; servico?: string; apenas_ativas?: boolean }) =>
+export const oxigenioEmpresas = (params?: { q?: string; servico?: string; apenas_ativas?: boolean; status?: "todas" | "ativas" | "inativas" | string }) =>
   api.get<EmpresaOxigenio[]>("/api/oxigenio/empresas", { params }).then((r) => r.data);
 
 export const oxigenioCriarEmpresa = (data: Partial<EmpresaOxigenio>) =>

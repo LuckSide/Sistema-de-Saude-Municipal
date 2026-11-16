@@ -111,6 +111,7 @@ const MODULOS_NAV: ModuloNav[] = [
       { to: "/prestadores", label: "Prestadores de Serviços", icon: Building2, tela: "usuarios", ou: ["cfg_unidades", "cfg_laboratorios", "lab_vagas", "tfd", "lab", "cfg_geral"] },
       { to: "/tfd/catalogo", label: "Catálogo SIGTAP", icon: BookOpenText, tela: "tfd_catalogo", ou: ["tfd"] },
       { to: "/tfd/destinos", label: "Destinos", icon: MapPin, tela: "tfd_destinos", ou: ["tfd"] },
+      { to: "/configuracoes?aba=gestao_filas", label: "Gestão de Filas", icon: ListOrdered, tela: "cfg_filas", ou: ["cfg_geral", "usuarios", "tfd"] },
     ],
   },
   {

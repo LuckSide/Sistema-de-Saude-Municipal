@@ -2,7 +2,7 @@ from datetime import date, datetime
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, and_, case, desc, func, or_, select
+from sqlmodel import Session, and_, case, desc, func, not_, or_, select
 import urllib.parse
 
 import re as _re
@@ -2408,6 +2408,8 @@ def listar_exames(
     apenas_agendados: bool = Query(default=False),
     idade_min: int | None = Query(default=None, ge=0, le=150),
     idade_max: int | None = Query(default=None, ge=0, le=150),
+    excluir_laboratorio: bool = Query(default=False),
+    apenas_laboratorio: bool = Query(default=False),
     meus: bool = Query(default=False),
     ordenacao: str = Query(default="prioridade", pattern="^(prioridade|cronologica)$"),
     page: int = Query(default=1, ge=1),
@@ -2446,6 +2448,8 @@ def listar_exames(
         justificativa=p_just,
         idade_min=p_idade_min,
         idade_max=p_idade_max,
+        excluir_laboratorio=excluir_laboratorio,
+        apenas_laboratorio=apenas_laboratorio,
     )
     total = len(itens)
     meta = paginar(total, p_page, p_limit)
@@ -2492,9 +2496,35 @@ def _filtrar_exames_lista(
     justificativa: str = "",
     idade_min: int | None = None,
     idade_max: int | None = None,
+    excluir_laboratorio: bool = False,
+    apenas_laboratorio: bool = False,
 ) -> list:
     """Filtros da fila compartilhados entre listagem e exportação XLSX."""
     filtros = [ExameFila.ativo == True]  # noqa: E712
+
+    # Segregação estrutural de filas: laboratório vs regulação geral
+    if excluir_laboratorio:
+        filas_lab = {t.nome.strip().upper() for t in db.exec(select(TipoFila).where(TipoFila.tipo_fila == "EXAME_LABORATORIAL")).all()}
+        conds_excluir = [
+            ExameFila.tipo_fila.ilike("%SANGUE%"),
+            ExameFila.tipo_fila.ilike("%LABORAT%"),
+            ExameFila.tipo_fila.ilike("%BIOQUIM%"),
+        ]
+        for fn in filas_lab:
+            if fn:
+                conds_excluir.append(ExameFila.tipo_fila.ilike(f"%{fn}%"))
+        filtros.append(not_(or_(*conds_excluir)))
+    elif apenas_laboratorio:
+        filas_lab = {t.nome.strip().upper() for t in db.exec(select(TipoFila).where(TipoFila.tipo_fila == "EXAME_LABORATORIAL")).all()}
+        conds_incluir = [
+            ExameFila.tipo_fila.ilike("%SANGUE%"),
+            ExameFila.tipo_fila.ilike("%LABORAT%"),
+            ExameFila.tipo_fila.ilike("%BIOQUIM%"),
+        ]
+        for fn in filas_lab:
+            if fn:
+                conds_incluir.append(ExameFila.tipo_fila.ilike(f"%{fn}%"))
+        filtros.append(or_(*conds_incluir))
     if isinstance(agendada_em, str) and agendada_em:
         filtros.append(func.to_char(ExameFila.data_agendada, "YYYY-MM-DD") == agendada_em)
     if isinstance(agendada_de, str) and agendada_de:
@@ -2836,6 +2866,8 @@ def exportar_fila(
     agendada_em: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     idade_min: int | None = Query(default=None, ge=0, le=150),
     idade_max: int | None = Query(default=None, ge=0, le=150),
+    excluir_laboratorio: bool = Query(default=False),
+    apenas_laboratorio: bool = Query(default=False),
     meus: bool = Query(default=False),
     ordenacao: str = Query(default="prioridade", pattern="^(prioridade|cronologica)$"),
     colunas: str | None = Query(default=None),
@@ -2879,6 +2911,8 @@ def exportar_fila(
         justificativa=just_val,
         idade_min=i_min_val,
         idade_max=i_max_val,
+        excluir_laboratorio=excluir_laboratorio,
+        apenas_laboratorio=apenas_laboratorio,
     )
     if ids_set:
         itens_filtrados = [it for it in itens if it.id in ids_set]
@@ -5370,6 +5404,7 @@ def obter_hierarquia_sigtap_endpoint(
 @router.get("/tipos", response_model=Pagina[TipoFilaOut])
 def listar_tipos(
     q: str = Query(default="", max_length=80),
+    tipo_fila: str | None = None,
     ativos: bool | None = None,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=100000),
@@ -5380,6 +5415,8 @@ def listar_tipos(
     filtros = []
     if q:
         filtros.append(TipoFila.nome.ilike(f"%{q}%"))
+    if tipo_fila and tipo_fila.strip() and tipo_fila.strip().upper() != "TODOS":
+        filtros.append(TipoFila.tipo_fila == tipo_fila.strip().upper())
     if ativos is not None:
         filtros.append(TipoFila.ativo == ativos)
     if filtros:
@@ -5391,11 +5428,17 @@ def listar_tipos(
 
 
 @router.post("/tipos", response_model=TipoFilaOut, status_code=201)
-def criar_tipo(data: TipoFilaIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_catalogo", "criar"))):
+def criar_tipo(data: TipoFilaIn, db: Session = Depends(get_db), _=Depends(need_any_perm("tfd_catalogo", "usuarios", "cfg_filas", "integracoes", acoes=("criar",)))):
     nome = data.nome.strip().upper()
     if db.exec(select(TipoFila).where(TipoFila.nome == nome)).first():
         raise HTTPException(400, "Tipo já cadastrado")
-    obj = TipoFila(codigo=data.codigo.strip(), nome=nome, ativo=data.ativo)
+    tf_cat = (data.tipo_fila or "REGULACAO_GERAL").strip().upper()
+    obj = TipoFila(
+        codigo=data.codigo.strip(),
+        nome=nome,
+        tipo_fila=tf_cat,
+        ativo=data.ativo,
+    )
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -5404,7 +5447,7 @@ def criar_tipo(data: TipoFilaIn, db: Session = Depends(get_db), _=Depends(need_p
 
 
 @router.put("/tipos/{tid}", response_model=TipoFilaOut)
-def atualizar_tipo(tid: int, data: TipoFilaIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_catalogo", "editar"))):
+def atualizar_tipo(tid: int, data: TipoFilaIn, db: Session = Depends(get_db), _=Depends(need_any_perm("tfd_catalogo", "usuarios", "cfg_filas", "integracoes", acoes=("editar",)))):
     obj = db.get(TipoFila, tid)
     if not obj:
         raise HTTPException(404, "Tipo não encontrado")
@@ -5412,8 +5455,10 @@ def atualizar_tipo(tid: int, data: TipoFilaIn, db: Session = Depends(get_db), _=
     dup = db.exec(select(TipoFila).where(TipoFila.nome == nome, TipoFila.id != tid)).first()
     if dup:
         raise HTTPException(400, "Tipo já cadastrado")
+    tf_cat = (data.tipo_fila or obj.tipo_fila or "REGULACAO_GERAL").strip().upper()
     obj.codigo = data.codigo.strip()
     obj.nome = nome
+    obj.tipo_fila = tf_cat
     obj.ativo = data.ativo
     db.add(obj)
     db.commit()

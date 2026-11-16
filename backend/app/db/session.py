@@ -1465,6 +1465,14 @@ def _init_db_impl() -> None:
             """,
             "CREATE INDEX IF NOT EXISTS ix_lab_inconsistencias_solic_id ON lab_inconsistencias_justificativas (solicitacao_id)",
             "CREATE INDEX IF NOT EXISTS ix_lab_inconsistencias_status_revisao ON lab_inconsistencias_justificativas (status_revisao)",
+            # Migrações Subagente 1: Tipagem de Filas (tfd_tipos_fila)
+            "ALTER TABLE tfd_tipos_fila ADD COLUMN IF NOT EXISTS tipo_fila VARCHAR(40) DEFAULT 'REGULACAO_GERAL' NOT NULL",
+            "CREATE INDEX IF NOT EXISTS ix_tfd_tipos_fila_tipo_fila ON tfd_tipos_fila (tipo_fila)",
+            "UPDATE tfd_tipos_fila SET tipo_fila = 'EXAME_LABORATORIAL' WHERE (nome ILIKE '%SANGUE%' OR nome ILIKE '%LABORAT%' OR nome ILIKE '%BIOQUIM%') AND (tipo_fila IS NULL OR tipo_fila = '' OR tipo_fila = 'REGULACAO_GERAL')",
+            "UPDATE tfd_tipos_fila SET tipo_fila = 'ALTA_COMPLEXIDADE' WHERE (nome ILIKE '%APAC%' OR nome ILIKE '%ALTA COMPLEX%') AND (tipo_fila IS NULL OR tipo_fila = '' OR tipo_fila = 'REGULACAO_GERAL')",
+            # Migrações Subagente 2: Composição de Equipamentos de Oxigênio
+            "ALTER TABLE oxigenio_equipamentos ADD COLUMN IF NOT EXISTS cilindro_incluso_tipo VARCHAR(30)",
+            "ALTER TABLE oxigenio_equipamentos ADD COLUMN IF NOT EXISTS cilindro_incluso_qtd INTEGER DEFAULT 0 NOT NULL",
         ]:
             try:
                 with conn.begin_nested():

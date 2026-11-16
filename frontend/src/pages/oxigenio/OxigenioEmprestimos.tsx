@@ -1037,11 +1037,36 @@ export default function OxigenioEmprestimos() {
                                            eq.tipo === "CONCENTRADOR" ? "Concentrador 5L" : eq.tipo;
                         return (
                           <option key={eq.id} value={eq.id}>
-                            [{rotuloTipo}] {eq.marca_modelo} · Série: {eq.numero_serie} (Patrimônio: {eq.patrimonio || "—"})
+                            [{rotuloTipo}] {eq.marca_modelo} · Série: {eq.numero_serie} {eq.cilindro_incluso_tipo ? `(Inclui cilindro ${eq.cilindro_incluso_tipo})` : ""}
                           </option>
                         );
                       })}
                     </select>
+
+                    {itemAtual.equipamento_id && (() => {
+                      const eq = equipamentosDisponiveisFiltrados.find(e => e.id === Number(itemAtual.equipamento_id));
+                      if (!eq) return null;
+                      return (
+                        <div className="mt-2 space-y-2">
+                          {eq.cilindro_incluso_tipo ? (
+                            <div className="p-2.5 bg-sky-50 border border-sky-200 rounded-lg text-sky-900 flex items-start gap-2">
+                              <CheckCircle2 className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
+                              <div className="text-[11px] space-y-0.5">
+                                <p className="font-bold">Cilindro de Backup Incluso no Concentrador</p>
+                                <p>
+                                  Este equipamento possui <b>{eq.cilindro_incluso_qtd || 1}x cilindro ({eq.cilindro_incluso_tipo})</b> embutido. Ele será vinculado ao termo e abatido do saldo de estoque automaticamente.
+                                </p>
+                              </div>
+                            </div>
+                          ) : eq.tipo.includes("CONCENTRADOR") ? (
+                            <p className="text-[11px] text-slate-500">
+                              Este concentrador não possui cilindro embutido pré-configurado. Você pode adicionar cilindros extras abaixo.
+                            </p>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
+
                     {equipamentosDisponiveisFiltrados.length === 0 && (
                       <p className="text-[11px] text-rose-600 mt-1">
                         Não há equipamentos disponíveis vinculados a este fornecedor.
@@ -1087,6 +1112,32 @@ export default function OxigenioEmprestimos() {
                                   <span className="text-[11px] text-slate-500 font-mono ml-2">
                                     Série: {equipObj?.numero_serie}
                                   </span>
+                                  {equipObj?.cilindro_incluso_tipo && (
+                                    <div className="text-[11px] text-teal-700 font-semibold flex items-center gap-1 mt-0.5">
+                                      <CheckCircle2 className="w-3 h-3 text-teal-600" />
+                                      Cilindro embutido incluso: {equipObj.cilindro_incluso_qtd || 1}x ({equipObj.cilindro_incluso_tipo})
+                                    </div>
+                                  )}
+                                  {equipObj?.tipo.includes("CONCENTRADOR") && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setItemAtual({
+                                          id: String(Date.now() + 2),
+                                          tipo_item: "CILINDRO",
+                                          tipo_cilindro: "10m3",
+                                          finalidade_cilindro: "SEMANAL_CONCENTRADOR",
+                                          quantidade: 1,
+                                          equipamento_id: null,
+                                          posse_cilindro: "PROPRIO",
+                                          observacoes: "Cilindro adicional para concentrador",
+                                        });
+                                      }}
+                                      className="text-[11px] font-semibold text-sky-700 hover:text-sky-900 underline block mt-0.5"
+                                    >
+                                      + Adicionar Cilindro Extra a este Atendimento
+                                    </button>
+                                  )}
                                 </div>
                               ) : (
                                 <div>

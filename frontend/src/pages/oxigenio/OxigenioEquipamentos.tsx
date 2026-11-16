@@ -16,6 +16,7 @@ import {
   Users,
   Eye,
   FileSpreadsheet,
+  Package,
   Edit2,
   Trash2,
   Info,
@@ -76,6 +77,8 @@ export default function OxigenioEquipamentos() {
     tensao_eletrica: "110V",
     horas_uso: 0,
     observacoes: "",
+    cilindro_incluso_tipo: "1m3",
+    cilindro_incluso_qtd: 1,
   });
 
   // Modal Registrar Troca de Cilindro
@@ -191,6 +194,8 @@ export default function OxigenioEquipamentos() {
       tensao_eletrica: "110V",
       horas_uso: 0,
       observacoes: "",
+      cilindro_incluso_tipo: "1m3",
+      cilindro_incluso_qtd: 1,
     });
     setModalEquipAberto(true);
   };
@@ -208,6 +213,8 @@ export default function OxigenioEquipamentos() {
       tensao_eletrica: eq.tensao_eletrica || "110V",
       horas_uso: eq.horas_uso || 0,
       observacoes: eq.observacoes || "",
+      cilindro_incluso_tipo: eq.cilindro_incluso_tipo || "",
+      cilindro_incluso_qtd: eq.cilindro_incluso_qtd || 1,
     });
     setModalEquipAberto(true);
   };
@@ -233,6 +240,8 @@ export default function OxigenioEquipamentos() {
         tensao_eletrica: formEquip.tensao_eletrica,
         horas_uso: Number(formEquip.horas_uso),
         observacoes: formEquip.observacoes,
+        cilindro_incluso_tipo: formEquip.tipo.includes("CONCENTRADOR") ? formEquip.cilindro_incluso_tipo || null : null,
+        cilindro_incluso_qtd: formEquip.tipo.includes("CONCENTRADOR") && formEquip.cilindro_incluso_tipo ? Number(formEquip.cilindro_incluso_qtd) || 1 : null,
       };
 
       if (equipamentoEdicao) {
@@ -558,18 +567,26 @@ export default function OxigenioEquipamentos() {
                   equipamentos.map((eq) => (
                     <tr key={eq.id} className="hover:bg-slate-50/70 transition-colors">
                       <td className="py-3 px-3">
-                        <div className="flex items-center gap-2">
-                          <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                            eq.tipo === "CONCENTRADOR_5L" || eq.tipo === "CONCENTRADOR" ? "bg-sky-100 text-sky-800" :
-                            eq.tipo === "CONCENTRADOR_10L" ? "bg-blue-100 text-blue-800" :
-                            eq.tipo === "CPAP" ? "bg-indigo-100 text-indigo-800" :
-                            "bg-purple-100 text-purple-800"
-                          }`}>
-                            {eq.tipo === "CONCENTRADOR_5L" ? "Concentrador 5L" :
-                             eq.tipo === "CONCENTRADOR_10L" ? "Concentrador 10L" :
-                             eq.tipo === "CONCENTRADOR" ? "Concentrador 5L" : eq.tipo}
-                          </span>
-                          <span className="font-medium text-slate-900">{eq.marca_modelo || "Padrão SUS"}</span>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                              eq.tipo === "CONCENTRADOR_5L" || eq.tipo === "CONCENTRADOR" ? "bg-sky-100 text-sky-800" :
+                              eq.tipo === "CONCENTRADOR_10L" ? "bg-blue-100 text-blue-800" :
+                              eq.tipo === "CPAP" ? "bg-indigo-100 text-indigo-800" :
+                              "bg-purple-100 text-purple-800"
+                            }`}>
+                              {eq.tipo === "CONCENTRADOR_5L" ? "Concentrador 5L" :
+                               eq.tipo === "CONCENTRADOR_10L" ? "Concentrador 10L" :
+                               eq.tipo === "CONCENTRADOR" ? "Concentrador 5L" : eq.tipo}
+                            </span>
+                            <span className="font-medium text-slate-900">{eq.marca_modelo || "Padrão SUS"}</span>
+                          </div>
+                          {eq.cilindro_incluso_tipo && (
+                            <span className="inline-flex items-center gap-1 text-[10px] text-sky-800 bg-sky-50 px-1.5 py-0.5 rounded border border-sky-200 mt-1 font-semibold">
+                              <Package className="w-3 h-3 text-sky-600" />
+                              Cilindro incluso: {eq.cilindro_incluso_tipo} ({eq.cilindro_incluso_qtd || 1} un)
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td className="py-3 px-3">
@@ -1053,6 +1070,46 @@ export default function OxigenioEquipamentos() {
                   />
                 </div>
               </div>
+
+              {/* Composição de Equipamento: Cilindro incluso/embutido */}
+              {formEquip.tipo.includes("CONCENTRADOR") && (
+                <div className="p-3 bg-sky-50/70 border border-sky-200 rounded-xl space-y-2">
+                  <div className="flex items-center gap-1.5 text-sky-900 font-semibold">
+                    <Package className="w-4 h-4 text-sky-700" />
+                    <span>Cilindro Incluso / Embutido com o Concentrador</span>
+                  </div>
+                  <p className="text-[11px] text-sky-800">
+                    Ao emprestar este concentrador, o cilindro backup selecionado será automaticamente vinculado ao contrato e abatido do estoque.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <Label>Tamanho do Cilindro Incluso</Label>
+                      <select
+                        value={formEquip.cilindro_incluso_tipo}
+                        onChange={(e) => setFormEquip({ ...formEquip, cilindro_incluso_tipo: e.target.value })}
+                        className="w-full mt-1 px-3 py-2 text-xs rounded-lg border border-sky-300 bg-white"
+                      >
+                        <option value="">Nenhum cilindro incluso</option>
+                        <option value="1m3">1m³ (Portátil / Transporte)</option>
+                        <option value="3m3">3m³ (Médio / Reserva)</option>
+                        <option value="10m3">10m³ (Grande / Backup Estacionário)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <Label>Quantidade Inclusa</Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        max="5"
+                        disabled={!formEquip.cilindro_incluso_tipo}
+                        value={formEquip.cilindro_incluso_qtd}
+                        onChange={(e) => setFormEquip({ ...formEquip, cilindro_incluso_qtd: Math.max(1, Number(e.target.value)) })}
+                        className="mt-1"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <Label>Observações Adicionais</Label>

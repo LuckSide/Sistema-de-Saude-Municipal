@@ -606,6 +606,7 @@ export default function FilaExames() {
       justificativa: justAtual.trim() || undefined,
       prioridade: prio || undefined,
       tipo_fila: tipoAtual.trim() || undefined,
+      excluir_laboratorio: true,
       procedimento: procAtual.trim() || undefined,
       codigo_especialidade: codEspFiltro,
       destino: dest.trim() || undefined,
@@ -640,11 +641,16 @@ export default function FilaExames() {
   async function carregarOpcoes(st = filtro, tf = tipoFila, cboSel = filtroCbo) {
     try {
       const o = await tfdFiltrosOpcoes(st || undefined, tf || undefined, cboSel || undefined);
-      setOpTipos(o.tipos ?? []);
+      const tiposSemLab = (o.tipos ?? []).filter((t) => {
+        const v = (t.value || "").toLowerCase();
+        const l = (t.label || "").toLowerCase();
+        return !v.includes("lab") && !v.includes("sangue") && !l.includes("laborat") && !l.includes("sangue");
+      });
+      setOpTipos(tiposSemLab);
       setOpProcs(o.procedimentos ?? []);
       setOpEsps(o.especialidades ?? []);
       setOpCbos(o.cbos ?? []);
-      return o;
+      return { ...o, tipos: tiposSemLab };
     } catch {
       setOpTipos([]);
       setOpProcs([]);
@@ -3126,6 +3132,7 @@ export default function FilaExames() {
                       q: q.trim() || undefined,
                       prioridade: prio || undefined,
                       tipo_fila: tipoFila.trim() || undefined,
+                      excluir_laboratorio: true,
                       procedimento: proc.trim() || undefined,
                       codigo_especialidade: espCbo.trim() || filtroCbo.trim() || undefined,
                       destino: dest.trim() || undefined,

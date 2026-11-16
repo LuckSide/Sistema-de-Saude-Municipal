@@ -44,6 +44,7 @@ export default function OxigenioEmpresas() {
   const [empresas, setEmpresas] = useState<EmpresaOxigenio[]>([]);
   const [busca, setBusca] = useState("");
   const [filtroServico, setFiltroServico] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState<"todas" | "ativas" | "inativas">("todas");
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
   const [sucesso, setSucesso] = useState("");
@@ -118,6 +119,7 @@ export default function OxigenioEmpresas() {
       const res = await oxigenioEmpresas({
         q: busca || undefined,
         servico: filtroServico || undefined,
+        status: filtroStatus !== "todas" ? filtroStatus : undefined,
       });
       setEmpresas(res);
     } catch (e: any) {
@@ -129,7 +131,7 @@ export default function OxigenioEmpresas() {
 
   useEffect(() => {
     carregarEmpresas();
-  }, [filtroServico]);
+  }, [filtroServico, filtroStatus]);
 
   const abrirModalNova = () => {
     setEmpresaEdicao(null);
@@ -350,6 +352,16 @@ export default function OxigenioEmpresas() {
             ))}
           </select>
 
+          <select
+            value={filtroStatus}
+            onChange={(e) => setFiltroStatus(e.target.value as any)}
+            className="px-3 py-2 text-xs rounded-lg border border-slate-300 bg-white"
+          >
+            <option value="todas">Todas as Empresas</option>
+            <option value="ativas">Apenas Ativas</option>
+            <option value="inativas">Apenas Desativadas</option>
+          </select>
+
           <Button
             variant="outline"
             size="sm"
@@ -390,12 +402,14 @@ export default function OxigenioEmpresas() {
           empresas.map((emp) => (
             <div
               key={emp.id}
-              className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between space-y-4"
+              className={`rounded-2xl border p-5 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between space-y-4 ${
+                emp.ativo ? "bg-white border-slate-200" : "bg-slate-50/80 border-slate-300 opacity-80"
+              }`}
             >
               <div>
                 <div className="flex items-start justify-between gap-2 mb-2">
                   <div className="flex items-center gap-2.5">
-                    <div className="p-2.5 bg-sky-100 text-sky-700 rounded-xl">
+                    <div className={`p-2.5 rounded-xl ${emp.ativo ? "bg-sky-100 text-sky-700" : "bg-slate-200 text-slate-600"}`}>
                       <Building2 className="w-5 h-5" />
                     </div>
                     <div>
@@ -408,8 +422,8 @@ export default function OxigenioEmpresas() {
                       Ativa
                     </span>
                   ) : (
-                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-slate-200 text-slate-700">
-                      Inativa
+                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-100 text-amber-900 border border-amber-200">
+                      Desativada (Fim da fila)
                     </span>
                   )}
                 </div>

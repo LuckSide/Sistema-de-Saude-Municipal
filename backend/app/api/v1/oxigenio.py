@@ -38,6 +38,7 @@ from app.schemas.oxigenio import (
     EmprestimoOxigenioIn,
     EmprestimoOxigenioOut,
     EmpresaOxigenioIn,
+    EmpresaOxigenioUpdate,
     EmpresaOxigenioOut,
     EntradaCompraOxigenioIn,
     EntradaCompraOxigenioOut,
@@ -79,12 +80,17 @@ def listar_empresas(
     q: str = "",
     servico: str = "",
     apenas_ativas: bool = False,
+    status: str = "todos",
     db: Session = Depends(get_db),
     _: User = Depends(need_any_perm("oxigenio_empresas", "oxigenio", "usuarios")),
 ):
-    stmt = select(EmpresaOxigenio).order_by(EmpresaOxigenio.razao_social)
-    if apenas_ativas:
+    # Ordenação padrão mandatória: empresas desativadas são sempre empurradas para o final (fundo) da tabela
+    stmt = select(EmpresaOxigenio).order_by(EmpresaOxigenio.ativo.desc(), EmpresaOxigenio.razao_social.asc())
+    if apenas_ativas or (status and status.lower() == "ativas"):
         stmt = stmt.where(EmpresaOxigenio.ativo == True)
+    elif status and status.lower() in ("inativas", "desativadas"):
+        stmt = stmt.where(EmpresaOxigenio.ativo == False)
+
     if q.strip():
         t = f"%{q.strip().lower()}%"
         stmt = stmt.where(
@@ -115,9 +121,9 @@ def _so_digitos(valor: str | None) -> str:
 
 def _validar_empresa_unica(
     db: Session,
-    razao_social: str,
-    nome_fantasia: str,
-    cnpj: str,
+    razao_social: str | None,
+    nome_fantasia: str | None,
+    cnpj: str | None,
     ignorar_id: int | None = None,
 ) -> None:
     cnpj_num = _so_digitos(cnpj)
@@ -125,19 +131,24 @@ def _validar_empresa_unica(
     fan_norm = normalizar_nome(nome_fantasia)
 
     for existente in db.exec(select(EmpresaOxigenio)).all():
-        if ignorar_id and existente.id == ignorar_id:
+        if ignorar_id is not None and existente.id is not None and int(existente.id) == int(ignorar_id):
             continue
-        if cnpj_num and _so_digitos(existente.cnpj) == cnpj_num:
+        if cnpj_num and len(cnpj_num) >= 11 and _so_digitos(existente.cnpj) == cnpj_num:
             raise HTTPException(
                 status_code=400,
                 detail=f"Já existe uma empresa cadastrada com este CNPJ ({existente.nome_fantasia or existente.razao_social}).",
             )
-        if raz_norm and normalizar_nome(existente.razao_social) == raz_norm:
+        if raz_norm and len(raz_norm) >= 3 and normalizar_nome(existente.razao_social) == raz_norm:
             raise HTTPException(
                 status_code=400,
                 detail=f"Já existe uma empresa cadastrada com esta Razão Social ({existente.razao_social}).",
             )
-        if fan_norm and normalizar_nome(existente.nome_fantasia) == fan_norm:
+        if (
+            fan_norm
+            and len(fan_norm) >= 4
+            and fan_norm != raz_norm
+            and normalizar_nome(existente.nome_fantasia) == fan_norm
+        ):
             raise HTTPException(
                 status_code=400,
                 detail=f"Já existe uma empresa cadastrada com este Nome Fantasia ({existente.nome_fantasia}).",
@@ -199,45 +210,96 @@ def obter_empresa(
 
 
 @router.put("/empresas/{empresa_id}", response_model=EmpresaOxigenioOut)
+@router.patch("/empresas/{empresa_id}", response_model=EmpresaOxigenioOut)
 def atualizar_empresa(
     empresa_id: int,
-    data: EmpresaOxigenioIn,
+    data: EmpresaOxigenioUpdate,
     db: Session = Depends(get_db),
-    ator: User = Depends(need_perm("oxigenio_empresas", "editar")),
+    ator: User = Depends(need_any_perm("oxigenio_empresas", "oxigenio", "usuarios")),
 ):
     emp = db.get(EmpresaOxigenio, empresa_id)
     if not emp:
         raise HTTPException(status_code=404, detail="Empresa não encontrada.")
 
-    _validar_empresa_unica(db, data.razao_social, data.nome_fantasia, data.cnpj, ignorar_id=empresa_id)
+    nome_antigo = emp.nome_fantasia or emp.razao_social
 
-    emp.razao_social = data.razao_social.strip()
-    emp.nome_fantasia = data.nome_fantasia.strip()
-    emp.cnpj = data.cnpj.strip()
-    emp.telefone = data.telefone.strip()
-    emp.email = data.email.strip()
-    emp.contato_responsavel = data.contato_responsavel.strip()
-    emp.endereco = data.endereco.strip()
-    emp.servicos = json.dumps(data.servicos)
-    emp.valor_unitario_10m3 = data.valor_unitario_10m3
-    emp.valor_unitario_3m3 = data.valor_unitario_3m3
-    emp.valor_unitario_1m3 = data.valor_unitario_1m3
-    emp.valor_recarga_m3 = data.valor_recarga_m3
-    emp.locacao_mensal_concentrador = data.locacao_mensal_concentrador or data.locacao_mensal_concentrador_5l
-    emp.locacao_mensal_concentrador_5l = data.locacao_mensal_concentrador_5l or data.locacao_mensal_concentrador
-    emp.locacao_mensal_concentrador_10l = data.locacao_mensal_concentrador_10l
-    emp.locacao_mensal_cpap = data.locacao_mensal_cpap
-    emp.locacao_mensal_bipap = data.locacao_mensal_bipap
-    emp.locacao_mensal_cilindro = data.locacao_mensal_cilindro
-    emp.observacoes = data.observacoes.strip()
-    emp.ativo = data.ativo
+    # Validação segura ignorando o próprio ID
+    _validar_empresa_unica(
+        db,
+        data.razao_social or emp.razao_social,
+        data.nome_fantasia if data.nome_fantasia is not None else emp.nome_fantasia,
+        data.cnpj if data.cnpj is not None else emp.cnpj,
+        ignorar_id=empresa_id,
+    )
+
+    if data.razao_social is not None:
+        emp.razao_social = data.razao_social.strip()
+    if data.nome_fantasia is not None:
+        emp.nome_fantasia = data.nome_fantasia.strip()
+    if data.cnpj is not None:
+        emp.cnpj = data.cnpj.strip()
+    if data.telefone is not None:
+        emp.telefone = data.telefone.strip()
+    if data.email is not None:
+        emp.email = data.email.strip()
+    if data.contato_responsavel is not None:
+        emp.contato_responsavel = data.contato_responsavel.strip()
+    if data.endereco is not None:
+        emp.endereco = data.endereco.strip()
+    if data.servicos is not None:
+        emp.servicos = json.dumps(data.servicos)
+    if data.valor_unitario_10m3 is not None:
+        emp.valor_unitario_10m3 = data.valor_unitario_10m3
+    if data.valor_unitario_3m3 is not None:
+        emp.valor_unitario_3m3 = data.valor_unitario_3m3
+    if data.valor_unitario_1m3 is not None:
+        emp.valor_unitario_1m3 = data.valor_unitario_1m3
+    if data.valor_recarga_m3 is not None:
+        emp.valor_recarga_m3 = data.valor_recarga_m3
+    if data.locacao_mensal_concentrador is not None or data.locacao_mensal_concentrador_5l is not None:
+        v_conc = (
+            data.locacao_mensal_concentrador_5l
+            if data.locacao_mensal_concentrador_5l is not None
+            else data.locacao_mensal_concentrador
+        )
+        emp.locacao_mensal_concentrador = v_conc or 0.0
+        emp.locacao_mensal_concentrador_5l = v_conc or 0.0
+    if data.locacao_mensal_concentrador_10l is not None:
+        emp.locacao_mensal_concentrador_10l = data.locacao_mensal_concentrador_10l
+    if data.locacao_mensal_cpap is not None:
+        emp.locacao_mensal_cpap = data.locacao_mensal_cpap
+    if data.locacao_mensal_bipap is not None:
+        emp.locacao_mensal_bipap = data.locacao_mensal_bipap
+    if data.locacao_mensal_cilindro is not None:
+        emp.locacao_mensal_cilindro = data.locacao_mensal_cilindro
+    if data.observacoes is not None:
+        emp.observacoes = data.observacoes.strip()
+    if data.ativo is not None:
+        emp.ativo = data.ativo
 
     db.add(emp)
     db.commit()
     db.refresh(emp)
 
+    novo_nome = emp.nome_fantasia or emp.razao_social
+    if novo_nome != nome_antigo:
+        # Sincroniza nome denormalizado nas tabelas filhas
+        for l in db.exec(select(LicitacaoContratoOxigenio).where(LicitacaoContratoOxigenio.empresa_id == empresa_id)).all():
+            l.empresa_nome = novo_nome
+            db.add(l)
+        for eq in db.exec(select(EquipamentoRespiratorio).where(EquipamentoRespiratorio.empresa_id == empresa_id)).all():
+            eq.empresa_nome = novo_nome
+            db.add(eq)
+        for em in db.exec(select(EmprestimoOxigenio).where(EmprestimoOxigenio.empresa_id == empresa_id)).all():
+            em.empresa_nome = novo_nome
+            db.add(em)
+        db.commit()
+
     item = EmpresaOxigenioOut.model_validate(emp)
-    item.servicos = data.servicos
+    try:
+        item.servicos = json.loads(emp.servicos or "[]")
+    except Exception:
+        item.servicos = []
     return item
 
 
@@ -705,6 +767,8 @@ def criar_equipamento(
         data_aquisicao=data.data_aquisicao,
         tensao_eletrica=data.tensao_eletrica.strip() or "Bivolt",
         horas_uso=data.horas_uso,
+        cilindro_incluso_tipo=data.cilindro_incluso_tipo,
+        cilindro_incluso_qtd=data.cilindro_incluso_qtd or 0,
         observacoes=data.observacoes.strip(),
         ativo=data.ativo,
     )
@@ -764,6 +828,8 @@ def atualizar_equipamento(
     eq.data_aquisicao = data.data_aquisicao
     eq.tensao_eletrica = data.tensao_eletrica.strip() or "Bivolt"
     eq.horas_uso = data.horas_uso
+    eq.cilindro_incluso_tipo = data.cilindro_incluso_tipo
+    eq.cilindro_incluso_qtd = data.cilindro_incluso_qtd or 0
     eq.observacoes = data.observacoes.strip()
     eq.ativo = data.ativo
 
@@ -982,6 +1048,31 @@ def criar_emprestimo(
                 "eq": item_eq,
             })
 
+        # Composição: Se algum concentrador tiver cilindro incluso, adiciona automaticamente caso não informado
+        for proc in list(itens_processados):
+            eq_o = proc.get("eq")
+            if eq_o and eq_o.cilindro_incluso_tipo and (eq_o.cilindro_incluso_qtd or 1) > 0:
+                tem_incluso_ja = any(
+                    si["in"].tipo_servico == "OXIGENIO" and getattr(si["in"], "acompanha_equipamento", False)
+                    for si in itens_processados
+                )
+                if not tem_incluso_ja:
+                    q_inc = eq_o.cilindro_incluso_qtd or 1
+                    t_inc = eq_o.cilindro_incluso_tipo
+                    itens_processados.append({
+                        "in": ItemEmprestimoIn(
+                            tipo_servico="OXIGENIO",
+                            tipo_cilindro=t_inc,
+                            finalidade_cilindro="FIXO_CONCENTRADOR",
+                            quantidade=q_inc,
+                            posse_cilindro="PROPRIO",
+                            acompanha_equipamento=True,
+                        ),
+                        "eq": None,
+                    })
+                    c_fmt = t_inc.replace("m3", "m³")
+                    itens_resumo_lista.append(f"{q_inc}x Cilindro {c_fmt} (Incluso com Concentrador)")
+
         # Define campos primários para compatibilidade (prioriza equipamento quando houver máquina + cilindro)
         p_maq = next((p for p in itens_processados if p["in"].tipo_servico == "MAQUINA"), None)
         p_ox = next((p for p in itens_processados if p["in"].tipo_servico == "OXIGENIO" and not p["in"].acompanha_equipamento), None)
@@ -1023,6 +1114,22 @@ def criar_emprestimo(
             ),
             "eq": primeiro_eq,
         })
+        if primeiro_eq and primeiro_eq.cilindro_incluso_tipo and (primeiro_eq.cilindro_incluso_qtd or 1) > 0:
+            q_inc = primeiro_eq.cilindro_incluso_qtd or 1
+            t_inc = primeiro_eq.cilindro_incluso_tipo
+            itens_processados.append({
+                "in": ItemEmprestimoIn(
+                    tipo_servico="OXIGENIO",
+                    tipo_cilindro=t_inc,
+                    finalidade_cilindro="FIXO_CONCENTRADOR",
+                    quantidade=q_inc,
+                    posse_cilindro="PROPRIO",
+                    acompanha_equipamento=True,
+                ),
+                "eq": None,
+            })
+            c_fmt = t_inc.replace("m3", "m³")
+            itens_resumo_lista.append(f"{q_inc}x Cilindro {c_fmt} (Incluso com Concentrador)")
 
     # Se for cilindro semanal de 10m³ para concentrador, calcula previsão de troca em +7 dias se não informada
     data_troca_prevista = data.data_prevista_troca
@@ -1478,8 +1585,6 @@ def resumo_estoque(
         sub_list = itens_ativos_por_emp.get(e.id or 0, [])
         if sub_list:
             for si in sub_list:
-                if getattr(si, "acompanha_equipamento", False):
-                    continue
                 if si.tipo_cilindro == "10m3":
                     em_uso_10 += si.quantidade or 1
                 elif si.tipo_cilindro == "3m3":

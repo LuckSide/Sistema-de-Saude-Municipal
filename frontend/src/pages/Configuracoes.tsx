@@ -14,6 +14,7 @@ import {
   GitBranch,
   History,
   ImagePlus,
+  ListOrdered,
   Loader2,
   Lock,
   MessageCircle,
@@ -36,6 +37,7 @@ import { useUndo } from "../components/UndoToast";
 import { useConfirm } from "../components/ConfirmDialog";
 import Medicos from "./Medicos";
 import UnidadesSaude from "./UnidadesSaude";
+import GestaoFilas from "./GestaoFilas";
 import {
   exportarBackup,
   fetchExamesPermitidos,
@@ -77,9 +79,10 @@ import {
   type WhatsAppLogItem,
 } from "../services/api";
 
-type Aba = "geral" | "filas" | "pec" | "rnds" | "whatsapp" | "exames" | "medicos" | "unidades" | "laboratorios" | "backup";
+type Aba = "geral" | "gestao_filas" | "filas" | "pec" | "rnds" | "whatsapp" | "exames" | "medicos" | "unidades" | "laboratorios" | "backup";
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "geral", rotulo: "Geral" },
+  { id: "gestao_filas", rotulo: "Gestão de Filas" },
   { id: "filas", rotulo: "Importar filas" },
   { id: "pec", rotulo: "PEC / e-SUS APS" },
   { id: "rnds", rotulo: "RNDS" },
@@ -109,6 +112,7 @@ export default function Configuracoes() {
   // nada é concedido a quem não tinha).
   const abasVisiveis = ABAS.filter((a) => {
     if (a.id === "geral") return can("cfg_geral") || can("usuarios");
+    if (a.id === "gestao_filas") return can("cfg_filas") || can("cfg_geral") || can("usuarios") || can("tfd");
     if (a.id === "filas") return can("cfg_filas");
     if (a.id === "pec") return can("cfg_pec");
     if (a.id === "whatsapp") return can("cfg_whatsapp") || can("cfg_geral") || can("usuarios") || can("cfg_pec");
@@ -152,6 +156,7 @@ export default function Configuracoes() {
               aba === a.id ? "bg-sus-900 text-white" : "border border-sus-900/15 text-sus-900 hover:bg-sand"
             }`}
           >
+            {a.id === "gestao_filas" && <ListOrdered className="h-4 w-4" />}
             {a.id === "whatsapp" && <MessageCircle className="h-4 w-4" />}
             {a.id === "exames" && <FlaskConical className="h-4 w-4" />}
             {a.id === "backup" && <Database className="h-4 w-4" />}
@@ -160,6 +165,7 @@ export default function Configuracoes() {
         ))}
       </div>
       {aba === "geral" && <AbaGeral />}
+      {aba === "gestao_filas" && <GestaoFilas />}
       {aba === "filas" && <AbaFilas />}
       {aba === "pec" && <AbaPec />}
       {aba === "rnds" && <AbaRnds />}

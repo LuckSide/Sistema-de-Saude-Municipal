@@ -30,6 +30,29 @@ class EmpresaOxigenioIn(BaseModel):
     ativo: bool = Field(default=True)
 
 
+class EmpresaOxigenioUpdate(BaseModel):
+    razao_social: str | None = Field(default=None, min_length=2, max_length=200)
+    nome_fantasia: str | None = Field(default=None, max_length=200)
+    cnpj: str | None = Field(default=None, max_length=20)
+    telefone: str | None = Field(default=None, max_length=40)
+    email: str | None = Field(default=None, max_length=120)
+    contato_responsavel: str | None = Field(default=None, max_length=150)
+    endereco: str | None = Field(default=None, max_length=255)
+    servicos: list[str] | None = None
+    valor_unitario_10m3: float | None = Field(default=None, ge=0.0)
+    valor_unitario_3m3: float | None = Field(default=None, ge=0.0)
+    valor_unitario_1m3: float | None = Field(default=None, ge=0.0)
+    valor_recarga_m3: float | None = Field(default=None, ge=0.0)
+    locacao_mensal_concentrador: float | None = Field(default=None, ge=0.0)
+    locacao_mensal_concentrador_5l: float | None = Field(default=None, ge=0.0)
+    locacao_mensal_concentrador_10l: float | None = Field(default=None, ge=0.0)
+    locacao_mensal_cpap: float | None = Field(default=None, ge=0.0)
+    locacao_mensal_bipap: float | None = Field(default=None, ge=0.0)
+    locacao_mensal_cilindro: float | None = Field(default=None, ge=0.0)
+    observacoes: str | None = None
+    ativo: bool | None = None
+
+
 class EmpresaOxigenioOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -200,6 +223,8 @@ class EquipamentoRespiratorioIn(BaseModel):
     data_aquisicao: date | None = None
     tensao_eletrica: str = Field(default="Bivolt", max_length=30)
     horas_uso: float = Field(default=0.0, ge=0.0)
+    cilindro_incluso_tipo: str | None = None
+    cilindro_incluso_qtd: int = Field(default=0, ge=0)
     observacoes: str = Field(default="")
     ativo: bool = Field(default=True)
 
@@ -219,6 +244,8 @@ class EquipamentoRespiratorioOut(BaseModel):
     data_aquisicao: date | None
     tensao_eletrica: str
     horas_uso: float
+    cilindro_incluso_tipo: str | None = None
+    cilindro_incluso_qtd: int = 0
     observacoes: str
     ativo: bool
     created_at: datetime

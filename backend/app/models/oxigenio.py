@@ -117,6 +117,9 @@ class EquipamentoRespiratorio(SQLModel, table=True):
     data_aquisicao: date | None = Field(default=None)
     tensao_eletrica: str = Field(default="Bivolt", max_length=30)
     horas_uso: float = Field(default=0.0)
+    # Composição: tamanho e quantidade de cilindro incluso/embutido no equipamento (ex: concentrador de oxigênio)
+    cilindro_incluso_tipo: str | None = Field(default=None, max_length=30)  # 10m3, 3m3, 1m3 ou None
+    cilindro_incluso_qtd: int = Field(default=0)
     observacoes: str = Field(default="", sa_column=Column(Text))
     ativo: bool = Field(default=True, index=True)
     created_at: datetime = Field(

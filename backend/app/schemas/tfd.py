@@ -559,6 +559,7 @@ class ExamePublicoOut(BaseModel):
 class TipoFilaIn(BaseModel):
     codigo: str = Field(default="", max_length=10)
     nome: str = Field(min_length=2, max_length=80)
+    tipo_fila: str = Field(default="REGULACAO_GERAL", max_length=40)
     ativo: bool = True
 
 

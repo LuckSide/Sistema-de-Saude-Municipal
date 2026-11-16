@@ -594,6 +594,18 @@ export default function NovaSolicitacao() {
     };
   }, [cboFiltroSig]);
 
+  // Vinculação Automática Relacional: Médico Selecionado -> CBO do Profissional
+  useEffect(() => {
+    if (!medicoId) return;
+    const med = medicos.find((m) => String(m.id) === String(medicoId));
+    if (med?.cbo_codigo) {
+      const cboClean = med.cbo_codigo.replace(/\D/g, "");
+      if (cboClean && cboClean !== cboFiltroSig) {
+        setCboFiltroSig(cboClean);
+      }
+    }
+  }, [medicoId, medicos, cboFiltroSig]);
+
   // Regra 3: Hierarquia de Seleção (Serviço -> Área/Subgrupo/CBO -> Procedimento)
   const espFiltroCatalogo = espManual ? especialidade : "";
 
@@ -1130,6 +1142,17 @@ export default function NovaSolicitacao() {
     if (!medicoId) {
       setErro("Selecione o(a) Médico(a) Requisitante.");
       return;
+    }
+
+    if (cboFiltroSig && espsCboSel.length > 0 && especialidade) {
+      const espNorm = normalizarTexto(especialidade);
+      const autorizada = espsCboSel.some((e) => normalizarTexto(e.nome) === espNorm);
+      if (!autorizada) {
+        setErro(
+          `A especialidade "${especialidade}" não é compatível com o CBO ${cboFiltroSig} do profissional solicitante no SIGTAP. Selecione uma especialidade vinculada.`
+        );
+        return;
+      }
     }
 
     if (!justificativa.trim() || justificativa.trim().length < JUST_MIN) {

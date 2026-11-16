@@ -221,6 +221,25 @@ export default function Medicos() {
       setErroModal(toastCampos(e, ROTULOS));
       return;
     }
+
+    // Validação Relacional Estrita CBO x Especialidades (SIGTAP)
+    const cboClean = (form.cbo_codigo || "").replace(/\D/g, "");
+    if (cboClean.length >= 4 && form.especialidades.trim()) {
+      const selecionadas = form.especialidades.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+      const autorizadasNomes = new Set(
+        especialidadesFiltradasModal.map((x) => x.nome.trim().toLowerCase())
+      );
+      if (autorizadasNomes.size > 0) {
+        const invalidas = selecionadas.filter((s) => !autorizadasNomes.has(s));
+        if (invalidas.length > 0) {
+          setErroModal(
+            `A(s) especialidade(s) "${invalidas.join(", ")}" não são autorizadas no SIGTAP para o CBO ${form.cbo_codigo}. Selecione apenas especialidades vinculadas ao profissional.`
+          );
+          return;
+        }
+      }
+    }
+
     setSalvando(true);
     try {
       const payload = { ...form, crm: normalizaCrm(form.crm), unidades_ids: form.unidades_ids };
@@ -448,6 +467,32 @@ export default function Medicos() {
                     placeholder="Digite ou selecione uma especialidade (separar por vírgula)"
                   />
                 </div>
+                {(() => {
+                  const cboClean = form.cbo_codigo.replace(/\D/g, "");
+                  if (cboClean.length < 4 || !form.especialidades.trim()) return null;
+                  const selecionadas = form.especialidades.split(",").map((s) => s.trim()).filter(Boolean);
+                  const autorizadasNomes = new Set(especialidadesFiltradasModal.map((x) => x.nome.trim().toLowerCase()));
+                  if (autorizadasNomes.size === 0) return null;
+                  const invalidas = selecionadas.filter((s) => !autorizadasNomes.has(s.toLowerCase()));
+                  if (invalidas.length === 0) return null;
+                  return (
+                    <div className="mt-1.5 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-900">
+                      <span>
+                        ⚠️ Especialidade(s) não autorizada(s) para este CBO: <b>{invalidas.join(", ")}</b>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const validas = selecionadas.filter((s) => autorizadasNomes.has(s.toLowerCase()));
+                          setForm({ ...form, especialidades: validas.join(", ") });
+                        }}
+                        className="font-bold underline text-amber-950 ml-2 cursor-pointer"
+                      >
+                        Remover incompatíveis
+                      </button>
+                    </div>
+                  );
+                })()}
                 {especialidadesFiltradasModal.length > 0 ? (
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     {especialidadesFiltradasModal.slice(0, 12).map((esp) => {
