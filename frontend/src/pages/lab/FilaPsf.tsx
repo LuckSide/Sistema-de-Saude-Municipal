@@ -6,6 +6,7 @@ import {
   CalendarDays,
   CheckCircle2,
   Edit2,
+  Filter,
   FlaskConical,
   Layers,
   MessageSquare,

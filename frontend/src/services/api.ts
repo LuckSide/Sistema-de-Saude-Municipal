@@ -1517,6 +1517,8 @@ export const sigtapCriarManual = (p: {
   sexo?: string;
 }) => api.post<SigtapProc>("/api/lab/sigtap", p).then((r) => r.data);
 
+export const labSigtapCriar = sigtapCriarManual;
+
 export type SigtapArvore = {
   grupos: { codigo: string; nome: string }[];
   subgrupos: { codigo: string; grupo_codigo: string; nome: string }[];

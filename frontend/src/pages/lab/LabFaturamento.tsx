@@ -323,8 +323,8 @@ export default function LabFaturamento() {
       return;
     }
     try {
-      const res = await labSigtap({ q: termo.trim(), limit: 10 });
-      setProcsSigtapEncontrados(res.data);
+      const res = await labSigtap(termo.trim(), undefined, 1, 10, false);
+      setProcsSigtapEncontrados(pagData<SigtapProc>(res));
     } catch {
       setProcsSigtapEncontrados([]);
     }

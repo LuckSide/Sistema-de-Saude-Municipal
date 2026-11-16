@@ -215,7 +215,7 @@ export default function Prestadores() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <ExportarExcel rota="/api/prestadores/exportar" nomeArquivo="prestadores" rotulo="Exportar Prestadores" />
+          <ExportarExcel url="/api/prestadores/exportar" arquivo="prestadores" rotulo="Exportar Prestadores" />
           <Button onClick={() => abrir()} className="bg-teal text-white hover:bg-teal/90 gap-1.5 shadow-sm">
             <Plus className="h-4 w-4" /> Novo Prestador
           </Button>
