@@ -389,7 +389,7 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
                 pacientes_novos += 1
 
             if not getattr(pac, "codigo_prontuario", ""):
-                pac.codigo_prontuario = gerar_prontuario_aleatorio(db, pac.id)
+                pac.codigo_prontuario = str(pac.co_seq_cidadao_pec) if getattr(pac, "co_seq_cidadao_pec", None) else str(pac.id)
                 db.add(pac)
             if _limpar_cpf(pac.cpf):
                 pac_cpf_cache.setdefault(_limpar_cpf(pac.cpf), pac)

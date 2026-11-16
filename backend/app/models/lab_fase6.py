@@ -56,6 +56,7 @@ class FilaPsf(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     paciente_id: int = Field(foreign_key="tfd_pacientes.id", index=True)
+    especialidade: str = Field(default="", max_length=120, index=True)
     unidade_psf: str = Field(default="", max_length=120, index=True)
     medico_solicitante: str = Field(default="", max_length=120)
     data_solicitacao: date = Field(sa_column=Column(Date, index=True))

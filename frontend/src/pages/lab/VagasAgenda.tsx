@@ -1234,6 +1234,7 @@ export default function VagasAgenda() {
               <thead>
                 <tr className="border-b border-sus-900/10 bg-sand/60 text-xs uppercase text-sus-900/60">
                   <th className="px-4 py-3">Data</th>
+                  <th className="px-4 py-3">Tipo de Serviço</th>
                   <th className="px-4 py-3">Total</th>
                   <th className="px-4 py-3">Ocupadas</th>
                   <th className="px-4 py-3">Livres</th>
@@ -1241,10 +1242,13 @@ export default function VagasAgenda() {
                 </tr>
               </thead>
               <tbody>
-                {vagasMes.slice(0, 5).map((v) => (
+                {vagasMes.slice(0, 10).map((v) => (
                   <tr key={v.id} className="border-b border-sus-900/5 last:border-0">
                     <td className="px-4 py-3 font-semibold">
                       {String(v.data).slice(0, 10).split("-").reverse().join("/")}
+                    </td>
+                    <td className="px-4 py-3 font-medium capitalize text-teal">
+                      {v.tipo_servico || "Rotina"}
                     </td>
                     <td className="px-4 py-3">{v.vagas_totais ?? v.total}</td>
                     <td className="px-4 py-3">{v.vagas_ocupadas ?? v.ocupadas}</td>

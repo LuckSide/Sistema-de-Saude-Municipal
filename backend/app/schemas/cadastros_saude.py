@@ -128,3 +128,24 @@ class UnidadeOut(BaseModel):
     cep: str = ""
     telefone: str = ""
     ativo: bool = True
+
+
+# ---------- Prestadores de Serviços (Subagente 3) ----------
+class PrestadorIn(BaseModel):
+    razao_social: str = Field(min_length=2, max_length=150)
+    nome_fantasia: str = Field(default="", max_length=150)
+    cnpj: str = Field(default="", max_length=20)
+    cnes: str = Field(default="", max_length=20)
+    tipo_entidade: str = Field(default="hospital", max_length=50)  # hospital | laboratorio | clinica | filantropico
+    responsavel_nome: str = Field(default="", max_length=120)
+    responsavel_telefone: str = Field(default="", max_length=30)
+    email: str = Field(default="", max_length=120)
+    telefone: str = Field(default="", max_length=30)
+    endereco: str = Field(default="", max_length=200)
+    municipio: str = Field(default="Guapé", max_length=100)
+    ativo: bool = True
+    observacoes: str = Field(default="", max_length=500)
+
+
+class PrestadorOut(PrestadorIn):
+    id: int

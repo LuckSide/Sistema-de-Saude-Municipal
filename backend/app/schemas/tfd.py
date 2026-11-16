@@ -398,12 +398,13 @@ class ExameBase(BaseModel):
     justificativa: str = Field(default="", max_length=500)
     resultado: str = Field(default="", max_length=2000)
     criado_por: str = Field(default="", max_length=120)
-    codigo_curto: str = Field(default="", max_length=20)  # ID único e imutável (ex: EX-000123)
+    codigo_curto: str = Field(default="", max_length=20)  # ID único e imutável (ex: SL-000123)
     numero_pedido: str = Field(default="", max_length=30)  # identificação operacional
 
 
 class ExameIn(ExameBase):
     exame: str = Field(min_length=2, max_length=120)
+    especialidade: str = Field(min_length=2, max_length=120, description="Especialidade requisitante obrigatória")
     prioridade: str = Field(default="rotina", pattern="^(rotina|urgente)$")
     status: str = Field(
         default="aguardando",

@@ -125,7 +125,7 @@ def criar_lab(
             password_hash=hash_password(senha_temp),
             nome=f"Recepção - {nome}",
             area="painel",
-            telas="lab_recepcao,lab_portal,lab",
+            telas="lab_recepcao",
             acoes="{}",
             laboratorio_id=obj.id,
             permite_retroativo=False,
@@ -539,6 +539,7 @@ def _formatar_fila_out(o: FilaPsf, pac: Paciente | None) -> FilaPsfOut:
     return FilaPsfOut(
         id=o.id,
         paciente_id=o.paciente_id,
+        especialidade=getattr(o, "especialidade", "") or "",
         unidade_psf=o.unidade_psf,
         medico_solicitante=o.medico_solicitante,
         data_solicitacao=o.data_solicitacao,
@@ -583,6 +584,7 @@ def _filtro_busca_fila_psf(db: Session, q_raw: str):
 @router.get("/exames/fila-psf", response_model=Pagina[FilaPsfOut])
 def listar_fila(
     status_: str | None = Query(default=None, alias="status"),
+    especialidade: str = "",
     unidade: str = "",
     data_de: str | None = None,
     data_ate: str | None = None,
@@ -594,6 +596,8 @@ def listar_fila(
 ):
     if not isinstance(status_, str):
         status_ = getattr(status_, "default", None)
+    if not isinstance(especialidade, str):
+        especialidade = getattr(especialidade, "default", "") or ""
     if not isinstance(page, int):
         page = getattr(page, "default", 1)
     if not isinstance(limit, int):
@@ -609,7 +613,13 @@ def listar_fila(
 
     filtros = []
     if status_ and status_.strip() and status_ != "todos":
-        filtros.append(FilaPsf.status == status_.strip())
+        st_clean = status_.strip()
+        if st_clean == "fora_da_fila":
+            filtros.append(FilaPsf.status.in_(["agendado", "cancelado"]))
+        else:
+            filtros.append(FilaPsf.status == st_clean)
+    if especialidade and especialidade.strip():
+        filtros.append(FilaPsf.especialidade.ilike(f"%{especialidade.strip()}%"))
     if unidade and unidade.strip() and unidade != "todas":
         filtros.append(FilaPsf.unidade_psf.ilike(f"%{unidade.strip()}%"))
     if data_de and str(data_de).strip():
@@ -669,6 +679,7 @@ def criar_fila(
     d_ped = data.data_pedido or d_solic
     obj = FilaPsf(
         paciente_id=data.paciente_id,
+        especialidade=data.especialidade.strip(),
         unidade_psf=data.unidade_psf,
         medico_solicitante=data.medico_solicitante,
         data_solicitacao=d_solic,
@@ -726,6 +737,8 @@ def atualizar_fila(
     obj = db.get(FilaPsf, fid)
     if not obj:
         raise HTTPException(404, "Fila não encontrada")
+    if getattr(data, "especialidade", None) is not None:
+        obj.especialidade = (data.especialidade or "").strip()
     if data.unidade_psf is not None:
         obj.unidade_psf = data.unidade_psf.strip()
     if data.medico_solicitante is not None:

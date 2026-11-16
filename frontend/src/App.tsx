@@ -45,6 +45,8 @@ const AuditLab = lazy(() => import("./pages/lab/AuditLab"));
 const LabFaturamento = lazy(() => import("./pages/lab/LabFaturamento"));
 const LabSigtap = lazy(() => import("./pages/lab/LabSigtap"));
 const LabOrcamentoLotes = lazy(() => import("./pages/lab/LabOrcamentoLotes"));
+const PortalLaboratorio = lazy(() => import("./pages/lab/PortalLaboratorio"));
+const Prestadores = lazy(() => import("./pages/Prestadores"));
 const AcompanharExame = lazy(() => import("./pages/AcompanharExame"));
 const ConfirmarPresencaViagem = lazy(() => import("./pages/ConfirmarPresencaViagem"));
 const Auditoria = lazy(() => import("./pages/Auditoria"));
@@ -239,8 +241,21 @@ export default function App() {
             <Route path="orcamento" element={<LabGuard tela="lab_orcamento" telas={["lab_orcamento", "lab_marcacao", "lab"]}><LabOrcamentoLotes /></LabGuard>} />
             <Route path="lotes" element={<LabGuard tela="lab_orcamento" telas={["lab_orcamento", "lab_marcacao", "lab"]}><LabOrcamentoLotes /></LabGuard>} />
             <Route path="faturamento" element={<LabGuard tela="lab_faturamento"><LabFaturamento /></LabGuard>} />
+            <Route path="portal-producao" element={<LabGuard tela="lab_recepcao" telas={["lab_recepcao", "lab_portal", "lab_faturamento", "lab", "usuarios"]}><PortalLaboratorio /></LabGuard>} />
             <Route path="sigtap" element={<LabGuard tela="lab_sigtap"><LabSigtap /></LabGuard>} />
           </Route>
+          <Route
+            path="/prestadores"
+            element={
+              <Protected>
+                <GuardQualquer telas={["cfg_unidades", "cfg_laboratorios", "usuarios", "tfd", "lab", "cfg_geral"]}>
+                  <Shell>
+                    <Prestadores />
+                  </Shell>
+                </GuardQualquer>
+              </Protected>
+            }
+          />
           <Route
             path="/sigtap"
             element={

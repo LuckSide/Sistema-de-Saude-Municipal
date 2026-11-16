@@ -30,3 +30,24 @@ class UnidadeSaude(SQLModel, table=True):
     cep: str = Field(default="", max_length=10)
     telefone: str = Field(default="", max_length=30)
     ativo: bool = Field(default=True)
+
+
+class Prestador(SQLModel, table=True):
+    """Entidade prestadora de serviços de saúde conveniada ou contratada (ex: Santa Casa, clínicas, laboratórios externos)."""
+    __tablename__ = "prestadores"
+
+    id: int | None = Field(default=None, primary_key=True)
+    razao_social: str = Field(max_length=150, index=True)
+    nome_fantasia: str = Field(default="", max_length=150, index=True)
+    cnpj: str = Field(default="", max_length=20, index=True)
+    cnes: str = Field(default="", max_length=20, index=True)
+    tipo_entidade: str = Field(default="hospital", max_length=50, index=True)  # hospital | laboratorio | clinica | filantropico
+    responsavel_nome: str = Field(default="", max_length=120)
+    responsavel_telefone: str = Field(default="", max_length=30)
+    email: str = Field(default="", max_length=120)
+    telefone: str = Field(default="", max_length=30)
+    endereco: str = Field(default="", max_length=200)
+    municipio: str = Field(default="Guapé", max_length=100)
+    ativo: bool = Field(default=True, index=True)
+    observacoes: str = Field(default="", max_length=500)
+

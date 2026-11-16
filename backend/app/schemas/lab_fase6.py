@@ -73,10 +73,11 @@ class LabFeriadoBloqueioOut(LabFeriadoBloqueioIn):
 # ---------- Fila PSF ----------
 class FilaPsfIn(BaseModel):
     paciente_id: int
+    especialidade: str = Field(min_length=2, max_length=120, description="Especialidade requisitante obrigatória")
     unidade_psf: str = Field(min_length=1, max_length=120)
     medico_solicitante: str = Field(min_length=1, max_length=120)
     data_solicitacao: date | None = None
-    data_pedido: date | None = None
+    data_pedido: date | None = Field(default_factory=date.today, description="Data do pedido oficial na fila")
     prioridade: str = Field(default="rotina", pattern="^(urgente|alta|rotina)$")
     justificativa: str = Field(default="", max_length=500)
     observacoes: str = Field(default="", max_length=500)
@@ -93,6 +94,7 @@ class FilaPsfIn(BaseModel):
 
 class FilaPsfOut(FilaPsfIn):
     id: int
+    especialidade: str = ""
     status: str = "na_fila"
     prioridade: str = "rotina"
     paciente_nome: str = ""
@@ -108,6 +110,7 @@ class FilaPsfStatusIn(BaseModel):
 
 
 class FilaPsfUpdateIn(BaseModel):
+    especialidade: str | None = None
     unidade_psf: str | None = None
     medico_solicitante: str | None = None
     data_solicitacao: date | None = None
@@ -430,6 +433,8 @@ class LabLotePreviaOut(BaseModel):
     deficit_total_vagas: int
     bloqueado: bool
     motivos_bloqueio: list[str] = []
+    dias_ignorados_sem_vaga: list[str] = []
+    motivo_dias_ignorados: str = ""
     sugestao_acao: str = ""
 
 
@@ -605,6 +610,8 @@ class LabFaturamentoRelatorioPrestadorOut(BaseModel):
 
 
 class LabAprovarFaturamentoIn(BaseModel):
+    laboratorio_id: int
+    competencia: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     liberar_visualizacao_lab: bool = True
     parecer: str = Field(default="", max_length=1000)
 

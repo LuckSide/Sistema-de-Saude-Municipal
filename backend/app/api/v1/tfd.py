@@ -2463,7 +2463,11 @@ def _filtrar_exames_lista(
             return []
         filtros.append(ExameFila.medico_id == med.id)
     if isinstance(status_, str) and status_:
-        filtros.append(ExameFila.status == status_)
+        st_clean = status_.strip()
+        if st_clean == "fora_da_fila":
+            filtros.append(ExameFila.status.in_(["agendado", "realizado", "cancelado", "recepcionado", "faltou", "desistiu"]))
+        else:
+            filtros.append(ExameFila.status == st_clean)
     if isinstance(prioridade, str) and prioridade:
         filtros.append(ExameFila.prioridade == prioridade)
     if isinstance(unidade_id, int):
@@ -4430,7 +4434,11 @@ def obter_relatorio_agendados(
     if isinstance(medico_id, int):
         filtros.append(ExameFila.medico_id == medico_id)
     if isinstance(status_, str) and status_:
-        filtros.append(ExameFila.status == status_)
+        st_clean = status_.strip()
+        if st_clean == "fora_da_fila":
+            filtros.append(ExameFila.status.in_(["agendado", "realizado", "cancelado", "recepcionado", "faltou", "desistiu"]))
+        else:
+            filtros.append(ExameFila.status == st_clean)
     if isinstance(tipo_fila, str) and tipo_fila.strip():
         filtros.append(ExameFila.tipo_fila.ilike(f"%{tipo_fila.strip()}%"))
     if isinstance(procedimento, str) and procedimento.strip():

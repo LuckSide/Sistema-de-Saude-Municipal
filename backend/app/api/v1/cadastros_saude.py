@@ -4,13 +4,15 @@ from sqlmodel import Session, select
 
 from app.core.deps import get_current_user, get_db as _get_db
 from app.core.security import hash_password
-from app.models.cadastros_saude import Medico, UnidadeSaude
+from app.models.cadastros_saude import Medico, UnidadeSaude, Prestador
 from app.models.user import User
 from app.schemas.cadastros_saude import (
     MedicoIn,
     MedicoOut,
     UnidadeIn,
     UnidadeOut,
+    PrestadorIn,
+    PrestadorOut,
 )
 from app.services.permissoes import need_any_perm
 from app.services.users import gerar_temporaria
@@ -447,4 +449,130 @@ def exportar_unidades(
             {"chave": "status", "rotulo": "Status", "largura": 12},
         ],
         linhas, "unidades_saude",
+    )
+
+
+# ---------- Prestadores de Serviços (Subagente 3) ----------
+@router.get("/prestadores", response_model=list[PrestadorOut])
+def listar_prestadores(
+    q: str = Query(default="", max_length=80),
+    somente_ativos: bool | None = Query(default=None),
+    tipo: str = Query(default="", max_length=50),
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(get_current_user),
+):
+    """Lista prestadores de serviço (ex: Santa Casa, clínicas, laboratórios externos)."""
+    base = select(Prestador).order_by(Prestador.razao_social)
+    if somente_ativos is True:
+        base = select(Prestador).where(Prestador.ativo != False).order_by(Prestador.razao_social)  # noqa: E712
+    elif somente_ativos is False:
+        base = select(Prestador).where(Prestador.ativo == False).order_by(Prestador.razao_social)  # noqa: E712
+
+    itens = list(db.exec(base).all())
+    termo = (q or "").strip().lower()
+    tipo_norm = (tipo or "").strip().lower()
+    if tipo_norm:
+        itens = [p for p in itens if (p.tipo_entidade or "").lower() == tipo_norm]
+    if termo:
+        itens = [
+            p for p in itens
+            if termo in (p.razao_social or "").lower()
+            or termo in (p.nome_fantasia or "").lower()
+            or termo in (p.cnpj or "").lower()
+            or termo in (p.cnes or "").lower()
+            or termo in (p.responsavel_nome or "").lower()
+            or termo in (p.municipio or "").lower()
+        ]
+    return [PrestadorOut(**p.model_dump()) for p in itens]
+
+
+@router.get("/prestadores/{pid}", response_model=PrestadorOut)
+def obter_prestador(
+    pid: int,
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(get_current_user),
+):
+    obj = db.get(Prestador, pid)
+    if not obj:
+        raise HTTPException(404, "Prestador não encontrado")
+    return PrestadorOut(**obj.model_dump())
+
+
+@router.post("/prestadores", response_model=PrestadorOut, status_code=201)
+def criar_prestador(
+    data: PrestadorIn,
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", "tfd", "lab", acoes=("criar",))),
+):
+    obj = Prestador(**data.model_dump())
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return PrestadorOut(**obj.model_dump())
+
+
+@router.put("/prestadores/{pid}", response_model=PrestadorOut)
+def atualizar_prestador(
+    pid: int,
+    data: PrestadorIn,
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", "tfd", "lab", acoes=("editar",))),
+):
+    obj = db.get(Prestador, pid)
+    if not obj:
+        raise HTTPException(404, "Prestador não encontrado")
+    for k, v in data.model_dump().items():
+        setattr(obj, k, v)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return PrestadorOut(**obj.model_dump())
+
+
+@router.delete("/prestadores/{pid}", status_code=204)
+def inativar_prestador(
+    pid: int,
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", "tfd", "lab", acoes=("excluir",))),
+):
+    obj = db.get(Prestador, pid)
+    if not obj:
+        raise HTTPException(404, "Prestador não encontrado")
+    obj.ativo = False
+    db.add(obj)
+    db.commit()
+
+
+@router.get("/prestadores/exportar")
+def exportar_prestadores(
+    db: Session = Depends(_get_db),
+    ator=Depends(need_any_perm("usuarios", "cfg_unidades", "tfd", "lab")),
+):
+    from app.services.export_xlsx import resposta_xlsx
+
+    linhas = [{
+        "razao_social": p.razao_social,
+        "nome_fantasia": p.nome_fantasia or "",
+        "tipo": p.tipo_entidade or "",
+        "cnpj": p.cnpj or "",
+        "cnes": p.cnes or "",
+        "responsavel": p.responsavel_nome or "",
+        "contato": " ".join(x for x in [p.telefone or "", p.email or ""] if x),
+        "municipio": p.municipio or "",
+        "status": "ativo" if p.ativo else "inativo",
+    } for p in db.exec(select(Prestador).order_by(Prestador.razao_social)).all()]
+    return resposta_xlsx(
+        "Prestadores de Serviços", getattr(ator, "nome", "") or getattr(ator, "username", ""),
+        [
+            {"chave": "razao_social", "rotulo": "Razão Social", "largura": 35},
+            {"chave": "nome_fantasia", "rotulo": "Nome Fantasia", "largura": 25},
+            {"chave": "tipo", "rotulo": "Tipo", "largura": 16},
+            {"chave": "cnpj", "rotulo": "CNPJ", "largura": 20},
+            {"chave": "cnes", "rotulo": "CNES", "largura": 14},
+            {"chave": "responsavel", "rotulo": "Responsável", "largura": 25},
+            {"chave": "contato", "rotulo": "Contato", "largura": 30},
+            {"chave": "municipio", "rotulo": "Município", "largura": 20},
+            {"chave": "status", "rotulo": "Status", "largura": 12},
+        ],
+        linhas, "prestadores",
     )

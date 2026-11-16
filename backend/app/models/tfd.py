@@ -252,7 +252,7 @@ class ExameFila(SQLModel, table=True):
     criado_por: str = Field(default="", max_length=120)
     status_anterior: str = Field(default="", max_length=20)  # p/ estornar recepção
     public_token: str = Field(default="", max_length=64, index=True)
-    codigo_curto: str = Field(default="", max_length=20, index=True)  # ID único e imutável (ex: EX-000123)
+    codigo_curto: str = Field(default="", max_length=20, index=True)  # ID único e imutável (ex: SL-000123)
     numero_pedido: str = Field(default="", max_length=30, index=True)  # identificação operacional
     created_at: datetime = Field(
         default_factory=datetime.utcnow,

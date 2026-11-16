@@ -327,18 +327,22 @@ def classificar_situacao_pec(row_map: dict, municipio_sede: str = "Guapé") -> t
         )
         return "mudanca_municipio", detalhe, None
 
-    # Inativação / unificação interna no próprio PEC
+    # Inativação interna no próprio PEC.
+    # DIRETRIZ ARQUITETURAL 1 (PEC): Pacientes com status 'unificado' (st_unificado) ou vinculados a cidadão master
+    # são considerados cidadãos comuns e ATIVOS, e não como inativos.
     inativo_pec = (
         _eh_explicitamente_falso(row_map.get("st_ativo"))
         or _eh_explicitamente_falso(row_map.get("st_ativo_para_exibicao"))
-        or _eh_verdadeiro(row_map.get("st_unificado_pec"))
-        or bool(str(row_map.get("co_cidadao_master_pec") or "").strip())
     )
-    if not inativo_pec and _eh_verdadeiro(row_map.get("st_ficha_inativa_fci")) and not _eh_verdadeiro(row_map.get("tem_vinculo_v")):
+    # Se o paciente é unificado no PEC, ele é considerado ativo/comum
+    if _eh_verdadeiro(row_map.get("st_unificado_pec")):
+        inativo_pec = False
+
+    if not inativo_pec and _eh_verdadeiro(row_map.get("st_ficha_inativa_fci")) and not _eh_verdadeiro(row_map.get("tem_vinculo_v")) and not _eh_verdadeiro(row_map.get("st_unificado_pec")):
         inativo_pec = True
 
     if inativo_pec:
-        return "inativo", "Cadastro inativo ou unificado no e-SUS PEC.", None
+        return "inativo", "Cadastro inativo no e-SUS PEC.", None
 
     return "ativo", "", None
 
@@ -1553,7 +1557,7 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
                             db.add(novo_p)
                             db.flush()
                             if novo_p.id and not novo_p.codigo_prontuario:
-                                novo_p.codigo_prontuario = gerar_prontuario_aleatorio(db, novo_p.id)
+                                novo_p.codigo_prontuario = str(pec_id) if pec_id else str(novo_p.id)
                                 db.add(novo_p)
 
                             _indexar_paciente(novo_p)

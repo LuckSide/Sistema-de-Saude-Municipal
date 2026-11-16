@@ -12,8 +12,16 @@ import {
   MapPin,
   Stethoscope,
   User,
+  DollarSign,
+  Printer,
+  ReceiptText,
 } from "lucide-react";
-import { tfdPerfilPaciente, type PacientePerfil } from "../services/api";
+import {
+  tfdPerfilPaciente,
+  type PacientePerfil,
+  labBiGastosPaciente,
+  type PacienteGastosResumo,
+} from "../services/api";
 import ExportarExcel from "./ExportarExcel";
 
 function fmtNasc(s: string | null): string {
@@ -58,8 +66,10 @@ export default function PerfilPaciente({
   const navigate = useNavigate();
   const [perfil, setPerfil] = useState<PacientePerfil | null>(null);
   const [erro, setErro] = useState("");
-  const [abaDemanda, setAbaDemanda] = useState<"espera" | "realizados" | "historico">("espera");
+  const [abaDemanda, setAbaDemanda] = useState<"espera" | "realizados" | "historico" | "financeiro">("espera");
   const [modoVisao, setModoVisao] = useState<"geral" | "procedimento">("geral");
+  const [gastos, setGastos] = useState<PacienteGastosResumo | null>(null);
+  const [carregandoGastos, setCarregandoGastos] = useState(false);
 
   const itensEspera = useMemo(() => {
     return (perfil?.demanda || []).filter((d) => (d.status || "").toLowerCase() === "aguardando");
@@ -72,22 +82,28 @@ export default function PerfilPaciente({
   const historico = useMemo(() => perfil?.historico ?? [], [perfil]);
 
   const abrirExame = (id: number, tipoFila?: string) => {
-    if (tipoFila && (tipoFila.includes("PSF") || tipoFila.includes("SANGUE"))) {
-      navigate(`/lab/fila?q=${id}`);
-      return;
-    }
-    if (onVerExame) {
-      onVerExame(id);
-    } else {
-      navigate(`/fila-exames?registro=${id}&q=${id}`);
-    }
+    const url = tipoFila && (tipoFila.includes("PSF") || tipoFila.includes("SANGUE"))
+      ? `/lab/fila?q=${id}`
+      : `/fila-exames?registro=${id}&q=${id}`;
+    window.open(url, "_blank", "noopener,noreferrer");
   };
 
   useEffect(() => {
     setPerfil(null);
     setErro("");
+    setGastos(null);
     tfdPerfilPaciente(pid).then(setPerfil).catch(() => setErro("Falha ao carregar perfil."));
   }, [pid]);
+
+  useEffect(() => {
+    if (abaDemanda === "financeiro" && pid && !gastos) {
+      setCarregandoGastos(true);
+      labBiGastosPaciente(pid)
+        .then(setGastos)
+        .catch(() => {})
+        .finally(() => setCarregandoGastos(false));
+    }
+  }, [abaDemanda, pid, gastos]);
 
   if (erro) return <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>;
   if (!perfil) return <p className="py-6 text-center text-sm text-ink/50">Carregando perfil…</p>;
@@ -212,6 +228,19 @@ export default function PerfilPaciente({
               }`}>
                 {historico.length}
               </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAbaDemanda("financeiro")}
+              className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold transition shadow-xs ${
+                abaDemanda === "financeiro"
+                  ? "bg-teal text-white shadow-teal/20"
+                  : "bg-sand/60 text-sus-900/70 hover:bg-sand hover:text-sus-950 border border-sus-900/10"
+              }`}
+            >
+              <DollarSign className="h-4 w-4" />
+              <span>Extrato Financeiro</span>
             </button>
           </div>
 
@@ -654,6 +683,96 @@ export default function PerfilPaciente({
                   </div>
                 );
               })
+            )}
+          </div>
+        )}
+
+        {abaDemanda === "financeiro" && (
+          <div className="mt-3 space-y-4">
+            {carregandoGastos ? (
+              <p className="rounded-xl border border-sus-900/10 bg-sand/30 px-4 py-8 text-center text-xs text-ink/55">
+                Carregando demonstrativo financeiro do paciente…
+              </p>
+            ) : !gastos || (gastos.itens || []).length === 0 ? (
+              <p className="rounded-xl border border-sus-900/10 bg-sand/30 px-4 py-8 text-center text-xs text-ink/55">
+                Nenhum procedimento laboratorial ou exame com custo financeiro registrado para este paciente.
+              </p>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 rounded-xl bg-teal/5 border border-teal/20">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-teal/10 rounded-xl text-teal">
+                      <ReceiptText className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-teal">Total Financeiro Investido</p>
+                      <p className="text-2xl font-black text-sus-950 font-mono">
+                        {new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(gastos.total_gasto || 0)}
+                      </p>
+                      <p className="text-[10px] text-ink/60 mt-0.5">
+                        {gastos.qtd_exames} exames/procedimentos realizados no sistema
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-sus-900/15 text-xs font-bold text-sus-950 hover:bg-sand transition shadow-xs self-start sm:self-center"
+                  >
+                    <Printer className="h-4 w-4 text-teal" /> Imprimir Extrato
+                  </button>
+                </div>
+
+                <div className="overflow-x-auto rounded-xl border border-sus-900/10">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="bg-sand/60 text-sus-900/70 border-b border-sus-900/10 font-bold uppercase">
+                        <th className="px-3 py-2.5">Data Atendimento</th>
+                        <th className="px-3 py-2.5">Laboratório Prestador</th>
+                        <th className="px-3 py-2.5">Procedimento SIGTAP</th>
+                        <th className="px-3 py-2.5 text-right">Valor Unitário</th>
+                        <th className="px-3 py-2.5 text-center">Origem Tabela</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-sus-900/10 bg-white">
+                      {(gastos.itens || []).map((it, idx) => (
+                        <tr key={idx} className="hover:bg-sand/20 transition-colors">
+                          <td className="px-3 py-2.5 font-mono text-[11px]">
+                            {it.data_agendada ? it.data_agendada.slice(0, 10).split("-").reverse().join("/") : "—"}
+                          </td>
+                          <td className="px-3 py-2.5 font-medium text-sus-950">{it.laboratorio_nome || "Laboratório Municipal"}</td>
+                          <td className="px-3 py-2.5">
+                            <span className="font-mono font-bold text-sus-950">{it.procedimento_codigo}</span> - {it.procedimento_descricao}
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-mono font-bold text-teal">
+                            {new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(it.valor_unitario || 0)}
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            {it.origem_preco === "contrato_customizado" ? (
+                              <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold text-purple-800">
+                                Preço Contratual
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-semibold text-stone-700">
+                                SIGTAP SUS
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-sand/40 border-t-2 border-sus-900/20 font-bold text-sus-950 text-xs">
+                        <td colSpan={3} className="px-3 py-2.5 uppercase">Total Consumido pelo Paciente</td>
+                        <td className="px-3 py-2.5 text-right font-mono text-sm text-teal">
+                          {new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(gastos.total_gasto || 0)}
+                        </td>
+                        <td className="px-3 py-2.5 text-center">—</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
             )}
           </div>
         )}

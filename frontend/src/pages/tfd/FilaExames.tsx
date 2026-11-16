@@ -1052,6 +1052,11 @@ export default function FilaExames() {
       setErro("Paciente inválido.");
       return;
     }
+    const espChecagem = (form.nome_especialidade || form.especialidade || form.tipo_fila || "").trim();
+    if (!espChecagem) {
+      setErro("O campo 'Especialidade' é obrigatório para lançar o paciente na fila de exames.");
+      return;
+    }
     const original = editId ? lista.find((x) => x.id === editId) : undefined;
     if (retroativoBloqueado && ehRetroativa(form.data_pedido)) {
       setErro(RETRO_MSG);
@@ -1095,6 +1100,11 @@ export default function FilaExames() {
     const pid = Number(form.paciente_id);
     if (!Number.isInteger(pid) || pid <= 0) {
       setErro("Paciente inválido.");
+      return;
+    }
+    const espChecagem = (form.nome_especialidade || form.especialidade || form.tipo_fila || "").trim();
+    if (!espChecagem) {
+      setErro("O campo 'Especialidade' é obrigatório para lançar o paciente na fila de exames.");
       return;
     }
     const original = editId ? lista.find((x) => x.id === editId) : undefined;
@@ -1342,7 +1352,12 @@ export default function FilaExames() {
                 <Label>Status</Label>
                 <Select value={filtro} onChange={(e) => setFiltro(e.target.value)}>
                   <option value="">Todos</option>
-                  {STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
+                  <option value="fora_da_fila">✓ Já saíram da fila (Agendados / Realizados / Cancelados)</option>
+                  {STATUS.map((s) => (
+                    <option key={s} value={s}>
+                      {s === "aguardando" ? "Na Fila (Aguardando)" : s.charAt(0).toUpperCase() + s.slice(1)}
+                    </option>
+                  ))}
                 </Select>
               </div>
               <div>

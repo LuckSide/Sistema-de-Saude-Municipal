@@ -225,10 +225,8 @@ def listar_sigtap(
 def criar_sigtap(
     data: SigtapIn,
     db: Session = Depends(get_db),
-    user=Depends(need_perm("lab_sigtap", "criar")),
+    user=Depends(need_any_perm("lab_sigtap", "cfg_exames", "usuarios", "tfd_catalogo", acoes=("criar",))),
 ):
-    if not user.is_superuser and "lab" not in (user.telas or "").split(","):
-        raise HTTPException(status_code=403, detail="Sem acesso ao Lab")
     codigo = data.codigo.strip()
     if db.exec(select(SigtapProcedimento).where(SigtapProcedimento.codigo == codigo)).first():
         raise HTTPException(400, "Código SIGTAP já cadastrado")
@@ -1034,7 +1032,14 @@ def api_aprovar_faturamento_secretaria(
     from app.services.lab_faturamento_service import aprovar_faturamento_secretaria
 
     usuario_nome = getattr(ator, "nome", "") or getattr(ator, "username", "") or "Secretaria de Saúde"
-    return aprovar_faturamento_secretaria(db, dados, usuario_nome=usuario_nome)
+    fech = aprovar_faturamento_secretaria(db, dados.laboratorio_id, dados.competencia, dados, usuario_nome=usuario_nome)
+    return {
+        "ok": True,
+        "status": fech.status,
+        "liberado_visualizacao_lab": fech.liberado_visualizacao_lab,
+        "aprovado_por": fech.aprovado_por,
+        "parecer": fech.parecer_secretaria,
+    }
 
 
 @router.get("/fpo/competencias", response_model=list[LabFPOCompetenciaOut])

@@ -165,7 +165,7 @@ def _init_db_impl() -> None:
     )
     from app.models.dashboard_prefs import UserDashboardPrefs  # noqa: F401
     from app.models.audit import AuditLog  # noqa: F401
-    from app.models.cadastros_saude import Medico, UnidadeSaude  # noqa: F401
+    from app.models.cadastros_saude import Medico, UnidadeSaude, Prestador  # noqa: F401
     from app.models.apac import (  # noqa: F401
         AnexoLaudoAPAC,
         FaixaNumeracaoAPAC,
@@ -1148,6 +1148,13 @@ def _init_db_impl() -> None:
             except Exception:
                 pass
 
+        if "especialidade" not in cols_fila_psf and cols_fila_psf:
+            try:
+                conn.execute(text("ALTER TABLE lab_fila_psf ADD COLUMN especialidade VARCHAR(120) DEFAULT '' NOT NULL"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_fila_psf_especialidade ON lab_fila_psf (especialidade)"))
+            except Exception:
+                pass
+
         if "contrato_id" not in cols_solic_mestre and cols_solic_mestre:
             try:
                 conn.execute(text("ALTER TABLE lab_solic_mestre ADD COLUMN contrato_id INTEGER"))
@@ -1353,6 +1360,28 @@ def _init_db_impl() -> None:
             "CREATE INDEX IF NOT EXISTS ix_lab_fpo_itens_fpo_id ON lab_fpo_itens (fpo_id)",
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_lab_fat_fechamento_lab_comp ON lab_faturamento_fechamentos (laboratorio_id, competencia)",
             "CREATE INDEX IF NOT EXISTS ix_lab_fat_fechamentos_competencia ON lab_faturamento_fechamentos (competencia)",
+            """
+            CREATE TABLE IF NOT EXISTS prestadores (
+                id SERIAL PRIMARY KEY,
+                razao_social VARCHAR(150) NOT NULL,
+                nome_fantasia VARCHAR(150) NOT NULL DEFAULT '',
+                cnpj VARCHAR(20) NOT NULL DEFAULT '',
+                cnes VARCHAR(20) NOT NULL DEFAULT '',
+                tipo_entidade VARCHAR(50) NOT NULL DEFAULT 'hospital',
+                responsavel_nome VARCHAR(120) NOT NULL DEFAULT '',
+                responsavel_telefone VARCHAR(30) NOT NULL DEFAULT '',
+                email VARCHAR(120) NOT NULL DEFAULT '',
+                telefone VARCHAR(30) NOT NULL DEFAULT '',
+                endereco VARCHAR(200) NOT NULL DEFAULT '',
+                municipio VARCHAR(100) NOT NULL DEFAULT 'Guapé',
+                ativo BOOLEAN NOT NULL DEFAULT TRUE,
+                observacoes VARCHAR(500) NOT NULL DEFAULT ''
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_prestadores_razao_social ON prestadores (razao_social)",
+            "CREATE INDEX IF NOT EXISTS ix_prestadores_cnpj ON prestadores (cnpj)",
+            "CREATE INDEX IF NOT EXISTS ix_prestadores_cnes ON prestadores (cnes)",
+            "CREATE INDEX IF NOT EXISTS ix_prestadores_ativo ON prestadores (ativo)",
         ]:
             try:
                 conn.execute(text(idx_lote))

@@ -156,6 +156,31 @@ export const createUnidadeSaude = (payload: Record<string, unknown>) => api.post
 export const updateUnidadeSaude = (id: number, payload: Record<string, unknown>) => api.put<UnidadeSaude>(`/api/unidades-saude/${id}`, payload).then((r) => r.data);
 export const deleteUnidadeSaude = (id: number) => api.delete(`/api/unidades-saude/${id}`).then((r) => r.data);
 
+export type Prestador = {
+  id: number;
+  razao_social: string;
+  nome_fantasia: string;
+  cnpj: string;
+  cnes: string;
+  tipo_entidade: string;
+  responsavel_nome: string;
+  responsavel_telefone: string;
+  email: string;
+  telefone: string;
+  endereco: string;
+  municipio: string;
+  ativo: boolean;
+  observacoes: string;
+};
+export const fetchPrestadores = (params?: { q?: string; somente_ativos?: boolean; tipo?: string }) =>
+  api.get<Prestador[]>("/api/prestadores", { params }).then((r) => r.data);
+export const createPrestador = (payload: Partial<Prestador>) =>
+  api.post<Prestador>("/api/prestadores", payload).then((r) => r.data);
+export const updatePrestador = (id: number, payload: Partial<Prestador>) =>
+  api.put<Prestador>(`/api/prestadores/${id}`, payload).then((r) => r.data);
+export const deletePrestador = (id: number) =>
+  api.delete(`/api/prestadores/${id}`).then((r) => r.data);
+
 export type UsuariosResumo = {
   total: number;
   ativos: number;
@@ -1688,6 +1713,7 @@ export type FilaPsfItem = {
   paciente_cpf?: string;
   paciente_cns?: string;
   paciente_prontuario?: string;
+  especialidade?: string;
   unidade_psf: string;
   medico_solicitante: string;
   medico: string;
@@ -1711,6 +1737,7 @@ export function mapFila(o: any): FilaPsfItem {
     paciente_cpf: o.paciente_cpf ?? "",
     paciente_cns: o.paciente_cns ?? "",
     paciente_prontuario: o.paciente_prontuario ?? "",
+    especialidade: o.especialidade ?? "",
     unidade_psf: o.unidade_psf ?? "",
     medico_solicitante: o.medico_solicitante ?? o.medico ?? "",
     medico: o.medico ?? o.medico_solicitante ?? "",
@@ -1730,11 +1757,13 @@ export function mapFila(o: any): FilaPsfItem {
 export type FilaPsfFiltros = {
   status?: string;
   unidade?: string;
+  especialidade?: string;
   data_de?: string;
   data_ate?: string;
   q?: string;
   page?: number;
   limit?: number;
+  fora_da_fila?: boolean;
 };
 
 export const filaPsfListar = (
@@ -1767,6 +1796,7 @@ export const filaPsfCriar = (p: Record<string, unknown>) =>
   api
     .post("/api/exames/fila-psf", {
       paciente_id: p.paciente_id,
+      especialidade: p.especialidade,
       unidade_psf: p.unidade_psf,
       medico_solicitante: (p as any).medico_solicitante ?? (p as any).medico,
       data_solicitacao:
@@ -1782,6 +1812,7 @@ export const filaPsfCriar = (p: Record<string, unknown>) =>
 export const filaPsfAtualizar = (id: number, p: Record<string, unknown>) =>
   api
     .put(`/api/exames/fila-psf/${id}`, {
+      especialidade: p.especialidade,
       unidade_psf: p.unidade_psf,
       medico_solicitante: (p as any).medico_solicitante ?? (p as any).medico,
       data_solicitacao: (p as any).data_solicitacao,
@@ -2164,6 +2195,8 @@ export type LabLotePrevia = {
   deficit_total_vagas: number;
   bloqueado: boolean;
   motivos_bloqueio: string[];
+  dias_ignorados_sem_vaga?: string[];
+  motivo_dias_ignorados?: string;
   sugestao_acao: string;
 };
 

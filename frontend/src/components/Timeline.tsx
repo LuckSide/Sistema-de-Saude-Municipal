@@ -125,7 +125,23 @@ export default function Timeline({
               {e.data.split("-").reverse().join("/")}
             </p>
             <p className="text-sm font-bold text-sus-950">{e.titulo}</p>
-            {e.detalhe && (
+            {/* Destaque detalhado para cancelamentos e remoções (Subagente 2) */}
+            {(e.tipo === "remocao" || e.titulo.toLowerCase().includes("cancel") || e.titulo.toLowerCase().includes("remov")) ? (
+              <div className="mt-2 rounded-xl border border-rose-300 bg-rose-50/70 p-3 text-xs text-rose-950 space-y-1.5 shadow-2xs">
+                <div className="flex items-center gap-1.5 font-bold text-rose-800">
+                  <span className="inline-block h-2 w-2 rounded-full bg-rose-600 animate-pulse" />
+                  Resumo Detalhado do Cancelamento / Baixa:
+                </div>
+                <p className="text-[11px] leading-relaxed text-rose-900 font-medium">
+                  <strong>Motivo Registrado:</strong> {e.detalhe || "Cancelamento formal registrado no prontuário do paciente."}
+                </p>
+                {e.usuario && (
+                  <p className="text-[10px] text-rose-800/80">
+                    Operador / Profissional Responsável: <strong>{e.usuario}</strong>
+                  </p>
+                )}
+              </div>
+            ) : e.detalhe && (
               <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-ink/75">
                 {e.detalhe.split(" · ").map((part, idx) => {
                   const p = part.trim();

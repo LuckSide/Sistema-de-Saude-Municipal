@@ -47,6 +47,7 @@ import {
   labsCriar,
   labsListar,
   labsRemover,
+  labSigtapCriar,
   limparDuplicadosPec,
   restaurarBackup,
   salvarExamesPermitidos,
@@ -1949,6 +1950,58 @@ function AbaExamesPermitidos() {
   const [ok, setOk] = useState("");
   const [alterado, setAlterado] = useState(false);
 
+  // Inclusão manual de procedimento compatível com SIGTAP (Subagente 4)
+  const [modalNovo, setModalNovo] = useState(false);
+  const [novoCodigo, setNovoCodigo] = useState("");
+  const [novoDescricao, setNovoDescricao] = useState("");
+  const [novoComplexidade, setNovoComplexidade] = useState("MC");
+  const [novoInstrumento, setNovoInstrumento] = useState("BPA-C");
+  const [novoValorSa, setNovoValorSa] = useState("0,00");
+  const [novoValorSh, setNovoValorSh] = useState("0,00");
+  const [novoValorSp, setNovoValorSp] = useState("0,00");
+  const [salvandoNovo, setSalvandoNovo] = useState(false);
+  const [erroNovo, setErroNovo] = useState("");
+
+  async function criarProcedimentoManual() {
+    setErroNovo("");
+    const codLimpo = novoCodigo.trim().replace(/\D/g, "");
+    if (codLimpo.length !== 10) {
+      setErroNovo("O código SIGTAP deve conter exatamente 10 dígitos numéricos.");
+      return;
+    }
+    if (novoDescricao.trim().length < 3) {
+      setErroNovo("A descrição do procedimento deve ter no mínimo 3 caracteres.");
+      return;
+    }
+    setSalvandoNovo(true);
+    try {
+      const vSa = parseFloat(novoValorSa.replace(/\./g, "").replace(",", ".")) || 0;
+      const vSh = parseFloat(novoValorSh.replace(/\./g, "").replace(",", ".")) || 0;
+      const vSp = parseFloat(novoValorSp.replace(/\./g, "").replace(",", ".")) || 0;
+      await labSigtapCriar({
+        codigo: codLimpo,
+        descricao: novoDescricao.trim().toUpperCase(),
+        complexidade: novoComplexidade,
+        instrumento: novoInstrumento,
+        valor_sa: vSa,
+        valor_sh: vSh,
+        valor_sp: vSp,
+      });
+      setOk(`Procedimento ${codLimpo} cadastrado manualmente com compatibilidade SIGTAP.`);
+      setModalNovo(false);
+      setNovoCodigo("");
+      setNovoDescricao("");
+      setNovoValorSa("0,00");
+      setNovoValorSh("0,00");
+      setNovoValorSp("0,00");
+      await carregar();
+    } catch (e: unknown) {
+      setErroNovo(msgErro(e, "Falha ao cadastrar procedimento manual compatível com o SIGTAP."));
+    } finally {
+      setSalvandoNovo(false);
+    }
+  }
+
   useEffect(() => {
     carregar();
   }, []);
@@ -2081,11 +2134,19 @@ function AbaExamesPermitidos() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setModalNovo(true)}
+              className="gap-1.5 text-xs !h-9"
+            >
+              <Plus className="h-4 w-4 text-teal" />
+              Incluir Procedimento Manual SIGTAP
+            </Button>
             <Button
               onClick={salvar}
               disabled={salvando || (!alterado && !erro)}
-              className="!w-auto gap-1.5"
+              className="!w-auto gap-1.5 !h-9"
             >
               {salvando ? (
                 <>
@@ -2260,6 +2321,133 @@ function AbaExamesPermitidos() {
           </table>
         </div>
       </Card>
+
+      {modalNovo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
+          <Card className="w-full max-w-xl overflow-hidden bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-sus-900/10 px-6 py-4 bg-sand/30">
+              <h2 className="text-base font-bold text-sus-950 flex items-center gap-2">
+                <FlaskConical className="h-5 w-5 text-teal" />
+                Cadastrar Procedimento Manual (Tabela SIGTAP)
+              </h2>
+              <button
+                onClick={() => setModalNovo(false)}
+                className="rounded-lg p-1 text-ink/40 hover:bg-sand hover:text-sus-950"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+              {erroNovo && (
+                <div className="rounded-xl bg-red-50 p-3 text-xs font-semibold text-red-700">
+                  {erroNovo}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">Código SIGTAP (10 dígitos) *</Label>
+                  <Input
+                    value={novoCodigo}
+                    onChange={(e) => setNovoCodigo(e.target.value)}
+                    placeholder="Ex: 0202010120"
+                    maxLength={10}
+                    className="mt-1 text-xs font-mono font-bold"
+                  />
+                  <p className="text-[10px] text-ink/50 mt-0.5">Padrão oficial DATASUS (somente números)</p>
+                </div>
+
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">Complexidade</Label>
+                  <select
+                    value={novoComplexidade}
+                    onChange={(e) => setNovoComplexidade(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-xs font-medium text-sus-950"
+                  >
+                    <option value="MC">Média Complexidade (MC)</option>
+                    <option value="AB">Atenção Básica (AB)</option>
+                    <option value="AC">Alta Complexidade (AC)</option>
+                    <option value="NA">Não se Aplica (NA)</option>
+                  </select>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <Label className="text-xs font-bold text-sus-950">Descrição Oficial do Exame / Procedimento *</Label>
+                  <Input
+                    value={novoDescricao}
+                    onChange={(e) => setNovoDescricao(e.target.value)}
+                    placeholder="Ex: DOSAGEM DE HEMOGLOBINA GLICADA A1C"
+                    className="mt-1 text-xs uppercase"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">Instrumento de Registro</Label>
+                  <select
+                    value={novoInstrumento}
+                    onChange={(e) => setNovoInstrumento(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-xs font-medium text-sus-950"
+                  >
+                    <option value="BPA-C">BPA Consolidado (BPA-C)</option>
+                    <option value="BPA-I">BPA Individualizado (BPA-I)</option>
+                    <option value="APAC">Laudo APAC (APAC)</option>
+                    <option value="AIH">Hospitalar (AIH)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">Valor Ambulatorial (SA - R$)</Label>
+                  <Input
+                    value={novoValorSa}
+                    onChange={(e) => setNovoValorSa(e.target.value)}
+                    placeholder="0,00"
+                    className="mt-1 text-xs font-mono"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">Valor Hospitalar (SH - R$)</Label>
+                  <Input
+                    value={novoValorSh}
+                    onChange={(e) => setNovoValorSh(e.target.value)}
+                    placeholder="0,00"
+                    className="mt-1 text-xs font-mono"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">Valor Profissional (SP - R$)</Label>
+                  <Input
+                    value={novoValorSp}
+                    onChange={(e) => setNovoValorSp(e.target.value)}
+                    placeholder="0,00"
+                    className="mt-1 text-xs font-mono"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-sus-900/10 bg-sand/30 px-6 py-4">
+              <Button
+                variant="outline"
+                onClick={() => setModalNovo(false)}
+                disabled={salvandoNovo}
+                className="text-xs"
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={criarProcedimentoManual}
+                disabled={salvandoNovo}
+                className="bg-teal text-white hover:bg-teal/90 text-xs"
+              >
+                {salvandoNovo ? "Salvando..." : "Cadastrar no SIGTAP"}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

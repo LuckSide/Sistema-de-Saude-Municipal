@@ -38,7 +38,7 @@ from app.schemas.lab_fase6 import (
     LabOrcamentoOut,
 )
 from app.services.export_xlsx import gerar_xlsx
-from app.services.geradores import gerar_prontuario_aleatorio, gerar_protocolo_lab_aleatorio
+from app.services.geradores import obter_prontuario_real, gerar_protocolo_lab_aleatorio
 from app.services.lab_preparo import determinar_preparo
 
 
@@ -252,14 +252,14 @@ def calcular_previa_lote(db: Session, dados: LabLotePreviaIn) -> LabLotePreviaOu
         )
         bloqueado = True
 
-    datas_validas = sorted(list({d for d in dados.datas_agendamento if d >= date.today()}))
-    if not datas_validas:
+    datas_brutas = sorted(list({d for d in dados.datas_agendamento if d >= date.today()}))
+    if not datas_brutas:
         raise HTTPException(400, "Informe ao menos uma data futura válida para agendamento.")
 
-    # Verifica feriados e bloqueios cadastrados
+    # 1. Identifica feriados e bloqueios cadastrados
     feriados = db.exec(
         select(LabFeriadoBloqueio).where(
-            LabFeriadoBloqueio.data.in_(datas_validas),
+            LabFeriadoBloqueio.data.in_(datas_brutas),
             LabFeriadoBloqueio.bloquear_agendamento == True,  # noqa: E712
             or_(
                 LabFeriadoBloqueio.laboratorio_id == None,  # noqa: E711
@@ -267,10 +267,43 @@ def calcular_previa_lote(db: Session, dados: LabLotePreviaIn) -> LabLotePreviaOu
             ),
         )
     ).all()
-    if feriados:
-        dias_bloq = ", ".join(f"{f.data.strftime('%d/%m/%Y')} ({f.descricao or 'Bloqueio'})" for f in feriados)
-        motivos_bloqueio.append(f"As seguintes datas estão bloqueadas na agenda (feriado/recesso): {dias_bloq}.")
+    feriados_set = {f.data: (f.descricao or "Bloqueio/Feriado") for f in feriados}
+
+    # 2. Consulta capacidade de vagas do laboratório nas datas escolhidas
+    vagas_db = db.exec(
+        select(VagaLab).where(
+            VagaLab.laboratorio_id == dados.laboratorio_id,
+            VagaLab.data.in_(datas_brutas),
+        )
+    ).all()
+    vagas_map = {v.data: v for v in vagas_db}
+
+    # 3. SUBAGENTE 1: Ignora automaticamente dias sem vagas abertas ou em feriados/bloqueios
+    datas_validas: list[date] = []
+    dias_ignorados_sem_vaga: list[str] = []
+
+    for d in datas_brutas:
+        if d in feriados_set:
+            dias_ignorados_sem_vaga.append(f"{d.strftime('%d/%m/%Y')} (Feriado: {feriados_set[d]})")
+            continue
+        vaga = vagas_map.get(d)
+        if not vaga:
+            dias_ignorados_sem_vaga.append(f"{d.strftime('%d/%m/%Y')} (Sem cota cadastrada)")
+            continue
+        v_livres = max(0, vaga.vagas_totais - vaga.vagas_ocupadas)
+        if v_livres <= 0:
+            dias_ignorados_sem_vaga.append(f"{d.strftime('%d/%m/%Y')} (Vagas esgotadas)")
+            continue
+        datas_validas.append(d)
+
+    if not datas_validas:
+        motivos_bloqueio.append(
+            f"Todos os dias do período selecionado foram ignorados automaticamente por não possuírem vagas abertas no laboratório {lab.nome}."
+        )
         bloqueado = True
+        datas_alocacao_processo = datas_brutas
+    else:
+        datas_alocacao_processo = datas_validas
 
     # Busca fila pendente em ordem de prioridade clínica e cronológica (data_pedido como base)
     stmt_fila = (
@@ -313,9 +346,7 @@ def calcular_previa_lote(db: Session, dados: LabLotePreviaIn) -> LabLotePreviaOu
             break
 
         pac = pacs_map.get(f.paciente_id)
-        pront = getattr(pac, "codigo_prontuario", "") or (
-            gerar_prontuario_aleatorio(pac_id=pac.id) if pac and pac.id else ""
-        )
+        pront = obter_prontuario_real(pac, pac.id if pac else None, db)
 
         item_previa = LabLotePreviaItemOut(
             fila_id=f.id or 0,
@@ -339,20 +370,11 @@ def calcular_previa_lote(db: Session, dados: LabLotePreviaIn) -> LabLotePreviaOu
         motivos_bloqueio.append("Nenhum paciente pendente com exames SIGTAP válidos foi encontrado na fila.")
         bloqueado = True
 
-    # Consulta capacidade de vagas do laboratório nas datas escolhidas
-    vagas_db = db.exec(
-        select(VagaLab).where(
-            VagaLab.laboratorio_id == dados.laboratorio_id,
-            VagaLab.data.in_(datas_validas),
-        )
-    ).all()
-    vagas_map = {v.data: v for v in vagas_db}
-
-    # Distribuição equilibrada dos pacientes entre as datas selecionadas
-    n_datas = len(datas_validas)
-    alocados_por_data: dict[date, list[LabLotePreviaItemOut]] = {d: [] for d in datas_validas}
+    # Distribuição equilibrada dos pacientes entre as datas válidas com vagas
+    n_datas = len(datas_alocacao_processo)
+    alocados_por_data: dict[date, list[LabLotePreviaItemOut]] = {d: [] for d in datas_alocacao_processo}
     for idx, p_item in enumerate(pacientes_selecionados):
-        d_alvo = datas_validas[idx % n_datas]
+        d_alvo = datas_alocacao_processo[idx % n_datas]
         p_item.data_agendada_sugerida = d_alvo
         alocados_por_data[d_alvo].append(p_item)
 
@@ -360,7 +382,7 @@ def calcular_previa_lote(db: Session, dados: LabLotePreviaIn) -> LabLotePreviaOu
     tem_deficit = False
     deficit_total = 0
 
-    for d in datas_validas:
+    for d in datas_alocacao_processo:
         alocados = alocados_por_data[d]
         qtd_alocados = len(alocados)
         v_dia = round(sum(it.valor_total for it in alocados), 2)
@@ -429,6 +451,12 @@ def calcular_previa_lote(db: Session, dados: LabLotePreviaIn) -> LabLotePreviaOu
         deficit_total_vagas=deficit_total,
         bloqueado=bloqueado,
         motivos_bloqueio=motivos_bloqueio,
+        dias_ignorados_sem_vaga=dias_ignorados_sem_vaga,
+        motivo_dias_ignorados=(
+            f"{len(dias_ignorados_sem_vaga)} dia(s) do período foram ignorados automaticamente por não possuírem vagas abertas no laboratório ou serem feriados."
+            if dias_ignorados_sem_vaga
+            else ""
+        ),
         sugestao_acao=sugestao,
     )
 
@@ -619,7 +647,20 @@ def consolidar_lote_atomico(
                     f"Saldo orçamentário insuficiente. Saldo disponível: R$ {saldo_livre:,.2f}, solicitado: R$ {dados.valor_solicitado:,.2f}.",
                 )
 
-        # 2. Lock pessimista nas cotas de vagas do laboratório
+        # 2. Verifica feriados e bloqueios cadastrados
+        feriados = db.exec(
+            select(LabFeriadoBloqueio).where(
+                LabFeriadoBloqueio.data.in_(datas_alvo),
+                LabFeriadoBloqueio.bloquear_agendamento == True,
+                or_(
+                    LabFeriadoBloqueio.laboratorio_id == None,
+                    LabFeriadoBloqueio.laboratorio_id == dados.laboratorio_id,
+                ),
+            )
+        ).all()
+        feriados_set = {f.data for f in feriados}
+
+        # 3. Lock pessimista nas cotas de vagas do laboratório
         vagas_db = db.exec(
             select(VagaLab)
             .where(
@@ -630,14 +671,19 @@ def consolidar_lote_atomico(
         ).all()
         vagas_map = {v.data: v for v in vagas_db}
 
-        for d in datas_alvo:
-            if d not in vagas_map:
-                raise HTTPException(
-                    400,
-                    f"Não há cotas de vagas cadastradas para o laboratório {lab.nome} na data {d.strftime('%d/%m/%Y')}.",
-                )
+        # Subagente 1: Ignora automaticamente dias sem vagas abertas ou em feriados
+        datas_alvo_validas = [
+            d for d in datas_alvo
+            if d not in feriados_set and d in vagas_map and (vagas_map[d].vagas_totais - vagas_map[d].vagas_ocupadas) > 0
+        ]
+        if not datas_alvo_validas:
+            raise HTTPException(
+                400,
+                f"Nenhuma data do período selecionado possui vagas abertas no laboratório {lab.nome}. Dias sem cotas foram ignorados automaticamente.",
+            )
+        datas_alvo = datas_alvo_validas
 
-        # 3. Lock pessimista nos itens da FilaPsf candidatos
+        # 4. Lock pessimista nos itens da FilaPsf candidatos
         if dados.fila_ids_confirmados:
             stmt_filas = (
                 select(FilaPsf)
@@ -715,6 +761,49 @@ def consolidar_lote_atomico(
                     "A transação foi cancelada sem alterações.",
                 )
 
+        # 4.1 Validação de Tetos e Limites Contratuais (Subagente 4)
+        contrato_obj = db.exec(
+            select(LabContrato).where(
+                LabContrato.laboratorio_id == dados.laboratorio_id,
+                LabContrato.status == "ativo",
+                LabContrato.data_inicio <= datas_alvo[0],
+                LabContrato.data_fim >= datas_alvo[0],
+            )
+        ).first()
+
+        if contrato_obj:
+            # Trava de Saldo Global do Contrato
+            saldo_contrato = max(0.0, round(float(contrato_obj.valor_total_contrato - contrato_obj.valor_total_gasto), 2))
+            if contrato_obj.valor_total_contrato > 0 and valor_acumulado > saldo_contrato:
+                raise HTTPException(
+                    400,
+                    f"O valor estimado do lote (R$ {valor_acumulado:.2f}) excede o saldo remanescente do contrato {contrato_obj.numero_contrato} (Saldo: R$ {saldo_contrato:.2f}). Suplemente o contrato para prosseguir.",
+                )
+
+            # Trava de Teto Mensal Pactuado
+            if contrato_obj.valor_mensal_teto > 0:
+                inicio_mes_lote = date(datas_alvo[0].year, datas_alvo[0].month, 1)
+                gasto_mes_item = db.exec(
+                    select(
+                        func.coalesce(
+                            func.sum(ItemSolic.quantidade * ItemSolic.valor_unitario_aplicado),
+                            0.0,
+                        )
+                    )
+                    .join(SolicitacaoMestre, SolicitacaoMestre.id == ItemSolic.solicitacao_id)
+                    .where(
+                        SolicitacaoMestre.laboratorio_id == contrato_obj.laboratorio_id,
+                        SolicitacaoMestre.data_agendada >= inicio_mes_lote,
+                        SolicitacaoMestre.status != "cancelado",
+                    )
+                ).one()
+                gasto_mes_val = round(float(gasto_mes_item or 0.0), 2)
+                if round(gasto_mes_val + valor_acumulado, 2) > contrato_obj.valor_mensal_teto:
+                    raise HTTPException(
+                        400,
+                        f"O valor deste lote (R$ {valor_acumulado:.2f}) somado aos gastos do mês (R$ {gasto_mes_val:.2f}) ultrapassa o teto mensal pactuado no contrato {contrato_obj.numero_contrato} (Teto Mensal: R$ {contrato_obj.valor_mensal_teto:.2f}).",
+                    )
+
         # 5. Criação do Lote
         prefixo = f"LOTE-{datetime.now().strftime('%Y%m')}"
         tot_mes = (
@@ -773,9 +862,7 @@ def consolidar_lote_atomico(
             custo_pac: float = item["custo"]
             procs: list[LabLotePreviaProcedimento] = item["procs"]
             pac = pacs_map.get(f.paciente_id)
-            pront = getattr(pac, "codigo_prontuario", "") or (
-                gerar_prontuario_aleatorio(pac_id=pac.id) if pac and pac.id else ""
-            )
+            pront = obter_prontuario_real(pac, pac.id if pac else None, db)
 
             # Cria SolicitacaoMestre
             mestre = SolicitacaoMestre(
@@ -875,11 +962,16 @@ def consolidar_lote_atomico(
                 "valor_total": custo_pac,
             })
 
-        # 7. Atualiza consumo do orçamento mensal
+        # 7. Atualiza consumo do orçamento mensal e saldo do contrato
         if orc:
             orc.valor_consumido = round(float(orc.valor_consumido + valor_acumulado), 2)
             orc.updated_at = datetime.utcnow()
             db.add(orc)
+
+        if contrato_obj:
+            contrato_obj.valor_total_gasto = round(float(contrato_obj.valor_total_gasto + valor_acumulado), 2)
+            contrato_obj.updated_at = datetime.utcnow()
+            db.add(contrato_obj)
 
         # 8. Gera e armazena os artefatos binários (ZIP e XLSX)
         zip_bytes = gerar_zip_comprovantes(comprovantes_dados)

@@ -85,9 +85,11 @@ export default function FilaPsf() {
   const [pacienteSelecionado, setPacienteSelecionado] = useState<Paciente | null>(null);
   const [form, setForm] = useState({
     paciente_id: "",
+    especialidade: "",
     unidade_psf: "",
     medico: MEDICO_GENERICO,
     data_solicitacao: new Date().toISOString().slice(0, 10),
+    data_pedido: new Date().toISOString().slice(0, 10),
     justificativa: "",
     obs: "",
   });
@@ -179,6 +181,8 @@ export default function FilaPsf() {
   const [carregando, setCarregando] = useState(false);
 
   // Filtros Avançados da Fila
+  const [filtrosAvancados, setFiltrosAvancados] = useState(false);
+  const [filtroEspecialidade, setFiltroEspecialidade] = useState("");
   const [termoBusca, setTermoBusca] = useState("");
   const [filtroUnidade, setFiltroUnidade] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("todos");
@@ -192,6 +196,7 @@ export default function FilaPsf() {
       const r = await filaPsfListar({
         status: filtroStatus !== "todos" ? filtroStatus : undefined,
         unidade: filtroUnidade || undefined,
+        especialidade: filtroEspecialidade.trim() || undefined,
         data_de: dataDe || undefined,
         data_ate: dataAte || undefined,
         q: termoBusca.trim() || undefined,
@@ -269,9 +274,11 @@ export default function FilaPsf() {
     setBuscaSig("");
     setForm({
       paciente_id: "",
+      especialidade: "",
       unidade_psf: unidPadraoUsuario || (unidades[0]?.nome ?? ""),
       medico: MEDICO_GENERICO,
       data_solicitacao: new Date().toISOString().slice(0, 10),
+      data_pedido: new Date().toISOString().slice(0, 10),
       justificativa: "",
       obs: "",
     });
@@ -303,9 +310,11 @@ export default function FilaPsf() {
     setBuscaSig("");
     setForm({
       paciente_id: String(item.paciente_id),
+      especialidade: item.especialidade || "",
       unidade_psf: item.unidade_psf || "",
       medico: item.medico || MEDICO_GENERICO,
       data_solicitacao: item.data_solicitacao || new Date().toISOString().slice(0, 10),
+      data_pedido: item.data_pedido || item.data_solicitacao || new Date().toISOString().slice(0, 10),
       justificativa: item.justificativa || "",
       obs: item.obs || "",
     });
@@ -381,6 +390,10 @@ export default function FilaPsf() {
       setErro("Informe a data do pedido.");
       return;
     }
+    if (!form.especialidade.trim()) {
+      setErro("O campo 'Especialidade' é obrigatório ao lançar o paciente na fila de exames.");
+      return;
+    }
     if (!form.unidade_psf.trim()) {
       setErro("Selecione o PSF / unidade de origem solicitante.");
       return;
@@ -409,10 +422,11 @@ export default function FilaPsf() {
     try {
       if (itemEditando) {
         await filaPsfAtualizar(itemEditando.id, {
+          especialidade: form.especialidade.trim(),
           unidade_psf: form.unidade_psf.trim(),
           medico: form.medico.trim(),
           data_solicitacao: form.data_solicitacao,
-          data_pedido: form.data_solicitacao,
+          data_pedido: form.data_pedido || form.data_solicitacao,
           justificativa: form.justificativa.trim(),
           obs: form.obs.trim(),
           sigtap_ids,
@@ -421,10 +435,11 @@ export default function FilaPsf() {
       } else {
         await filaPsfCriar({
           paciente_id: Number(form.paciente_id),
+          especialidade: form.especialidade.trim(),
           unidade_psf: form.unidade_psf.trim(),
           medico: form.medico.trim(),
           data_solicitacao: form.data_solicitacao,
-          data_pedido: form.data_solicitacao,
+          data_pedido: form.data_pedido || form.data_solicitacao,
           justificativa: form.justificativa.trim(),
           obs: form.obs.trim(),
           sigtap_ids,
@@ -656,9 +671,24 @@ export default function FilaPsf() {
               >
                 <option value="todos">Todos</option>
                 <option value="na_fila">Na Fila (Aguardando)</option>
+                <option value="fora_da_fila">Já Saíram da Fila</option>
                 <option value="agendado">Agendado</option>
+                <option value="cancelado">Cancelado</option>
               </Select>
             </div>
+
+            <Button
+              type="button"
+              onClick={() => setFiltrosAvancados(!filtrosAvancados)}
+              className={`h-10 px-2.5 text-xs font-bold border transition mt-auto shrink-0 ${
+                filtrosAvancados || filtroEspecialidade || filtroStatus === "fora_da_fila"
+                  ? "bg-teal text-white border-teal"
+                  : "bg-white text-sus-900 border-sus-900/20 hover:bg-sand"
+              }`}
+              title="Filtros avançados da fila de espera"
+            >
+              <Filter className="h-3.5 w-3.5" />
+            </Button>
 
             {temFiltroAtivo && (
               <Button
@@ -672,6 +702,48 @@ export default function FilaPsf() {
             )}
           </div>
         </div>
+
+        {/* Painel Expansível de Filtros Avançados */}
+        {filtrosAvancados && (
+          <div className="p-3.5 bg-sand/40 border border-teal/20 rounded-xl grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+            <div>
+              <Label className="text-xs font-bold text-sus-950 mb-1 block">
+                Especialidade Solicitante
+              </Label>
+              <Input
+                value={filtroEspecialidade}
+                onChange={(e) => setFiltroEspecialidade(e.target.value)}
+                placeholder="Filtrar por especialidade médica…"
+                className="h-9 text-xs bg-white"
+              />
+            </div>
+            <div>
+              <Label className="text-xs font-bold text-sus-950 mb-1 block">
+                Pesquisar Pedidos que já Saíram da Fila
+              </Label>
+              <Select
+                value={filtroStatus}
+                onChange={(e) => setFiltroStatus(e.target.value)}
+                className="!h-9 text-xs font-medium text-sus-950 bg-white"
+              >
+                <option value="todos">Todos os Pedidos (Histórico Completo)</option>
+                <option value="na_fila">Apenas na Fila (Aguardando)</option>
+                <option value="fora_da_fila">✓ Apenas Pedidos que já Saíram da Fila</option>
+                <option value="agendado">Somente Agendados</option>
+                <option value="cancelado">Somente Cancelados</option>
+              </Select>
+            </div>
+            <div>
+              <Button
+                type="button"
+                onClick={() => carregar(1)}
+                className="h-9 w-full bg-teal text-white text-xs font-bold flex items-center justify-center gap-1.5"
+              >
+                <Search className="h-3.5 w-3.5" /> Aplicar Filtros Avançados
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Resumo dos filtros ativos */}
         <div className="flex flex-wrap items-center justify-between text-[11px] text-ink/60 pt-2 border-t border-sus-900/5 gap-2">
@@ -739,6 +811,7 @@ export default function FilaPsf() {
                 </th>
                 <th className="px-4 py-3 font-semibold">Data Pedido</th>
                 <th className="px-4 py-3 font-semibold">Paciente</th>
+                <th className="px-4 py-3 font-semibold">Especialidade</th>
                 <th className="px-4 py-3 font-semibold">PSF / Origem</th>
                 <th className="px-4 py-3 font-semibold">Médico Requisitante</th>
                 <th className="px-4 py-3 font-semibold">Exames Solicitados</th>
@@ -774,6 +847,9 @@ export default function FilaPsf() {
                         {f.paciente_cpf && <span>CPF: {f.paciente_cpf}</span>}
                         {f.paciente_prontuario && <span>Pront.: {f.paciente_prontuario}</span>}
                       </div>
+                    </td>
+                    <td className="px-4 py-3 text-xs font-semibold text-teal whitespace-nowrap">
+                      {f.especialidade || "Geral"}
                     </td>
                     <td className="px-4 py-3 text-xs text-ink/75 font-medium">{f.unidade_psf}</td>
                     <td className="px-4 py-3 text-xs text-ink/75">{f.medico}</td>
@@ -897,7 +973,7 @@ export default function FilaPsf() {
                   obrigatorio
                 />
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-start">
                   <div>
                     <div className="flex items-center min-h-[26px] mb-1.5">
                       <Label className="!mb-0 flex items-center gap-1.5">
@@ -906,11 +982,33 @@ export default function FilaPsf() {
                     </div>
                     <Input
                       type="date"
-                      value={form.data_solicitacao}
-                      onChange={(e) => set("data_solicitacao", e.target.value)}
+                      value={form.data_pedido || form.data_solicitacao}
+                      onChange={(e) => {
+                        set("data_pedido", e.target.value);
+                        set("data_solicitacao", e.target.value);
+                      }}
+                      required
                     />
                     <p className="mt-1.5 text-[11px] text-ink/50">
                       Data da requisição médica.
+                    </p>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center min-h-[26px] mb-1.5">
+                      <Label className="!mb-0 flex items-center gap-1.5">
+                        <Building2 className="h-3.5 w-3.5 text-teal" /> Especialidade *
+                      </Label>
+                    </div>
+                    <Input
+                      value={form.especialidade}
+                      onChange={(e) => set("especialidade", e.target.value)}
+                      placeholder="Ex: Clínica Geral, Pediatria…"
+                      required
+                      className="text-xs"
+                    />
+                    <p className="mt-1.5 text-[11px] text-ink/50">
+                      Especialidade solicitante (obrigatório).
                     </p>
                   </div>
 

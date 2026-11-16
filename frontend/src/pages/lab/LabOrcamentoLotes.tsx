@@ -1023,6 +1023,26 @@ export default function LabOrcamentoLotes() {
                     </div>
                   )}
 
+                  {/* Alerta de Dias Ignorados Automaticamente por Falta de Vagas */}
+                  {previaResultado.dias_ignorados_sem_vaga && previaResultado.dias_ignorados_sem_vaga.length > 0 && (
+                    <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs space-y-1.5">
+                      <div className="flex items-center gap-2 font-bold text-amber-800">
+                        <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+                        Dias ignorados automaticamente (sem vagas abertas no laboratório ou bloqueados):
+                      </div>
+                      <p className="text-[11px] text-amber-800/90">
+                        {previaResultado.motivo_dias_ignorados || "O sistema ignorou automaticamente os dias sem vagas para proteger a cota do laboratório."}
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 pt-0.5">
+                        {previaResultado.dias_ignorados_sem_vaga.map((d, i) => (
+                          <span key={i} className="px-2 py-0.5 rounded-md bg-white border border-amber-300 text-amber-900 font-mono text-[11px] font-semibold">
+                            {d}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Tabela de Distribuição Diária */}
                   <div className="overflow-x-auto border border-slate-200 rounded-xl">
                     <table className="w-full text-left text-xs">
