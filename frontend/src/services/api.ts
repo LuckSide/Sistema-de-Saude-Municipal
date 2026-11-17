@@ -1741,6 +1741,8 @@ export type FilaPsfItem = {
   fila_id?: number | null;
   tipo_fila?: string;
   unidade_saude_id?: number | null;
+  data_agendada?: string | null;
+  hora_agendada?: string;
 };
 
 export function mapFila(o: any): FilaPsfItem {
@@ -1769,6 +1771,8 @@ export function mapFila(o: any): FilaPsfItem {
     fila_id: o.fila_id ?? null,
     tipo_fila: o.tipo_fila ?? o.especialidade ?? "",
     unidade_saude_id: o.unidade_saude_id ?? null,
+    data_agendada: o.data_agendada ?? null,
+    hora_agendada: o.hora_agendada ?? "",
   };
 }
 

@@ -240,7 +240,21 @@ export default function FilaPsf() {
     tfdTipos({ tipo_fila: "EXAME_LABORATORIAL", ativos: true, limit: 100 })
       .then((r) => {
         const data = pagData<TipoFila>(r);
-        setFilasLab(data);
+        if (data.length > 0) {
+          setFilasLab(data);
+        } else {
+          tfdTipos({ ativos: true, limit: 100 })
+            .then((res) => {
+              const all = pagData<TipoFila>(res);
+              const labOnly = all.filter(
+                (x) =>
+                  x.tipo_fila === "EXAME_LABORATORIAL" ||
+                  /lab|sangue|bioquim|rotina|hiperdia|gineco|pediat|caps|pré-natal/i.test(x.nome)
+              );
+              setFilasLab(labOnly.length > 0 ? labOnly : all);
+            })
+            .catch(() => {});
+        }
       })
       .catch(() => {});
   }, []);
@@ -976,9 +990,30 @@ export default function FilaPsf() {
                       {!f.justificativa && !f.obs && "—"}
                     </td>
                     <td className="px-4 py-3 text-xs">
-                      <span className="rounded-md bg-amber-50 px-2 py-0.5 font-semibold text-amber-700 border border-amber-200">
-                        {f.status}
-                      </span>
+                      {f.status === "agendado" ? (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="inline-flex items-center gap-1 w-fit rounded-md bg-teal/15 px-2 py-0.5 font-bold text-teal border border-teal/30 text-[11px]">
+                            <CalendarDays className="h-3 w-3" /> Agendado
+                          </span>
+                          {(f.data_agendada || f.data_solicitacao) && (
+                            <span className="text-[10px] text-ink/65 font-medium">
+                              p/ {fmtData(f.data_agendada || f.data_solicitacao)} {f.hora_agendada ? `às ${f.hora_agendada}` : ""}
+                            </span>
+                          )}
+                        </div>
+                      ) : f.status === "na_fila" || f.status === "aguardando" ? (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 font-semibold text-amber-700 border border-amber-200">
+                          Na Fila (Aguardando)
+                        </span>
+                      ) : f.status === "realizado" ? (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700 border border-emerald-200">
+                          <CheckCircle2 className="h-3 w-3" /> Realizado
+                        </span>
+                      ) : (
+                        <span className="rounded-md bg-slate-100 px-2 py-0.5 font-semibold text-slate-600 border border-slate-200">
+                          {f.status}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="inline-flex items-center gap-1">

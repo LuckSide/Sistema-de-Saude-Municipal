@@ -16,7 +16,7 @@ from app.core.deps import get_db
 from app.services.permissoes import need_any_perm, need_perm
 from app.models.integracoes import IntegrationSettings
 from app.models.user import User
-from app.services.importacao_filas import MAX_BYTES, MAX_LINHAS, ler_csv, ler_xlsx, processar_linhas
+from app.services.importacao_filas import MAX_BYTES, MAX_LINHAS, ler_csv, ler_xlsx, ler_xml, processar_linhas
 
 router = APIRouter()
 
@@ -584,19 +584,25 @@ def importar_filas(
     db: Session = Depends(get_db),
     user: User = Depends(need_perm("cfg_filas", "criar")),
 ):
-    """Carga massiva de fila de espera (CSV/XLSX). `simular=true` não grava."""
+    """Carga massiva de fila de espera (CSV/XLSX/XML). `simular=true` não grava."""
     _ = user
     nome = (file.filename or "").strip()
     ext = nome.rsplit(".", 1)[-1].lower() if "." in nome else ""
-    if ext not in ("csv", "xlsx", "xlsm"):
-        raise HTTPException(status_code=400, detail="Envie .csv ou .xlsx")
+    if ext not in ("csv", "xlsx", "xlsm", "xml"):
+        raise HTTPException(status_code=400, detail="Envie .csv, .xlsx ou .xml")
     conteudo = file.file.read(MAX_BYTES + 1)
     if not conteudo:
         raise HTTPException(status_code=400, detail="Arquivo vazio")
     if len(conteudo) > MAX_BYTES:
-        raise HTTPException(status_code=400, detail="Arquivo acima de 10MB")
+        raise HTTPException(status_code=400, detail="Arquivo acima do limite de tamanho permitido")
     try:
-        linhas = ler_csv(conteudo) if ext == "csv" else ler_xlsx(conteudo)
+        raw_start = conteudo.lstrip()[:100].lower()
+        if ext == "xml" or raw_start.startswith(b"<?xml") or raw_start.startswith(b"<exames") or raw_start.startswith(b"<root"):
+            linhas = ler_xml(conteudo)
+        elif ext == "csv":
+            linhas = ler_csv(conteudo)
+        else:
+            linhas = ler_xlsx(conteudo)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not linhas:

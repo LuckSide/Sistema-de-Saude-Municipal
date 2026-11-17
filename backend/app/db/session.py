@@ -1555,6 +1555,60 @@ def _init_db_impl() -> None:
                   AND (lp.tipo_fila = ef.tipo_fila OR lp.especialidade = ef.tipo_fila)
               )
             """,
+            "ALTER TABLE lab_fila_psf ADD COLUMN IF NOT EXISTS data_agendada date",
+            "ALTER TABLE lab_fila_psf ADD COLUMN IF NOT EXISTS hora_agendada varchar(10)",
+            """
+            INSERT INTO tfd_tipos_fila (codigo, nome, tipo_fila, ativo)
+            VALUES 
+                ('', 'EX. LAB. PSF ROTINA', 'EXAME_LABORATORIAL', true),
+                ('', 'EX. LAB. SECRETARIA', 'EXAME_LABORATORIAL', true),
+                ('', 'EX. LAB. HIPERDIA', 'EXAME_LABORATORIAL', true),
+                ('', 'EX. LAB. PEDIATRIA', 'EXAME_LABORATORIAL', true),
+                ('', 'EX. LAB. PRÉ-NATAL', 'EXAME_LABORATORIAL', true),
+                ('', 'EX. LAB. GINECOLOGIA', 'EXAME_LABORATORIAL', true),
+                ('', 'LAB EX CAPS', 'EXAME_LABORATORIAL', true)
+            ON CONFLICT DO NOTHING
+            """,
+            """
+            UPDATE tfd_tipos_fila
+            SET tipo_fila = 'EXAME_LABORATORIAL'
+            WHERE UPPER(TRIM(nome)) IN (
+                'EX. LAB. PSF ROTINA', 'EX. LAB. SECRETARIA', 'EX. LAB. HIPERDIA',
+                'EX. LAB. PEDIATRIA', 'EX. LAB. PRÉ-NATAL', 'EX. LAB. GINECOLOGIA', 'LAB EX CAPS'
+            ) AND tipo_fila != 'EXAME_LABORATORIAL'
+            """,
+            """
+            INSERT INTO lab_laboratorios (nome, cnes, ativo)
+            SELECT 'Laboratório Municipal de Guapé', '0000000', true
+            WHERE NOT EXISTS (SELECT 1 FROM lab_laboratorios WHERE ativo = true)
+            """,
+            """
+            INSERT INTO lab_solic_mestre (
+                paciente_id, data_agendada, hora_agendada, laboratorio_id,
+                status, agendado_por, origem_fila_id, medico_solicitante,
+                unidade_psf, observacao_laboratorio, status_auditoria
+            )
+            SELECT 
+                lp.paciente_id,
+                COALESCE(lp.data_agendada, lp.data_solicitacao),
+                COALESCE(NULLIF(lp.hora_agendada, ''), '07:00'),
+                (SELECT id FROM lab_laboratorios WHERE ativo = true ORDER BY id ASC LIMIT 1),
+                'agendado',
+                'Sincronização Automática Fila',
+                lp.id,
+                lp.medico_solicitante,
+                lp.unidade_psf,
+                COALESCE(lp.observacoes, ''),
+                'pendente_conferencia'
+            FROM lab_fila_psf lp
+            WHERE (lp.status = 'agendado' OR lp.data_agendada IS NOT NULL)
+              AND NOT EXISTS (
+                  SELECT 1 FROM lab_solic_mestre sm
+                  WHERE sm.paciente_id = lp.paciente_id
+                    AND sm.data_agendada = COALESCE(lp.data_agendada, lp.data_solicitacao)
+                    AND sm.status != 'cancelado'
+              )
+            """,
         ]:
             try:
                 with conn.begin_nested():

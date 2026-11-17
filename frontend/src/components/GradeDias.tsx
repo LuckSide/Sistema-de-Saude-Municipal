@@ -57,8 +57,9 @@ export default function GradeDias({
           const ativa = diaSel === d;
           const ehHoje = d === hoje;
           const passado = d < hoje;
-          const semVaga = total === 0 || passado;
-          const desab = bloqueado || (semVaga && !permitirSemVaga) || passado;
+          const temAgendados = ocup > 0;
+          const semVaga = total === 0 && !temAgendados;
+          const desab = bloqueado || (semVaga && !permitirSemVaga && !temAgendados);
           const cheio = total > 0 && livres <= 0;
           return (
             <button
@@ -66,7 +67,7 @@ export default function GradeDias({
               type="button"
               disabled={desab}
               onClick={() => onSelect(d)}
-              title={passado ? "Dia passado indisponível" : semVaga ? "Sem vagas cadastradas" : `Total ${total} · ${ocup} ocupadas · ${livres} livres`}
+              title={passado ? (temAgendados ? `${ocup} agendamentos no histórico` : "Dia passado") : semVaga ? "Sem vagas cadastradas" : `Total ${total} · ${ocup} ocupadas · ${livres} livres`}
               className={cn(
                 "min-h-[64px] rounded-xl border bg-white p-1.5 text-left font-body transition active:scale-[.98]",
                 "disabled:cursor-not-allowed disabled:opacity-60",
@@ -74,7 +75,7 @@ export default function GradeDias({
                   ? "border-sus-900 bg-sus-900 text-white shadow-card"
                   : "text-sus-950 hover:border-teal/50",
                 !ativa && ehHoje && "ring-2 ring-teal ring-offset-1",
-                !ativa && semVaga && "border-sus-900/10",
+                !ativa && semVaga && !temAgendados && "border-sus-900/10",
                 !ativa && passado && "bg-sand/60",
                 !ativa && !semVaga && !cheio && "border-teal/30 bg-teal/10",
                 !ativa && cheio && "border-sus-900/20 bg-sand"
@@ -90,17 +91,17 @@ export default function GradeDias({
                   </span>
                 )}
               </span>
-              {semVaga ? (
+              {semVaga && !temAgendados ? (
                 <span className={cn("mt-1 block text-[10px] font-medium", ativa ? "text-white/80" : "text-sus-950/40")}>
                   {passado ? "passado" : permitirSemVaga && !bloqueado ? "+ abrir vagas" : "sem vaga"}
                 </span>
               ) : (
                 <span className="mt-1 block">
                   <span className={cn("block text-[10px] font-bold", ativa ? "text-white" : "text-sus-950")}>
-                    {livres} livres
+                    {passado ? `${ocup} agendado${ocup > 1 ? "s" : ""}` : `${livres} livres`}
                   </span>
                   <span className={cn("block text-[10px]", ativa ? "text-white/75" : "text-sus-950/55")}>
-                    {total} total · {ocup} ocup
+                    {passado ? "histórico" : `${total} total · ${ocup} ocup`}
                   </span>
                   <span className={cn("mt-1 block h-1 overflow-hidden rounded-full", ativa ? "bg-white/25" : "bg-sus-900/10")}>
                     <span

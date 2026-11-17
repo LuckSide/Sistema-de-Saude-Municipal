@@ -19,8 +19,8 @@ from app.models.tfd import (
     TipoFila,
 )
 
-MAX_BYTES = 10 * 1024 * 1024
-MAX_LINHAS = 20000
+MAX_BYTES = 30 * 1024 * 1024
+MAX_LINHAS = 50000
 MAX_ERROS = 25
 
 STATUS_VALIDOS = {"aguardando", "agendado", "realizado", "cancelado"}
@@ -43,19 +43,30 @@ ALIASES = {
     "fone": "telefone",
     "codigo_procedimento": "codigo_procedimento",
     "cod_procedimento": "codigo_procedimento",
-    "codigo": "codigo_procedimento",
+    "codigo": "codigo_pedido",
+    "codigo_pedido": "codigo_pedido",
     "nome_procedimento": "nome_procedimento",
     "procedimento": "nome_procedimento",
     "servico_tipo_nome": "tipo_fila",
     "tipo_fila": "tipo_fila",
     "tipo": "tipo_fila",
     "servico": "tipo_fila",
+    "tipo_servico": "tipo_fila",
     "codigo_especialidade_executante": "cbo",
     "codigo_especialidade": "cbo",
     "cbo": "cbo",
+    "codigo_profissional": "cbo",
     "nome_especialidade_executante": "nome_especialidade",
     "cbo_especialidade_nome_executante": "nome_especialidade",
     "nome_especialidade": "nome_especialidade",
+    "profissional": "medico_nome",
+    "medico": "medico_nome",
+    "medico_solicitante": "medico_nome",
+    "prontuario": "prontuario",
+    "num_prontuario": "prontuario",
+    "codigo_prontuario": "prontuario",
+    "numero_atendimento": "atendimento",
+    "atendimento": "atendimento",
     "data_hora_solicitacao": "data_pedido",
     "data_pedido": "data_pedido",
     "data_solicitacao": "data_pedido",
@@ -66,10 +77,14 @@ ALIASES = {
     "justificativa": "justificativa",
     "unidade_referencia": "destino",
     "nome_unidade": "destino",
+    "unidade": "destino",
     "destino": "destino",
     "data_min_agendamento": "data_agendada",
     "data_primeiro_agendamento": "data_agendada",
+    "data_agendamento": "data_agendada",
     "data_agendada": "data_agendada",
+    "hora_agendamento": "hora_agendada",
+    "hora_agendada": "hora_agendada",
     "status": "status",
 }
 
@@ -161,6 +176,44 @@ def ler_xlsx(conteudo: bytes) -> list[dict]:
     return out
 
 
+def ler_xml(conteudo: bytes) -> list[dict]:
+    """Parse tolerante e de alta performance para arquivos XML de filas e exames laboratoriais."""
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(conteudo)
+    except Exception as e:
+        raise ValueError(f"XML inválido ou corrompido: {e}")
+
+    # Suporta nós <exame>, <registro>, <item>, <solicitacao>, <paciente>
+    itens = root.findall(".//exame")
+    if not itens:
+        itens = root.findall(".//registro")
+    if not itens:
+        itens = root.findall(".//item")
+    if not itens:
+        itens = root.findall(".//solicitacao")
+    if not itens:
+        itens = root.findall(".//paciente")
+    if not itens:
+        filhos = list(root)
+        if filhos and len(filhos) > 1:
+            itens = filhos
+
+    if not itens:
+        raise ValueError("Nenhum registro encontrado no XML (esperado tags <exame>, <registro> ou <item>)")
+
+    out: list[dict] = []
+    for el in itens:
+        d: dict[str, str] = {}
+        for child in el:
+            tag = (child.tag or "").strip().lower()
+            val = (child.text or "").strip()
+            d[tag] = val
+        if d:
+            out.append(d)
+    return out
+
+
 def prioridade_de(raw: str) -> str:
     v = (raw or "").strip().lower()
     if v in ("sim", "urgente", "urgencia", "urgência"):
@@ -223,8 +276,12 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
     procs_cat: dict[tuple[str, str], tuple[str, str, str]] = {}
 
     from app.models.cadastros_saude import UnidadeSaude
-    from app.models.lab_fase6 import FilaPsf
+    from app.models.lab_fase6 import FilaPsf, Laboratorio, SolicitacaoMestre, ItemSolic
+    from app.models.lab_exames import SigtapProcedimento
     from sqlmodel import or_
+
+    lab_padrao_cache: Laboratorio | None = None
+    sigtap_padrao_id: int | None = db.exec(select(SigtapProcedimento.id).limit(1)).first()
 
     filas_map: dict[str, TipoFila] = {
         tf.nome.strip().upper(): tf for tf in db.exec(select(TipoFila)).all() if tf.nome
@@ -290,6 +347,7 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
     pac_cpf_cache: dict[str, Paciente] = {}
     pac_cns_cache: dict[str, Paciente] = {}
     pac_pec_cache: dict[int, Paciente] = {}
+    pac_prontuario_cache: dict[str, Paciente] = {}
     pac_nn_cache: dict[tuple[str, str], Paciente] = {}
     pac_nasc_cache: dict[str, list[Paciente]] = {}
     pac_nome_cache: dict[str, list[Paciente]] = {}
@@ -304,12 +362,15 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
         cpf_p = _limpar_cpf(p.cpf)
         cns_p = _limpar_cns(p.cns)
         n_sp = _norm_nome_sp(p.nome)
+        pront_p = (getattr(p, "codigo_prontuario", "") or "").strip()
         if cpf_p:
             pac_cpf_cache.setdefault(cpf_p, p)
         if cns_p:
             pac_cns_cache.setdefault(cns_p, p)
         if p.co_seq_cidadao_pec:
             pac_pec_cache.setdefault(p.co_seq_cidadao_pec, p)
+        if pront_p:
+            pac_prontuario_cache.setdefault(pront_p, p)
         if p.nascimento:
             pac_nasc_cache.setdefault(str(p.nascimento), []).append(p)
         if n_sp and p.nascimento:
@@ -341,11 +402,17 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
                 return False
             return True
 
+        pront_lin = (r.get("prontuario") or "").strip()
+
         pac = None
         if cpf_limpo_lin and cpf_limpo_lin in pac_cpf_cache:
             pac = pac_cpf_cache[cpf_limpo_lin]
         elif cns_limpo_lin and cns_limpo_lin in pac_cns_cache:
             pac = pac_cns_cache[cns_limpo_lin]
+        elif pront_lin and pront_lin in pac_prontuario_cache:
+            cand = pac_prontuario_cache[pront_lin]
+            if _sem_conflito_docs(cand):
+                pac = cand
         elif n_sp_lin and nasc_lin and (n_sp_lin, str(nasc_lin)) in pac_nn_cache:
             cand = pac_nn_cache[(n_sp_lin, str(nasc_lin))]
             if _sem_conflito_docs(cand):
@@ -383,6 +450,7 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
                         telefone=(pec_cidadao.get("nu_telefone_celular") or r.get("telefone") or "")[:50],
                         co_seq_cidadao_pec=co_seq,
                         situacao_cadastral=sit,
+                        codigo_prontuario=pront_lin or (str(co_seq) if co_seq else ""),
                     )
                     db.add(pac)
                     db.flush()
@@ -394,14 +462,17 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
                     nome=nome, cpf=cpf, cns=cns,
                     nascimento=nasc_lin,
                     telefone=(r.get("telefone") or "")[:20],
+                    codigo_prontuario=pront_lin or "",
                 )
                 db.add(pac)
                 db.flush()
                 pacientes_novos += 1
 
             if not getattr(pac, "codigo_prontuario", ""):
-                pac.codigo_prontuario = str(pac.co_seq_cidadao_pec) if getattr(pac, "co_seq_cidadao_pec", None) else str(pac.id)
+                pac.codigo_prontuario = pront_lin or (str(pac.co_seq_cidadao_pec) if getattr(pac, "co_seq_cidadao_pec", None) else str(pac.id))
                 db.add(pac)
+            if pront_lin:
+                pac_prontuario_cache.setdefault(pront_lin, pac)
             if _limpar_cpf(pac.cpf):
                 pac_cpf_cache.setdefault(_limpar_cpf(pac.cpf), pac)
             if _limpar_cns(pac.cns):
@@ -437,18 +508,21 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
         # Resolução da Fila e Tipo
         tipo_u = tipo.upper()
         tf_obj = filas_map.get(tipo_u)
+        eh_lab_nome = any(term in tipo_u for term in ("LAB", "SANGUE", "BIOQUIM", "ROTINA", "HIPERDIA", "GINECO", "PEDIAT", "PRÉ-NATAL", "PRE-NATAL", "CAPS"))
         if not tf_obj and tipo:
-            eh_lab_nome = any(term in tipo_u for term in ("LAB", "SANGUE", "BIOQUIM"))
             cat_tf = "EXAME_LABORATORIAL" if eh_lab_nome else "REGULACAO_GERAL"
             tf_obj = TipoFila(codigo="", nome=tipo[:80].upper(), tipo_fila=cat_tf, ativo=True)
             db.add(tf_obj)
             db.flush()
             filas_map[tipo_u] = tf_obj
             tipos_cat[tipo_u] = cat_tf
+        elif tf_obj and eh_lab_nome and getattr(tf_obj, "tipo_fila", None) != "EXAME_LABORATORIAL":
+            tf_obj.tipo_fila = "EXAME_LABORATORIAL"
+            db.add(tf_obj)
         fila_id = tf_obj.id if tf_obj else None
         eh_lab = bool(
             (tf_obj and tf_obj.tipo_fila == "EXAME_LABORATORIAL")
-            or any(term in tipo_u for term in ("LAB", "SANGUE", "BIOQUIM"))
+            or eh_lab_nome
         )
 
         # Resolução da Unidade de Saúde (RLS e integridade institucional)
@@ -467,12 +541,11 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
         unidade_nome = uni_obj.nome if uni_obj else (dest_raw[:150] or "")
         unidade_cnes = getattr(uni_obj, "cnes", "") or ""
 
-        # Mapeamento do status: nunca rascunho ou status oculto
+        # Mapeamento do status e data agendada
         raw_st = (r.get("status") or "").strip().lower()
-        if raw_st in ("aguardando", "na_fila", "pendente", "espera", ""):
-            status = "aguardando"
-            status_lab = "na_fila"
-        elif raw_st in ("agendado", "marcado"):
+        dt_agend_lin = parse_data(r.get("data_agendada") or "")
+        hora_agend_lin = (r.get("hora_agendada") or "").strip()[:10]
+        if raw_st in ("agendado", "marcado") or (dt_agend_lin is not None and raw_st in ("desconhecido", "")):
             status = "agendado"
             status_lab = "agendado"
         elif raw_st in ("cancelado", "obito", "desistiu"):
@@ -521,6 +594,9 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
             if ja.status != status:
                 ja.status = status
                 houve_alt = True
+            if dt_agend_lin and not ja.data_agendada:
+                ja.data_agendada = dt_agend_lin
+                houve_alt = True
             if not ja.fila_id and fila_id:
                 ja.fila_id = fila_id
                 houve_alt = True
@@ -544,7 +620,7 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
                 nome_especialidade=nome_esp[:120],
                 prioridade=prioridade_de(r.get("prioridade") or ""),
                 status=status, data_pedido=data_ped,
-                data_agendada=parse_data(r.get("data_agendada") or ""),
+                data_agendada=dt_agend_lin,
                 destino=(dest_raw or "")[:120],
                 unidade_saude_id=unidade_saude_id,
                 unidade_nome=unidade_nome[:150],
@@ -556,10 +632,14 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
 
         # Sincronização automática para Fila de Exames Laboratoriais (lab_fila_psf)
         if eh_lab:
+            data_ref_lab = dt_agend_lin or data_ped
             ja_lab = db.exec(
                 select(FilaPsf).where(
                     FilaPsf.paciente_id == pac.id,
-                    FilaPsf.data_solicitacao == data_ped,
+                    or_(
+                        FilaPsf.data_solicitacao == data_ref_lab,
+                        FilaPsf.data_agendada == dt_agend_lin,
+                    ),
                     or_(
                         FilaPsf.fila_id == fila_id,
                         FilaPsf.tipo_fila == (tipo[:80] or "EXAME_LABORATORIAL"),
@@ -574,26 +654,67 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
                     ja_lab.fila_id = fila_id
                 if not ja_lab.unidade_saude_id and unidade_saude_id:
                     ja_lab.unidade_saude_id = unidade_saude_id
+                if dt_agend_lin and not ja_lab.data_agendada:
+                    ja_lab.data_agendada = dt_agend_lin
+                    ja_lab.hora_agendada = hora_agend_lin or "07:00"
                 db.add(ja_lab)
             else:
-                db.add(
-                    FilaPsf(
-                        paciente_id=pac.id,
-                        especialidade=tipo[:80] or "EXAME_LABORATORIAL",
-                        tipo_fila=tipo[:80] or "EXAME_LABORATORIAL",
-                        fila_id=fila_id,
-                        unidade_psf=unidade_nome or dest_raw[:120] or "PSF",
-                        unidade_saude_id=unidade_saude_id,
-                        medico_solicitante=r.get("medico_nome") or "",
-                        data_solicitacao=data_ped,
-                        data_pedido=data_ped,
-                        status=status_lab,
-                        prioridade=prioridade_de(r.get("prioridade") or ""),
-                        justificativa=r.get("justificativa") or "",
-                        observacoes=r.get("observacao") or "",
-                        sigtap_ids_json="[]",
-                    )
+                ja_lab = FilaPsf(
+                    paciente_id=pac.id,
+                    especialidade=tipo[:80] or "EXAME_LABORATORIAL",
+                    tipo_fila=tipo[:80] or "EXAME_LABORATORIAL",
+                    fila_id=fila_id,
+                    unidade_psf=unidade_nome or dest_raw[:120] or tipo[:80] or "PSF",
+                    unidade_saude_id=unidade_saude_id,
+                    medico_solicitante=r.get("medico_nome") or "",
+                    data_solicitacao=data_ref_lab,
+                    data_pedido=data_ped,
+                    data_agendada=dt_agend_lin,
+                    hora_agendada=hora_agend_lin or ("07:00" if dt_agend_lin else ""),
+                    status=status_lab,
+                    prioridade=prioridade_de(r.get("prioridade") or ""),
+                    justificativa=r.get("justificativa") or "",
+                    observacoes=(r.get("observacao") or (f"Código Vivver: {r.get('codigo_pedido') or ''}" if r.get("codigo_pedido") else ""))[:500],
+                    sigtap_ids_json="[]",
                 )
+                db.add(ja_lab)
+                db.flush()
+
+            # Sincronização automática para SolicitacaoMestre (lab_solic_mestre) para pedidos com data marcada
+            if dt_agend_lin:
+                if not lab_padrao_cache:
+                    lab_p = db.exec(select(Laboratorio).where(Laboratorio.ativo == True)).first()
+                    if not lab_p:
+                        lab_p = Laboratorio(nome="Laboratório Municipal de Guapé", cnes="0000000", ativo=True)
+                        db.add(lab_p)
+                        db.flush()
+                    lab_padrao_cache = lab_p
+
+                ja_solic = db.exec(
+                    select(SolicitacaoMestre).where(
+                        SolicitacaoMestre.paciente_id == pac.id,
+                        SolicitacaoMestre.data_agendada == dt_agend_lin,
+                        SolicitacaoMestre.status != "cancelado",
+                    )
+                ).first()
+                if not ja_solic:
+                    solic_obj = SolicitacaoMestre(
+                        paciente_id=pac.id,
+                        data_agendada=dt_agend_lin,
+                        hora_agendada=hora_agend_lin or "07:00",
+                        laboratorio_id=lab_padrao_cache.id,
+                        status="agendado",
+                        agendado_por="Importação XML",
+                        origem_fila_id=ja_lab.id if ja_lab else None,
+                        medico_solicitante=r.get("medico_nome") or "",
+                        unidade_psf=unidade_nome or dest_raw[:120] or tipo[:80] or "PSF",
+                        observacao_laboratorio=f"Agendamento Vivver #{r.get('codigo_pedido') or ''}".strip(),
+                        status_auditoria="pendente_conferencia",
+                    )
+                    db.add(solic_obj)
+                    db.flush()
+                    if sigtap_padrao_id:
+                        db.add(ItemSolic(solicitacao_id=solic_obj.id, sigtap_id=sigtap_padrao_id, quantidade=1))
 
         if not simular and (exames_novos + atualizados) % 500 == 0:
             db.commit()

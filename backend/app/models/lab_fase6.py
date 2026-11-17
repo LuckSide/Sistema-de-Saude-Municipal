@@ -70,6 +70,8 @@ class FilaPsf(SQLModel, table=True):
     fila_id: int | None = Field(default=None, foreign_key="tfd_tipos_fila.id", index=True)
     tipo_fila: str = Field(default="", max_length=80, index=True)
     unidade_saude_id: int | None = Field(default=None, index=True)
+    data_agendada: date | None = Field(default=None, sa_column=Column(Date, index=True))
+    hora_agendada: str = Field(default="", max_length=10)
 
 
 class SolicitacaoMestre(SQLModel, table=True):

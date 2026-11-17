@@ -227,12 +227,13 @@ export default function VagasAgenda() {
   }
 
   function abrirDia(d: string) {
-    if (d < hojeISO()) {
-      setErro("Dia passado indisponível (sem vagas).");
-      return;
-    }
     setDiaSel(d);
-    setModoDia("agendar");
+    const ehPassado = d < hojeISO();
+    if (ehPassado) {
+      setModoDia("agendados");
+    } else {
+      setModoDia("agendar");
+    }
     const v = vagaPorDia.get(d);
     setVagaQtd(String(v?.vagas_totais ?? v?.total ?? 20));
     setVagaTipoServico((v?.tipo_servico as string) || "rotina");
@@ -653,6 +654,11 @@ export default function VagasAgenda() {
             {/* ABA 1: Ajustar Vagas */}
             {modoDia === "vaga" && (
               <div className="space-y-3">
+                {diaSel < hojeISO() && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                    <b>Data Histórica:</b> Este dia pertence a um período anterior a hoje. Consulte a aba <b>Agendados</b> para ver os exames realizados/marcados nesta data.
+                  </div>
+                )}
                 <div>
                   <Label>Quantitativo diário *</Label>
                   <Input
@@ -661,6 +667,7 @@ export default function VagasAgenda() {
                     placeholder="Ex: 20"
                     value={vagaQtd}
                     onChange={(e) => setVagaQtd(e.target.value)}
+                    disabled={diaSel < hojeISO()}
                   />
                   {vagaDiaSel && (
                     <p className="mt-1 text-xs text-ink/55">
@@ -671,17 +678,17 @@ export default function VagasAgenda() {
                 </div>
                 <div>
                   <Label>Tipo de Serviço / Categoria da Vaga</Label>
-                  <Select value={vagaTipoServico} onChange={(e) => setVagaTipoServico(e.target.value)}>
+                  <Select value={vagaTipoServico} onChange={(e) => setVagaTipoServico(e.target.value)} disabled={diaSel < hojeISO()}>
                     <option value="rotina">Exames de Rotina (Padrão)</option>
                     <option value="labcon">Labcon / Específico</option>
                     <option value="urgencia">Urgência / Prioritário</option>
                   </Select>
                 </div>
                 {erro && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
-                <Button onClick={salvarVagaDia} className="w-full">
+                <Button onClick={salvarVagaDia} disabled={diaSel < hojeISO()} className="w-full">
                   <Plus className="h-4 w-4" /> {vagaDiaSel ? "Atualizar vagas do dia" : "Abrir vagas do dia"}
                 </Button>
-                {vagaDiaSel && (
+                {vagaDiaSel && diaSel >= hojeISO() && (
                   <button
                     onClick={excluirVagaDia}
                     className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-red-600 transition hover:bg-red-50"
@@ -695,6 +702,11 @@ export default function VagasAgenda() {
             {/* ABA 2: Agendar Paciente */}
             {modoDia === "agendar" && (
               <div className="space-y-3">
+                {diaSel < hojeISO() && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                    <b>Data Histórica:</b> Agendamentos novos só podem ser marcados para datas futuras. Acesse a aba <b>Agendados</b> para ver os pacientes deste dia.
+                  </div>
+                )}
                 <div>
                   <Label>Converter da fila do PSF (opcional)</Label>
                   <Select value={origemFilaId} onChange={(e) => usarFila(e.target.value)}>
@@ -801,7 +813,7 @@ export default function VagasAgenda() {
                   )}
                 </div>
                 {erro && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
-                <Button onClick={agendar} className="w-full">
+                <Button onClick={agendar} disabled={diaSel < hojeISO()} className="w-full">
                   <Plus className="h-4 w-4" /> Confirmar agendamento
                 </Button>
               </div>

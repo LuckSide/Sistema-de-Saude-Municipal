@@ -216,18 +216,72 @@ def grade_vagas(
         filtros.append(VagaLab.laboratorio_id == laboratorio_id)
     vagas = db.exec(select(VagaLab).where(*filtros)).all()
     labs = {l.id: l.nome for l in db.exec(select(Laboratorio)).all()}
-    return [
-        {
-            "data": v.data.isoformat(),
-            "laboratorio_id": v.laboratorio_id,
-            "laboratorio_nome": labs.get(v.laboratorio_id, "?"),
-            "laboratorio": labs.get(v.laboratorio_id, "?"),
-            "total": v.vagas_totais,
-            "ocupadas": v.vagas_ocupadas,
-            "livres": max(0, v.vagas_totais - v.vagas_ocupadas),
-        }
-        for v in vagas
+
+    # Agrupamento de solicitações agendadas reais no mês (SolicitacaoMestre)
+    solic_filtros = [
+        SolicitacaoMestre.data_agendada >= de,
+        SolicitacaoMestre.data_agendada <= ate,
+        SolicitacaoMestre.status.in_(["agendado", "coletado", "realizado", "recepcionado"]),
     ]
+    if laboratorio_id:
+        solic_filtros.append(SolicitacaoMestre.laboratorio_id == laboratorio_id)
+
+    from sqlmodel import func as sm_func
+    solic_reais = db.exec(
+        select(
+            SolicitacaoMestre.data_agendada,
+            SolicitacaoMestre.laboratorio_id,
+            sm_func.count(SolicitacaoMestre.id),
+        )
+        .where(*solic_filtros)
+        .group_by(SolicitacaoMestre.data_agendada, SolicitacaoMestre.laboratorio_id)
+    ).all()
+
+    agend_map: dict[tuple[str, int], int] = {}
+    for dt_ag, lid, cnt in solic_reais:
+        if dt_ag:
+            agend_map[(dt_ag.isoformat(), lid or 0)] = cnt
+
+    dias_processados = set()
+    out = []
+    for v in vagas:
+        d_str = v.data.isoformat()
+        lid = v.laboratorio_id or 0
+        chave = (d_str, lid)
+        dias_processados.add(chave)
+        reais = agend_map.get(chave, 0)
+        if not reais and (d_str, 0) in agend_map:
+            reais = agend_map.get((d_str, 0), 0)
+            dias_processados.add((d_str, 0))
+        ocup = max(v.vagas_ocupadas or 0, reais)
+        tot = max(v.vagas_totais or 0, ocup)
+        out.append({
+            "data": d_str,
+            "laboratorio_id": v.laboratorio_id,
+            "laboratorio_nome": labs.get(v.laboratorio_id, "Laboratório Municipal"),
+            "laboratorio": labs.get(v.laboratorio_id, "Laboratório Municipal"),
+            "total": tot,
+            "ocupadas": ocup,
+            "livres": max(0, tot - ocup),
+        })
+
+    # Dias com agendamentos reais em SolicitacaoMestre que não tinham VagaLab prévia aberta
+    for (d_str, lid), cnt in agend_map.items():
+        if (d_str, lid) not in dias_processados and (d_str, 0) not in dias_processados:
+            efetivo_lid = lid if lid in labs else (next(iter(labs.keys())) if labs else 1)
+            out.append({
+                "data": d_str,
+                "laboratorio_id": efetivo_lid,
+                "laboratorio_nome": labs.get(efetivo_lid, "Laboratório Municipal"),
+                "laboratorio": labs.get(efetivo_lid, "Laboratório Municipal"),
+                "total": cnt,
+                "ocupadas": cnt,
+                "livres": 0,
+            })
+            dias_processados.add((d_str, lid))
+
+    out.sort(key=lambda x: x["data"])
+    return out
 
 
 def _parse_data_segura(val: str | date | None) -> date | None:
@@ -568,6 +622,8 @@ def _formatar_fila_out(o: FilaPsf, pac: Paciente | None) -> FilaPsfOut:
         fila_id=getattr(o, "fila_id", None),
         tipo_fila=getattr(o, "tipo_fila", "") or getattr(o, "especialidade", ""),
         unidade_saude_id=getattr(o, "unidade_saude_id", None),
+        data_agendada=getattr(o, "data_agendada", None),
+        hora_agendada=getattr(o, "hora_agendada", "") or "",
     )
 
 

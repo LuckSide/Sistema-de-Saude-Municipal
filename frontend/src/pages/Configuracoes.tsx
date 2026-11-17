@@ -401,7 +401,7 @@ function AbaFilas() {
     setErro("");
     setRes(null);
     if (!arq) {
-      setErro("Escolha um arquivo .csv ou .xlsx.");
+      setErro("Escolha um arquivo .csv, .xlsx ou .xml.");
       return;
     }
     setBusy(true);
@@ -416,20 +416,20 @@ function AbaFilas() {
 
   return (
     <Card className="max-w-2xl p-6">
-      <p className="mb-1 font-display text-base font-bold text-sus-950">Carga massiva de fila de espera</p>
+      <p className="mb-1 font-display text-base font-bold text-sus-950">Carga massiva de fila de espera e exames</p>
       <p className="mb-4 text-xs text-ink/55">
-        CSV (delimitador , ; | ou tab, UTF-8/Latin-1) ou Excel .xlsx com cabeçalho na 1ª linha.
-        Colunas aceitas: nome_paciente, cpf_paciente, numero_cartao, data_nascimento, telefone,
-        codigo_procedimento, nome_procedimento, servico_tipo_nome, data_hora_solicitacao, urgencia,
-        observacao, unidade_referencia. Máx 10MB / 20 mil linhas. Idempotente (reenvio não duplica).
+        CSV, Excel (.xlsx) ou XML de exportação (Vivver / e-SUS).
+        Colunas e tags aceitas: nome/paciente, cpf, cns/cartao_sus, data_nascimento, telefone,
+        codigo_procedimento, servico_tipo_nome/tipo_servico, data_pedido, data_agendamento, urgencia,
+        observacao, unidade_referencia. Máx 30MB / 50 mil linhas. Idempotente (reenvio não duplica).
       </p>
       <div className="space-y-3">
         <div>
-          <Label>Arquivo (.csv / .xlsx)</Label>
+          <Label>Arquivo (.csv / .xlsx / .xml)</Label>
           <input
             ref={inputRef}
             type="file"
-            accept=".csv,.xlsx,.xlsm"
+            accept=".csv,.xlsx,.xlsm,.xml"
             onChange={(e) => setArq(e.target.files?.[0] ?? null)}
             className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink file:mr-3 file:rounded-lg file:border-0 file:bg-sus-900 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white"
           />

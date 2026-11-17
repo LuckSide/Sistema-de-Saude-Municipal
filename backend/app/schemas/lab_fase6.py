@@ -85,6 +85,8 @@ class FilaPsfIn(BaseModel):
     fila_id: int | None = None
     tipo_fila: str = ""
     unidade_saude_id: int | None = None
+    data_agendada: date | None = None
+    hora_agendada: str = ""
 
     @field_validator("justificativa")
     @classmethod
@@ -146,6 +148,8 @@ class FilaPsfAgendarLoteIn(BaseModel):
     fila_id: int | None = None
     tipo_fila: str = ""
     unidade_saude_id: int | None = None
+    data_agendada: date | None = None
+    hora_agendada: str = ""
     enviar_whatsapp: bool = True
     instrucoes_transporte: str = ""
 
