@@ -82,6 +82,9 @@ class FilaPsfIn(BaseModel):
     justificativa: str = Field(default="", max_length=500)
     observacoes: str = Field(default="", max_length=500)
     sigtap_ids: list[int] = Field(default_factory=list)
+    fila_id: int | None = None
+    tipo_fila: str = ""
+    unidade_saude_id: int | None = None
 
     @field_validator("justificativa")
     @classmethod
@@ -119,6 +122,9 @@ class FilaPsfUpdateIn(BaseModel):
     justificativa: str | None = None
     observacoes: str | None = None
     sigtap_ids: list[int] | None = None
+    fila_id: int | None = None
+    tipo_fila: str | None = None
+    unidade_saude_id: int | None = None
 
     @field_validator("justificativa")
     @classmethod
@@ -137,6 +143,9 @@ class FilaPsfAgendarLoteIn(BaseModel):
     data_agendada: date
     hora_agendada: str = Field(default="07:00", max_length=10)
     sigtap_ids: list[int] = Field(default_factory=list)
+    fila_id: int | None = None
+    tipo_fila: str = ""
+    unidade_saude_id: int | None = None
     enviar_whatsapp: bool = True
     instrucoes_transporte: str = ""
 

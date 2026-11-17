@@ -1473,6 +1473,88 @@ def _init_db_impl() -> None:
             # Migrações Subagente 2: Composição de Equipamentos de Oxigênio
             "ALTER TABLE oxigenio_equipamentos ADD COLUMN IF NOT EXISTS cilindro_incluso_tipo VARCHAR(30)",
             "ALTER TABLE oxigenio_equipamentos ADD COLUMN IF NOT EXISTS cilindro_incluso_qtd INTEGER DEFAULT 0 NOT NULL",
+            # Migrações Subagente 2: Vínculo com a Fila (fila_id) e Tipagem em tfd_exames_fila e lab_fila_psf
+            "ALTER TABLE tfd_exames_fila ADD COLUMN IF NOT EXISTS fila_id INTEGER REFERENCES tfd_tipos_fila(id)",
+            "CREATE INDEX IF NOT EXISTS ix_tfd_exames_fila_fila_id ON tfd_exames_fila (fila_id)",
+            "ALTER TABLE lab_fila_psf ADD COLUMN IF NOT EXISTS fila_id INTEGER REFERENCES tfd_tipos_fila(id)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_fila_psf_fila_id ON lab_fila_psf (fila_id)",
+            "ALTER TABLE lab_fila_psf ADD COLUMN IF NOT EXISTS tipo_fila VARCHAR(80) DEFAULT '' NOT NULL",
+            "CREATE INDEX IF NOT EXISTS ix_lab_fila_psf_tipo_fila ON lab_fila_psf (tipo_fila)",
+            "ALTER TABLE lab_fila_psf ADD COLUMN IF NOT EXISTS unidade_saude_id INTEGER",
+            "CREATE INDEX IF NOT EXISTS ix_lab_fila_psf_unidade_saude_id ON lab_fila_psf (unidade_saude_id)",
+            # Backfill fila_id em tfd_exames_fila a partir do nome da fila
+            """
+            UPDATE tfd_exames_fila ef
+            SET fila_id = tf.id
+            FROM tfd_tipos_fila tf
+            WHERE ef.fila_id IS NULL
+              AND (
+                UPPER(TRIM(ef.tipo_fila)) = UPPER(TRIM(tf.nome))
+                OR UPPER(TRIM(ef.especialidade)) = UPPER(TRIM(tf.nome))
+              )
+            """,
+            # Backfill fila_id e tipo_fila em lab_fila_psf
+            """
+            UPDATE lab_fila_psf lp
+            SET fila_id = tf.id,
+                tipo_fila = COALESCE(NULLIF(lp.tipo_fila, ''), tf.nome)
+            FROM tfd_tipos_fila tf
+            WHERE lp.fila_id IS NULL
+              AND (
+                UPPER(TRIM(lp.tipo_fila)) = UPPER(TRIM(tf.nome))
+                OR UPPER(TRIM(lp.especialidade)) = UPPER(TRIM(tf.nome))
+              )
+            """,
+            # Migração de visibilidade pós-importação: garantir que exames laboratoriais existentes em tfd_exames_fila estejam sincronizados em lab_fila_psf
+            """
+            INSERT INTO lab_fila_psf (
+                paciente_id, especialidade, unidade_psf, medico_solicitante,
+                data_solicitacao, data_pedido, status, prioridade,
+                justificativa, observacoes, sigtap_ids_json, fila_id, tipo_fila, unidade_saude_id
+            )
+            SELECT
+                ef.paciente_id,
+                COALESCE(NULLIF(ef.tipo_fila, ''), ef.especialidade, 'EXAME_LABORATORIAL'),
+                COALESCE(NULLIF(ef.unidade_nome, ''), ef.destino, ''),
+                COALESCE(ef.medico_nome, ''),
+                COALESCE(ef.data_pedido, CURRENT_DATE),
+                ef.data_pedido,
+                CASE
+                    WHEN ef.status = 'aguardando' THEN 'na_fila'
+                    WHEN ef.status = 'agendado' THEN 'agendado'
+                    WHEN ef.status = 'cancelado' THEN 'cancelado'
+                    ELSE 'na_fila'
+                END,
+                CASE
+                    WHEN LOWER(ef.prioridade) = 'urgente' THEN 'urgente'
+                    WHEN LOWER(ef.prioridade) = 'alta' THEN 'alta'
+                    ELSE 'rotina'
+                END,
+                COALESCE(ef.justificativa, ''),
+                COALESCE(ef.observacoes, ''),
+                '[]',
+                ef.fila_id,
+                COALESCE(NULLIF(ef.tipo_fila, ''), 'EXAME_LABORATORIAL'),
+                ef.unidade_saude_id
+            FROM tfd_exames_fila ef
+            WHERE ef.ativo = TRUE
+              AND (
+                EXISTS (
+                    SELECT 1 FROM tfd_tipos_fila tf
+                    WHERE tf.tipo_fila = 'EXAME_LABORATORIAL'
+                      AND (tf.id = ef.fila_id OR UPPER(TRIM(tf.nome)) = UPPER(TRIM(ef.tipo_fila)))
+                )
+                OR UPPER(ef.tipo_fila) LIKE '%LAB%'
+                OR UPPER(ef.tipo_fila) LIKE '%SANGUE%'
+                OR UPPER(ef.tipo_fila) LIKE '%BIOQUIM%'
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM lab_fila_psf lp
+                WHERE lp.paciente_id = ef.paciente_id
+                  AND lp.data_solicitacao = ef.data_pedido
+                  AND (lp.tipo_fila = ef.tipo_fila OR lp.especialidade = ef.tipo_fila)
+              )
+            """,
         ]:
             try:
                 with conn.begin_nested():

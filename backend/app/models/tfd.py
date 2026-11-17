@@ -210,6 +210,7 @@ class ExameFila(SQLModel, table=True):
     # - codigo_procedimento = codigo_procedimento (ex: 0205020186)
     # - codigo_especialidade = CBO (ex: 225320) + nome_especialidade
     tipo_fila: str = Field(default="", max_length=80, index=True)
+    fila_id: int | None = Field(default=None, foreign_key="tfd_tipos_fila.id", index=True)
     codigo_procedimento: str = Field(default="", max_length=20, index=True)
     codigo_especialidade: str = Field(default="", max_length=10, index=True)
     nome_especialidade: str = Field(default="", max_length=120)
@@ -277,7 +278,8 @@ class ProcedimentoCatalogo(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     codigo: str = Field(max_length=20, index=True)  # codigo_procedimento ex: 0205020186
     nome: str = Field(max_length=150, index=True)  # nome_procedimento
-    tipo_fila: str = Field(default="", max_length=80, index=True)  # servico_tipo_nome
+    tipo_fila: str = Field(default="", max_length=80, index=True)
+    fila_id: int | None = Field(default=None, foreign_key="tfd_tipos_fila.id", index=True)  # servico_tipo_nome
     codigo_especialidade: str = Field(default="", max_length=10, index=True)  # CBO padrão
     nome_especialidade: str = Field(default="", max_length=120)
     codigo_curto: str = Field(default="", max_length=12, index=True)

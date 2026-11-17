@@ -1737,6 +1737,10 @@ export type FilaPsfItem = {
   criado_em: string;
   sigtap_ids?: number[];
   exames_nomes?: string[];
+  lote_id?: number | null;
+  fila_id?: number | null;
+  tipo_fila?: string;
+  unidade_saude_id?: number | null;
 };
 
 export function mapFila(o: any): FilaPsfItem {
@@ -1761,6 +1765,10 @@ export function mapFila(o: any): FilaPsfItem {
     criado_em: o.data_solicitacao ?? "",
     sigtap_ids: o.sigtap_ids ?? [],
     exames_nomes: o.exames_nomes ?? [],
+    lote_id: o.lote_id ?? null,
+    fila_id: o.fila_id ?? null,
+    tipo_fila: o.tipo_fila ?? o.especialidade ?? "",
+    unidade_saude_id: o.unidade_saude_id ?? null,
   };
 }
 
@@ -1768,6 +1776,8 @@ export type FilaPsfFiltros = {
   status?: string;
   unidade?: string;
   especialidade?: string;
+  fila_id?: number;
+  tipo_fila?: string;
   data_de?: string;
   data_ate?: string;
   q?: string;
@@ -1816,6 +1826,9 @@ export const filaPsfCriar = (p: Record<string, unknown>) =>
       justificativa: (p as any).justificativa ?? "",
       observacoes: (p as any).observacoes ?? (p as any).obs ?? "",
       sigtap_ids: (p as any).sigtap_ids ?? [],
+      fila_id: (p as any).fila_id ?? undefined,
+      tipo_fila: (p as any).tipo_fila ?? undefined,
+      unidade_saude_id: (p as any).unidade_saude_id ?? undefined,
     })
     .then((r) => mapFila(r.data));
 
@@ -1831,6 +1844,9 @@ export const filaPsfAtualizar = (id: number, p: Record<string, unknown>) =>
       justificativa: (p as any).justificativa ?? "",
       observacoes: (p as any).observacoes ?? (p as any).obs ?? "",
       sigtap_ids: (p as any).sigtap_ids,
+      fila_id: (p as any).fila_id ?? undefined,
+      tipo_fila: (p as any).tipo_fila ?? undefined,
+      unidade_saude_id: (p as any).unidade_saude_id ?? undefined,
     })
     .then((r) => mapFila(r.data));
 

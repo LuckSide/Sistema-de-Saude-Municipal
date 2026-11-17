@@ -565,6 +565,9 @@ def _formatar_fila_out(o: FilaPsf, pac: Paciente | None) -> FilaPsfOut:
         paciente_cpf=getattr(pac, "cpf", "") or "",
         paciente_cns=getattr(pac, "cns", "") or "",
         paciente_prontuario=prontuario,
+        fila_id=getattr(o, "fila_id", None),
+        tipo_fila=getattr(o, "tipo_fila", "") or getattr(o, "especialidade", ""),
+        unidade_saude_id=getattr(o, "unidade_saude_id", None),
     )
 
 
@@ -600,6 +603,8 @@ def listar_fila(
     data_de: str | None = None,
     data_ate: str | None = None,
     q: str = "",
+    fila_id: int | None = Query(default=None),
+    tipo_fila: str = Query(default=""),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
@@ -623,10 +628,34 @@ def listar_fila(
         q = getattr(q, "default", "") or ""
 
     filtros = []
+    if fila_id is not None:
+        from app.models.tfd import TipoFila
+        tf = db.get(TipoFila, fila_id)
+        if tf:
+            filtros.append(
+                or_(
+                    FilaPsf.fila_id == fila_id,
+                    FilaPsf.tipo_fila == tf.nome,
+                    FilaPsf.especialidade.ilike(f"%{tf.nome}%"),
+                )
+            )
+        else:
+            filtros.append(FilaPsf.fila_id == fila_id)
+    elif tipo_fila and str(tipo_fila).strip() and str(tipo_fila).strip().upper() != "TODOS":
+        tf_clean = str(tipo_fila).strip()
+        filtros.append(
+            or_(
+                FilaPsf.tipo_fila.ilike(f"%{tf_clean}%"),
+                FilaPsf.especialidade.ilike(f"%{tf_clean}%"),
+            )
+        )
+
     if status_ and status_.strip() and status_ != "todos":
         st_clean = status_.strip()
         if st_clean == "fora_da_fila":
-            filtros.append(FilaPsf.status.in_(["agendado", "cancelado"]))
+            filtros.append(FilaPsf.status.in_(["agendado", "cancelado", "realizado"]))
+        elif st_clean == "na_fila":
+            filtros.append(FilaPsf.status.in_(["na_fila", "aguardando"]))
         else:
             filtros.append(FilaPsf.status == st_clean)
     if especialidade and especialidade.strip():
@@ -699,6 +728,9 @@ def criar_fila(
         justificativa=data.justificativa,
         observacoes=obs_final,
         status="na_fila",
+        fila_id=data.fila_id,
+        tipo_fila=data.tipo_fila or data.especialidade.strip(),
+        unidade_saude_id=data.unidade_saude_id,
     )
     db.add(obj)
     db.commit()
@@ -780,6 +812,12 @@ def atualizar_fila(
         trecho_ids = json.dumps(data.sigtap_ids)
         trecho_nomes = ", ".join(nomes_exames)
         obj.observacoes = f"Exames: {trecho_nomes} | SIGTAP_IDS:{trecho_ids}"[:500]
+    if data.fila_id is not None:
+        obj.fila_id = data.fila_id
+    if data.tipo_fila is not None:
+        obj.tipo_fila = data.tipo_fila.strip()
+    if data.unidade_saude_id is not None:
+        obj.unidade_saude_id = data.unidade_saude_id
 
     db.add(obj)
     db.commit()

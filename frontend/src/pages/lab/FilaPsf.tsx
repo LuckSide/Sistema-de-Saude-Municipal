@@ -30,6 +30,7 @@ import {
   labsListar,
   labSigtap,
   labVerificarDuplicidade,
+  tfdTipos,
   pagData,
   pagMeta,
   type FilaPsfItem,
@@ -37,6 +38,7 @@ import {
   type Medico,
   type Paciente,
   type SigtapProc,
+  type TipoFila,
   type UnidadeSaude,
   type PedidoDuplicadoLab,
 } from "../../services/api";
@@ -86,6 +88,7 @@ export default function FilaPsf() {
   const [pacienteSelecionado, setPacienteSelecionado] = useState<Paciente | null>(null);
   const [form, setForm] = useState({
     paciente_id: "",
+    fila_id: "",
     especialidade: "",
     unidade_psf: "",
     medico: MEDICO_GENERICO,
@@ -182,6 +185,8 @@ export default function FilaPsf() {
   const [carregando, setCarregando] = useState(false);
 
   // Filtros Avançados da Fila
+  const [filasLab, setFilasLab] = useState<TipoFila[]>([]);
+  const [filtroFilaId, setFiltroFilaId] = useState("");
   const [filtrosAvancados, setFiltrosAvancados] = useState(false);
   const [filtroEspecialidade, setFiltroEspecialidade] = useState("");
   const [termoBusca, setTermoBusca] = useState("");
@@ -195,6 +200,7 @@ export default function FilaPsf() {
     setErro("");
     try {
       const r = await filaPsfListar({
+        fila_id: filtroFilaId ? Number(filtroFilaId) : undefined,
         status: filtroStatus !== "todos" ? filtroStatus : undefined,
         unidade: filtroUnidade || undefined,
         especialidade: filtroEspecialidade.trim() || undefined,
@@ -230,11 +236,18 @@ export default function FilaPsf() {
         if (ativ.length > 0) setLoteLabId(String(ativ[0].id));
       })
       .catch(() => {});
+    // Busca dinâmica de filas registradas como exame de laboratório/sangue
+    tfdTipos({ tipo_fila: "EXAME_LABORATORIAL", ativos: true, limit: 100 })
+      .then((r) => {
+        const data = pagData<TipoFila>(r);
+        setFilasLab(data);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
     carregar(1);
-  }, [filtroStatus, filtroUnidade, dataDe, dataAte]);
+  }, [filtroFilaId, filtroStatus, filtroUnidade, dataDe, dataAte]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -244,6 +257,7 @@ export default function FilaPsf() {
   }, [termoBusca]);
 
   function limparFiltros() {
+    setFiltroFilaId("");
     setTermoBusca("");
     setFiltroUnidade("");
     setFiltroStatus("todos");
@@ -252,7 +266,7 @@ export default function FilaPsf() {
   }
 
   const temFiltroAtivo = Boolean(
-    termoBusca.trim() || filtroUnidade || filtroStatus !== "todos" || dataDe || dataAte
+    filtroFilaId || termoBusca.trim() || filtroUnidade || filtroStatus !== "todos" || dataDe || dataAte
   );
 
   function set(k: string, v: string) {
@@ -275,6 +289,7 @@ export default function FilaPsf() {
     setBuscaSig("");
     setForm({
       paciente_id: "",
+      fila_id: filtroFilaId || (filasLab[0] ? String(filasLab[0].id) : ""),
       especialidade: "",
       unidade_psf: unidPadraoUsuario || (unidades[0]?.nome ?? ""),
       medico: MEDICO_GENERICO,
@@ -311,6 +326,7 @@ export default function FilaPsf() {
     setBuscaSig("");
     setForm({
       paciente_id: String(item.paciente_id),
+      fila_id: item.fila_id ? String(item.fila_id) : "",
       especialidade: item.especialidade || "",
       unidade_psf: item.unidade_psf || "",
       medico: item.medico || MEDICO_GENERICO,
@@ -331,6 +347,18 @@ export default function FilaPsf() {
     setDuplicidadeFila(null);
     setIgnorarDuplicidadeFila(false);
   }
+
+  // Opções para o Combobox de Filtro de Filas de Sangue / Laboratório
+  const opcoesFiltroFilas = useMemo<ComboOption[]>(() => {
+    return [
+      { value: "", label: "🩸 Todas as Filas de Sangue / Laboratório", sub: "Sem restrição de fila" },
+      ...filasLab.map((f) => ({
+        value: String(f.id),
+        label: `${f.codigo ? `[${f.codigo}] ` : ""}${f.nome}`,
+        sub: `Fila Oficial (${f.tipo_fila})`,
+      })),
+    ];
+  }, [filasLab]);
 
   // Opções para o Combobox de Filtro de Unidades (inclui "Todas")
   const opcoesFiltroUnidades = useMemo<ComboOption[]>(() => {
@@ -420,6 +448,9 @@ export default function FilaPsf() {
     });
 
     setSalvando(true);
+    const filaSel = filasLab.find((f) => String(f.id) === form.fila_id);
+    const tipoFilaNome = filaSel?.nome || form.especialidade.trim();
+    const filaIdNum = form.fila_id ? Number(form.fila_id) : undefined;
     try {
       if (itemEditando) {
         await filaPsfAtualizar(itemEditando.id, {
@@ -431,6 +462,8 @@ export default function FilaPsf() {
           justificativa: form.justificativa.trim(),
           obs: form.obs.trim(),
           sigtap_ids,
+          fila_id: filaIdNum,
+          tipo_fila: tipoFilaNome,
         });
         setOk(`Pedido de ${itemEditando.paciente_nome} atualizado com sucesso.`);
       } else {
@@ -444,6 +477,8 @@ export default function FilaPsf() {
           justificativa: form.justificativa.trim(),
           obs: form.obs.trim(),
           sigtap_ids,
+          fila_id: filaIdNum,
+          tipo_fila: tipoFilaNome,
         });
         setOk("Pedido incluído na fila de exames com sucesso.");
       }
@@ -590,11 +625,28 @@ export default function FilaPsf() {
         </p>
       )}
 
-      {/* Barra de Filtros: Período, PSF e Busca de Paciente */}
+      {/* Barra de Filtros: Fila de Sangue, Período, PSF e Busca de Paciente */}
       <Card className="p-4 sm:p-5 border-sus-900/10 shadow-xs space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+          {/* Seletor Dinâmico por Tipo de Fila (Exame Laboratorial / Sangue) */}
+          <div className="md:col-span-3">
+            <Label className="text-xs font-bold text-sus-950 flex items-center gap-1.5 mb-1.5">
+              <FlaskConical className="h-3.5 w-3.5 text-purple-600" /> Fila de Laboratório
+            </Label>
+            <Combobox
+              value={filtroFilaId}
+              onChange={setFiltroFilaId}
+              options={opcoesFiltroFilas}
+              placeholder="Todas as filas de sangue…"
+              searchPlaceholder="Digite o nome da fila…"
+              emptyText="Nenhuma fila encontrada"
+              showAll={false}
+              className="h-10 text-xs"
+            />
+          </div>
+
           {/* Busca Geral / Paciente */}
-          <div className="md:col-span-4">
+          <div className="md:col-span-3">
             <Label className="text-xs font-bold text-sus-950 flex items-center gap-1.5 mb-1.5">
               <Search className="h-3.5 w-3.5 text-teal" /> Paciente ou Procedimento
             </Label>
@@ -603,7 +655,7 @@ export default function FilaPsf() {
               <Input
                 value={termoBusca}
                 onChange={(e) => setTermoBusca(e.target.value)}
-                placeholder="Nome do paciente, CPF, prontuário ou exame…"
+                placeholder="Nome, CPF, prontuário ou exame…"
                 className="pl-9 h-10 text-xs bg-white"
               />
               {termoBusca && (
@@ -620,7 +672,7 @@ export default function FilaPsf() {
           </div>
 
           {/* Busca por PSF / Unidade de Origem */}
-          <div className="md:col-span-3">
+          <div className="md:col-span-2">
             <Label className="text-xs font-bold text-sus-950 flex items-center gap-1.5 mb-1.5">
               <Building2 className="h-3.5 w-3.5 text-teal" /> PSF / Unidade
             </Label>
@@ -628,7 +680,7 @@ export default function FilaPsf() {
               value={filtroUnidade}
               onChange={setFiltroUnidade}
               options={opcoesFiltroUnidades}
-              placeholder="Todas as unidades / PSFs…"
+              placeholder="Todas as unidades…"
               searchPlaceholder="Digite o nome do PSF…"
               emptyText="Nenhuma unidade encontrada"
               showAll={false}
@@ -637,24 +689,24 @@ export default function FilaPsf() {
           </div>
 
           {/* Período: Data Inicial e Data Final */}
-          <div className="md:col-span-3">
+          <div className="md:col-span-2">
             <Label className="text-xs font-bold text-sus-950 flex items-center gap-1.5 mb-1.5">
-              <Calendar className="h-3.5 w-3.5 text-teal" /> Período da Solicitação
+              <Calendar className="h-3.5 w-3.5 text-teal" /> Período
             </Label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-1.5">
               <Input
                 type="date"
                 value={dataDe}
                 onChange={(e) => setDataDe(e.target.value)}
                 title="Data inicial do pedido"
-                className="h-10 text-xs"
+                className="h-10 text-[11px] px-1"
               />
               <Input
                 type="date"
                 value={dataAte}
                 onChange={(e) => setDataAte(e.target.value)}
                 title="Data final do pedido"
-                className="h-10 text-xs"
+                className="h-10 text-[11px] px-1"
               />
             </div>
           </div>
@@ -703,6 +755,44 @@ export default function FilaPsf() {
             )}
           </div>
         </div>
+
+        {/* Chips/Pills Dinâmicos de Seleção Rápida de Filas de Sangue */}
+        {filasLab.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-2.5 border-t border-sus-900/10">
+            <span className="text-[11px] font-semibold text-slate-500 mr-1 flex items-center gap-1">
+              <Layers className="w-3.5 h-3.5 text-purple-600" /> Filas de Sangue:
+            </span>
+            <button
+              type="button"
+              onClick={() => setFiltroFilaId("")}
+              className={`px-2.5 py-1 rounded-full text-xs font-medium transition cursor-pointer ${
+                !filtroFilaId
+                  ? "bg-purple-700 text-white shadow-xs"
+                  : "bg-slate-100 hover:bg-slate-200 text-slate-700"
+              }`}
+            >
+              Todas ({total})
+            </button>
+            {filasLab.map((f) => {
+              const ativo = filtroFilaId === String(f.id);
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setFiltroFilaId(ativo ? "" : String(f.id))}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition cursor-pointer flex items-center gap-1 ${
+                    ativo
+                      ? "bg-purple-700 text-white shadow-xs font-bold"
+                      : "bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200/60"
+                  }`}
+                  title={`Filtrar apenas pedidos da fila ${f.nome}`}
+                >
+                  {f.nome}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Painel Expansível de Filtros Avançados */}
         {filtrosAvancados && (
@@ -849,8 +939,13 @@ export default function FilaPsf() {
                         {f.paciente_prontuario && <span>Pront.: {f.paciente_prontuario}</span>}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-xs font-semibold text-teal whitespace-nowrap">
-                      {f.especialidade || "Geral"}
+                    <td className="px-4 py-3 text-xs whitespace-nowrap">
+                      {f.tipo_fila && (
+                        <span className="inline-block bg-purple-50 text-purple-700 border border-purple-200/60 px-1.5 py-0.5 rounded text-[10px] font-semibold mr-1.5">
+                          {f.tipo_fila}
+                        </span>
+                      )}
+                      <span className="font-semibold text-teal">{f.especialidade || "Geral"}</span>
                     </td>
                     <td className="px-4 py-3 text-xs text-ink/75 font-medium">{f.unidade_psf}</td>
                     <td className="px-4 py-3 text-xs text-ink/75">{f.medico}</td>
@@ -974,7 +1069,7 @@ export default function FilaPsf() {
                   obrigatorio
                 />
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-start">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-start">
                   <div>
                     <div className="flex items-center min-h-[26px] mb-1.5">
                       <Label className="!mb-0 flex items-center gap-1.5">
@@ -992,6 +1087,37 @@ export default function FilaPsf() {
                     />
                     <p className="mt-1.5 text-[11px] text-ink/50">
                       Data da requisição médica.
+                    </p>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center min-h-[26px] mb-1.5">
+                      <Label className="!mb-0 flex items-center gap-1.5">
+                        <FlaskConical className="h-3.5 w-3.5 text-purple-600" /> Fila de Sangue
+                      </Label>
+                    </div>
+                    <Select
+                      value={form.fila_id}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const fObj = filasLab.find((f) => String(f.id) === val);
+                        setForm((prev) => ({
+                          ...prev,
+                          fila_id: val,
+                          especialidade: prev.especialidade || (fObj ? fObj.nome : ""),
+                        }));
+                      }}
+                      className="text-xs !h-9"
+                    >
+                      <option value="">Selecione a fila…</option>
+                      {filasLab.map((f) => (
+                        <option key={f.id} value={String(f.id)}>
+                          {f.nome}
+                        </option>
+                      ))}
+                    </Select>
+                    <p className="mt-1.5 text-[11px] text-ink/50">
+                      Fila do laboratório.
                     </p>
                   </div>
 

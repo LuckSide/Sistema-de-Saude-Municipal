@@ -2394,6 +2394,7 @@ def listar_exames(
     prioridade: str | None = None,
     especialidade: str = Query(default="", max_length=80),
     tipo_fila: str = Query(default="", max_length=80),
+    fila_id: int | None = Query(default=None),
     procedimento: str = Query(default="", max_length=150),
     codigo_especialidade: str = Query(default="", max_length=10),
     justificativa: str = Query(default="", max_length=150),
@@ -2450,6 +2451,7 @@ def listar_exames(
         idade_max=p_idade_max,
         excluir_laboratorio=excluir_laboratorio,
         apenas_laboratorio=apenas_laboratorio,
+        fila_id=fila_id,
     )
     total = len(itens)
     meta = paginar(total, p_page, p_limit)
@@ -2498,9 +2500,23 @@ def _filtrar_exames_lista(
     idade_max: int | None = None,
     excluir_laboratorio: bool = False,
     apenas_laboratorio: bool = False,
+    fila_id: int | None = None,
 ) -> list:
     """Filtros da fila compartilhados entre listagem e exportação XLSX."""
     filtros = [ExameFila.ativo == True]  # noqa: E712
+
+    if fila_id is not None:
+        tf_match = db.get(TipoFila, fila_id)
+        if tf_match:
+            filtros.append(
+                or_(
+                    ExameFila.fila_id == fila_id,
+                    ExameFila.tipo_fila == tf_match.nome,
+                    ExameFila.especialidade.ilike(f"%{tf_match.nome}%"),
+                )
+            )
+        else:
+            filtros.append(ExameFila.fila_id == fila_id)
 
     # Segregação estrutural de filas: laboratório vs regulação geral
     if excluir_laboratorio:
@@ -2855,6 +2871,7 @@ def exportar_fila(
     prioridade: str | None = None,
     especialidade: str = Query(default="", max_length=80),
     tipo_fila: str = Query(default="", max_length=80),
+    fila_id: int | None = Query(default=None),
     procedimento: str = Query(default="", max_length=150),
     codigo_especialidade: str = Query(default="", max_length=10),
     justificativa: str = Query(default="", max_length=150),
@@ -2913,6 +2930,7 @@ def exportar_fila(
         idade_max=i_max_val,
         excluir_laboratorio=excluir_laboratorio,
         apenas_laboratorio=apenas_laboratorio,
+        fila_id=fila_id,
     )
     if ids_set:
         itens_filtrados = [it for it in itens if it.id in ids_set]

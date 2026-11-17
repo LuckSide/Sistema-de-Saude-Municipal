@@ -222,6 +222,17 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
     esps_cat: dict[str, str] = {}
     procs_cat: dict[tuple[str, str], tuple[str, str, str]] = {}
 
+    from app.models.cadastros_saude import UnidadeSaude
+    from app.models.lab_fase6 import FilaPsf
+    from sqlmodel import or_
+
+    filas_map: dict[str, TipoFila] = {
+        tf.nome.strip().upper(): tf for tf in db.exec(select(TipoFila)).all() if tf.nome
+    }
+    unidades_map: dict[str, UnidadeSaude] = {
+        u.nome.strip().upper(): u for u in db.exec(select(UnidadeSaude).where(UnidadeSaude.ativo == True)).all() if u.nome
+    }
+
     from app.services.geradores import gerar_prontuario_aleatorio
     from app.services.pec_sync import (
         limpar_cns as _limpar_cns,
@@ -422,13 +433,62 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
         nome_esp = nome_esp[:120]
         exame = (f"{cod} - {nproc}" if cod and nproc else (nproc or tipo or "EXAME"))[:120]
         data_ped = parse_data(r.get("data_pedido") or "") or date.today()
-        status = (r.get("status") or "aguardando").strip().lower()
-        if status not in STATUS_VALIDOS:
+
+        # Resolução da Fila e Tipo
+        tipo_u = tipo.upper()
+        tf_obj = filas_map.get(tipo_u)
+        if not tf_obj and tipo:
+            eh_lab_nome = any(term in tipo_u for term in ("LAB", "SANGUE", "BIOQUIM"))
+            cat_tf = "EXAME_LABORATORIAL" if eh_lab_nome else "REGULACAO_GERAL"
+            tf_obj = TipoFila(codigo="", nome=tipo[:80].upper(), tipo_fila=cat_tf, ativo=True)
+            db.add(tf_obj)
+            db.flush()
+            filas_map[tipo_u] = tf_obj
+            tipos_cat[tipo_u] = cat_tf
+        fila_id = tf_obj.id if tf_obj else None
+        eh_lab = bool(
+            (tf_obj and tf_obj.tipo_fila == "EXAME_LABORATORIAL")
+            or any(term in tipo_u for term in ("LAB", "SANGUE", "BIOQUIM"))
+        )
+
+        # Resolução da Unidade de Saúde (RLS e integridade institucional)
+        dest_raw = (r.get("destino") or r.get("unidade") or r.get("unidade_referencia") or r.get("nome_unidade") or "").strip()
+        dest_u = dest_raw.upper()
+        uni_obj = unidades_map.get(dest_u)
+        if not uni_obj and dest_u:
+            for un, u in unidades_map.items():
+                if dest_u in un or un in dest_u:
+                    uni_obj = u
+                    break
+        if not uni_obj and getattr(pac, "unidade_saude_id", None):
+            uni_obj = db.get(UnidadeSaude, pac.unidade_saude_id)
+
+        unidade_saude_id = uni_obj.id if uni_obj else None
+        unidade_nome = uni_obj.nome if uni_obj else (dest_raw[:150] or "")
+        unidade_cnes = getattr(uni_obj, "cnes", "") or ""
+
+        # Mapeamento do status: nunca rascunho ou status oculto
+        raw_st = (r.get("status") or "").strip().lower()
+        if raw_st in ("aguardando", "na_fila", "pendente", "espera", ""):
             status = "aguardando"
+            status_lab = "na_fila"
+        elif raw_st in ("agendado", "marcado"):
+            status = "agendado"
+            status_lab = "agendado"
+        elif raw_st in ("cancelado", "obito", "desistiu"):
+            status = "cancelado"
+            status_lab = "cancelado"
+        elif raw_st in ("realizado", "recepcionado"):
+            status = "realizado"
+            status_lab = "realizado"
+        else:
+            status = "aguardando"
+            status_lab = "na_fila"
 
         # Baixa automática imediata se o paciente for óbito ou mudança de município no PEC
         if (getattr(pac, "situacao_cadastral", "") or "").lower() in ("obito", "mudanca_municipio"):
             status = "cancelado"
+            status_lab = "cancelado"
             db.add(
                 PacienteHistorico(
                     paciente_id=pac.id,
@@ -457,28 +517,84 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
             )
         ).first()
         if ja:
+            houve_alt = False
             if ja.status != status:
                 ja.status = status
+                houve_alt = True
+            if not ja.fila_id and fila_id:
+                ja.fila_id = fila_id
+                houve_alt = True
+            if not ja.unidade_saude_id and unidade_saude_id:
+                ja.unidade_saude_id = unidade_saude_id
+                ja.unidade_nome = unidade_nome
+                ja.unidade_cnes = unidade_cnes
+                houve_alt = True
+            if houve_alt:
                 db.add(ja)
                 atualizados += 1
             else:
                 duplicados += 1
-            continue
+        else:
+            db.add(ExameFila(
+                paciente_id=pac.id, exame=exame,
+                especialidade=tipo[:80], tipo_fila=tipo[:80],
+                fila_id=fila_id,
+                codigo_procedimento=cod[:20],
+                codigo_especialidade=cbo_raw[:10],
+                nome_especialidade=nome_esp[:120],
+                prioridade=prioridade_de(r.get("prioridade") or ""),
+                status=status, data_pedido=data_ped,
+                data_agendada=parse_data(r.get("data_agendada") or ""),
+                destino=(dest_raw or "")[:120],
+                unidade_saude_id=unidade_saude_id,
+                unidade_nome=unidade_nome[:150],
+                unidade_cnes=unidade_cnes[:20],
+                observacoes=(r.get("observacao") or "")[:500],
+                public_token=secrets.token_urlsafe(24),
+            ))
+            exames_novos += 1
 
-        db.add(ExameFila(
-            paciente_id=pac.id, exame=exame,
-            especialidade=tipo[:80], tipo_fila=tipo[:80],
-            codigo_procedimento=cod[:20],
-            codigo_especialidade=cbo_raw[:10],
-            nome_especialidade=nome_esp[:120],
-            prioridade=prioridade_de(r.get("prioridade") or ""),
-            status=status, data_pedido=data_ped,
-            data_agendada=parse_data(r.get("data_agendada") or ""),
-            destino=(r.get("destino") or "")[:120],
-            observacoes=(r.get("observacao") or "")[:500],
-            public_token=secrets.token_urlsafe(24),
-        ))
-        exames_novos += 1
+        # Sincronização automática para Fila de Exames Laboratoriais (lab_fila_psf)
+        if eh_lab:
+            ja_lab = db.exec(
+                select(FilaPsf).where(
+                    FilaPsf.paciente_id == pac.id,
+                    FilaPsf.data_solicitacao == data_ped,
+                    or_(
+                        FilaPsf.fila_id == fila_id,
+                        FilaPsf.tipo_fila == (tipo[:80] or "EXAME_LABORATORIAL"),
+                        FilaPsf.especialidade == (tipo[:80] or "EXAME_LABORATORIAL"),
+                    ),
+                )
+            ).first()
+            if ja_lab:
+                if ja_lab.status != status_lab:
+                    ja_lab.status = status_lab
+                if not ja_lab.fila_id and fila_id:
+                    ja_lab.fila_id = fila_id
+                if not ja_lab.unidade_saude_id and unidade_saude_id:
+                    ja_lab.unidade_saude_id = unidade_saude_id
+                db.add(ja_lab)
+            else:
+                db.add(
+                    FilaPsf(
+                        paciente_id=pac.id,
+                        especialidade=tipo[:80] or "EXAME_LABORATORIAL",
+                        tipo_fila=tipo[:80] or "EXAME_LABORATORIAL",
+                        fila_id=fila_id,
+                        unidade_psf=unidade_nome or dest_raw[:120] or "PSF",
+                        unidade_saude_id=unidade_saude_id,
+                        medico_solicitante=r.get("medico_nome") or "",
+                        data_solicitacao=data_ped,
+                        data_pedido=data_ped,
+                        status=status_lab,
+                        prioridade=prioridade_de(r.get("prioridade") or ""),
+                        justificativa=r.get("justificativa") or "",
+                        observacoes=r.get("observacao") or "",
+                        sigtap_ids_json="[]",
+                    )
+                )
+
         if not simular and (exames_novos + atualizados) % 500 == 0:
             db.commit()
 
@@ -517,6 +633,7 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
             consolidar_pacientes_duplicados(db, remover_inelegiveis_sem_vinculo=False)
         except Exception:
             pass
+        db.commit()
 
     return {
         "lidas": lidas,

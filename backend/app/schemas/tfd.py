@@ -379,6 +379,7 @@ class ExameBase(BaseModel):
     exame: str = Field(default="", max_length=120)
     especialidade: str = Field(default="", max_length=80)
     tipo_fila: str = Field(default="ELETIVO", max_length=80)
+    fila_id: int | None = None
     codigo_procedimento: str = Field(default="", max_length=20)
     codigo_especialidade: str = Field(default="", max_length=10)
     nome_especialidade: str = Field(default="", max_length=120)

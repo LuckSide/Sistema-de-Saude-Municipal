@@ -67,6 +67,9 @@ class FilaPsf(SQLModel, table=True):
     observacoes: str = Field(default="", max_length=500)
     sigtap_ids_json: str = Field(default="[]")
     lote_id: int | None = Field(default=None, foreign_key="lab_lotes_liberacao.id", index=True)
+    fila_id: int | None = Field(default=None, foreign_key="tfd_tipos_fila.id", index=True)
+    tipo_fila: str = Field(default="", max_length=80, index=True)
+    unidade_saude_id: int | None = Field(default=None, index=True)
 
 
 class SolicitacaoMestre(SQLModel, table=True):
