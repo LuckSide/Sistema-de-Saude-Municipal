@@ -869,68 +869,79 @@ export default function LabFaturamento() {
               </div>
 
               {/* TABELA DE ITENS EXECUTADOS */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-sus-900/15 bg-sand/60 font-semibold uppercase text-sus-900/70">
-                      <th className="px-3 py-2.5">Código</th>
-                      <th className="px-3 py-2.5">Procedimento / Exame</th>
-                      <th className="px-3 py-2.5 text-center">Origem Preço</th>
-                      <th className="px-3 py-2.5 text-center">Qtd Executada</th>
-                      <th className="px-3 py-2.5 text-right">Valor Unitário</th>
-                      <th className="px-3 py-2.5 text-right">Total Faturado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {relatorioPrestador.itens.map((it) => (
-                      <tr key={it.sigtap_id} className="border-b border-sus-900/5 hover:bg-sand/20">
-                        <td className="px-3 py-2 font-mono text-ink/70">{it.codigo_procedimento}</td>
-                        <td className="px-3 py-2 font-medium text-sus-950">{it.descricao_procedimento}</td>
-                        <td className="px-3 py-2 text-center">
-                          {it.origem_preco === "contrato_custom" ? (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
-                              Tabela Contrato
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-50 text-slate-600 border border-slate-200">
-                              SIGTAP SUS
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-center font-bold text-sus-950">{it.quantidade}</td>
-                        <td className="px-3 py-2 text-right font-mono">
-                          {it.valor_unitario.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono font-bold text-teal">
-                          {it.valor_total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                        </td>
-                      </tr>
-                    ))}
-                    {relatorioPrestador.itens.length === 0 && (
-                      <tr>
-                        <td colSpan={6} className="px-3 py-8 text-center text-ink/40">
-                          Nenhum exame executado nesta competência para este prestador.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                  {/* TOTALIZADOR */}
-                  <tfoot>
-                    <tr className="bg-sand/60 font-bold border-t-2 border-sus-900/15">
-                      <td colSpan={3} className="px-3 py-3 uppercase text-sus-950">
-                        Total Geral da Produção ({relatorioPrestador.competencia})
-                      </td>
-                      <td className="px-3 py-3 text-center text-sm text-sus-950">
-                        {relatorioPrestador.total_exames}
-                      </td>
-                      <td className="px-3 py-3 text-right text-xs text-ink/50">—</td>
-                      <td className="px-3 py-3 text-right font-mono text-base text-teal">
-                        {relatorioPrestador.valor_total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
+              {(() => {
+                const itensPrestador = Array.isArray(relatorioPrestador.itens)
+                  ? relatorioPrestador.itens
+                  : Array.isArray((relatorioPrestador as any).itens_agrupados)
+                  ? (relatorioPrestador as any).itens_agrupados
+                  : [];
+                return (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-sus-900/15 bg-sand/60 font-semibold uppercase text-sus-900/70">
+                          <th className="px-3 py-2.5">Código</th>
+                          <th className="px-3 py-2.5">Procedimento / Exame</th>
+                          <th className="px-3 py-2.5 text-center">Origem Preço</th>
+                          <th className="px-3 py-2.5 text-center">Qtd Executada</th>
+                          <th className="px-3 py-2.5 text-right">Valor Unitário</th>
+                          <th className="px-3 py-2.5 text-right">Total Faturado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {itensPrestador.map((it: any) => (
+                          <tr key={it.sigtap_id} className="border-b border-sus-900/5 hover:bg-sand/20">
+                            <td className="px-3 py-2 font-mono text-ink/70">{it.codigo_procedimento}</td>
+                            <td className="px-3 py-2 font-medium text-sus-950">{it.descricao_procedimento}</td>
+                            <td className="px-3 py-2 text-center">
+                              {it.origem_preco === "contrato_custom" || it.origem_preco === "contrato_customizado" ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                                  Tabela Contrato
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-50 text-slate-600 border border-slate-200">
+                                  SIGTAP SUS
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-center font-bold text-sus-950">
+                              {it.quantidade ?? it.quantidade_executada ?? 0}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono">
+                              {(Number(it.valor_unitario) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono font-bold text-teal">
+                              {(Number(it.valor_total) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                            </td>
+                          </tr>
+                        ))}
+                        {itensPrestador.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="px-3 py-8 text-center text-ink/40">
+                              Nenhum exame executado nesta competência para este prestador.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                      {/* TOTALIZADOR */}
+                      <tfoot>
+                        <tr className="bg-sand/60 font-bold border-t-2 border-sus-900/15">
+                          <td colSpan={3} className="px-3 py-3 uppercase text-sus-950">
+                            Total Geral da Produção ({relatorioPrestador.competencia})
+                          </td>
+                          <td className="px-3 py-3 text-center text-sm text-sus-950">
+                            {relatorioPrestador.total_exames ?? (relatorioPrestador as any).qtd_exames_total ?? 0}
+                          </td>
+                          <td className="px-3 py-3 text-right text-xs text-ink/50">—</td>
+                          <td className="px-3 py-3 text-right font-mono text-base text-teal">
+                            {(Number(relatorioPrestador.valor_total ?? (relatorioPrestador as any).valor_total_bruto) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                );
+              })()}
 
               {/* BLOCO DE GOVERNANÇA E APROVAÇÃO SECRETARIA */}
               {!ehPerfilLaboratorio && (
@@ -1155,7 +1166,7 @@ export default function LabFaturamento() {
                 </tr>
               </thead>
               <tbody>
-                {resumoBpa?.itens.map((it) => (
+                {(resumoBpa?.itens || []).map((it) => (
                   <tr key={it.codigo} className="border-b border-sus-900/5 hover:bg-sand/20">
                     <td className="px-4 py-3 font-mono text-xs">{it.codigo}</td>
                     <td className="px-4 py-3 text-xs font-medium text-sus-950">{it.descricao}</td>
@@ -1168,7 +1179,7 @@ export default function LabFaturamento() {
                     </td>
                   </tr>
                 ))}
-                {(!resumoBpa || resumoBpa.itens.length === 0) && (
+                {(!resumoBpa || (resumoBpa.itens || []).length === 0) && (
                   <tr>
                     <td colSpan={5} className="px-4 py-8 text-center text-ink/45 text-xs">
                       Nenhum procedimento no consolidado BPA desta competência.
@@ -1549,7 +1560,7 @@ export default function LabFaturamento() {
                   </tr>
                 </thead>
                 <tbody>
-                  {extratoPacienteBi.itens.map((it, idx) => (
+                  {(extratoPacienteBi.itens || []).map((it, idx) => (
                     <tr key={idx} className="border-b border-sus-900/5 hover:bg-sand/20">
                       <td className="px-3 py-2 font-mono whitespace-nowrap">{it.data_agendada}</td>
                       <td className="px-3 py-2 text-ink/75">{it.laboratorio_nome}</td>

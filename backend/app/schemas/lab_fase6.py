@@ -587,6 +587,7 @@ class LabFaturamentoItemRelatorioOut(BaseModel):
     codigo_procedimento: str
     descricao_procedimento: str
     quantidade_executada: int
+    quantidade: int = 0
     valor_unitario: float
     valor_total: float
     origem_preco: str  # sigtap_padrao | contrato_custom
@@ -595,20 +596,29 @@ class LabFaturamentoItemRelatorioOut(BaseModel):
 class LabFaturamentoRelatorioPrestadorOut(BaseModel):
     laboratorio_id: int
     laboratorio_nome: str
+    cnes_laboratorio: str = ""
+    responsavel_tecnico: str = ""
+    horario_funcionamento: str = ""
     contrato_id: int | None
     numero_contrato: str
     competencia: str
     qtd_solicitacoes: int
     qtd_exames_total: int
+    total_solicitacoes: int = 0
+    total_exames: int = 0
     valor_total_bruto: float
     valor_glosas: float
     valor_total_liquido: float
+    valor_total: float = 0.0
+    valor_glosado: float = 0.0
+    valor_aprovado: float = 0.0
     status_fechamento: str  # em_apuracao | aguardando_aprovacao | aprovado_secretaria | fechado
     liberado_visualizacao_lab: bool
     aprovado_por: str
     aprovado_em: datetime | None
     parecer_secretaria: str
     itens_agrupados: list[LabFaturamentoItemRelatorioOut] = []
+    itens: list[LabFaturamentoItemRelatorioOut] = []
 
 
 class LabAprovarFaturamentoIn(BaseModel):

@@ -4183,7 +4183,36 @@ export const labContratoPrecoRemover = (contratoId: number, precoId: number) =>
 export const labFaturamentoRelatorio = (laboratorio_id: number, competencia: string) =>
   api.get<LabFaturamentoRelatorio>("/api/lab/faturamento/relatorio-prestador", {
     params: { laboratorio_id, competencia },
-  }).then((r) => r.data);
+  }).then((r) => {
+    const d = r.data as any;
+    const rawItens = Array.isArray(d?.itens)
+      ? d.itens
+      : Array.isArray(d?.itens_agrupados)
+      ? d.itens_agrupados
+      : [];
+    const itens = rawItens.map((it: any) => ({
+      sigtap_id: it.sigtap_id,
+      codigo_procedimento: it.codigo_procedimento,
+      descricao_procedimento: it.descricao_procedimento,
+      quantidade: it.quantidade ?? it.quantidade_executada ?? 0,
+      valor_unitario: Number(it.valor_unitario || 0),
+      valor_total: Number(it.valor_total || 0),
+      origem_preco: it.origem_preco || "sigtap_padrao",
+    }));
+    return {
+      ...d,
+      cnes_laboratorio: d.cnes_laboratorio || "",
+      responsavel_tecnico: d.responsavel_tecnico || "",
+      horario_funcionamento: d.horario_funcionamento || "",
+      total_solicitacoes: d.total_solicitacoes ?? d.qtd_solicitacoes ?? 0,
+      total_exames: d.total_exames ?? d.qtd_exames_total ?? 0,
+      valor_total: d.valor_total ?? d.valor_total_bruto ?? 0,
+      valor_glosado: d.valor_glosado ?? d.valor_glosas ?? 0,
+      valor_aprovado: d.valor_aprovado ?? d.valor_total_liquido ?? 0,
+      itens,
+      itens_agrupados: itens,
+    } as LabFaturamentoRelatorio;
+  });
 
 export const labFaturamentoAprovar = (p: {
   laboratorio_id: number;
