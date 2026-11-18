@@ -416,15 +416,26 @@ def agendar_lote_fila(
         if not fila or fila.status != "na_fila":
             continue
         ids_exames = sigtap_ids
-        if fila.observacoes and "SIGTAP_IDS:" in fila.observacoes:
+        parsed_ids: list[int] = []
+        if getattr(fila, "sigtap_ids_json", None):
+            try:
+                import json
+                parsed = json.loads(fila.sigtap_ids_json)
+                if isinstance(parsed, list) and parsed:
+                    parsed_ids = [int(x) for x in parsed if str(x).isdigit()]
+            except Exception:
+                parsed_ids = []
+        if not parsed_ids and fila.observacoes and "SIGTAP_IDS:" in fila.observacoes:
             try:
                 import json
                 trecho = fila.observacoes.split("SIGTAP_IDS:")[1].split("|")[0].strip()
                 parsed = json.loads(trecho)
                 if isinstance(parsed, list) and parsed:
-                    ids_exames = [int(x) for x in parsed]
+                    parsed_ids = [int(x) for x in parsed if str(x).isdigit()]
             except Exception:
-                pass
+                parsed_ids = []
+        if parsed_ids:
+            ids_exames = parsed_ids
         try:
             m = criar_solicitacao_mestre(
                 db,

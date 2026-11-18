@@ -31,13 +31,21 @@ class DetalhesDiagnostico(BaseModel):
 class DiagnosticoResponse(BaseModel):
     resumo: ResumoDiagnostico
     detalhes: DetalhesDiagnostico
+    cache_hit: bool = False
+    gerado_em: Optional[datetime] = None
 
 
 # ==============================================================================
 # UNIFICAÇÃO (R3)
 # ==============================================================================
 
-EntidadeUnificavel = Literal["pacientes", "medicos", "unidades", "laboratorios"]
+EntidadeUnificavel = Literal[
+    "pacientes",
+    "medicos",
+    "unidades",
+    "laboratorios",
+    "prestadores",
+]
 
 
 class UnificarRegistrosRequest(BaseModel):
@@ -136,3 +144,54 @@ class LogAuditoriaItem(BaseModel):
 class AuditoriaGerenciamentoResponse(BaseModel):
     logs: List[LogAuditoriaItem] = Field(default_factory=list)
     total: int = 0
+
+
+# ==============================================================================
+# RESOLUÇÃO INDIVIDUAL E EM LOTE DE INCONSISTÊNCIAS
+# ==============================================================================
+
+class ResolverInconsistenciaItem(BaseModel):
+    tipo: str = Field(
+        description="Tipo da inconsistência/duplicidade reportada pelo diagnóstico"
+    )
+    dominio: str = Field(
+        description="Domínio: 'pacientes', 'filas', 'laboratorio', 'viagens' ou 'cadastros'"
+    )
+    chave_unica: Optional[str] = Field(
+        default=None,
+        description="Identificador único da ocorrência para correlação no lote",
+    )
+    dados: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Metadados da ocorrência retornada pelo diagnóstico",
+    )
+    parametros: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Parâmetros opcionais para customizar a correção",
+    )
+
+
+class ResolverInconsistenciaResultado(BaseModel):
+    chave_unica: Optional[str] = None
+    tipo: str
+    dominio: str
+    sucesso: bool
+    mensagem: str
+    registros_afetados: int = 0
+
+
+class ResolverLoteRequest(BaseModel):
+    itens: List[ResolverInconsistenciaItem] = Field(
+        min_length=1,
+        max_length=500,
+        description="Lista de ocorrências selecionadas para correção em lote",
+    )
+
+
+class ResolverLoteResponse(BaseModel):
+    sucesso: bool
+    total_solicitados: int
+    total_resolvidos: int
+    total_falhas: int
+    mensagem: str
+    resultados: List[ResolverInconsistenciaResultado] = Field(default_factory=list)

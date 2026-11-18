@@ -4315,6 +4315,11 @@ export type ItemDiagnostico = {
   dominio: "pacientes" | "filas" | "laboratorio" | "viagens" | "cadastros" | string;
   descricao: string;
   chave?: string;
+  chave_unica?: string;
+  corrigivel?: boolean;
+  acao_sugerida?: string;
+  descricao_correcao?: string;
+  entidade_unificavel?: EntidadeUnificavel;
   total?: number;
   ids?: number[];
   id?: number;
@@ -4335,9 +4340,46 @@ export type DetalhesDiagnostico = {
 export type DiagnosticoResponse = {
   resumo: ResumoDiagnostico;
   detalhes: DetalhesDiagnostico;
+  cache_hit?: boolean;
+  gerado_em?: string | null;
 };
 
-export type EntidadeUnificavel = "pacientes" | "medicos" | "unidades" | "laboratorios";
+export type EntidadeUnificavel =
+  | "pacientes"
+  | "medicos"
+  | "unidades"
+  | "laboratorios"
+  | "prestadores";
+
+export type ResolverInconsistenciaItem = {
+  tipo: string;
+  dominio: string;
+  chave_unica?: string;
+  dados: Record<string, unknown>;
+  parametros?: Record<string, unknown>;
+};
+
+export type ResolverInconsistenciaResultado = {
+  chave_unica?: string | null;
+  tipo: string;
+  dominio: string;
+  sucesso: boolean;
+  mensagem: string;
+  registros_afetados: number;
+};
+
+export type ResolverLoteRequest = {
+  itens: ResolverInconsistenciaItem[];
+};
+
+export type ResolverLoteResponse = {
+  sucesso: boolean;
+  total_solicitados: number;
+  total_resolvidos: number;
+  total_falhas: number;
+  mensagem: string;
+  resultados: ResolverInconsistenciaResultado[];
+};
 
 export type UnificarRequest = {
   entidade: EntidadeUnificavel;
@@ -4418,11 +4460,32 @@ export type LogAuditoriaItem = AuditoriaItem;
 export type AuditoriaDadosResponse = AuditoriaResponse;
 export type AuditoriaGerenciamentoResponse = AuditoriaResponse;
 
-export const obterDiagnosticoDados = (dominio?: string): Promise<DiagnosticoResponse> =>
-  api
+export const obterDiagnosticoDados = (
+  dominio?: string,
+  forcar = false
+): Promise<DiagnosticoResponse> => {
+  const params: Record<string, unknown> = {};
+  if (dominio && dominio !== "todos") params.dominio = dominio;
+  if (forcar) params.forcar = true;
+  return api
     .get<DiagnosticoResponse>("/api/v1/gerenciamento-dados/diagnostico", {
-      params: dominio && dominio !== "todos" ? { dominio } : undefined,
+      params: Object.keys(params).length > 0 ? params : undefined,
     })
+    .then((r) => r.data);
+};
+
+export const resolverInconsistenciaDados = (
+  payload: ResolverInconsistenciaItem
+): Promise<ResolverInconsistenciaResultado> =>
+  api
+    .post<ResolverInconsistenciaResultado>("/api/v1/gerenciamento-dados/resolver", payload)
+    .then((r) => r.data);
+
+export const resolverInconsistenciasLoteDados = (
+  payload: ResolverLoteRequest
+): Promise<ResolverLoteResponse> =>
+  api
+    .post<ResolverLoteResponse>("/api/v1/gerenciamento-dados/resolver-lote", payload)
     .then((r) => r.data);
 
 export const unificarRegistros = (payload: UnificarRequest): Promise<UnificarResponse> =>

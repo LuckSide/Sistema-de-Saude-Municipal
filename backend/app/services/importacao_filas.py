@@ -5,8 +5,12 @@ Idempotente: upsert paciente por CPF (ou nome) + dedup exame por
 """
 
 import csv
+import hashlib
 import io
+import json
+import re
 import secrets
+import unicodedata
 from datetime import date, datetime
 
 from sqlmodel import Session, select
@@ -19,11 +23,34 @@ from app.models.tfd import (
     TipoFila,
 )
 
-MAX_BYTES = 30 * 1024 * 1024
-MAX_LINHAS = 50000
+MAX_BYTES = 60 * 1024 * 1024
+MAX_LINHAS = 200000
 MAX_ERROS = 25
 
 STATUS_VALIDOS = {"aguardando", "agendado", "realizado", "cancelado"}
+VALORES_PLACEHOLDER = {
+    "",
+    "desconhecido",
+    "desconhecida",
+    "n/a",
+    "na",
+    "nao informado",
+    "não informado",
+    "nenhum",
+    "nenhuma",
+    "null",
+    "none",
+    "-",
+    "--",
+}
+PREFIXOS_SIGTAP_LAB = (
+    "DOSAGEM DE ",
+    "PESQUISA DE ",
+    "DETERMINACAO DE ",
+    "EXAME DE ",
+    "CONTAGEM DE ",
+    "TESTE DE ",
+)
 
 # header normalizado -> campo canônico
 ALIASES = {
@@ -43,10 +70,21 @@ ALIASES = {
     "fone": "telefone",
     "codigo_procedimento": "codigo_procedimento",
     "cod_procedimento": "codigo_procedimento",
+    "codigo_sigtap": "codigo_procedimento",
+    "cod_sigtap": "codigo_procedimento",
+    "sigtap": "codigo_procedimento",
     "codigo": "codigo_pedido",
     "codigo_pedido": "codigo_pedido",
     "nome_procedimento": "nome_procedimento",
+    "descricao_procedimento": "nome_procedimento",
     "procedimento": "nome_procedimento",
+    "nome_exame": "nome_procedimento",
+    "exame": "nome_procedimento",
+    "exames_realizados": "exames_realizados",
+    "exames_solicitados": "exames_realizados",
+    "procedimentos": "exames_realizados",
+    "quantidade": "quantidade",
+    "qtd": "quantidade",
     "servico_tipo_nome": "tipo_fila",
     "tipo_fila": "tipo_fila",
     "tipo": "tipo_fila",
@@ -106,10 +144,65 @@ def parse_data(s: str) -> date | None:
     return None
 
 
+def _normalizar_texto_proc(s: str) -> str:
+    """Remove acentos, converte para maiúsculas e colapsa espaços extras."""
+    if not s:
+        return ""
+    nfkd = unicodedata.normalize("NFKD", s.strip())
+    sem_acento = "".join(c for c in nfkd if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", sem_acento).strip().upper()
+
+
+def _eh_placeholder(s: str) -> bool:
+    return (s or "").strip().lower() in VALORES_PLACEHOLDER
+
+
+def _parse_procedimentos_texto(raw: str) -> list[dict]:
+    """Interpreta listas textuais de exames separadas por ';', '|' ou quebra de linha.
+
+    Suporta:
+    - "0202020380 - HEMOGRAMA COMPLETO; 0202010473 - DOSAGEM DE GLICOSE"
+    - "HEMOGRAMA COMPLETO; GLICOSE; COLESTEROL TOTAL"
+    """
+    if _eh_placeholder(raw):
+        return []
+    partes = re.split(r"[;|\n]+", raw)
+    out: list[dict] = []
+    for p in partes:
+        txt = p.strip()
+        if _eh_placeholder(txt):
+            continue
+        m = re.match(r"^(\d[\d.\-]{7,13})\s*[-–:]\s*(.+)$", txt)
+        if m:
+            out.append({
+                "codigo_procedimento": so_digitos(m.group(1)),
+                "nome_procedimento": m.group(2).strip(),
+                "quantidade": 1,
+            })
+        else:
+            dig = so_digitos(txt)
+            if dig and len(dig) in (9, 10) and dig == re.sub(r"[.\-\s]", "", txt):
+                out.append({
+                    "codigo_procedimento": dig,
+                    "nome_procedimento": "",
+                    "quantidade": 1,
+                })
+            else:
+                out.append({
+                    "codigo_procedimento": "",
+                    "nome_procedimento": txt,
+                    "quantidade": 1,
+                })
+    return out
+
+
 def normalizar_linha(bruta: dict) -> dict:
     """Mapeia headers variados p/ campos canônicos (case-insensitive)."""
-    out: dict[str, str] = {}
+    out: dict = {}
     for k, v in (bruta or {}).items():
+        if k == "_procedimentos_lista" and isinstance(v, list):
+            out["_procedimentos_lista"] = v
+            continue
         chave = (str(k) if k is not None else "").strip().lower()
         campo = ALIASES.get(chave)
         if not campo:
@@ -176,39 +269,117 @@ def ler_xlsx(conteudo: bytes) -> list[dict]:
     return out
 
 
+def _extrair_procedimentos_container(container_el) -> list[dict]:
+    """Extrai lista de procedimentos individuais a partir de um elemento XML aninhado.
+
+    Suporta:
+    - <procedimento><codigo_procedimento>...</codigo_procedimento><nome_procedimento>...</nome_procedimento></procedimento>
+    - <procedimento codigo="0202020380" nome="HEMOGRAMA COMPLETO" quantidade="1" />
+    - <procedimento>0202020380 - HEMOGRAMA COMPLETO</procedimento>
+    """
+    procs: list[dict] = []
+    for sub in list(container_el):
+        sub_filhos = list(sub)
+        if sub_filhos or sub.attrib:
+            cod = ""
+            nome = ""
+            qtd = 1
+            # Atributos XML
+            for ak, av in (sub.attrib or {}).items():
+                akl = ak.strip().lower()
+                avl = (av or "").strip()
+                if akl in ("codigo", "codigo_procedimento", "cod_procedimento", "codigo_sigtap", "sigtap"):
+                    cod = avl
+                elif akl in ("nome", "nome_procedimento", "descricao", "descricao_procedimento", "exame"):
+                    nome = avl
+                elif akl in ("quantidade", "qtd"):
+                    try:
+                        qtd = max(1, int(avl))
+                    except ValueError:
+                        qtd = 1
+            # Sub-elementos XML
+            for g in sub_filhos:
+                gt = (g.tag or "").strip().lower()
+                gv = (g.text or "").strip()
+                if gt in ("codigo", "codigo_procedimento", "cod_procedimento", "codigo_sigtap", "cod_sigtap", "sigtap"):
+                    if gv:
+                        cod = gv
+                elif gt in ("nome", "nome_procedimento", "descricao", "descricao_procedimento", "exame", "procedimento"):
+                    if gv:
+                        nome = gv
+                elif gt in ("quantidade", "qtd"):
+                    try:
+                        qtd = max(1, int(gv))
+                    except ValueError:
+                        qtd = 1
+            if not nome and not sub_filhos and (sub.text or "").strip():
+                nome = (sub.text or "").strip()
+            if not (_eh_placeholder(cod) and _eh_placeholder(nome)):
+                procs.append({
+                    "codigo_procedimento": "" if _eh_placeholder(cod) else cod,
+                    "nome_procedimento": "" if _eh_placeholder(nome) else nome,
+                    "quantidade": qtd,
+                })
+        else:
+            txt = (sub.text or "").strip()
+            procs.extend(_parse_procedimentos_texto(txt))
+    return procs
+
+
 def ler_xml(conteudo: bytes) -> list[dict]:
-    """Parse tolerante e de alta performance para arquivos XML de filas e exames laboratoriais."""
+    """Parse tolerante e de alta performance para arquivos XML de filas e exames laboratoriais.
+
+    Suporta:
+    1. Formato agrupado/aninhado (<exame> contendo <exames_realizados>/<procedimentos>/<itens> com sub-tags);
+    2. Formato achatado/tabular (um nó <exame> por procedimento com <codigo_procedimento>/<nome_procedimento>);
+    3. Lista delimitada em texto dentro de <exames_realizados> (separada por ';' ou '|').
+    """
     import xml.etree.ElementTree as ET
     try:
         root = ET.fromstring(conteudo)
     except Exception as e:
         raise ValueError(f"XML inválido ou corrompido: {e}")
 
-    # Suporta nós <exame>, <registro>, <item>, <solicitacao>, <paciente>
-    itens = root.findall(".//exame")
+    # Prioriza filhos diretos (ou 1 nível abaixo de wrapper) para não capturar sub-tags <exame>/<item> internas
+    itens = []
+    for tag_cand in ("exame", "solicitacao", "registro", "item", "paciente"):
+        itens = root.findall(f"./{tag_cand}")
+        if itens:
+            break
     if not itens:
-        itens = root.findall(".//registro")
+        for wrapper in ("exames", "solicitacoes", "registros", "itens"):
+            w = root.find(f"./{wrapper}")
+            if w is not None and len(list(w)) > 0:
+                itens = list(w)
+                break
     if not itens:
-        itens = root.findall(".//item")
-    if not itens:
-        itens = root.findall(".//solicitacao")
-    if not itens:
-        itens = root.findall(".//paciente")
+        for tag_cand in ("exame", "registro", "item", "solicitacao", "paciente"):
+            itens = root.findall(f".//{tag_cand}")
+            if itens:
+                break
     if not itens:
         filhos = list(root)
         if filhos and len(filhos) > 1:
             itens = filhos
 
     if not itens:
-        raise ValueError("Nenhum registro encontrado no XML (esperado tags <exame>, <registro> ou <item>)")
+        raise ValueError("Nenhum registro encontrado no XML (esperado tags <exame>, <solicitacao>, <registro> ou <item>)")
+
+    CONTAINER_PROCS_TAGS = {"exames_realizados", "exames_solicitados", "procedimentos", "itens", "exames"}
 
     out: list[dict] = []
     for el in itens:
-        d: dict[str, str] = {}
+        d: dict = {}
+        procs_lista: list[dict] = []
         for child in el:
             tag = (child.tag or "").strip().lower()
-            val = (child.text or "").strip()
-            d[tag] = val
+            if tag in CONTAINER_PROCS_TAGS and len(list(child)) > 0:
+                procs_lista.extend(_extrair_procedimentos_container(child))
+            else:
+                val = (child.text or "").strip()
+                d[tag] = val
+        if procs_lista:
+            d["_procedimentos_lista"] = procs_lista
         if d:
             out.append(d)
     return out
@@ -270,18 +441,160 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
     """Upsert pacientes + exames + catálogo. Retorna só contadores (sem PII)."""
     lidas = len(linhas)
     pacientes_novos = exames_novos = atualizados = duplicados = ignoradas = 0
+    itens_lab_novos = sigtap_criados = 0
     erros: list[dict] = []
     tipos_cat: dict[str, str] = {}
     esps_cat: dict[str, str] = {}
     procs_cat: dict[tuple[str, str], tuple[str, str, str]] = {}
 
     from app.models.cadastros_saude import UnidadeSaude
-    from app.models.lab_fase6 import FilaPsf, Laboratorio, SolicitacaoMestre, ItemSolic
+    from app.models.lab_fase6 import FilaPsf, Laboratorio, SolicitacaoMestre, ItemSolic, VagaLab
     from app.models.lab_exames import SigtapProcedimento
-    from sqlmodel import or_
+    from sqlmodel import func as sm_func, or_
 
     lab_padrao_cache: Laboratorio | None = None
-    sigtap_padrao_id: int | None = db.exec(select(SigtapProcedimento.id).limit(1)).first()
+
+    # Cache em memória da tabela SIGTAP (código exato, 10 dígitos, nome normalizado e nome curto sem prefixo)
+    sigtap_por_codigo: dict[str, SigtapProcedimento] = {}
+    sigtap_por_nome: dict[str, SigtapProcedimento] = {}
+    sigtap_por_nome_curto: dict[str, SigtapProcedimento] = {}
+
+    def _eh_sigtap_lab(sp: SigtapProcedimento) -> bool:
+        return (sp.grupo_codigo == "02") or (sp.codigo or "").startswith("02")
+
+    def _registrar_sigtap_cache(sp: SigtapProcedimento) -> None:
+        cod_u = (sp.codigo or "").strip().upper()
+        if cod_u:
+            sigtap_por_codigo.setdefault(cod_u, sp)
+            dig = so_digitos(cod_u)
+            if dig:
+                sigtap_por_codigo.setdefault(dig, sp)
+                if len(dig) in (9, 10):
+                    sigtap_por_codigo.setdefault(dig.zfill(10), sp)
+        nome_n = _normalizar_texto_proc(sp.descricao or "")
+        if nome_n:
+            atual = sigtap_por_nome.get(nome_n)
+            if atual is None or (_eh_sigtap_lab(sp) and not _eh_sigtap_lab(atual)):
+                sigtap_por_nome[nome_n] = sp
+            for pref in PREFIXOS_SIGTAP_LAB:
+                if nome_n.startswith(pref):
+                    curto = nome_n[len(pref):].strip()
+                    if curto:
+                        atual_c = sigtap_por_nome_curto.get(curto)
+                        if atual_c is None or (_eh_sigtap_lab(sp) and not _eh_sigtap_lab(atual_c)):
+                            sigtap_por_nome_curto[curto] = sp
+                    break
+
+    for sp_existente in db.exec(select(SigtapProcedimento)).all():
+        _registrar_sigtap_cache(sp_existente)
+
+    def _resolver_ou_criar_sigtap(cod_raw: str, nome_raw: str) -> SigtapProcedimento | None:
+        nonlocal sigtap_criados
+        cod_clean = "" if _eh_placeholder(cod_raw) else (cod_raw or "").strip()
+        nome_clean = "" if _eh_placeholder(nome_raw) else (nome_raw or "").strip()
+        if not cod_clean and not nome_clean:
+            return None
+
+        # 1. Lookup por código (exato, somente dígitos, zero-padded 10 dígitos)
+        cod_u = cod_clean.upper()
+        cod_dig = so_digitos(cod_clean)
+        if cod_u:
+            hit = sigtap_por_codigo.get(cod_u)
+            if hit:
+                return hit
+            if cod_dig:
+                hit = sigtap_por_codigo.get(cod_dig)
+                if hit:
+                    return hit
+                if len(cod_dig) in (9, 10):
+                    hit = sigtap_por_codigo.get(cod_dig.zfill(10))
+                    if hit:
+                        return hit
+
+        # 2. Fallback por nome normalizado (exato e sem prefixo "DOSAGEM DE "/"PESQUISA DE "...)
+        nome_n = _normalizar_texto_proc(nome_clean)
+        if nome_n:
+            hit = sigtap_por_nome.get(nome_n) or sigtap_por_nome_curto.get(nome_n)
+            if hit:
+                return hit
+            for pref in PREFIXOS_SIGTAP_LAB:
+                if nome_n.startswith(pref):
+                    curto = nome_n[len(pref):].strip()
+                    if curto:
+                        hit = sigtap_por_nome_curto.get(curto) or sigtap_por_nome.get(curto)
+                        if hit:
+                            return hit
+                    break
+
+        # 3. Criação controlada (apenas quando há código ou nome real não encontrado)
+        if cod_dig and len(cod_dig) in (9, 10):
+            codigo_novo = cod_dig.zfill(10)
+        elif cod_clean and len(cod_clean) <= 20:
+            codigo_novo = cod_u[:20]
+        else:
+            chave_hash = nome_n or cod_u
+            codigo_novo = f"IMP-{hashlib.sha1(chave_hash.encode('utf-8')).hexdigest()[:12].upper()}"
+
+        if codigo_novo in sigtap_por_codigo:
+            return sigtap_por_codigo[codigo_novo]
+
+        desc_nova = (nome_clean or f"PROCEDIMENTO {codigo_novo}")[:255]
+        grupo_cod = codigo_novo[:2] if len(codigo_novo) >= 2 and codigo_novo[:2].isdigit() else "02"
+        subgrupo_cod = codigo_novo[:4] if len(codigo_novo) >= 4 and codigo_novo[:4].isdigit() else "0202"
+        novo_sp = SigtapProcedimento(
+            codigo=codigo_novo,
+            descricao=desc_nova,
+            instrumento="BPA-I",
+            grupo_codigo=grupo_cod,
+            subgrupo_codigo=subgrupo_cod,
+            origem_manual=True,
+        )
+        db.add(novo_sp)
+        db.flush()
+        _registrar_sigtap_cache(novo_sp)
+        sigtap_criados += 1
+        return novo_sp
+
+    def _extrair_procs_da_linha(row_norm: dict) -> list[dict]:
+        procs_lista = row_norm.get("_procedimentos_lista")
+        if isinstance(procs_lista, list) and procs_lista:
+            return procs_lista
+        cod_l = "" if _eh_placeholder(row_norm.get("codigo_procedimento") or "") else (row_norm.get("codigo_procedimento") or "").strip()
+        nome_l = "" if _eh_placeholder(row_norm.get("nome_procedimento") or "") else (row_norm.get("nome_procedimento") or "").strip()
+        if cod_l or nome_l:
+            try:
+                qtd_l = max(1, int((row_norm.get("quantidade") or "1").strip()))
+            except ValueError:
+                qtd_l = 1
+            return [{"codigo_procedimento": cod_l, "nome_procedimento": nome_l, "quantidade": qtd_l}]
+        raw_exames = row_norm.get("exames_realizados") or ""
+        if raw_exames and not _eh_placeholder(raw_exames):
+            return _parse_procedimentos_texto(raw_exames)
+        return []
+
+    def _parse_sigtap_ids_json(raw: str | None) -> list[int]:
+        if not raw:
+            return []
+        try:
+            arr = json.loads(raw)
+            if isinstance(arr, list):
+                out_ids: list[int] = []
+                for x in arr:
+                    try:
+                        xi = int(x)
+                        if xi not in out_ids:
+                            out_ids.append(xi)
+                    except (TypeError, ValueError):
+                        continue
+                return out_ids
+        except Exception:
+            pass
+        return []
+
+    SOLIC_RANK = {"agendado": 1, "coletado": 2, "realizado": 3}
+    solic_cache: dict[tuple[int, date], SolicitacaoMestre] = {}
+    itens_solic_cache: dict[int, set[int]] = {}
+    vagas_afetadas: set[tuple[int, date]] = set()
 
     filas_map: dict[str, TipoFila] = {
         tf.nome.strip().upper(): tf for tf in db.exec(select(TipoFila)).all() if tf.nome
@@ -545,23 +858,32 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
         raw_st = (r.get("status") or "").strip().lower()
         dt_agend_lin = parse_data(r.get("data_agendada") or "")
         hora_agend_lin = (r.get("hora_agendada") or "").strip()[:10]
-        if raw_st in ("agendado", "marcado") or (dt_agend_lin is not None and raw_st in ("desconhecido", "")):
-            status = "agendado"
-            status_lab = "agendado"
-        elif raw_st in ("cancelado", "obito", "desistiu"):
-            status = "cancelado"
-            status_lab = "cancelado"
-        elif raw_st in ("realizado", "recepcionado"):
+        if raw_st in ("realizado", "recepcionado", "concluido", "concluído"):
             status = "realizado"
             status_lab = "realizado"
+            status_solic: str | None = "realizado"
+        elif raw_st in ("coletado",):
+            status = "agendado"
+            status_lab = "agendado"
+            status_solic = "coletado"
+        elif raw_st in ("agendado", "marcado") or (dt_agend_lin is not None and raw_st in ("desconhecido", "")):
+            status = "agendado"
+            status_lab = "agendado"
+            status_solic = "agendado"
+        elif raw_st in ("cancelado", "obito", "óbito", "desistiu"):
+            status = "cancelado"
+            status_lab = "cancelado"
+            status_solic = "cancelado"
         else:
             status = "aguardando"
             status_lab = "na_fila"
+            status_solic = None
 
         # Baixa automática imediata se o paciente for óbito ou mudança de município no PEC
         if (getattr(pac, "situacao_cadastral", "") or "").lower() in ("obito", "mudanca_municipio"):
             status = "cancelado"
             status_lab = "cancelado"
+            status_solic = "cancelado"
             db.add(
                 PacienteHistorico(
                     paciente_id=pac.id,
@@ -578,146 +900,278 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
             tipos_cat[tipo.upper()] = tipos_cat.get(tipo.upper(), "")
         if cbo_raw and nome_esp:
             esps_cat[cbo_raw] = nome_esp
-        if cod or nproc:
+        if (cod and not _eh_placeholder(cod)) or (nproc and not _eh_placeholder(nproc)):
             procs_cat[(cod, (nproc or exame).upper())] = (tipo.upper(), cbo_raw, nome_esp)
 
-        ja = db.exec(
-            select(ExameFila).where(
-                ExameFila.paciente_id == pac.id,
-                ExameFila.exame == exame,
-                ExameFila.data_pedido == data_ped,
-                ExameFila.ativo == True,  # noqa: E712
-            )
-        ).first()
-        if ja:
-            houve_alt = False
-            if ja.status != status:
-                ja.status = status
-                houve_alt = True
-            if dt_agend_lin and not ja.data_agendada:
-                ja.data_agendada = dt_agend_lin
-                houve_alt = True
-            if not ja.fila_id and fila_id:
-                ja.fila_id = fila_id
-                houve_alt = True
-            if not ja.unidade_saude_id and unidade_saude_id:
-                ja.unidade_saude_id = unidade_saude_id
-                ja.unidade_nome = unidade_nome
-                ja.unidade_cnes = unidade_cnes
-                houve_alt = True
-            if houve_alt:
-                db.add(ja)
-                atualizados += 1
+        # Segregação de filas: exames laboratoriais vão exclusivamente para lab_fila_psf / lab_solic_mestre / lab_solic_itens
+        # (evitando cruzamento indevido em tfd_exames_fila). Demais filas continuam em tfd_exames_fila.
+        if not eh_lab:
+            ja = db.exec(
+                select(ExameFila).where(
+                    ExameFila.paciente_id == pac.id,
+                    ExameFila.exame == exame,
+                    ExameFila.data_pedido == data_ped,
+                    ExameFila.ativo == True,  # noqa: E712
+                )
+            ).first()
+            if ja:
+                houve_alt = False
+                if ja.status != status:
+                    ja.status = status
+                    houve_alt = True
+                if dt_agend_lin and not ja.data_agendada:
+                    ja.data_agendada = dt_agend_lin
+                    houve_alt = True
+                if not ja.fila_id and fila_id:
+                    ja.fila_id = fila_id
+                    houve_alt = True
+                if not ja.unidade_saude_id and unidade_saude_id:
+                    ja.unidade_saude_id = unidade_saude_id
+                    ja.unidade_nome = unidade_nome
+                    ja.unidade_cnes = unidade_cnes
+                    houve_alt = True
+                if houve_alt:
+                    db.add(ja)
+                    atualizados += 1
+                else:
+                    duplicados += 1
             else:
-                duplicados += 1
+                db.add(ExameFila(
+                    paciente_id=pac.id, exame=exame,
+                    especialidade=tipo[:80], tipo_fila=tipo[:80],
+                    fila_id=fila_id,
+                    codigo_procedimento=cod[:20],
+                    codigo_especialidade=cbo_raw[:10],
+                    nome_especialidade=nome_esp[:120],
+                    prioridade=prioridade_de(r.get("prioridade") or ""),
+                    status=status, data_pedido=data_ped,
+                    data_agendada=dt_agend_lin,
+                    destino=(dest_raw or "")[:120],
+                    unidade_saude_id=unidade_saude_id,
+                    unidade_nome=unidade_nome[:150],
+                    unidade_cnes=unidade_cnes[:20],
+                    observacoes=(r.get("observacao") or "")[:500],
+                    public_token=secrets.token_urlsafe(24),
+                ))
+                exames_novos += 1
         else:
-            db.add(ExameFila(
-                paciente_id=pac.id, exame=exame,
-                especialidade=tipo[:80], tipo_fila=tipo[:80],
-                fila_id=fila_id,
-                codigo_procedimento=cod[:20],
-                codigo_especialidade=cbo_raw[:10],
-                nome_especialidade=nome_esp[:120],
-                prioridade=prioridade_de(r.get("prioridade") or ""),
-                status=status, data_pedido=data_ped,
-                data_agendada=dt_agend_lin,
-                destino=(dest_raw or "")[:120],
-                unidade_saude_id=unidade_saude_id,
-                unidade_nome=unidade_nome[:150],
-                unidade_cnes=unidade_cnes[:20],
-                observacoes=(r.get("observacao") or "")[:500],
-                public_token=secrets.token_urlsafe(24),
-            ))
-            exames_novos += 1
+            # Resolve procedimentos individuais de laboratório via SIGTAP (código -> nome -> criação controlada)
+            procs_brutos = _extrair_procs_da_linha(r)
+            procs_resolvidos: list[tuple[SigtapProcedimento, int]] = []
+            ids_vistos_linha: set[int] = set()
+            for p_item in procs_brutos:
+                sp_res = _resolver_ou_criar_sigtap(
+                    p_item.get("codigo_procedimento") or "",
+                    p_item.get("nome_procedimento") or "",
+                )
+                if sp_res and sp_res.id and sp_res.id not in ids_vistos_linha:
+                    try:
+                        qtd_item = max(1, int(p_item.get("quantidade", 1)))
+                    except (TypeError, ValueError):
+                        qtd_item = 1
+                    procs_resolvidos.append((sp_res, qtd_item))
+                    ids_vistos_linha.add(sp_res.id)
+                    procs_cat[(sp_res.codigo, sp_res.descricao.upper())] = (tipo.upper(), cbo_raw, nome_esp)
 
-        # Sincronização automática para Fila de Exames Laboratoriais (lab_fila_psf)
-        if eh_lab:
+            novos_sigtap_ids = [sp.id for sp, _ in procs_resolvidos if sp.id]
             data_ref_lab = dt_agend_lin or data_ped
+            tipo_lab_label = tipo[:80] or "EXAME_LABORATORIAL"
+
+            cond_data_fila = (
+                or_(
+                    FilaPsf.data_solicitacao == data_ref_lab,
+                    FilaPsf.data_agendada == dt_agend_lin,
+                )
+                if dt_agend_lin is not None
+                else (FilaPsf.data_solicitacao == data_ref_lab)
+            )
+            cond_fila_match = [
+                FilaPsf.tipo_fila == tipo_lab_label,
+                FilaPsf.especialidade == tipo_lab_label,
+            ]
+            if fila_id is not None:
+                cond_fila_match.insert(0, FilaPsf.fila_id == fila_id)
+
             ja_lab = db.exec(
                 select(FilaPsf).where(
                     FilaPsf.paciente_id == pac.id,
-                    or_(
-                        FilaPsf.data_solicitacao == data_ref_lab,
-                        FilaPsf.data_agendada == dt_agend_lin,
-                    ),
-                    or_(
-                        FilaPsf.fila_id == fila_id,
-                        FilaPsf.tipo_fila == (tipo[:80] or "EXAME_LABORATORIAL"),
-                        FilaPsf.especialidade == (tipo[:80] or "EXAME_LABORATORIAL"),
-                    ),
+                    cond_data_fila,
+                    or_(*cond_fila_match),
                 )
             ).first()
+
+            criou_lab = False
+            houve_alt_lab = False
+
             if ja_lab:
+                ids_atuais = _parse_sigtap_ids_json(ja_lab.sigtap_ids_json)
+                ids_merged = list(ids_atuais)
+                for sid in novos_sigtap_ids:
+                    if sid not in ids_merged:
+                        ids_merged.append(sid)
+                if ids_merged != ids_atuais:
+                    ja_lab.sigtap_ids_json = json.dumps(ids_merged)
+                    houve_alt_lab = True
                 if ja_lab.status != status_lab:
                     ja_lab.status = status_lab
+                    houve_alt_lab = True
                 if not ja_lab.fila_id and fila_id:
                     ja_lab.fila_id = fila_id
+                    houve_alt_lab = True
                 if not ja_lab.unidade_saude_id and unidade_saude_id:
                     ja_lab.unidade_saude_id = unidade_saude_id
+                    houve_alt_lab = True
                 if dt_agend_lin and not ja_lab.data_agendada:
                     ja_lab.data_agendada = dt_agend_lin
                     ja_lab.hora_agendada = hora_agend_lin or "07:00"
-                db.add(ja_lab)
+                    houve_alt_lab = True
+                if houve_alt_lab:
+                    db.add(ja_lab)
             else:
                 ja_lab = FilaPsf(
                     paciente_id=pac.id,
-                    especialidade=tipo[:80] or "EXAME_LABORATORIAL",
-                    tipo_fila=tipo[:80] or "EXAME_LABORATORIAL",
+                    especialidade=tipo_lab_label,
+                    tipo_fila=tipo_lab_label,
                     fila_id=fila_id,
-                    unidade_psf=unidade_nome or dest_raw[:120] or tipo[:80] or "PSF",
+                    unidade_psf=unidade_nome or dest_raw[:120] or tipo_lab_label or "PSF",
                     unidade_saude_id=unidade_saude_id,
-                    medico_solicitante=r.get("medico_nome") or "",
+                    medico_solicitante=(r.get("medico_nome") or "")[:120],
                     data_solicitacao=data_ref_lab,
                     data_pedido=data_ped,
                     data_agendada=dt_agend_lin,
                     hora_agendada=hora_agend_lin or ("07:00" if dt_agend_lin else ""),
                     status=status_lab,
                     prioridade=prioridade_de(r.get("prioridade") or ""),
-                    justificativa=r.get("justificativa") or "",
+                    justificativa=(r.get("justificativa") or "")[:500],
                     observacoes=(r.get("observacao") or (f"Código Vivver: {r.get('codigo_pedido') or ''}" if r.get("codigo_pedido") else ""))[:500],
-                    sigtap_ids_json="[]",
+                    sigtap_ids_json=json.dumps(novos_sigtap_ids),
                 )
                 db.add(ja_lab)
                 db.flush()
+                criou_lab = True
 
-            # Sincronização automática para SolicitacaoMestre (lab_solic_mestre) para pedidos com data marcada
-            if dt_agend_lin:
+            # Sincronização automática para SolicitacaoMestre (lab_solic_mestre) e ItemSolic (lab_solic_itens)
+            deve_criar_solic = (
+                status_solic in ("agendado", "coletado", "realizado")
+                and (dt_agend_lin is not None or status_solic in ("coletado", "realizado"))
+            )
+            if deve_criar_solic:
+                dt_solic_mestre = dt_agend_lin or data_ped
                 if not lab_padrao_cache:
-                    lab_p = db.exec(select(Laboratorio).where(Laboratorio.ativo == True)).first()
+                    lab_p = db.exec(select(Laboratorio).where(Laboratorio.ativo == True)).first()  # noqa: E712
                     if not lab_p:
-                        lab_p = Laboratorio(nome="Laboratório Municipal de Guapé", cnes="0000000", ativo=True)
+                        lab_p = Laboratorio(nome="Laboratório Municipal de Guapé", ativo=True)
                         db.add(lab_p)
                         db.flush()
                     lab_padrao_cache = lab_p
 
-                ja_solic = db.exec(
-                    select(SolicitacaoMestre).where(
-                        SolicitacaoMestre.paciente_id == pac.id,
-                        SolicitacaoMestre.data_agendada == dt_agend_lin,
-                        SolicitacaoMestre.status != "cancelado",
-                    )
-                ).first()
-                if not ja_solic:
+                chave_solic = (pac.id, dt_solic_mestre)
+                solic_obj = solic_cache.get(chave_solic)
+                if solic_obj is None:
+                    solic_obj = db.exec(
+                        select(SolicitacaoMestre).where(
+                            SolicitacaoMestre.paciente_id == pac.id,
+                            SolicitacaoMestre.data_agendada == dt_solic_mestre,
+                            SolicitacaoMestre.status != "cancelado",
+                        )
+                    ).first()
+                    if solic_obj is not None:
+                        solic_cache[chave_solic] = solic_obj
+
+                if solic_obj is None:
+                    cod_ped = (r.get("codigo_pedido") or "").strip()
+                    obs_lab = f"Agendamento Vivver #{cod_ped}" if cod_ped else "Importação XML"
                     solic_obj = SolicitacaoMestre(
                         paciente_id=pac.id,
-                        data_agendada=dt_agend_lin,
+                        data_agendada=dt_solic_mestre,
                         hora_agendada=hora_agend_lin or "07:00",
                         laboratorio_id=lab_padrao_cache.id,
-                        status="agendado",
+                        status=status_solic or "agendado",
                         agendado_por="Importação XML",
                         origem_fila_id=ja_lab.id if ja_lab else None,
-                        medico_solicitante=r.get("medico_nome") or "",
-                        unidade_psf=unidade_nome or dest_raw[:120] or tipo[:80] or "PSF",
-                        observacao_laboratorio=f"Agendamento Vivver #{r.get('codigo_pedido') or ''}".strip(),
-                        status_auditoria="pendente_conferencia",
+                        unidade_saude_id=unidade_saude_id,
+                        medico_solicitante=(r.get("medico_nome") or "")[:150],
+                        unidade_psf=(unidade_nome or dest_raw[:120] or tipo_lab_label or "PSF")[:150],
+                        observacao_laboratorio=obs_lab[:500],
+                        status_auditoria="aprovado" if status_solic == "realizado" else "pendente_conferencia",
                     )
                     db.add(solic_obj)
                     db.flush()
-                    if sigtap_padrao_id:
-                        db.add(ItemSolic(solicitacao_id=solic_obj.id, sigtap_id=sigtap_padrao_id, quantidade=1))
+                    solic_cache[chave_solic] = solic_obj
+                    itens_solic_cache[solic_obj.id] = set()
+                    vagas_afetadas.add((solic_obj.laboratorio_id, solic_obj.data_agendada))
+                    if not criou_lab:
+                        houve_alt_lab = True
+                else:
+                    if solic_obj.id not in itens_solic_cache:
+                        existentes_ids = db.exec(
+                            select(ItemSolic.sigtap_id).where(ItemSolic.solicitacao_id == solic_obj.id)
+                        ).all()
+                        itens_solic_cache[solic_obj.id] = {int(x) for x in existentes_ids if x is not None}
+                    alt_solic = False
+                    if SOLIC_RANK.get(status_solic or "", 0) > SOLIC_RANK.get(solic_obj.status or "", 0):
+                        solic_obj.status = status_solic or solic_obj.status
+                        if solic_obj.status == "realizado":
+                            solic_obj.status_auditoria = "aprovado"
+                        alt_solic = True
+                    if not solic_obj.origem_fila_id and ja_lab and ja_lab.id:
+                        solic_obj.origem_fila_id = ja_lab.id
+                        alt_solic = True
+                    if not solic_obj.unidade_saude_id and unidade_saude_id:
+                        solic_obj.unidade_saude_id = unidade_saude_id
+                        alt_solic = True
+                    if alt_solic:
+                        db.add(solic_obj)
+                        houve_alt_lab = True
 
-        if not simular and (exames_novos + atualizados) % 500 == 0:
-            db.commit()
+                # Insere itens individuais (deduplicando por (solicitacao_id, sigtap_id))
+                itens_set = itens_solic_cache.setdefault(solic_obj.id, set())
+                for sp_item, qtd_item in procs_resolvidos:
+                    if sp_item.id and sp_item.id not in itens_set:
+                        valor_unit = round(float(sp_item.valor_sa or 0.0) + float(sp_item.valor_sp or 0.0), 2)
+                        db.add(ItemSolic(
+                            solicitacao_id=solic_obj.id,
+                            sigtap_id=sp_item.id,
+                            quantidade=qtd_item,
+                            valor_unitario_aplicado=valor_unit,
+                            origem_preco="sigtap_padrao",
+                            status_auditoria="aprovado" if solic_obj.status == "realizado" else "pendente_conferencia",
+                        ))
+                        itens_set.add(sp_item.id)
+                        itens_lab_novos += 1
+                        houve_alt_lab = True
+
+            if criou_lab:
+                exames_novos += 1
+            elif houve_alt_lab:
+                atualizados += 1
+            else:
+                duplicados += 1
+
+        if (i % 500) == 0:
+            db.flush()
+
+    # Sincroniza contagem de vagas_ocupadas em VagaLab para as datas afetadas (evita divergencia_contagem_vagas)
+    if vagas_afetadas:
+        db.flush()
+        for lab_id_v, dt_v in vagas_afetadas:
+            vaga = db.exec(
+                select(VagaLab).where(
+                    VagaLab.laboratorio_id == lab_id_v,
+                    VagaLab.data == dt_v,
+                )
+            ).first()
+            if vaga:
+                real_count = db.exec(
+                    select(sm_func.count(SolicitacaoMestre.id)).where(
+                        SolicitacaoMestre.laboratorio_id == lab_id_v,
+                        SolicitacaoMestre.data_agendada == dt_v,
+                        SolicitacaoMestre.status != "cancelado",
+                    )
+                ).one() or 0
+                if vaga.vagas_ocupadas != int(real_count):
+                    vaga.vagas_ocupadas = int(real_count)
+                    db.add(vaga)
 
     n_tipos = n_esps = n_procs = 0
     for nome_u in tipos_cat:
@@ -749,12 +1203,16 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
         n_procs += 1
 
     if not simular:
+        db.commit()
         try:
             from app.services.pec_sync import consolidar_pacientes_duplicados
             consolidar_pacientes_duplicados(db, remover_inelegiveis_sem_vinculo=False)
+            db.commit()
         except Exception:
-            pass
-        db.commit()
+            try:
+                db.rollback()
+            except Exception:
+                pass
 
     return {
         "lidas": lidas,
@@ -763,6 +1221,8 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
         "atualizados": atualizados,
         "duplicados": duplicados,
         "ignoradas": ignoradas,
+        "itens_lab_novos": itens_lab_novos,
+        "sigtap_criados": sigtap_criados,
         "catalogo": {"tipos_novos": n_tipos, "especialidades_novas": n_esps, "procedimentos_novos": n_procs},
         "erros": erros,
     }

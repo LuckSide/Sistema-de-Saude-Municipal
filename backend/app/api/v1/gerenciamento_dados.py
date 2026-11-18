@@ -3,6 +3,8 @@
 Endpoints:
 - GET  /api/v1/gerenciamento-dados/diagnostico
 - POST /api/v1/gerenciamento-dados/unificar
+- POST /api/v1/gerenciamento-dados/resolver
+- POST /api/v1/gerenciamento-dados/resolver-lote
 - POST /api/v1/gerenciamento-dados/limpeza-massa/preview
 - POST /api/v1/gerenciamento-dados/limpeza-massa/executar
 - GET  /api/v1/gerenciamento-dados/auditoria
@@ -24,6 +26,10 @@ from app.schemas.gerenciamento_dados import (
     LimpezaMassaExecutarResponse,
     LimpezaMassaPreviewRequest,
     LimpezaMassaPreviewResponse,
+    ResolverInconsistenciaItem,
+    ResolverInconsistenciaResultado,
+    ResolverLoteRequest,
+    ResolverLoteResponse,
     UnificarRegistrosRequest,
     UnificarRegistrosResponse,
 )
@@ -32,6 +38,8 @@ from app.services.gerenciamento_dados import (
     executar_limpeza_massa,
     listar_logs_auditoria_gerenciamento,
     preview_limpeza_massa,
+    resolver_inconsistencia,
+    resolver_inconsistencias_lote,
     unificar_registros,
 )
 
@@ -42,17 +50,69 @@ router = APIRouter()
     "/diagnostico",
     response_model=DiagnosticoResponse,
     summary="Relatório de diagnóstico de inconsistências e duplicidades",
-    description="Analisa a base de dados nos 5 domínios (pacientes, filas, laboratorio, viagens, cadastros).",
+    description="Analisa a base de dados nos 5 domínios (pacientes, filas, laboratorio, viagens, cadastros), utilizando cache persistente salvo no banco quando forcar=false.",
 )
 def obter_diagnostico(
     dominio: Optional[str] = Query(
         default=None,
         description="Filtro opcional de domínio ('pacientes', 'filas', 'laboratorio', 'viagens', 'cadastros' ou omitir para todos)",
     ),
+    forcar: bool = Query(
+        default=False,
+        description="Quando true, ignora o cache e reexecuta a varredura completa no banco.",
+    ),
     db: Session = Depends(get_db),
     user: User = Depends(require_superuser),
 ) -> DiagnosticoResponse:
-    return diagnosticar_dados(db, dominio=dominio)
+    return diagnosticar_dados(db, dominio=dominio, forcar=forcar)
+
+
+@router.post(
+    "/resolver",
+    response_model=ResolverInconsistenciaResultado,
+    summary="Correção automatizada de uma inconsistência ou duplicidade",
+    description="Executa a ação corretiva adequada para qualquer um dos tipos detectados nos 5 domínios, com bloqueio transacional, auditoria e invalidação do cache.",
+)
+def resolver_item(
+    payload: ResolverInconsistenciaItem,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_superuser),
+    _senha_guard: User = Depends(require_senha_ok),
+) -> ResolverInconsistenciaResultado:
+    client_ip = request.client.host if request.client else ""
+    user_agent = request.headers.get("user-agent", "")
+    return resolver_inconsistencia(
+        db=db,
+        item=payload,
+        user=user,
+        client_ip=client_ip,
+        user_agent=user_agent,
+    )
+
+
+@router.post(
+    "/resolver-lote",
+    response_model=ResolverLoteResponse,
+    summary="Correção em lote de inconsistências selecionadas",
+    description="Processa em lote os itens selecionados usando savepoints isolados por item, auditoria consolidada e invalidação automática do cache.",
+)
+def resolver_lote(
+    payload: ResolverLoteRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_superuser),
+    _senha_guard: User = Depends(require_senha_ok),
+) -> ResolverLoteResponse:
+    client_ip = request.client.host if request.client else ""
+    user_agent = request.headers.get("user-agent", "")
+    return resolver_inconsistencias_lote(
+        db=db,
+        request=payload,
+        user=user,
+        client_ip=client_ip,
+        user_agent=user_agent,
+    )
 
 
 @router.post(

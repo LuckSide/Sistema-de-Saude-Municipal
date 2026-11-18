@@ -1630,6 +1630,11 @@ def _init_db_impl() -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_tfd_viagem_fila_exame_ativo ON tfd_viagem_fila (exame_fila_id) WHERE exame_fila_id IS NOT NULL AND status IN ('aguardando', 'alocado')",
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_apac_solicitacoes_numero_apac ON apac_solicitacoes (numero_apac) WHERE numero_apac IS NOT NULL AND numero_apac != ''",
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_lab_solic_mestre_origem_fila_ativa ON lab_solic_mestre (origem_fila_id) WHERE origem_fila_id IS NOT NULL AND status != 'cancelado'",
+            """CREATE TABLE IF NOT EXISTS gerenciamento_dados_cache (
+                chave VARCHAR(40) PRIMARY KEY,
+                payload_json TEXT NOT NULL,
+                atualizado_em TIMESTAMP NOT NULL
+            )""",
         ]:
             try:
                 with conn.begin_nested():

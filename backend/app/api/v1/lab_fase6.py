@@ -582,23 +582,47 @@ def remover_feriado(
     return None
 
 
-def _formatar_fila_out(o: FilaPsf, pac: Paciente | None) -> FilaPsfOut:
-    sids = []
-    nomes = []
+def _extrair_sigtap_ids_fila(o: FilaPsf) -> list[int]:
+    """Lê IDs SIGTAP de sigtap_ids_json (primário) com fallback para observacoes."""
+    import json
+    raw_json = getattr(o, "sigtap_ids_json", None) or ""
+    if raw_json and raw_json.strip() not in ("", "[]"):
+        try:
+            parsed = json.loads(raw_json)
+            if isinstance(parsed, list):
+                ids = [int(x) for x in parsed if str(x).isdigit()]
+                if ids:
+                    return ids
+        except Exception:
+            pass
     obs = o.observacoes or ""
     if "SIGTAP_IDS:" in obs:
         try:
-            import json
             parte = obs.split("SIGTAP_IDS:")[1].split("|")[0].strip()
-            sids = json.loads(parte)
+            parsed = json.loads(parte)
+            if isinstance(parsed, list):
+                return [int(x) for x in parsed if str(x).isdigit()]
         except Exception:
-            sids = []
+            pass
+    return []
+
+
+def _formatar_fila_out(
+    o: FilaPsf,
+    pac: Paciente | None,
+    sigtap_nomes_map: dict[int, str] | None = None,
+) -> FilaPsfOut:
+    sids = _extrair_sigtap_ids_fila(o)
+    nomes: list[str] = []
+    obs = o.observacoes or ""
     if "Exames:" in obs:
         try:
             nomes_str = obs.split("Exames:")[1].split("|")[0].strip()
             nomes = [n.strip() for n in nomes_str.split(",") if n.strip()]
         except Exception:
             nomes = []
+    if not nomes and sids and sigtap_nomes_map:
+        nomes = [sigtap_nomes_map[sid] for sid in sids if sid in sigtap_nomes_map]
 
     prontuario = getattr(pac, "codigo_prontuario", "") or (gerar_prontuario_aleatorio(pac_id=pac.id) if pac and pac.id else "")
     return FilaPsfOut(
@@ -742,10 +766,23 @@ def listar_fila(
     base = base.order_by(func.coalesce(FilaPsf.data_pedido, FilaPsf.data_solicitacao).desc(), FilaPsf.id.desc())
     total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
     meta = paginar(total, page, limit)
+    rows_page = list(db.exec(base.offset(meta["offset"]).limit(limit)).all())
+    all_sids: set[int] = set()
+    for o in rows_page:
+        all_sids.update(_extrair_sigtap_ids_fila(o))
+    sigtap_nomes_map: dict[int, str] = {}
+    if all_sids:
+        for sp_id, sp_desc in db.exec(
+            select(SigtapProcedimento.id, SigtapProcedimento.descricao).where(
+                SigtapProcedimento.id.in_(all_sids)
+            )
+        ).all():
+            if sp_id is not None:
+                sigtap_nomes_map[int(sp_id)] = sp_desc or ""
     out = []
-    for o in db.exec(base.offset(meta["offset"]).limit(limit)).all():
+    for o in rows_page:
         pac = db.get(Paciente, o.paciente_id)
-        out.append(_formatar_fila_out(o, pac))
+        out.append(_formatar_fila_out(o, pac, sigtap_nomes_map))
     return {"data": out, "total": total, "page": meta["page"], "pages": meta["pages"]}
 
 
@@ -783,6 +820,7 @@ def criar_fila(
         prioridade=data.prioridade,
         justificativa=data.justificativa,
         observacoes=obs_final,
+        sigtap_ids_json=__import__("json").dumps(data.sigtap_ids or []),
         status="na_fila",
         fila_id=data.fila_id,
         tipo_fila=data.tipo_fila or data.especialidade.strip(),
@@ -868,6 +906,9 @@ def atualizar_fila(
         trecho_ids = json.dumps(data.sigtap_ids)
         trecho_nomes = ", ".join(nomes_exames)
         obj.observacoes = f"Exames: {trecho_nomes} | SIGTAP_IDS:{trecho_ids}"[:500]
+    if data.sigtap_ids is not None:
+        import json
+        obj.sigtap_ids_json = json.dumps(data.sigtap_ids)
     if data.fila_id is not None:
         obj.fila_id = data.fila_id
     if data.tipo_fila is not None:
@@ -1104,19 +1145,13 @@ def verificar_duplicidade_lab(
     for f in filas:
         match_fila = False
         obs = f.observacoes or ""
-        # Verifica se o ID do SIGTAP consta em formato JSON ou texto
-        if "SIGTAP_IDS:" in obs:
-            try:
-                import json
-                trecho = obs.split("SIGTAP_IDS:")[1].split("|")[0].strip()
-                p_ids = json.loads(trecho)
-                if isinstance(p_ids, list):
-                    for bid in ids_busca:
-                        if bid in p_ids:
-                            match_fila = True
-                            break
-            except Exception:
-                pass
+        # Verifica se o ID do SIGTAP consta em sigtap_ids_json ou em observacoes
+        p_ids = _extrair_sigtap_ids_fila(f)
+        if p_ids:
+            for bid in ids_busca:
+                if bid in p_ids:
+                    match_fila = True
+                    break
 
         if not match_fila:
             for bid in ids_busca:

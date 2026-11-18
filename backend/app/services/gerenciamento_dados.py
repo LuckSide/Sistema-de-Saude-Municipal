@@ -84,6 +84,10 @@ from app.schemas.gerenciamento_dados import (
     LimpezaMassaPreviewRequest,
     LimpezaMassaPreviewResponse,
     LogAuditoriaItem,
+    ResolverInconsistenciaItem,
+    ResolverInconsistenciaResultado,
+    ResolverLoteRequest,
+    ResolverLoteResponse,
     ResumoDiagnostico,
     ResumoDominio,
     UnificarRegistrosRequest,
@@ -117,14 +121,18 @@ def acquire_advisory_lock(db: Session, lock_id: int) -> None:
 
 
 def tabelas_existentes(db: Session) -> Set[str]:
-    """Retorna o conjunto de nomes de tabelas existentes no banco conectado."""
+    """Retorna o conjunto de nomes de tabelas existentes usando a conexão ativa da sessão."""
     try:
-        bind = db.get_bind()
-        if bind is None:
-            return set()
-        return set(sa_inspect(bind).get_table_names())
+        conn = db.connection()
+        return set(sa_inspect(conn).get_table_names())
     except Exception:
-        return set()
+        try:
+            bind = db.get_bind()
+            if bind is None:
+                return set()
+            return set(sa_inspect(bind).get_table_names())
+        except Exception:
+            return set()
 
 
 def normalizar_texto(s: Optional[str]) -> str:
@@ -878,8 +886,10 @@ def diagnosticar_cadastros(db: Session) -> Tuple[List[Dict[str, Any]], List[Dict
                     "descricao": f"Existem {len(ids)} médicos cadastrados com o mesmo CRM ({crm_norm}).",
                 })
 
-        # Médicos com CBO ou descrição de motorista
+        # Médicos com CBO ou descrição de motorista (apenas ativos)
         for m in medicos:
+            if not m.ativo:
+                continue
             cbo = (m.cbo_codigo or "").strip()
             desc = (m.cbo_descricao or "").strip().lower()
             nome = (m.nome or "").strip().lower()
@@ -985,14 +995,18 @@ def diagnosticar_cadastros(db: Session) -> Tuple[List[Dict[str, Any]], List[Dict
                     "descricao": f"Existem {len(ids)} prestadores cadastrados com o mesmo CNES ({c}).",
                 })
 
-        # Cruzamento duplicado entre lab_laboratorios e prestadores
+        # Cruzamento duplicado entre lab_laboratorios e prestadores (apenas ativos)
         if "lab_laboratorios" in tabs:
             labs = list(db.exec(select(Laboratorio)).all())
             for l in labs:
+                if not l.ativo:
+                    continue
                 l_nome = normalizar_texto(l.nome)
                 if not l_nome:
                     continue
                 for p in prestadores:
+                    if not p.ativo:
+                        continue
                     p_razao = normalizar_texto(p.razao_social)
                     p_fantasia = normalizar_texto(p.nome_fantasia)
                     if l_nome in (p_razao, p_fantasia):
@@ -1029,39 +1043,436 @@ def diagnosticar_cadastros(db: Session) -> Tuple[List[Dict[str, Any]], List[Dict
     return duplicidades, inconsistencias
 
 
-def diagnosticar_dados(db: Session, dominio: Optional[str] = None) -> DiagnosticoResponse:
-    """Executa a rotina consolidada de diagnóstico nos 5 domínios."""
+_CACHE_CHAVE_TODOS = "todos"
+
+_METADADOS_CORRECAO: Dict[str, Tuple[str, str, Optional[str]]] = {
+    # Pacientes
+    "duplicidade_cpf": (
+        "Unificar pacientes",
+        "Preserva o cadastro mais completo/antigo, reatribui todas as 18 tabelas vinculadas e exclui os duplicados.",
+        "pacientes",
+    ),
+    "duplicidade_cns": (
+        "Unificar pacientes",
+        "Preserva o cadastro mais completo/antigo, reatribui vínculos e exclui os duplicados.",
+        "pacientes",
+    ),
+    "duplicidade_nome_nascimento": (
+        "Unificar pacientes",
+        "Preserva o cadastro mais completo/antigo, reatribui vínculos e exclui os duplicados.",
+        "pacientes",
+    ),
+    "pec_co_seq_duplicado": (
+        "Unificar cadastros PEC",
+        "Consolida os cadastros com a mesma chave co_seq_cidadao_pec no registro principal.",
+        "pacientes",
+    ),
+    "obito_com_pendencias": (
+        "Cancelar pendências ativas",
+        "Cancela exames em fila, solicitações laboratoriais agendadas e remove alocações em viagens ativas do paciente.",
+        None,
+    ),
+    "divergencia_obito_situacao": (
+        "Sincronizar situação/óbito",
+        "Alinha a situação cadastral com a data de óbito (marca 'obito' se houver data ou registra a data faltante).",
+        None,
+    ),
+    # Filas
+    "duplicidade_tfd_exames_fila": (
+        "Cancelar pedidos duplicados",
+        "Mantém o pedido mais avançado/antigo na fila TFD e cancela os pedidos repetidos.",
+        None,
+    ),
+    "duplicidade_lab_fila_psf": (
+        "Cancelar solicitações duplicadas",
+        "Mantém a solicitação mais avançada/antiga na fila PSF e cancela as repetidas.",
+        None,
+    ),
+    "cruzamento_indevido_tfd_lab": (
+        "Remover da fila TFD",
+        "Cancela o pedido redundante da Regulação Geral, mantendo o exame apenas na fila de laboratório (PSF).",
+        None,
+    ),
+    "tipo_fila_invalido": (
+        "Corrigir vínculo de fila",
+        "Tenta revincular ao tipo de fila correspondente pelo nome ou limpa a referência inválida (fila_id).",
+        None,
+    ),
+    "tipo_fila_duplicado": (
+        "Unificar tipos de fila",
+        "Reatribui os exames e filas PSF para o tipo de fila principal e exclui os cadastros duplicados.",
+        None,
+    ),
+    # Laboratório
+    "duplicidade_agendamento_dia": (
+        "Consolidar agendamentos",
+        "Move os procedimentos únicos para o agendamento principal, cancela os repetidos e recalcula as vagas.",
+        None,
+    ),
+    "mestre_sem_itens": (
+        "Cancelar agendamento vazio",
+        "Cancela a solicitação sem procedimentos, devolve a fila PSF para 'na_fila' e atualiza as vagas.",
+        None,
+    ),
+    "item_lab_orfao": (
+        "Excluir item órfão",
+        "Remove o item de exame vinculado a uma solicitação inexistente ou cancelada.",
+        None,
+    ),
+    "itens_duplicados_mesma_solicitacao": (
+        "Remover itens duplicados",
+        "Mantém apenas um registro do procedimento SIGTAP na solicitação e exclui as cópias.",
+        None,
+    ),
+    "solicitacao_com_fila_inexistente": (
+        "Limpar vínculo de fila",
+        "Remove o ponteiro quebrado origem_fila_id da solicitação laboratorial.",
+        None,
+    ),
+    "fila_psf_agendada_sem_mestre": (
+        "Devolver à fila PSF",
+        "Retorna o status da fila PSF de 'agendado' para 'na_fila' para permitir novo agendamento.",
+        None,
+    ),
+    "divergencia_contagem_vagas": (
+        "Sincronizar contagem de vagas",
+        "Atualiza vagas_ocupadas no banco com o número real de agendamentos ativos naquela data.",
+        None,
+    ),
+    # Viagens
+    "paciente_duplicado_mesma_viagem": (
+        "Remover alocação duplicada",
+        "Mantém apenas uma alocação do paciente na viagem e exclui os registros excedentes.",
+        None,
+    ),
+    "passageiro_alocado_fila_aguardando": (
+        "Sincronizar fila p/ alocado",
+        "Atualiza o status da fila de transporte para 'alocado', refletindo a viagem ativa.",
+        None,
+    ),
+    "fila_viagem_alocada_sem_viagem": (
+        "Devolver à fila de viagem",
+        "Retorna o status da fila de transporte para 'aguardando', pois não há viagem ativa vinculada.",
+        None,
+    ),
+    "viagem_fila_exame_inexistente": (
+        "Limpar vínculo de exame",
+        "Remove a referência quebrada exame_fila_id da fila de transporte.",
+        None,
+    ),
+    "auto_acompanhamento_viagem": (
+        "Remover auto-acompanhante",
+        "Limpa o campo acompanhante_id inválido onde o paciente acompanhava a si mesmo.",
+        None,
+    ),
+    "acompanhante_inexistente": (
+        "Limpar acompanhante inválido",
+        "Remove o ponteiro acompanhante_id que referencia um paciente inexistente.",
+        None,
+    ),
+    "lotacao_veiculo_excedida": (
+        "Ajustar lotação do veículo",
+        "Desaloca os últimos passageiros excedentes da viagem e os devolve à fila de transporte como 'aguardando'.",
+        None,
+    ),
+    # Cadastros
+    "duplicidade_medico_cpf": (
+        "Unificar médicos",
+        "Preserva o cadastro principal do médico, reatribui solicitações/filas e exclui os duplicados.",
+        "medicos",
+    ),
+    "duplicidade_medico_crm": (
+        "Unificar médicos",
+        "Preserva o cadastro principal do médico, reatribui solicitações/filas e exclui os duplicados.",
+        "medicos",
+    ),
+    "medico_cbo_motorista": (
+        "Inativar cadastro indevido",
+        "Inativa o profissional cadastrado incorretamente como médico com CBO/descrição de motorista.",
+        None,
+    ),
+    "medico_unidades_invalidas": (
+        "Limpar unidades inválidas",
+        "Remove os IDs de unidades de saúde inexistentes do cadastro do médico.",
+        None,
+    ),
+    "duplicidade_unidade_cnes": (
+        "Unificar unidades",
+        "Preserva a unidade principal, reatribui vínculos e exclui as unidades duplicadas.",
+        "unidades",
+    ),
+    "unidade_cnes_invalido": (
+        "Normalizar CNES",
+        "Formata o CNES para 7 dígitos numéricos (ou limpa o campo se não houver dígitos aproveitáveis).",
+        None,
+    ),
+    "duplicidade_prestador_cnpj": (
+        "Unificar prestadores",
+        "Preserva o prestador principal, mescla dados complementares e remove os duplicados.",
+        "prestadores",
+    ),
+    "duplicidade_prestador_cnes": (
+        "Unificar prestadores",
+        "Preserva o prestador principal, mescla dados complementares e remove os duplicados.",
+        "prestadores",
+    ),
+    "cruzamento_lab_prestador_duplicado": (
+        "Inativar prestador redundante",
+        "Inativa o registro coincidente na tabela de Prestadores, mantendo ativo o cadastro em Laboratórios.",
+        None,
+    ),
+    "duplicidade_laboratorio_nome": (
+        "Unificar laboratórios",
+        "Preserva o laboratório principal, reatribui contratos/vagas/agendamentos e exclui os duplicados.",
+        "laboratorios",
+    ),
+}
+
+
+def _gerar_chave_unica_item(item: Dict[str, Any]) -> str:
+    """Gera identificador estável e determinístico para cada ocorrência do diagnóstico."""
+    dominio = str(item.get("dominio") or "geral")
+    tipo = str(item.get("tipo") or "desconhecido")
+    partes: List[str] = [dominio, tipo]
+
+    for campo in (
+        "chave",
+        "tabela",
+        "id",
+        "paciente_id",
+        "tfd_fila_id",
+        "lab_fila_id",
+        "solicitacao_id",
+        "item_id",
+        "sigtap_id",
+        "fila_id",
+        "vaga_id",
+        "viagem_id",
+        "viagem_paciente_id",
+        "viagem_fila_id",
+        "medico_id",
+        "unidade_id",
+        "laboratorio_id",
+        "prestador_id",
+        "data_agendada",
+    ):
+        val = item.get(campo)
+        if val is not None and val != "":
+            partes.append(f"{campo}={val}")
+
+    for lista_campo in ("ids", "itens_ids", "solicitacoes_ids"):
+        lst = item.get(lista_campo)
+        if isinstance(lst, list) and lst:
+            partes.append(f"{lista_campo}={','.join(str(x) for x in sorted(lst))}")
+
+    return "|".join(partes)
+
+
+def _enriquecer_item_diagnostico(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Adiciona chave_unica e metadados de correção a qualquer ocorrência do diagnóstico."""
+    tipo = str(item.get("tipo") or "")
+    acao, desc_corr, entidade_unif = _METADADOS_CORRECAO.get(
+        tipo,
+        ("Corrigir inconsistência", "Aplica a correção automatizada para esta ocorrência.", None),
+    )
+    enriquecido = dict(item)
+    enriquecido["chave_unica"] = _gerar_chave_unica_item(enriquecido)
+    enriquecido["corrigivel"] = True
+    enriquecido["acao_sugerida"] = acao
+    enriquecido["descricao_correcao"] = desc_corr
+    if entidade_unif is not None:
+        enriquecido["entidade_unificavel"] = entidade_unif
+    return enriquecido
+
+
+def _eh_postgres(db: Session) -> bool:
+    try:
+        bind = db.get_bind()
+        return getattr(getattr(bind, "dialect", None), "name", "") == "postgresql"
+    except Exception:
+        return False
+
+
+def _garantir_tabela_cache(db: Session) -> None:
+    """Garante existência da tabela gerenciamento_dados_cache em PostgreSQL e SQLite."""
+    ddl = text(
+        "CREATE TABLE IF NOT EXISTS gerenciamento_dados_cache ("
+        "chave VARCHAR(40) PRIMARY KEY, "
+        "payload_json TEXT NOT NULL, "
+        "atualizado_em TIMESTAMP NOT NULL)"
+    )
+    try:
+        if _eh_postgres(db):
+            with db.begin_nested():
+                db.execute(ddl)
+        else:
+            db.execute(ddl)
+    except Exception as exc:
+        logger.debug("Tabela gerenciamento_dados_cache já existente ou indisponível: %s", exc)
+
+
+def _ler_cache_diagnostico(db: Session) -> Optional[DiagnosticoResponse]:
+    """Lê o diagnóstico em cache persistido no banco (compartilhado entre workers Gunicorn)."""
+    try:
+        _garantir_tabela_cache(db)
+        row = db.execute(
+            text(
+                "SELECT payload_json, atualizado_em FROM gerenciamento_dados_cache "
+                "WHERE chave = :chave"
+            ),
+            {"chave": _CACHE_CHAVE_TODOS},
+        ).first()
+        if not row:
+            return None
+        payload_raw, atualizado_em = row[0], row[1]
+        data = json.loads(payload_raw)
+        resp = DiagnosticoResponse.model_validate(data)
+        resp.cache_hit = True
+        if isinstance(atualizado_em, str):
+            try:
+                resp.gerado_em = datetime.fromisoformat(atualizado_em)
+            except ValueError:
+                resp.gerado_em = None
+        else:
+            resp.gerado_em = atualizado_em
+        return resp
+    except Exception as exc:
+        logger.debug("Falha ao ler cache de diagnóstico (será recalculado): %s", exc)
+        return None
+
+
+def _gravar_cache_diagnostico(db: Session, resp: DiagnosticoResponse, agora: datetime) -> None:
+    """Persiste o diagnóstico completo no cache do banco."""
+    try:
+        _garantir_tabela_cache(db)
+        payload_str = resp.model_dump_json()
+        params_del = {"chave": _CACHE_CHAVE_TODOS}
+        params_ins = {
+            "chave": _CACHE_CHAVE_TODOS,
+            "payload_json": payload_str,
+            "atualizado_em": agora,
+        }
+        sql_del = text("DELETE FROM gerenciamento_dados_cache WHERE chave = :chave")
+        sql_ins = text(
+            "INSERT INTO gerenciamento_dados_cache (chave, payload_json, atualizado_em) "
+            "VALUES (:chave, :payload_json, :atualizado_em)"
+        )
+        if _eh_postgres(db):
+            with db.begin_nested():
+                db.execute(sql_del, params_del)
+                db.execute(sql_ins, params_ins)
+        else:
+            db.execute(sql_del, params_del)
+            db.execute(sql_ins, params_ins)
+        db.commit()
+    except Exception as exc:
+        logger.debug("Falha ao gravar cache de diagnóstico: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
+def invalidar_cache_diagnostico(db: Session) -> None:
+    """Invalida o cache de diagnóstico dentro da transação atual após qualquer alteração."""
+    sql_del = text("DELETE FROM gerenciamento_dados_cache WHERE chave = :chave")
+    try:
+        if _eh_postgres(db):
+            with db.begin_nested():
+                db.execute(sql_del, {"chave": _CACHE_CHAVE_TODOS})
+        else:
+            if "gerenciamento_dados_cache" in tabelas_existentes(db):
+                db.execute(sql_del, {"chave": _CACHE_CHAVE_TODOS})
+    except Exception as exc:
+        logger.debug("Cache de diagnóstico não invalidado (tabela ainda não criada): %s", exc)
+
+
+def _filtrar_resposta_dominio(resp: DiagnosticoResponse, dom: str) -> DiagnosticoResponse:
+    """Retorna visão filtrada por domínio mantendo os metadados de cache."""
+    if dom == "todos":
+        return resp
+    detalhes = DetalhesDiagnostico()
+    resumo = ResumoDiagnostico()
+    if dom == "pacientes":
+        detalhes.pacientes = resp.detalhes.pacientes
+        resumo.pacientes = resp.resumo.pacientes
+    elif dom == "filas":
+        detalhes.filas = resp.detalhes.filas
+        resumo.filas = resp.resumo.filas
+    elif dom == "laboratorio":
+        detalhes.laboratorio = resp.detalhes.laboratorio
+        resumo.laboratorio = resp.resumo.laboratorio
+    elif dom == "viagens":
+        detalhes.viagens = resp.detalhes.viagens
+        resumo.viagens = resp.resumo.viagens
+    elif dom == "cadastros":
+        detalhes.cadastros = resp.detalhes.cadastros
+        resumo.cadastros = resp.resumo.cadastros
+    return DiagnosticoResponse(
+        resumo=resumo,
+        detalhes=detalhes,
+        cache_hit=resp.cache_hit,
+        gerado_em=resp.gerado_em,
+    )
+
+
+def diagnosticar_dados(
+    db: Session,
+    dominio: Optional[str] = None,
+    forcar: bool = False,
+    usar_cache: bool = True,
+) -> DiagnosticoResponse:
+    """Executa a rotina consolidada de diagnóstico nos 5 domínios com cache persistente."""
+    dom = (dominio or "todos").strip().lower()
+
+    if usar_cache and not forcar:
+        cached = _ler_cache_diagnostico(db)
+        if cached is not None:
+            return _filtrar_resposta_dominio(cached, dom)
+
     detalhes = DetalhesDiagnostico()
     resumo = ResumoDiagnostico()
 
-    dom = (dominio or "todos").strip().lower()
+    # Quando cache está habilitado, sempre computa todos os domínios para preencher o cache completo
+    computar_todos = usar_cache or dom == "todos"
 
-    if dom in ("todos", "pacientes"):
+    if computar_todos or dom == "pacientes":
         dups, incs = diagnosticar_pacientes(db)
-        detalhes.pacientes = dups + incs
+        detalhes.pacientes = [_enriquecer_item_diagnostico(i) for i in (dups + incs)]
         resumo.pacientes = ResumoDominio(duplicidades=len(dups), inconsistencias=len(incs))
 
-    if dom in ("todos", "filas"):
+    if computar_todos or dom == "filas":
         dups, incs = diagnosticar_filas(db)
-        detalhes.filas = dups + incs
+        detalhes.filas = [_enriquecer_item_diagnostico(i) for i in (dups + incs)]
         resumo.filas = ResumoDominio(duplicidades=len(dups), inconsistencias=len(incs))
 
-    if dom in ("todos", "laboratorio"):
+    if computar_todos or dom == "laboratorio":
         dups, incs = diagnosticar_laboratorio(db)
-        detalhes.laboratorio = dups + incs
+        detalhes.laboratorio = [_enriquecer_item_diagnostico(i) for i in (dups + incs)]
         resumo.laboratorio = ResumoDominio(duplicidades=len(dups), inconsistencias=len(incs))
 
-    if dom in ("todos", "viagens"):
+    if computar_todos or dom == "viagens":
         dups, incs = diagnosticar_viagens(db)
-        detalhes.viagens = dups + incs
+        detalhes.viagens = [_enriquecer_item_diagnostico(i) for i in (dups + incs)]
         resumo.viagens = ResumoDominio(duplicidades=len(dups), inconsistencias=len(incs))
 
-    if dom in ("todos", "cadastros"):
+    if computar_todos or dom == "cadastros":
         dups, incs = diagnosticar_cadastros(db)
-        detalhes.cadastros = dups + incs
+        detalhes.cadastros = [_enriquecer_item_diagnostico(i) for i in (dups + incs)]
         resumo.cadastros = ResumoDominio(duplicidades=len(dups), inconsistencias=len(incs))
 
-    return DiagnosticoResponse(resumo=resumo, detalhes=detalhes)
+    agora = datetime.now(timezone.utc).replace(tzinfo=None)
+    resp_completa = DiagnosticoResponse(
+        resumo=resumo,
+        detalhes=detalhes,
+        cache_hit=False,
+        gerado_em=agora,
+    )
+
+    if usar_cache:
+        _gravar_cache_diagnostico(db, resp_completa, agora)
+
+    return _filtrar_resposta_dominio(resp_completa, dom)
 
 
 # ==============================================================================
@@ -1098,12 +1509,15 @@ def unificar_registros(
             resp = _unificar_unidades(db, mid, did, request.campos_mesclar, user, client_ip, user_agent)
         elif entidade == "laboratorios":
             resp = _unificar_laboratorios(db, mid, did, request.campos_mesclar, user, client_ip, user_agent)
+        elif entidade == "prestadores":
+            resp = _unificar_prestadores(db, mid, did, request.campos_mesclar, user, client_ip, user_agent)
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Entidade '{entidade}' não suportada para unificação.",
             )
 
+        invalidar_cache_diagnostico(db)
         db.commit()
         return resp
     except HTTPException:
@@ -2224,6 +2638,7 @@ def executar_limpeza_massa(
             device=user_agent,
         )
 
+        invalidar_cache_diagnostico(db)
         db.commit()
 
         return LimpezaMassaExecutarResponse(
@@ -2241,6 +2656,1038 @@ def executar_limpeza_massa(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro durante a execução da limpeza em massa: {exc}",
+        )
+
+
+# ==============================================================================
+# UNIFICAÇÃO DE PRESTADORES + RESOLUÇÃO INDIVIDUAL E EM LOTE (TODOS OS DOMÍNIOS)
+# ==============================================================================
+
+def _unificar_prestadores(
+    db: Session,
+    mid: int,
+    did: int,
+    campos_mesclar: Optional[Dict[str, Any]],
+    user: Optional[User],
+    client_ip: str,
+    user_agent: str,
+) -> UnificarRegistrosResponse:
+    """Unifica dois cadastros de Prestador preservando o principal e excluindo o duplicado."""
+    p_master = db.get(Prestador, mid)
+    p_dup = db.get(Prestador, did)
+    if not p_master:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Prestador principal ID {mid} não encontrado.",
+        )
+    if not p_dup:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Prestador duplicado ID {did} não encontrado.",
+        )
+
+    for campo in (
+        "nome_fantasia",
+        "cnpj",
+        "cnes",
+        "responsavel_nome",
+        "responsavel_telefone",
+        "email",
+        "telefone",
+        "endereco",
+        "municipio",
+        "observacoes",
+    ):
+        val_m = getattr(p_master, campo, None)
+        val_d = getattr(p_dup, campo, None)
+        if not val_m and val_d:
+            setattr(p_master, campo, val_d)
+
+    if campos_mesclar:
+        for k, v in campos_mesclar.items():
+            if k in PROTECTED_FIELDS or not hasattr(p_master, k):
+                continue
+            setattr(p_master, k, v)
+
+    razao_dup = p_dup.razao_social
+    db.add(p_master)
+    db.delete(p_dup)
+    db.flush()
+
+    registrar_auditoria(
+        db=db,
+        action="DATA_UNIFY_PRESTADOR",
+        entity="PRESTADOR",
+        entity_id=mid,
+        user=user,
+        details={
+            "principal_id": mid,
+            "duplicado_id": did,
+            "razao_social_duplicado": razao_dup,
+            "ip": client_ip,
+        },
+        device=user_agent,
+    )
+
+    return UnificarRegistrosResponse(
+        sucesso=True,
+        mensagem=f"Prestador #{did} ({razao_dup}) unificado no prestador #{mid} ({p_master.razao_social}).",
+        vinculos_reatribuidos=0,
+        registro_excluido_id=did,
+        detalhes={"principal_id": mid, "duplicado_id": did},
+    )
+
+
+def _recalcular_vagas_lab(db: Session, pares_lab_data: Set[Tuple[int, date]]) -> int:
+    """Sincroniza lab_vagas.vagas_ocupadas para todos os pares (laboratorio_id, data) informados."""
+    if not pares_lab_data:
+        return 0
+    tabs = tabelas_existentes(db)
+    if "lab_vagas" not in tabs or "lab_solic_mestre" not in tabs:
+        return 0
+    atualizadas = 0
+    for lab_id, dt in pares_lab_data:
+        if lab_id is None or dt is None:
+            continue
+        vaga = db.exec(
+            select(VagaLab)
+            .where(VagaLab.laboratorio_id == lab_id)
+            .where(VagaLab.data == dt)
+        ).first()
+        if not vaga:
+            continue
+        real_count = db.execute(
+            select(func.count(SolicitacaoMestre.id))
+            .where(SolicitacaoMestre.laboratorio_id == lab_id)
+            .where(SolicitacaoMestre.data_agendada == dt)
+            .where(SolicitacaoMestre.status != "cancelado")
+        ).scalar() or 0
+        if vaga.vagas_ocupadas != real_count:
+            vaga.vagas_ocupadas = int(real_count)
+            db.add(vaga)
+            atualizadas += 1
+    db.flush()
+    return atualizadas
+
+
+def _escolher_principal_paciente(db: Session, ids: List[int]) -> Tuple[Optional[int], List[int]]:
+    """Seleciona o melhor cadastro de paciente como principal e retorna (principal_id, duplicados_ids)."""
+    existentes: List[Paciente] = []
+    for pid in dict.fromkeys(int(x) for x in ids if x is not None):
+        p = db.get(Paciente, pid)
+        if p is not None and p.id is not None:
+            existentes.append(p)
+    if len(existentes) < 2:
+        return (existentes[0].id if existentes else None), []
+
+    def _score(p: Paciente) -> Tuple[int, int]:
+        pts = 0
+        sit = (p.situacao_cadastral or "").lower()
+        if p.data_obito is None and sit in ("ativo", "unificado", ""):
+            pts += 10
+        if p.co_seq_cidadao_pec is not None:
+            pts += 5
+        c_cpf = so_digitos(p.cpf)
+        if len(c_cpf) == 11 and c_cpf != c_cpf[0] * 11:
+            pts += 3
+        c_cns = so_digitos(p.cns)
+        if len(c_cns) == 15 and c_cns != c_cns[0] * 15:
+            pts += 2
+        if p.codigo_prontuario:
+            pts += 1
+        # Maior pontuação primeiro; desempate pelo menor ID
+        return (-pts, p.id or 0)
+
+    existentes.sort(key=_score)
+    principal = existentes[0].id
+    duplicados = [p.id for p in existentes[1:] if p.id is not None]
+    return principal, duplicados
+
+
+def _extrair_ids(dados: Dict[str, Any], *chaves: str) -> List[int]:
+    for ch in chaves:
+        val = dados.get(ch)
+        if isinstance(val, list) and val:
+            out: List[int] = []
+            for x in val:
+                try:
+                    out.append(int(x))
+                except (TypeError, ValueError):
+                    pass
+            if out:
+                return list(dict.fromkeys(out))
+    return []
+
+
+def _resolver_item_interno(
+    db: Session,
+    item: ResolverInconsistenciaItem,
+    user: Optional[User],
+    client_ip: str,
+    user_agent: str,
+) -> ResolverInconsistenciaResultado:
+    """Executa a correção atômica para qualquer um dos 35 tipos de diagnóstico."""
+    tipo = (item.tipo or "").strip()
+    dominio = (item.dominio or "").strip().lower()
+    dados = item.dados or {}
+    params = item.parametros or {}
+    tabs = tabelas_existentes(db)
+
+    def _ok(msg: str, afetados: int = 1) -> ResolverInconsistenciaResultado:
+        return ResolverInconsistenciaResultado(
+            chave_unica=item.chave_unica,
+            tipo=tipo,
+            dominio=dominio,
+            sucesso=True,
+            mensagem=msg,
+            registros_afetados=afetados,
+        )
+
+    def _erro(msg: str) -> ResolverInconsistenciaResultado:
+        return ResolverInconsistenciaResultado(
+            chave_unica=item.chave_unica,
+            tipo=tipo,
+            dominio=dominio,
+            sucesso=False,
+            mensagem=msg,
+            registros_afetados=0,
+        )
+
+    # ------------------------------------------------------------------
+    # DOMÍNIO 1: PACIENTES
+    # ------------------------------------------------------------------
+    if tipo in ("duplicidade_cpf", "duplicidade_cns", "duplicidade_nome_nascimento", "pec_co_seq_duplicado"):
+        ids = _extrair_ids(dados, "ids")
+        principal_override = params.get("registro_principal_id")
+        if principal_override:
+            mid = int(principal_override)
+            existentes_ids = [i for i in ids if db.get(Paciente, i) is not None]
+            if mid not in existentes_ids or len(existentes_ids) < 2:
+                return _ok("Duplicidade de pacientes já resolvida anteriormente.", 0)
+            dups = [i for i in existentes_ids if i != mid]
+        else:
+            mid, dups = _escolher_principal_paciente(db, ids)
+            if not mid or not dups:
+                return _ok("Duplicidade de pacientes já resolvida anteriormente.", 0)
+
+        total_vinculos = 0
+        for did in dups:
+            if db.get(Paciente, did) is None:
+                continue
+            r = _unificar_pacientes(db, mid, did, None, user, client_ip, user_agent)
+            total_vinculos += r.vinculos_reatribuidos
+        return _ok(
+            f"{len(dups)} cadastro(s) duplicado(s) unificado(s) no paciente #{mid} ({total_vinculos} vínculo(s) reatribuído(s)).",
+            len(dups),
+        )
+
+    if tipo == "obito_com_pendencias":
+        pid = dados.get("paciente_id") or dados.get("id")
+        if not pid:
+            return _erro("paciente_id não informado para encerrar pendências.")
+        pid = int(pid)
+        pac = db.get(Paciente, pid)
+        if not pac:
+            return _ok(f"Paciente #{pid} não existe mais na base.", 0)
+
+        encerrados = 0
+        pares_vagas: Set[Tuple[int, date]] = set()
+
+        if "tfd_exames_fila" in tabs:
+            exames = list(
+                db.exec(
+                    select(ExameFila)
+                    .where(ExameFila.paciente_id == pid)
+                    .where(ExameFila.ativo == True)
+                    .where(ExameFila.status.in_(["aguardando", "agendado"]))
+                ).all()
+            )
+            for ef in exames:
+                ef.status = "cancelado"
+                ef.ativo = False
+                db.add(ef)
+                encerrados += 1
+
+        if "lab_fila_psf" in tabs:
+            filas = list(
+                db.exec(
+                    select(FilaPsf)
+                    .where(FilaPsf.paciente_id == pid)
+                    .where(FilaPsf.status.in_(["na_fila", "agendado"]))
+                ).all()
+            )
+            for lf in filas:
+                lf.status = "cancelado"
+                db.add(lf)
+                encerrados += 1
+
+        if "lab_solic_mestre" in tabs:
+            mestres = list(
+                db.exec(
+                    select(SolicitacaoMestre)
+                    .where(SolicitacaoMestre.paciente_id == pid)
+                    .where(SolicitacaoMestre.status == "agendado")
+                ).all()
+            )
+            for sm in mestres:
+                sm.status = "cancelado"
+                db.add(sm)
+                if sm.laboratorio_id and sm.data_agendada:
+                    pares_vagas.add((sm.laboratorio_id, sm.data_agendada))
+                encerrados += 1
+
+        if "tfd_viagem_pacientes" in tabs and "tfd_viagens" in tabs:
+            vps = list(
+                db.exec(
+                    select(ViagemPaciente)
+                    .join(Viagem, Viagem.id == ViagemPaciente.viagem_id)
+                    .where(ViagemPaciente.paciente_id == pid)
+                    .where(Viagem.status.in_(["agendada", "andamento"]))
+                ).all()
+            )
+            for vp in vps:
+                if vp.viagem_fila_id and "tfd_viagem_fila" in tabs:
+                    vf = db.get(ViagemFila, vp.viagem_fila_id)
+                    if vf:
+                        vf.status = "cancelado"
+                        db.add(vf)
+                db.delete(vp)
+                encerrados += 1
+
+        db.flush()
+        _recalcular_vagas_lab(db, pares_vagas)
+        return _ok(
+            f"{encerrados} pendência(s) ativa(s) cancelada(s) para o paciente #{pid} ({pac.nome}).",
+            encerrados,
+        )
+
+    if tipo == "divergencia_obito_situacao":
+        pid = dados.get("paciente_id") or dados.get("id")
+        if not pid:
+            return _erro("paciente_id não informado para sincronizar situação/óbito.")
+        pac = db.get(Paciente, int(pid))
+        if not pac:
+            return _ok(f"Paciente #{pid} não encontrado (possivelmente unificado).", 0)
+
+        sit = (pac.situacao_cadastral or "").lower()
+        if pac.data_obito is not None and sit == "ativo":
+            pac.situacao_cadastral = "obito"
+            db.add(pac)
+            db.flush()
+            return _ok(f"Situação cadastral do paciente #{pac.id} atualizada para 'obito' conforme data de óbito ({pac.data_obito}).", 1)
+        if sit == "obito" and pac.data_obito is None:
+            if params.get("reativar"):
+                pac.situacao_cadastral = "ativo"
+                db.add(pac)
+                db.flush()
+                return _ok(f"Situação cadastral do paciente #{pac.id} revertida para 'ativo'.", 1)
+            pac.data_obito = date.today()
+            db.add(pac)
+            db.flush()
+            return _ok(f"Data de óbito do paciente #{pac.id} preenchida com {pac.data_obito} para consistência cadastral.", 1)
+        return _ok(f"Divergência do paciente #{pac.id} já estava sincronizada.", 0)
+
+    # ------------------------------------------------------------------
+    # DOMÍNIO 2: FILAS DE ESPERA
+    # ------------------------------------------------------------------
+    if tipo == "duplicidade_tfd_exames_fila":
+        ids = _extrair_ids(dados, "ids")
+        registros = [
+            ef for ef in (db.get(ExameFila, i) for i in ids)
+            if ef is not None and ef.ativo and ef.status in ("aguardando", "agendado")
+        ]
+        if len(registros) < 2:
+            return _ok("Duplicidade na fila TFD já resolvida anteriormente.", 0)
+        registros.sort(key=lambda ef: (0 if ef.status == "agendado" else 1, ef.id or 0))
+        mantido = registros[0]
+        cancelados = 0
+        for dup in registros[1:]:
+            dup.status = "cancelado"
+            dup.ativo = False
+            db.add(dup)
+            cancelados += 1
+        db.flush()
+        return _ok(
+            f"Mantido pedido #{mantido.id} na fila TFD e cancelado(s) {cancelados} pedido(s) duplicado(s).",
+            cancelados,
+        )
+
+    if tipo == "duplicidade_lab_fila_psf":
+        ids = _extrair_ids(dados, "ids")
+        registros = [
+            lf for lf in (db.get(FilaPsf, i) for i in ids)
+            if lf is not None and lf.status in ("na_fila", "agendado")
+        ]
+        if len(registros) < 2:
+            return _ok("Duplicidade na fila PSF já resolvida anteriormente.", 0)
+        registros.sort(key=lambda lf: (0 if lf.status == "agendado" else 1, lf.id or 0))
+        mantido = registros[0]
+        cancelados = 0
+        for dup in registros[1:]:
+            if "lab_solic_mestre" in tabs and dup.id is not None:
+                mestres_dup = list(
+                    db.exec(select(SolicitacaoMestre).where(SolicitacaoMestre.origem_fila_id == dup.id)).all()
+                )
+                for sm in mestres_dup:
+                    sm.origem_fila_id = mantido.id
+                    db.add(sm)
+            dup.status = "cancelado"
+            db.add(dup)
+            cancelados += 1
+        db.flush()
+        return _ok(
+            f"Mantida solicitação PSF #{mantido.id} e cancelada(s) {cancelados} duplicata(s).",
+            cancelados,
+        )
+
+    if tipo == "cruzamento_indevido_tfd_lab":
+        tfd_id = dados.get("tfd_fila_id")
+        if not tfd_id:
+            return _erro("tfd_fila_id não informado.")
+        ef = db.get(ExameFila, int(tfd_id))
+        if not ef or not ef.ativo or ef.status == "cancelado":
+            return _ok(f"Pedido TFD #{tfd_id} já estava inativo/cancelado.", 0)
+        ef.ativo = False
+        ef.status = "cancelado"
+        db.add(ef)
+        db.flush()
+        return _ok(
+            f"Pedido laboratorial redundante #{ef.id} removido da Regulação Geral (mantido na Fila PSF).",
+            1,
+        )
+
+    if tipo == "tipo_fila_invalido":
+        tabela = str(dados.get("tabela") or "")
+        reg_id = dados.get("id")
+        if not reg_id:
+            return _erro("ID do registro não informado para corrigir tipo_fila_invalido.")
+        tipos_existentes = list(db.exec(select(TipoFila)).all()) if "tfd_tipos_fila" in tabs else []
+        mapa_nome = {normalizar_texto(tf.nome): tf.id for tf in tipos_existentes if tf.id and tf.nome}
+        mapa_ids = {tf.id for tf in tipos_existentes if tf.id}
+
+        if tabela == "tfd_exames_fila":
+            reg = db.get(ExameFila, int(reg_id))
+            if not reg:
+                return _ok(f"Registro tfd_exames_fila #{reg_id} não existe mais.", 0)
+            if reg.fila_id in mapa_ids or reg.fila_id is None:
+                return _ok(f"Vínculo fila_id do exame #{reg_id} já está regular.", 0)
+            novo_id = mapa_nome.get(normalizar_texto(reg.tipo_fila))
+            reg.fila_id = novo_id
+            db.add(reg)
+            db.flush()
+            return _ok(
+                f"Exame #{reg.id} atualizado: fila_id definido para {novo_id if novo_id else 'nulo (referência inválida removida)'}.",
+                1,
+            )
+        if tabela == "lab_fila_psf":
+            reg_psf = db.get(FilaPsf, int(reg_id))
+            if not reg_psf:
+                return _ok(f"Registro lab_fila_psf #{reg_id} não existe mais.", 0)
+            if reg_psf.fila_id in mapa_ids or reg_psf.fila_id is None:
+                return _ok(f"Vínculo fila_id da fila PSF #{reg_id} já está regular.", 0)
+            novo_id = mapa_nome.get(normalizar_texto(reg_psf.tipo_fila))
+            reg_psf.fila_id = novo_id
+            db.add(reg_psf)
+            db.flush()
+            return _ok(
+                f"Fila PSF #{reg_psf.id} atualizada: fila_id definido para {novo_id if novo_id else 'nulo (referência inválida removida)'}.",
+                1,
+            )
+        return _erro(f"Tabela '{tabela}' não suportada para tipo_fila_invalido.")
+
+    if tipo == "tipo_fila_duplicado":
+        ids = sorted(_extrair_ids(dados, "ids"))
+        existentes = [tf for tf in (db.get(TipoFila, i) for i in ids) if tf is not None and tf.id is not None]
+        if len(existentes) < 2:
+            return _ok("Duplicidade de tipos de fila já resolvida anteriormente.", 0)
+        principal = existentes[0]
+        removidos = 0
+        for dup in existentes[1:]:
+            if "tfd_exames_fila" in tabs:
+                db.execute(
+                    text("UPDATE tfd_exames_fila SET fila_id = :mid WHERE fila_id = :did"),
+                    {"mid": principal.id, "did": dup.id},
+                )
+            if "lab_fila_psf" in tabs:
+                db.execute(
+                    text("UPDATE lab_fila_psf SET fila_id = :mid WHERE fila_id = :did"),
+                    {"mid": principal.id, "did": dup.id},
+                )
+            db.delete(dup)
+            removidos += 1
+        db.flush()
+        return _ok(
+            f"{removidos} tipo(s) de fila duplicado(s) unificado(s) no TipoFila #{principal.id} ({principal.nome}).",
+            removidos,
+        )
+
+    # ------------------------------------------------------------------
+    # DOMÍNIO 3: LABORATÓRIO
+    # ------------------------------------------------------------------
+    if tipo == "duplicidade_agendamento_dia":
+        ids = _extrair_ids(dados, "ids", "solicitacoes_ids")
+        mestres = [
+            sm for sm in (db.get(SolicitacaoMestre, i) for i in ids)
+            if sm is not None and sm.status != "cancelado"
+        ]
+        if len(mestres) < 2:
+            return _ok("Duplicidade de agendamentos no dia já resolvida anteriormente.", 0)
+
+        status_prio = {"realizado": 0, "coletado": 1, "agendado": 2}
+        contagem_itens: Dict[int, int] = {}
+        if "lab_solic_itens" in tabs:
+            for sm in mestres:
+                cnt = db.execute(
+                    select(func.count(ItemSolic.id)).where(ItemSolic.solicitacao_id == sm.id)
+                ).scalar() or 0
+                contagem_itens[sm.id] = int(cnt)
+
+        mestres.sort(key=lambda sm: (status_prio.get(sm.status, 3), -contagem_itens.get(sm.id, 0), sm.id or 0))
+        principal = mestres[0]
+        pares_vagas: Set[Tuple[int, date]] = set()
+        if principal.laboratorio_id and principal.data_agendada:
+            pares_vagas.add((principal.laboratorio_id, principal.data_agendada))
+
+        sigtap_principal: Set[int] = set()
+        if "lab_solic_itens" in tabs:
+            sigtap_principal = {
+                it.sigtap_id
+                for it in db.exec(select(ItemSolic).where(ItemSolic.solicitacao_id == principal.id)).all()
+            }
+
+        cancelados = 0
+        for dup in mestres[1:]:
+            if dup.laboratorio_id and dup.data_agendada:
+                pares_vagas.add((dup.laboratorio_id, dup.data_agendada))
+            if "lab_solic_itens" in tabs:
+                itens_dup = list(db.exec(select(ItemSolic).where(ItemSolic.solicitacao_id == dup.id)).all())
+                for it in itens_dup:
+                    if it.sigtap_id not in sigtap_principal:
+                        it.solicitacao_id = principal.id
+                        db.add(it)
+                        sigtap_principal.add(it.sigtap_id)
+                    else:
+                        db.delete(it)
+            if "lab_resultados_arquivos" in tabs:
+                arqs = list(db.exec(select(LabResultadoArquivo).where(LabResultadoArquivo.solicitacao_id == dup.id)).all())
+                for arq in arqs:
+                    arq.solicitacao_id = principal.id
+                    db.add(arq)
+            if "lab_lotes_itens" in tabs:
+                lotes = list(db.exec(select(LabLoteItem).where(LabLoteItem.solicitacao_id == dup.id)).all())
+                for li in lotes:
+                    li.solicitacao_id = principal.id
+                    db.add(li)
+            dup.status = "cancelado"
+            db.add(dup)
+            cancelados += 1
+
+        db.flush()
+        _recalcular_vagas_lab(db, pares_vagas)
+        return _ok(
+            f"{cancelados} agendamento(s) duplicado(s) consolidado(s) na solicitação #{principal.id} e vagas recalculadas.",
+            cancelados,
+        )
+
+    if tipo == "mestre_sem_itens":
+        solic_id = dados.get("solicitacao_id") or dados.get("id")
+        if not solic_id:
+            return _erro("solicitacao_id não informado.")
+        sm = db.get(SolicitacaoMestre, int(solic_id))
+        if not sm or sm.status == "cancelado":
+            return _ok(f"Solicitação #{solic_id} já estava cancelada ou removida.", 0)
+        if "lab_solic_itens" in tabs:
+            tem_itens = db.execute(
+                select(func.count(ItemSolic.id)).where(ItemSolic.solicitacao_id == sm.id)
+            ).scalar() or 0
+            if tem_itens > 0:
+                return _ok(f"Solicitação #{sm.id} já possui {tem_itens} procedimento(s).", 0)
+        pares_vagas: Set[Tuple[int, date]] = set()
+        if sm.laboratorio_id and sm.data_agendada:
+            pares_vagas.add((sm.laboratorio_id, sm.data_agendada))
+        if sm.origem_fila_id and "lab_fila_psf" in tabs:
+            fp = db.get(FilaPsf, sm.origem_fila_id)
+            if fp and fp.status == "agendado":
+                fp.status = "na_fila"
+                fp.data_agendada = None
+                fp.hora_agendada = ""
+                db.add(fp)
+        sm.status = "cancelado"
+        db.add(sm)
+        db.flush()
+        _recalcular_vagas_lab(db, pares_vagas)
+        return _ok(f"Agendamento vazio #{sm.id} cancelado e fila/vagas atualizadas.", 1)
+
+    if tipo == "item_lab_orfao":
+        item_id = dados.get("item_id") or dados.get("id")
+        if not item_id:
+            return _erro("item_id não informado.")
+        it = db.get(ItemSolic, int(item_id))
+        if not it:
+            return _ok(f"Item laboratorial #{item_id} já removido.", 0)
+        db.delete(it)
+        db.flush()
+        return _ok(f"Item laboratorial órfão #{item_id} excluído com sucesso.", 1)
+
+    if tipo == "itens_duplicados_mesma_solicitacao":
+        itens_ids = sorted(_extrair_ids(dados, "itens_ids", "ids"))
+        existentes = [it for it in (db.get(ItemSolic, i) for i in itens_ids) if it is not None]
+        if len(existentes) < 2:
+            return _ok("Duplicidade de itens na solicitação já resolvida.", 0)
+        mantido = existentes[0]
+        removidos = 0
+        for dup in existentes[1:]:
+            db.delete(dup)
+            removidos += 1
+        db.flush()
+        return _ok(
+            f"Mantido item #{mantido.id} e excluído(s) {removidos} item(ns) duplicado(s) da solicitação #{mantido.solicitacao_id}.",
+            removidos,
+        )
+
+    if tipo == "solicitacao_com_fila_inexistente":
+        solic_id = dados.get("solicitacao_id") or dados.get("id")
+        if not solic_id:
+            return _erro("solicitacao_id não informado.")
+        sm = db.get(SolicitacaoMestre, int(solic_id))
+        if not sm:
+            return _ok(f"Solicitação #{solic_id} não encontrada.", 0)
+        sm.origem_fila_id = None
+        db.add(sm)
+        db.flush()
+        return _ok(f"Referência quebrada origem_fila_id removida da solicitação #{sm.id}.", 1)
+
+    if tipo == "fila_psf_agendada_sem_mestre":
+        fila_id = dados.get("fila_id") or dados.get("id")
+        if not fila_id:
+            return _erro("fila_id não informado.")
+        fp = db.get(FilaPsf, int(fila_id))
+        if not fp:
+            return _ok(f"Fila PSF #{fila_id} não encontrada.", 0)
+        if fp.status != "agendado":
+            return _ok(f"Fila PSF #{fp.id} já está com status '{fp.status}'.", 0)
+        fp.status = "na_fila"
+        fp.data_agendada = None
+        fp.hora_agendada = ""
+        db.add(fp)
+        db.flush()
+        return _ok(f"Fila PSF #{fp.id} retornada para status 'na_fila'.", 1)
+
+    if tipo == "divergencia_contagem_vagas":
+        vaga_id = dados.get("vaga_id") or dados.get("id")
+        if not vaga_id:
+            return _erro("vaga_id não informado.")
+        vaga = db.get(VagaLab, int(vaga_id))
+        if not vaga:
+            return _ok(f"Vaga #{vaga_id} não encontrada.", 0)
+        anterior = vaga.vagas_ocupadas
+        real_count = db.execute(
+            select(func.count(SolicitacaoMestre.id))
+            .where(SolicitacaoMestre.laboratorio_id == vaga.laboratorio_id)
+            .where(SolicitacaoMestre.data_agendada == vaga.data)
+            .where(SolicitacaoMestre.status != "cancelado")
+        ).scalar() or 0
+        vaga.vagas_ocupadas = int(real_count)
+        db.add(vaga)
+        db.flush()
+        return _ok(
+            f"Vaga #{vaga.id} ({vaga.data}) sincronizada: {anterior} → {real_count} ocupada(s).",
+            1,
+        )
+
+    # ------------------------------------------------------------------
+    # DOMÍNIO 4: VIAGENS E TFD
+    # ------------------------------------------------------------------
+    if tipo == "paciente_duplicado_mesma_viagem":
+        ids = _extrair_ids(dados, "ids")
+        vps = [vp for vp in (db.get(ViagemPaciente, i) for i in ids) if vp is not None]
+        if len(vps) < 2:
+            return _ok("Duplicidade de passageiro na viagem já resolvida.", 0)
+        vps.sort(key=lambda vp: (0 if vp.viagem_fila_id else 1, 0 if vp.acompanhante_id else 1, vp.id or 0))
+        mantido = vps[0]
+        removidos = 0
+        for dup in vps[1:]:
+            db.delete(dup)
+            removidos += 1
+        db.flush()
+        return _ok(
+            f"Mantida alocação #{mantido.id} na viagem #{mantido.viagem_id} e removida(s) {removidos} duplicata(s).",
+            removidos,
+        )
+
+    if tipo == "passageiro_alocado_fila_aguardando":
+        vf_id = dados.get("viagem_fila_id")
+        if not vf_id:
+            return _erro("viagem_fila_id não informado.")
+        vf = db.get(ViagemFila, int(vf_id))
+        if not vf:
+            return _ok(f"Fila de viagem #{vf_id} não encontrada.", 0)
+        vf.status = "alocado"
+        db.add(vf)
+        db.flush()
+        return _ok(f"Fila de transporte #{vf.id} atualizada para 'alocado'.", 1)
+
+    if tipo == "fila_viagem_alocada_sem_viagem":
+        vf_id = dados.get("viagem_fila_id")
+        if not vf_id:
+            return _erro("viagem_fila_id não informado.")
+        vf = db.get(ViagemFila, int(vf_id))
+        if not vf:
+            return _ok(f"Fila de viagem #{vf_id} não encontrada.", 0)
+        vf.status = "aguardando"
+        db.add(vf)
+        db.flush()
+        return _ok(f"Fila de transporte #{vf.id} devolvida para 'aguardando'.", 1)
+
+    if tipo == "viagem_fila_exame_inexistente":
+        vf_id = dados.get("viagem_fila_id")
+        if not vf_id:
+            return _erro("viagem_fila_id não informado.")
+        vf = db.get(ViagemFila, int(vf_id))
+        if not vf:
+            return _ok(f"Fila de viagem #{vf_id} não encontrada.", 0)
+        vf.exame_fila_id = None
+        db.add(vf)
+        db.flush()
+        return _ok(f"Referência quebrada exame_fila_id limpa na fila de viagem #{vf.id}.", 1)
+
+    if tipo in ("auto_acompanhamento_viagem", "acompanhante_inexistente"):
+        vp_id = dados.get("viagem_paciente_id")
+        if not vp_id:
+            return _erro("viagem_paciente_id não informado.")
+        vp = db.get(ViagemPaciente, int(vp_id))
+        if not vp:
+            return _ok(f"Alocação de viagem #{vp_id} não encontrada.", 0)
+        vp.acompanhante_id = None
+        db.add(vp)
+        db.flush()
+        return _ok(f"Acompanhante inválido removido da alocação #{vp.id} (viagem #{vp.viagem_id}).", 1)
+
+    if tipo == "lotacao_veiculo_excedida":
+        viagem_id = dados.get("viagem_id")
+        if not viagem_id:
+            return _erro("viagem_id não informado.")
+        v = db.get(Viagem, int(viagem_id))
+        if not v or not v.veiculo_id:
+            return _ok(f"Viagem #{viagem_id} não encontrada ou sem veículo.", 0)
+        veic = db.get(Veiculo, v.veiculo_id)
+        if not veic:
+            return _ok(f"Veículo da viagem #{viagem_id} não encontrado.", 0)
+
+        pass_viagem = list(
+            db.exec(
+                select(ViagemPaciente)
+                .where(ViagemPaciente.viagem_id == v.id)
+                .order_by(ViagemPaciente.id.desc())
+            ).all()
+        )
+
+        def _ocupacao(lista: List[ViagemPaciente]) -> int:
+            return len(lista) + sum(
+                1 for vp in lista if vp.acompanhante_id is not None or bool((vp.acompanhante or "").strip())
+            )
+
+        desalocados = 0
+        while pass_viagem and _ocupacao(pass_viagem) > veic.capacidade:
+            vp = pass_viagem.pop(0)
+            if vp.viagem_fila_id and "tfd_viagem_fila" in tabs:
+                vf = db.get(ViagemFila, vp.viagem_fila_id)
+                if vf:
+                    vf.status = "aguardando"
+                    db.add(vf)
+            db.delete(vp)
+            desalocados += 1
+
+        db.flush()
+        return _ok(
+            f"{desalocados} passageiro(s) excedente(s) desalocado(s) da viagem #{v.id} e devolvido(s) à fila (capacidade {veic.capacidade}).",
+            desalocados,
+        )
+
+    # ------------------------------------------------------------------
+    # DOMÍNIO 5: CADASTROS DE SAÚDE
+    # ------------------------------------------------------------------
+    if tipo in ("duplicidade_medico_cpf", "duplicidade_medico_crm"):
+        ids = sorted(_extrair_ids(dados, "ids"))
+        existentes = [i for i in ids if db.get(Medico, i) is not None]
+        if len(existentes) < 2:
+            return _ok("Duplicidade de médicos já resolvida anteriormente.", 0)
+        mid = int(params.get("registro_principal_id") or existentes[0])
+        if mid not in existentes:
+            mid = existentes[0]
+        dups = [i for i in existentes if i != mid]
+        for did in dups:
+            _unificar_medicos(db, mid, did, None, user, client_ip, user_agent)
+        return _ok(f"{len(dups)} médico(s) duplicado(s) unificado(s) no médico #{mid}.", len(dups))
+
+    if tipo == "medico_cbo_motorista":
+        med_id = dados.get("medico_id") or dados.get("id")
+        if not med_id:
+            return _erro("medico_id não informado.")
+        med = db.get(Medico, int(med_id))
+        if not med:
+            return _ok(f"Médico #{med_id} não encontrado.", 0)
+        if not med.ativo:
+            return _ok(f"Cadastro #{med.id} já estava inativo.", 0)
+        med.ativo = False
+        db.add(med)
+        db.flush()
+        return _ok(f"Cadastro indevido #{med.id} ({med.nome}) inativado na tabela de médicos.", 1)
+
+    if tipo == "medico_unidades_invalidas":
+        med_id = dados.get("medico_id") or dados.get("id")
+        if not med_id:
+            return _erro("medico_id não informado.")
+        med = db.get(Medico, int(med_id))
+        if not med:
+            return _ok(f"Médico #{med_id} não encontrado.", 0)
+        unidades_validas = (
+            {u for u in db.exec(select(UnidadeSaude.id)).all() if u is not None}
+            if "unidades_saude" in tabs
+            else set()
+        )
+        partes = [p.strip() for p in (med.unidades_ids or "").split(",") if p.strip().isdigit()]
+        limpas = [p for p in partes if int(p) in unidades_validas]
+        med.unidades_ids = ",".join(limpas)
+        db.add(med)
+        db.flush()
+        return _ok(
+            f"Unidades inválidas removidas do médico #{med.id} ({med.nome}).",
+            1,
+        )
+
+    if tipo == "duplicidade_unidade_cnes":
+        ids = sorted(_extrair_ids(dados, "ids"))
+        existentes = [i for i in ids if db.get(UnidadeSaude, i) is not None]
+        if len(existentes) < 2:
+            return _ok("Duplicidade de unidades de saúde já resolvida anteriormente.", 0)
+        mid = int(params.get("registro_principal_id") or existentes[0])
+        if mid not in existentes:
+            mid = existentes[0]
+        dups = [i for i in existentes if i != mid]
+        for did in dups:
+            _unificar_unidades(db, mid, did, None, user, client_ip, user_agent)
+        return _ok(f"{len(dups)} unidade(s) duplicada(s) unificada(s) na unidade #{mid}.", len(dups))
+
+    if tipo == "unidade_cnes_invalido":
+        un_id = dados.get("unidade_id") or dados.get("id")
+        if not un_id:
+            return _erro("unidade_id não informado.")
+        un = db.get(UnidadeSaude, int(un_id))
+        if not un:
+            return _ok(f"Unidade #{un_id} não encontrada.", 0)
+        anterior = un.cnes
+        digitos = so_digitos(un.cnes)
+        if 0 < len(digitos) <= 7:
+            un.cnes = digitos.zfill(7)
+        else:
+            un.cnes = ""
+        db.add(un)
+        db.flush()
+        return _ok(
+            f"CNES da unidade #{un.id} ({un.nome}) normalizado: '{anterior}' → '{un.cnes or '(vazio)'}'.",
+            1,
+        )
+
+    if tipo in ("duplicidade_prestador_cnpj", "duplicidade_prestador_cnes"):
+        ids = sorted(_extrair_ids(dados, "ids"))
+        existentes = [i for i in ids if db.get(Prestador, i) is not None]
+        if len(existentes) < 2:
+            return _ok("Duplicidade de prestadores já resolvida anteriormente.", 0)
+        mid = int(params.get("registro_principal_id") or existentes[0])
+        if mid not in existentes:
+            mid = existentes[0]
+        dups = [i for i in existentes if i != mid]
+        for did in dups:
+            _unificar_prestadores(db, mid, did, None, user, client_ip, user_agent)
+        return _ok(f"{len(dups)} prestador(es) duplicado(s) unificado(s) no prestador #{mid}.", len(dups))
+
+    if tipo == "cruzamento_lab_prestador_duplicado":
+        prest_id = dados.get("prestador_id")
+        lab_id = dados.get("laboratorio_id")
+        if not prest_id:
+            return _erro("prestador_id não informado.")
+        prest = db.get(Prestador, int(prest_id))
+        if not prest:
+            return _ok(f"Prestador #{prest_id} não encontrado.", 0)
+        if not prest.ativo:
+            return _ok(f"Prestador #{prest.id} já estava inativo.", 0)
+        prest.ativo = False
+        nota = f"Inativado por duplicidade com Laboratório #{lab_id}."
+        prest.observacoes = f"{prest.observacoes} | {nota}".strip(" |")[:500]
+        db.add(prest)
+        db.flush()
+        return _ok(
+            f"Prestador redundante #{prest.id} ({prest.razao_social}) inativado, mantendo Laboratório #{lab_id} ativo.",
+            1,
+        )
+
+    if tipo == "duplicidade_laboratorio_nome":
+        ids = sorted(_extrair_ids(dados, "ids"))
+        existentes = [i for i in ids if db.get(Laboratorio, i) is not None]
+        if len(existentes) < 2:
+            return _ok("Duplicidade de laboratórios já resolvida anteriormente.", 0)
+        mid = int(params.get("registro_principal_id") or existentes[0])
+        if mid not in existentes:
+            mid = existentes[0]
+        dups = [i for i in existentes if i != mid]
+        for did in dups:
+            _unificar_laboratorios(db, mid, did, None, user, client_ip, user_agent)
+        return _ok(f"{len(dups)} laboratório(s) duplicado(s) unificado(s) no laboratório #{mid}.", len(dups))
+
+    return _erro(f"Tipo de inconsistência '{tipo}' não possui rotina de correção cadastrada.")
+
+
+def resolver_inconsistencia(
+    db: Session,
+    item: ResolverInconsistenciaItem,
+    user: Optional[User] = None,
+    client_ip: str = "",
+    user_agent: str = "",
+) -> ResolverInconsistenciaResultado:
+    """Corrige uma única ocorrência de diagnóstico de forma atômica, auditada e invalidando o cache."""
+    acquire_advisory_lock(db, LOCK_DATA_UNIFY)
+    try:
+        resultado = _resolver_item_interno(db, item, user, client_ip, user_agent)
+        if not resultado.sucesso:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=resultado.mensagem,
+            )
+
+        registrar_auditoria(
+            db=db,
+            action="DATA_RESOLVE_INCONSISTENCY",
+            entity="DATA_MANAGEMENT",
+            entity_id=None,
+            user=user,
+            details={
+                "tipo": item.tipo,
+                "dominio": item.dominio,
+                "chave_unica": item.chave_unica,
+                "registros_afetados": resultado.registros_afetados,
+                "mensagem": resultado.mensagem,
+                "ip": client_ip,
+            },
+            device=user_agent,
+        )
+        invalidar_cache_diagnostico(db)
+        db.commit()
+        return resultado
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Falha ao resolver inconsistência '%s': %s", item.tipo, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao corrigir inconsistência: {exc}",
+        )
+
+
+def resolver_inconsistencias_lote(
+    db: Session,
+    request: ResolverLoteRequest,
+    user: Optional[User] = None,
+    client_ip: str = "",
+    user_agent: str = "",
+) -> ResolverLoteResponse:
+    """Corrige em lote as ocorrências selecionadas, usando savepoints isolados por item."""
+    acquire_advisory_lock(db, LOCK_DATA_UNIFY)
+    resultados: List[ResolverInconsistenciaResultado] = []
+    resolvidos = 0
+    falhas = 0
+    usar_savepoint = _eh_postgres(db)
+
+    try:
+        for item in request.itens:
+            try:
+                if usar_savepoint:
+                    with db.begin_nested():
+                        res = _resolver_item_interno(db, item, user, client_ip, user_agent)
+                        if not res.sucesso:
+                            raise ValueError(res.mensagem)
+                else:
+                    res = _resolver_item_interno(db, item, user, client_ip, user_agent)
+                    if not res.sucesso:
+                        db.rollback()
+                        raise ValueError(res.mensagem)
+                    db.commit()
+                resultados.append(res)
+                resolvidos += 1
+            except HTTPException as http_exc:
+                if not usar_savepoint:
+                    db.rollback()
+                falhas += 1
+                resultados.append(
+                    ResolverInconsistenciaResultado(
+                        chave_unica=item.chave_unica,
+                        tipo=item.tipo,
+                        dominio=item.dominio,
+                        sucesso=False,
+                        mensagem=str(http_exc.detail),
+                        registros_afetados=0,
+                    )
+                )
+            except Exception as item_exc:
+                if not usar_savepoint:
+                    db.rollback()
+                falhas += 1
+                resultados.append(
+                    ResolverInconsistenciaResultado(
+                        chave_unica=item.chave_unica,
+                        tipo=item.tipo,
+                        dominio=item.dominio,
+                        sucesso=False,
+                        mensagem=str(item_exc),
+                        registros_afetados=0,
+                    )
+                )
+
+        if resolvidos > 0:
+            registrar_auditoria(
+                db=db,
+                action="DATA_RESOLVE_BATCH",
+                entity="DATA_MANAGEMENT",
+                entity_id=None,
+                user=user,
+                details={
+                    "total_solicitados": len(request.itens),
+                    "total_resolvidos": resolvidos,
+                    "total_falhas": falhas,
+                    "tipos": sorted({i.tipo for i in request.itens}),
+                    "ip": client_ip,
+                },
+                device=user_agent,
+            )
+            invalidar_cache_diagnostico(db)
+
+        db.commit()
+
+        msg = (
+            f"Correção em lote concluída: {resolvidos} de {len(request.itens)} problema(s) corrigido(s)."
+            if falhas == 0
+            else f"Correção em lote finalizada com avisos: {resolvidos} corrigido(s) e {falhas} falha(s)."
+        )
+        return ResolverLoteResponse(
+            sucesso=falhas == 0,
+            total_solicitados=len(request.itens),
+            total_resolvidos=resolvidos,
+            total_falhas=falhas,
+            mensagem=msg,
+            resultados=resultados,
+        )
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Falha na correção em lote de inconsistências: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro durante a correção em lote: {exc}",
         )
 
 

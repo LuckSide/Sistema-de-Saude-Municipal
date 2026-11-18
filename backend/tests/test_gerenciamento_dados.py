@@ -1520,3 +1520,183 @@ def test_t5_3_unificacao_campos_mesclar_ignora_campos_protegidos(db: Session, ad
     assert l_reloaded.nome == "Lab Nome Atualizado"
     assert db.get(Laboratorio, 999904) is None
 
+
+# ==============================================================================
+# CACHE DO DIAGNÓSTICO + RESOLUÇÃO INDIVIDUAL E EM LOTE (TODOS OS DOMÍNIOS)
+# ==============================================================================
+
+def test_cache_diagnostico_hit_forcar_e_invalidacao(api_client: TestClient, db: Session):
+    """GET /diagnostico deve usar cache persistente (cache_hit=True), respeitar forcar=true e invalidar ao corrigir."""
+    u = UnidadeSaude(nome="UBS CNES Sujo", cnes="123-45")
+    db.add(u)
+    db.commit()
+
+    # 1ª chamada: computa e grava cache
+    r1 = api_client.get("/api/v1/gerenciamento-dados/diagnostico")
+    assert r1.status_code == 200
+    d1 = r1.json()
+    assert d1["cache_hit"] is False
+    assert d1["gerado_em"] is not None
+    assert d1["resumo"]["cadastros"]["inconsistencias"] >= 1
+
+    # 2ª chamada sem forcar: vem instantaneamente do cache
+    r2 = api_client.get("/api/v1/gerenciamento-dados/diagnostico")
+    assert r2.status_code == 200
+    d2 = r2.json()
+    assert d2["cache_hit"] is True
+    assert d2["gerado_em"] == d1["gerado_em"]
+
+    # Chamada com forcar=true: ignora cache e reexecuta
+    r3 = api_client.get("/api/v1/gerenciamento-dados/diagnostico?forcar=true")
+    assert r3.status_code == 200
+    d3 = r3.json()
+    assert d3["cache_hit"] is False
+
+    # Corrige o item via POST /resolver → invalida cache automaticamente
+    item_cnes = next(
+        i for i in d3["detalhes"]["cadastros"] if i["tipo"] == "unidade_cnes_invalido"
+    )
+    assert item_cnes["corrigivel"] is True
+    assert item_cnes["chave_unica"]
+    assert item_cnes["acao_sugerida"]
+
+    r_fix = api_client.post(
+        "/api/v1/gerenciamento-dados/resolver",
+        json={
+            "tipo": item_cnes["tipo"],
+            "dominio": item_cnes["dominio"],
+            "chave_unica": item_cnes["chave_unica"],
+            "dados": item_cnes,
+        },
+    )
+    assert r_fix.status_code == 200
+    assert r_fix.json()["sucesso"] is True
+
+    # Próxima chamada sem forcar deve recalcular (cache foi invalidado) e não reportar mais o problema
+    r4 = api_client.get("/api/v1/gerenciamento-dados/diagnostico")
+    assert r4.status_code == 200
+    d4 = r4.json()
+    assert d4["cache_hit"] is False
+    assert not any(i["tipo"] == "unidade_cnes_invalido" for i in d4["detalhes"]["cadastros"])
+
+
+def test_resolver_lote_multidominio_e_idempotencia(api_client: TestClient, db: Session):
+    """POST /resolver-lote corrige múltiplos domínios em lote e lida com duplicidades sobrepostas sem falhar."""
+    # Domínio Pacientes: mesmo CPF + mesmo CNS + mesmo Nome/Nasc (3 ocorrências apontando para os mesmos 2 IDs!)
+    p1 = Paciente(
+        nome="MARIA LOTE SILVA",
+        cpf="12345678901",
+        cns="700001234567890",
+        nascimento=date(1985, 5, 10),
+        situacao_cadastral="ativo",
+    )
+    p2 = Paciente(
+        nome="MARIA LOTE SILVA",
+        cpf="12345678901",
+        cns="700001234567890",
+        nascimento=date(1985, 5, 10),
+        situacao_cadastral="ativo",
+    )
+    # Paciente com divergência óbito x situação
+    p_obito = Paciente(
+        nome="JOAO OBITO ATIVO",
+        cpf="98765432100",
+        situacao_cadastral="ativo",
+        data_obito=date(2025, 1, 10),
+    )
+    db.add_all([p1, p2, p_obito])
+    db.commit()
+
+    # Pedido ativo para paciente em óbito
+    ef_obito = ExameFila(
+        paciente_id=p_obito.id,
+        exame="HEMOGRAMA",
+        tipo_fila="EXAME",
+        status="aguardando",
+        ativo=True,
+    )
+    # Duplicidade na fila TFD para p1
+    ef_dup1 = ExameFila(
+        paciente_id=p1.id,
+        exame="RAIO X TORAX",
+        codigo_procedimento="0204030170",
+        tipo_fila="IMAGEM",
+        status="aguardando",
+        ativo=True,
+    )
+    ef_dup2 = ExameFila(
+        paciente_id=p1.id,
+        exame="RAIO X TORAX",
+        codigo_procedimento="0204030170",
+        tipo_fila="IMAGEM",
+        status="aguardando",
+        ativo=True,
+    )
+    # Domínio Laboratório: vaga divergente + solicitação mestre vazia
+    lab = Laboratorio(nome="Lab Lote Teste", ativo=True)
+    db.add_all([ef_obito, ef_dup1, ef_dup2, lab])
+    db.commit()
+
+    vaga = VagaLab(
+        laboratorio_id=lab.id,
+        data=date(2026, 11, 20),
+        vagas_totais=10,
+        vagas_ocupadas=7,
+    )
+    sm_vazio = SolicitacaoMestre(
+        paciente_id=p1.id,
+        laboratorio_id=lab.id,
+        data_agendada=date(2026, 11, 20),
+        status="agendado",
+    )
+    # Domínio Cadastros: médico motorista + prestador duplicado com lab
+    med_mot = Medico(nome="CARLOS MOTORISTA", cbo_codigo="782310", cbo_descricao="Motorista", ativo=True)
+    prest = Prestador(razao_social="Lab Lote Teste", cnpj="11222333000181", ativo=True)
+    db.add_all([vaga, sm_vazio, med_mot, prest])
+    db.commit()
+
+    # Executa diagnóstico completo
+    r_diag = api_client.get("/api/v1/gerenciamento-dados/diagnostico?forcar=true")
+    assert r_diag.status_code == 200
+    detalhes = r_diag.json()["detalhes"]
+    todos_itens = (
+        detalhes["pacientes"]
+        + detalhes["filas"]
+        + detalhes["laboratorio"]
+        + detalhes["viagens"]
+        + detalhes["cadastros"]
+    )
+    assert len(todos_itens) >= 7
+    assert all(it.get("corrigivel") is True for it in todos_itens)
+
+    # Corrige TODOS os problemas de uma só vez em lote
+    r_lote = api_client.post(
+        "/api/v1/gerenciamento-dados/resolver-lote",
+        json={
+            "itens": [
+                {
+                    "tipo": it["tipo"],
+                    "dominio": it["dominio"],
+                    "chave_unica": it.get("chave_unica"),
+                    "dados": it,
+                }
+                for it in todos_itens
+            ]
+        },
+    )
+    assert r_lote.status_code == 200
+    body = r_lote.json()
+    assert body["sucesso"] is True
+    assert body["total_falhas"] == 0
+    assert body["total_resolvidos"] == len(todos_itens)
+
+    # Reexecuta diagnóstico e confirma que TODAS as inconsistências foram eliminadas!
+    r_pos = api_client.get("/api/v1/gerenciamento-dados/diagnostico")
+    assert r_pos.status_code == 200
+    pos = r_pos.json()
+    assert pos["cache_hit"] is False
+    for dom in ("pacientes", "filas", "laboratorio", "viagens", "cadastros"):
+        assert pos["resumo"][dom]["duplicidades"] == 0
+        assert pos["resumo"][dom]["inconsistencias"] == 0
+
+
