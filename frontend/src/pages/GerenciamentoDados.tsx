@@ -1718,7 +1718,7 @@ function ModalLimpezaMassa({
                       {String(limpezaConfigurada.filtro.tipo_fila || "Todas as filas")}
                     </span>
                   </p>
-                  {(limpezaConfigurada.filtro.data_inicio || limpezaConfigurada.filtro.data_fim) && (
+                  {Boolean(limpezaConfigurada.filtro.data_inicio || limpezaConfigurada.filtro.data_fim) && (
                     <p>
                       <span className="font-semibold">Período:</span>{" "}
                       {String(limpezaConfigurada.filtro.data_inicio || "Início")} até{" "}
