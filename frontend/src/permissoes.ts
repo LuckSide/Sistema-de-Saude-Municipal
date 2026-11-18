@@ -172,6 +172,7 @@ export const MODULOS: NoPermissao[] = [
       { codigo: "cfg_medicos", rotulo: "Médicos e Profissionais", icone: Stethoscope, rota: "/configuracoes?aba=medicos" },
       { codigo: "cfg_unidades", rotulo: "Unidades de Saúde e PSFs", icone: Building2, rota: "/configuracoes?aba=unidades" },
       { codigo: "cfg_laboratorios", rotulo: "Laboratórios Conveniados", icone: FlaskConical, rota: "/configuracoes?aba=laboratorios" },
+      { codigo: "cfg_dados", rotulo: "Gerenciamento de Dados (Inconsistências e Limpeza)", icone: Database, rota: "/configuracoes?aba=dados" },
       { codigo: "cfg_backup", rotulo: "Backup e Restauração (Superuser)", icone: Database, rota: "/configuracoes?aba=backup" },
     ],
   },

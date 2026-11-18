@@ -10,6 +10,7 @@ from app.api.v1.auditoria import router as auditoria_router
 from app.api.v1.backup import router as backup_router
 from app.api.v1.cadastros_saude import router as cadastros_saude_router
 from app.api.v1.dashboard import router as dashboard_router
+from app.api.v1.gerenciamento_dados import router as gerenciamento_dados_router
 from app.api.v1.indicadores import router as indicadores_router
 from app.api.v1.integracoes import router as integracoes_router
 from app.api.v1.lab import router as lab_router
@@ -192,6 +193,8 @@ app.include_router(settings_router, prefix="/api", tags=["settings"])
 app.include_router(update_router, prefix="/api/update", tags=["update"])
 app.include_router(backup_router, prefix="/api/backup", tags=["backup"])
 app.include_router(whatsapp_router, prefix="/api", tags=["whatsapp"])
+app.include_router(gerenciamento_dados_router, prefix="/api/v1/gerenciamento-dados", tags=["gerenciamento_dados"])
+app.include_router(gerenciamento_dados_router, prefix="/api/gerenciamento-dados", tags=["gerenciamento_dados"])
 
 
 # Compatibilidade de rotas legadas/diretas p/ fila de procedimentos e pacientes

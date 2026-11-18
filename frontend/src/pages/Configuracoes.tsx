@@ -38,6 +38,7 @@ import { useConfirm } from "../components/ConfirmDialog";
 import Medicos from "./Medicos";
 import UnidadesSaude from "./UnidadesSaude";
 import GestaoFilas from "./GestaoFilas";
+import GerenciamentoDados from "./GerenciamentoDados";
 import {
   exportarBackup,
   fetchExamesPermitidos,
@@ -79,7 +80,7 @@ import {
   type WhatsAppLogItem,
 } from "../services/api";
 
-type Aba = "geral" | "gestao_filas" | "filas" | "pec" | "rnds" | "whatsapp" | "exames" | "medicos" | "unidades" | "laboratorios" | "backup";
+type Aba = "geral" | "gestao_filas" | "filas" | "pec" | "rnds" | "whatsapp" | "exames" | "medicos" | "unidades" | "laboratorios" | "dados" | "backup";
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "geral", rotulo: "Geral" },
   { id: "gestao_filas", rotulo: "Gestão de Filas" },
@@ -91,6 +92,7 @@ const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "medicos", rotulo: "Médicos e Profissionais de Saúde" },
   { id: "unidades", rotulo: "Unidades de Saúde e PSFs" },
   { id: "laboratorios", rotulo: "Laboratórios" },
+  { id: "dados", rotulo: "Gerenciamento de Dados" },
   { id: "backup", rotulo: "Backup e Restauração" },
 ];
 
@@ -120,6 +122,7 @@ export default function Configuracoes() {
     if (a.id === "medicos") return can("cfg_medicos") || can("usuarios") || can("lab_vagas");
     if (a.id === "unidades") return can("cfg_unidades") || can("usuarios") || can("lab_vagas");
     if (a.id === "laboratorios") return can("cfg_laboratorios") || can("usuarios") || can("lab_vagas");
+    if (a.id === "dados") return !!user?.is_superuser || can("cfg_dados");
     if (a.id === "backup") return !!user?.is_superuser;
     return can("cfg_rnds");
   });
@@ -159,6 +162,7 @@ export default function Configuracoes() {
             {a.id === "gestao_filas" && <ListOrdered className="h-4 w-4" />}
             {a.id === "whatsapp" && <MessageCircle className="h-4 w-4" />}
             {a.id === "exames" && <FlaskConical className="h-4 w-4" />}
+            {a.id === "dados" && <Database className="h-4 w-4" />}
             {a.id === "backup" && <Database className="h-4 w-4" />}
             {a.rotulo}
           </button>
@@ -174,6 +178,7 @@ export default function Configuracoes() {
       {aba === "medicos" && <Medicos />}
       {aba === "unidades" && <UnidadesSaude />}
       {aba === "laboratorios" && <AbaLaboratorios />}
+      {aba === "dados" && <GerenciamentoDados />}
       {aba === "backup" && <AbaBackup />}
     </div>
   );

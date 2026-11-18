@@ -96,6 +96,7 @@ function ConfigGuard({ children }: { children: ReactElement }) {
     "cfg_medicos",
     "cfg_unidades",
     "cfg_laboratorios",
+    "cfg_dados",
     "cfg_backup",
   ];
   if (!CFG_TELAS.some((t) => can(t))) return <Navigate to="/" replace />;

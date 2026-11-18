@@ -4293,5 +4293,166 @@ export const labBiGastosRanking = (q = "", page = 1, limit = 50) =>
 export const labBiGastosPaciente = (pacienteId: number) =>
   api.get<PacienteGastosResumo>(`/api/lab/bi/pacientes/${pacienteId}/gastos`).then((r) => r.data);
 
+// ============================================================================
+// GERENCIAMENTO DE DADOS (CONFIGURAÇÕES - R1 A R5)
+// ============================================================================
+
+export type ResumoDominio = {
+  duplicidades: number;
+  inconsistencias: number;
+};
+
+export type ResumoDiagnostico = {
+  pacientes: ResumoDominio;
+  filas: ResumoDominio;
+  laboratorio: ResumoDominio;
+  viagens: ResumoDominio;
+  cadastros: ResumoDominio;
+};
+
+export type ItemDiagnostico = {
+  tipo: string;
+  dominio: "pacientes" | "filas" | "laboratorio" | "viagens" | "cadastros" | string;
+  descricao: string;
+  chave?: string;
+  total?: number;
+  ids?: number[];
+  id?: number;
+  paciente_id?: number;
+  nome?: string;
+  registros?: Array<Record<string, unknown>>;
+  [key: string]: unknown;
+};
+
+export type DetalhesDiagnostico = {
+  pacientes: ItemDiagnostico[];
+  filas: ItemDiagnostico[];
+  laboratorio: ItemDiagnostico[];
+  viagens: ItemDiagnostico[];
+  cadastros: ItemDiagnostico[];
+};
+
+export type DiagnosticoResponse = {
+  resumo: ResumoDiagnostico;
+  detalhes: DetalhesDiagnostico;
+};
+
+export type EntidadeUnificavel = "pacientes" | "medicos" | "unidades" | "laboratorios";
+
+export type UnificarRequest = {
+  entidade: EntidadeUnificavel;
+  registro_principal_id: number;
+  registro_duplicado_id: number;
+  campos_mesclar?: Record<string, unknown> | null;
+};
+
+export type UnificarResponse = {
+  sucesso: boolean;
+  mensagem: string;
+  vinculos_reatribuidos: number;
+  registro_excluido_id: number;
+  detalhes?: Record<string, unknown>;
+};
+
+// Aliases para máxima compatibilidade
+export type UnificacaoRequest = UnificarRequest;
+export type UnificacaoResponse = UnificarResponse;
+export type UnificarRegistrosRequest = UnificarRequest;
+export type UnificarRegistrosResponse = UnificarResponse;
+
+export type TipoLimpezaMassa =
+  | "fila_importada"
+  | "pedidos_orfaos"
+  | "agendamentos_duplicados"
+  | "cadastros_fantasmas";
+
+export type LimpezaMassaPreviewRequest = {
+  tipo_limpeza: string;
+  filtro?: Record<string, unknown> | null;
+};
+
+export type LimpezaMassaPreviewResponse = {
+  total_afetados: number;
+  detalhes: Array<Record<string, unknown>>;
+  mensagem?: string | null;
+};
+
+export type LimpezaMassaExecRequest = {
+  tipo_limpeza: string;
+  filtro?: Record<string, unknown> | null;
+  senha: string;
+  confirmacao_explicita: boolean;
+};
+
+export type LimpezaMassaExecResponse = {
+  sucesso: boolean;
+  total_removidos: number;
+  mensagem: string;
+  detalhes?: Record<string, unknown>;
+};
+
+// Aliases para máxima compatibilidade
+export type LimpezaMassaExecutarRequest = LimpezaMassaExecRequest;
+export type LimpezaMassaExecutarResponse = LimpezaMassaExecResponse;
+
+export type AuditoriaItem = {
+  id: number;
+  user_id?: number | null;
+  user_name: string;
+  action: string;
+  entity: string;
+  entity_id?: number | null;
+  device: string;
+  details: string;
+  timestamp: string;
+  rotulo_acao?: string | null;
+  rotulo_entidade?: string | null;
+};
+
+export type AuditoriaResponse = {
+  logs: AuditoriaItem[];
+  total: number;
+};
+
+export type LogAuditoriaItem = AuditoriaItem;
+export type AuditoriaDadosResponse = AuditoriaResponse;
+export type AuditoriaGerenciamentoResponse = AuditoriaResponse;
+
+export const obterDiagnosticoDados = (dominio?: string): Promise<DiagnosticoResponse> =>
+  api
+    .get<DiagnosticoResponse>("/api/v1/gerenciamento-dados/diagnostico", {
+      params: dominio && dominio !== "todos" ? { dominio } : undefined,
+    })
+    .then((r) => r.data);
+
+export const unificarRegistros = (payload: UnificarRequest): Promise<UnificarResponse> =>
+  api
+    .post<UnificarResponse>("/api/v1/gerenciamento-dados/unificar", payload)
+    .then((r) => r.data);
+
+export const previewLimpezaMassa = (
+  payload: LimpezaMassaPreviewRequest
+): Promise<LimpezaMassaPreviewResponse> =>
+  api
+    .post<LimpezaMassaPreviewResponse>("/api/v1/gerenciamento-dados/limpeza-massa/preview", payload)
+    .then((r) => r.data);
+
+export const executarLimpezaMassa = (
+  payload: LimpezaMassaExecRequest
+): Promise<LimpezaMassaExecResponse> =>
+  api
+    .post<LimpezaMassaExecResponse>("/api/v1/gerenciamento-dados/limpeza-massa/executar", payload)
+    .then((r) => r.data);
+
+export const obterAuditoriaDados = (
+  limit = 50,
+  offset = 0
+): Promise<AuditoriaResponse> =>
+  api
+    .get<AuditoriaResponse>("/api/v1/gerenciamento-dados/auditoria", {
+      params: { limit, offset },
+    })
+    .then((r) => r.data);
+
 export default api;
 

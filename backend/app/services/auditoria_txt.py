@@ -79,6 +79,18 @@ ACTION_LABELS = {
     "BACKUP_EXPORT": "Geração de backup criptografado",
     "BACKUP_RESTORE": "Restauração de dados do sistema",
     "DASHBOARD_UPDATE": "Preferências do painel",
+    # Gerenciamento de Dados (Unificação e Limpeza em Massa)
+    "DATA_UNIFY_PACIENTE": "Unificação de Paciente Duplicado",
+    "DATA_UNIFY_MEDICO": "Unificação de Médico Duplicado",
+    "DATA_UNIFY_UNIDADE": "Unificação de Unidade de Saúde Duplicada",
+    "DATA_UNIFY_LABORATORIO": "Unificação de Laboratório Duplicado",
+    "DATA_MASS_CLEANUP": "Limpeza em Massa de Dados",
+    "DATA_UNIFY_PATIENT": "Unificação de Paciente Duplicado",
+    "DATA_UNIFY_DOCTOR": "Unificação de Médico Duplicado",
+    "DATA_UNIFY_UNIT": "Unificação de Unidade de Saúde Duplicada",
+    "DATA_UNIFY_LAB": "Unificação de Laboratório Duplicado",
+    "DATA_MASS_CLEANUP_QUEUE": "Limpeza em Massa de Fila",
+    "DATA_MASS_CLEANUP_ORPHANS": "Limpeza em Massa de Registros Órfãos",
 }
 
 ENTITY_LABELS = {
@@ -107,6 +119,7 @@ ENTITY_LABELS = {
     "SYSTEM": "Sistema",
     "DASHBOARD": "Painel Principal",
     "AUDIT": "Auditoria",
+    "DATA_MANAGEMENT": "Gerenciamento de Dados",
     "PACIENTES": "Pacientes",
     "EXAMES": "Fila de Exames",
     "VIAGENS": "Viagens",
