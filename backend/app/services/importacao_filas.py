@@ -437,11 +437,21 @@ def _normalizar_cns_excel(raw: str, limpar_cns_fn) -> str:
     return (raw or "").strip()[:20]
 
 
-def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> dict:
-    """Upsert pacientes + exames + catálogo. Retorna só contadores (sem PII)."""
+def processar_linhas(
+    linhas: list[dict],
+    db: Session,
+    simular: bool = False,
+    criar_pacientes_novos: bool = True,
+) -> dict:
+    """Upsert pacientes (priorizando cidadãos já sincronizados do e-SUS PEC) + exames + catálogo."""
     lidas = len(linhas)
     pacientes_novos = exames_novos = atualizados = duplicados = ignoradas = 0
     itens_lab_novos = sigtap_criados = 0
+    pacientes_sincronizados_pec = pacientes_criados_sem_pec = pacientes_nao_encontrados_ignorados = 0
+    ids_vinculados_pec: set[int] = set()
+    ids_vinculados_locais: set[int] = set()
+    avisos_pacientes_novos: list[dict] = []
+    avisos_nomes_vistos: set[str] = set()
     erros: list[dict] = []
     tipos_cat: dict[str, str] = {}
     esps_cat: dict[str, str] = {}
@@ -653,6 +663,13 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
                     ).mappings().first()
                     if row:
                         return dict(row)
+                if nome_val and not nasc_val:
+                    rows = conn.execute(
+                        text("SELECT co_seq_cidadao, no_cidadao, nu_cpf, nu_cns, dt_nascimento, no_mae, nu_telefone_celular, st_faleceu, st_mudou_se FROM tb_cidadao WHERE UPPER(TRIM(no_cidadao)) = :nome AND COALESCE(st_ativo, 1) = 1 LIMIT 2"),
+                        {"nome": nome_val.strip().upper()}
+                    ).mappings().all()
+                    if len(rows) == 1:
+                        return dict(rows[0])
         except Exception:
             pass
         return None
@@ -660,20 +677,15 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
     pac_cpf_cache: dict[str, Paciente] = {}
     pac_cns_cache: dict[str, Paciente] = {}
     pac_pec_cache: dict[int, Paciente] = {}
-    pac_prontuario_cache: dict[str, Paciente] = {}
-    pac_nn_cache: dict[tuple[str, str], Paciente] = {}
+    pac_prontuario_cache: dict[str, list[Paciente]] = {}
+    pac_nn_cache: dict[tuple[str, str], list[Paciente]] = {}
     pac_nasc_cache: dict[str, list[Paciente]] = {}
     pac_nome_cache: dict[str, list[Paciente]] = {}
+    pac_primeiro_nome_cache: dict[str, list[Paciente]] = {}
 
-    # Prioriza cidadãos ativos sincronizados com o PEC para evitar vincular fila a stubs legados/duplicados
-    pacientes_existentes = sorted(
-        db.exec(select(Paciente)).all(),
-        key=lambda p: _prioridade_paciente_import(p, _limpar_cpf, _limpar_cns),
-        reverse=True,
-    )
-    for p in pacientes_existentes:
-        cpf_p = _limpar_cpf(p.cpf)
-        cns_p = _limpar_cns(p.cns)
+    def _indexar_paciente_cache(p: Paciente) -> None:
+        cpf_p = _limpar_cpf(_normalizar_cpf_excel(p.cpf or "", _limpar_cpf))
+        cns_p = _limpar_cns(_normalizar_cns_excel(p.cns or "", _limpar_cns))
         n_sp = _norm_nome_sp(p.nome)
         pront_p = (getattr(p, "codigo_prontuario", "") or "").strip()
         if cpf_p:
@@ -683,13 +695,35 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
         if p.co_seq_cidadao_pec:
             pac_pec_cache.setdefault(p.co_seq_cidadao_pec, p)
         if pront_p:
-            pac_prontuario_cache.setdefault(pront_p, p)
+            lst = pac_prontuario_cache.setdefault(pront_p, [])
+            if p not in lst:
+                lst.append(p)
         if p.nascimento:
-            pac_nasc_cache.setdefault(str(p.nascimento), []).append(p)
+            lst = pac_nasc_cache.setdefault(str(p.nascimento), [])
+            if p not in lst:
+                lst.append(p)
         if n_sp and p.nascimento:
-            pac_nn_cache.setdefault((n_sp, str(p.nascimento)), p)
+            lst = pac_nn_cache.setdefault((n_sp, str(p.nascimento)), [])
+            if p not in lst:
+                lst.append(p)
         if n_sp:
-            pac_nome_cache.setdefault(n_sp, []).append(p)
+            lst = pac_nome_cache.setdefault(n_sp, [])
+            if p not in lst:
+                lst.append(p)
+            toks = n_sp.split()
+            if len(toks) >= 2:
+                lst_p = pac_primeiro_nome_cache.setdefault(toks[0], [])
+                if p not in lst_p:
+                    lst_p.append(p)
+
+    # Prioriza cidadãos ativos sincronizados com o PEC para evitar vincular fila a stubs legados/duplicados
+    pacientes_existentes = sorted(
+        db.exec(select(Paciente)).all(),
+        key=lambda p: _prioridade_paciente_import(p, _limpar_cpf, _limpar_cns),
+        reverse=True,
+    )
+    for p in pacientes_existentes:
+        _indexar_paciente_cache(p)
 
     for i, bruta in enumerate(linhas, start=2):  # linha 1 = cabeçalho
         r = normalizar_linha(bruta)
@@ -707,53 +741,118 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
         n_sp_lin = _norm_nome_sp(nome)
 
         def _sem_conflito_docs(cand: Paciente) -> bool:
-            cand_cpf = _limpar_cpf(cand.cpf)
-            cand_cns = _limpar_cns(cand.cns)
+            cand_cpf = _limpar_cpf(_normalizar_cpf_excel(cand.cpf or "", _limpar_cpf))
+            cand_cns = _limpar_cns(_normalizar_cns_excel(cand.cns or "", _limpar_cns))
             if cpf_limpo_lin and cand_cpf and cand_cpf != cpf_limpo_lin:
                 return False
             if cns_limpo_lin and cand_cns and cand_cns != cns_limpo_lin:
                 return False
+            if nasc_lin and cand.nascimento and cand.nascimento != nasc_lin:
+                return False
             return True
+
+        def _escolher_candidato_unico(cands: list[Paciente]) -> Paciente | None:
+            validos = [c for c in cands if _sem_conflito_docs(c)]
+            if not validos:
+                return None
+            if len(validos) == 1:
+                return validos[0]
+            # Prioriza cidadão ativo único vindo do e-SUS PEC
+            ativos_pec = [
+                c for c in validos
+                if c.co_seq_cidadao_pec and (getattr(c, "situacao_cadastral", None) or "ativo").strip().lower() in ("ativo", "")
+            ]
+            if len(ativos_pec) == 1:
+                return ativos_pec[0]
+            com_pec = [c for c in validos if c.co_seq_cidadao_pec]
+            if len(com_pec) == 1:
+                return com_pec[0]
+            ativos = [
+                c for c in validos
+                if (getattr(c, "situacao_cadastral", None) or "ativo").strip().lower() in ("ativo", "")
+            ]
+            if len(ativos) == 1:
+                return ativos[0]
+            return None
 
         pront_lin = (r.get("prontuario") or "").strip()
 
-        pac = None
+        # Cascata de busca (SEMPRE tenta todas as etapas com `if not pac:` antes de criar qualquer registro)
+        pac: Paciente | None = None
         if cpf_limpo_lin and cpf_limpo_lin in pac_cpf_cache:
             pac = pac_cpf_cache[cpf_limpo_lin]
-        elif cns_limpo_lin and cns_limpo_lin in pac_cns_cache:
+        if not pac and cns_limpo_lin and cns_limpo_lin in pac_cns_cache:
             pac = pac_cns_cache[cns_limpo_lin]
-        elif pront_lin and pront_lin in pac_prontuario_cache:
-            cand = pac_prontuario_cache[pront_lin]
-            if _sem_conflito_docs(cand):
-                pac = cand
-        elif n_sp_lin and nasc_lin and (n_sp_lin, str(nasc_lin)) in pac_nn_cache:
-            cand = pac_nn_cache[(n_sp_lin, str(nasc_lin))]
-            if _sem_conflito_docs(cand):
-                pac = cand
-        elif nome and nasc_lin:
-            # Fallback tolerante a variações de preposição/abreviação com mesma data de nascimento
-            for cand in pac_nasc_cache.get(str(nasc_lin), []):
-                if _sem_conflito_docs(cand) and _nomes_compativeis(nome, cand.nome):
-                    pac = cand
-                    break
-        elif n_sp_lin and not nasc_lin:
-            cands = [cand for cand in pac_nome_cache.get(n_sp_lin, []) if _sem_conflito_docs(cand)]
-            if len(cands) == 1:
-                pac = cands[0]
+        if not pac and pront_lin and pront_lin in pac_prontuario_cache:
+            # Exige compatibilidade de nome p/ evitar colisão entre prontuário de sistema externo (ex: Vivver) e co_seq do PEC
+            cands_pront = [c for c in pac_prontuario_cache[pront_lin] if _nomes_compativeis(nome, c.nome)]
+            pac = _escolher_candidato_unico(cands_pront)
+        if not pac and n_sp_lin and nasc_lin and (n_sp_lin, str(nasc_lin)) in pac_nn_cache:
+            pac = _escolher_candidato_unico(pac_nn_cache[(n_sp_lin, str(nasc_lin))])
+        if not pac and nome and nasc_lin:
+            cands_nasc = [c for c in pac_nasc_cache.get(str(nasc_lin), []) if _nomes_compativeis(nome, c.nome)]
+            pac = _escolher_candidato_unico(cands_nasc)
+        if not pac and n_sp_lin and not nasc_lin:
+            pac = _escolher_candidato_unico(pac_nome_cache.get(n_sp_lin, []))
+        if not pac and n_sp_lin and not nasc_lin:
+            toks_lin = n_sp_lin.split()
+            if len(toks_lin) >= 2:
+                cands_compat = [
+                    c for c in pac_primeiro_nome_cache.get(toks_lin[0], [])
+                    if _nomes_compativeis(nome, c.nome)
+                ]
+                pac = _escolher_candidato_unico(cands_compat)
 
-        if not pac:
-            # Consulta o e-SUS PEC prioritariamente antes de criar um novo paciente
+        if pac is not None:
+            # Paciente JÁ EXISTE no banco (prioritariamente sincronizado do PEC) — apenas sincroniza/enriquece dados faltantes
+            if pac.id:
+                if pac.co_seq_cidadao_pec:
+                    ids_vinculados_pec.add(pac.id)
+                else:
+                    ids_vinculados_locais.add(pac.id)
+            alt_pac = False
+            if cpf_limpo_lin and not _limpar_cpf(pac.cpf):
+                pac.cpf = cpf_limpo_lin
+                pac_cpf_cache.setdefault(cpf_limpo_lin, pac)
+                alt_pac = True
+            if cns_limpo_lin and not _limpar_cns(pac.cns):
+                pac.cns = cns_limpo_lin
+                pac_cns_cache.setdefault(cns_limpo_lin, pac)
+                alt_pac = True
+            if nasc_lin and not pac.nascimento:
+                pac.nascimento = nasc_lin
+                alt_pac = True
+            if (r.get("telefone") or "") and not pac.telefone:
+                pac.telefone = (r.get("telefone") or "")[:20]
+                alt_pac = True
+            if alt_pac:
+                db.add(pac)
+        else:
+            # Não encontrado no banco local -> consulta o e-SUS PEC ao vivo antes de criar novo paciente
             pec_cidadao = _buscar_pec_cidadao(cpf_limpo_lin, cns_limpo_lin, nome, nasc_lin)
             if pec_cidadao:
                 co_seq = pec_cidadao.get("co_seq_cidadao")
+                cpf_pec = _limpar_cpf(pec_cidadao.get("nu_cpf")) or cpf
+                cns_pec = _limpar_cns(pec_cidadao.get("nu_cns")) or cns
+                # Antes de inserir, verifica se o cidadão do PEC já existe no banco local por co_seq, CPF ou CNS
                 if co_seq and co_seq in pac_pec_cache:
                     pac = pac_pec_cache[co_seq]
+                elif cpf_pec and cpf_pec in pac_cpf_cache:
+                    pac = pac_cpf_cache[cpf_pec]
+                elif cns_pec and cns_pec in pac_cns_cache:
+                    pac = pac_cns_cache[cns_pec]
+
+                if pac is not None:
+                    if co_seq and not pac.co_seq_cidadao_pec:
+                        pac.co_seq_cidadao_pec = co_seq
+                        pac_pec_cache[co_seq] = pac
+                        db.add(pac)
+                    if pac.id:
+                        ids_vinculados_pec.add(pac.id)
                 else:
                     st_f = pec_cidadao.get("st_faleceu")
                     st_m = pec_cidadao.get("st_mudou_se")
                     sit = "obito" if st_f in (1, True, "1") else ("mudanca_municipio" if st_m in (1, True, "1") else "ativo")
-                    cpf_pec = _limpar_cpf(pec_cidadao.get("nu_cpf")) or cpf
-                    cns_pec = _limpar_cns(pec_cidadao.get("nu_cns")) or cns
                     pac = Paciente(
                         nome=(pec_cidadao.get("no_cidadao") or nome)[:150],
                         cpf=cpf_pec,
@@ -767,10 +866,33 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
                     )
                     db.add(pac)
                     db.flush()
-                    if co_seq:
-                        pac_pec_cache[co_seq] = pac
                     pacientes_novos += 1
+                    pacientes_sincronizados_pec += 1
+                    if pac.id:
+                        ids_vinculados_pec.add(pac.id)
+                    if not getattr(pac, "codigo_prontuario", ""):
+                        pac.codigo_prontuario = pront_lin or (str(co_seq) if co_seq else str(pac.id))
+                        db.add(pac)
+                    _indexar_paciente_cache(pac)
             else:
+                # Paciente realmente NÃO existe no banco local nem no e-SUS PEC
+                chave_aviso = n_sp_lin or nome.upper()
+                if not criar_pacientes_novos:
+                    ignoradas += 1
+                    pacientes_nao_encontrados_ignorados += 1
+                    if chave_aviso not in avisos_nomes_vistos and len(avisos_pacientes_novos) < 50:
+                        avisos_nomes_vistos.add(chave_aviso)
+                        avisos_pacientes_novos.append({
+                            "linha": i,
+                            "nome": nome,
+                            "prontuario": pront_lin,
+                            "acao": "ignorado",
+                            "motivo": "Paciente não encontrado no banco (nem no e-SUS PEC) — linha ignorada conforme configuração",
+                        })
+                    if len(erros) < MAX_ERROS:
+                        erros.append({"linha": i, "motivo": "paciente não encontrado no banco/PEC (criação desabilitada)"})
+                    continue
+
                 pac = Paciente(
                     nome=nome, cpf=cpf, cns=cns,
                     nascimento=nasc_lin,
@@ -780,32 +902,20 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
                 db.add(pac)
                 db.flush()
                 pacientes_novos += 1
-
-            if not getattr(pac, "codigo_prontuario", ""):
-                pac.codigo_prontuario = pront_lin or (str(pac.co_seq_cidadao_pec) if getattr(pac, "co_seq_cidadao_pec", None) else str(pac.id))
-                db.add(pac)
-            if pront_lin:
-                pac_prontuario_cache.setdefault(pront_lin, pac)
-            if _limpar_cpf(pac.cpf):
-                pac_cpf_cache.setdefault(_limpar_cpf(pac.cpf), pac)
-            if _limpar_cns(pac.cns):
-                pac_cns_cache.setdefault(_limpar_cns(pac.cns), pac)
-            if pac.nascimento:
-                pac_nasc_cache.setdefault(str(pac.nascimento), []).append(pac)
-            if n_sp_lin and pac.nascimento:
-                pac_nn_cache.setdefault((n_sp_lin, str(pac.nascimento)), pac)
-            if n_sp_lin:
-                pac_nome_cache.setdefault(n_sp_lin, []).append(pac)
-        else:
-            if cpf_limpo_lin and not _limpar_cpf(pac.cpf):
-                pac.cpf = cpf_limpo_lin
-                pac_cpf_cache.setdefault(cpf_limpo_lin, pac)
-            if cns_limpo_lin and not _limpar_cns(pac.cns):
-                pac.cns = cns_limpo_lin
-                pac_cns_cache.setdefault(cns_limpo_lin, pac)
-            if (r.get("telefone") or "") and not pac.telefone:
-                pac.telefone = (r.get("telefone") or "")[:20]
-            db.add(pac)
+                pacientes_criados_sem_pec += 1
+                if chave_aviso not in avisos_nomes_vistos and len(avisos_pacientes_novos) < 50:
+                    avisos_nomes_vistos.add(chave_aviso)
+                    avisos_pacientes_novos.append({
+                        "linha": i,
+                        "nome": nome,
+                        "prontuario": pront_lin,
+                        "acao": "criado_sem_pec",
+                        "motivo": "Paciente não encontrado no banco local nem no e-SUS PEC — criado como novo cadastro local",
+                    })
+                if not getattr(pac, "codigo_prontuario", ""):
+                    pac.codigo_prontuario = pront_lin or str(pac.id)
+                    db.add(pac)
+                _indexar_paciente_cache(pac)
 
         cod = (r.get("codigo_procedimento") or "").strip()
         nproc = (r.get("nome_procedimento") or "").strip()
@@ -1214,9 +1324,29 @@ def processar_linhas(linhas: list[dict], db: Session, simular: bool = False) -> 
             except Exception:
                 pass
 
+    aviso_criacao = ""
+    if pacientes_criados_sem_pec > 0:
+        verbo = "serão criados" if simular else "foram criados"
+        aviso_criacao = (
+            f"Atenção: {pacientes_criados_sem_pec} paciente(s) não foram encontrados no banco local "
+            f"(nem no e-SUS PEC) e {verbo} como novos cadastros sem vínculo PEC."
+        )
+    elif pacientes_nao_encontrados_ignorados > 0:
+        aviso_criacao = (
+            f"Atenção: {pacientes_nao_encontrados_ignorados} linha(s) foram ignoradas porque os pacientes "
+            f"não existem no banco local/e-SUS PEC e a criação automática de novos pacientes está desativada."
+        )
+
     return {
         "lidas": lidas,
         "pacientes_novos": pacientes_novos,
+        "pacientes_vinculados_pec": len(ids_vinculados_pec),
+        "pacientes_vinculados_locais": len(ids_vinculados_locais),
+        "pacientes_sincronizados_pec": pacientes_sincronizados_pec,
+        "pacientes_criados_sem_pec": pacientes_criados_sem_pec,
+        "pacientes_nao_encontrados_ignorados": pacientes_nao_encontrados_ignorados,
+        "aviso_criacao_pacientes": aviso_criacao,
+        "avisos_pacientes_novos": avisos_pacientes_novos,
         "exames_novos": exames_novos,
         "atualizados": atualizados,
         "duplicados": duplicados,

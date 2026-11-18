@@ -393,10 +393,12 @@ function AbaGeral() {
   );
 }
 
-// ---------- Filas: upload CSV/XLSX ----------
+// ---------- Filas: upload CSV/XLSX/XML ----------
 function AbaFilas() {
+  const { confirmar } = useConfirm();
   const [arq, setArq] = useState<File | null>(null);
   const [simular, setSimular] = useState(true);
+  const [criarPacientesNovos, setCriarPacientesNovos] = useState(true);
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState("");
   const [res, setRes] = useState<ImportFilasOut | null>(null);
@@ -404,14 +406,32 @@ function AbaFilas() {
 
   async function enviar() {
     setErro("");
-    setRes(null);
     if (!arq) {
       setErro("Escolha um arquivo .csv, .xlsx ou .xml.");
       return;
     }
+
+    // Ao gravar de fato, se a simulação anterior detectou criação de pacientes novos (sem PEC), avisa e pede confirmação explícita
+    if (!simular && criarPacientesNovos) {
+      const qtdSemPecPrev =
+        res && res.simulacao && res.arquivo === arq.name
+          ? (res.pacientes_criados_sem_pec ?? res.pacientes_novos ?? 0)
+          : null;
+      if (qtdSemPecPrev !== null && qtdSemPecPrev > 0) {
+        const ok = await confirmar({
+          titulo: `Criar ${qtdSemPecPrev} novo(s) paciente(s) fora do PEC?`,
+          descricao: `A simulação identificou ${qtdSemPecPrev} paciente(s) que NÃO existem no banco local nem no e-SUS PEC. Se continuar, eles serão cadastrados como novos pacientes sem vínculo PEC. Caso prefira apenas vincular aos pacientes já existentes do PEC, cancele e desmarque a criação automática.`,
+          textoConfirmar: "Sim, importar e criar ausentes",
+          variante: "warning",
+        });
+        if (!ok) return;
+      }
+    }
+
+    setRes(null);
     setBusy(true);
     try {
-      setRes(await importarFilas(arq, simular));
+      setRes(await importarFilas(arq, simular, criarPacientesNovos));
     } catch (e: unknown) {
       setErro(msgErro(e, "Falha ao importar."));
     } finally {
@@ -419,14 +439,17 @@ function AbaFilas() {
     }
   }
 
+  const qtdSemPec = res?.pacientes_criados_sem_pec ?? 0;
+  const qtdIgnoradosSemPec = res?.pacientes_nao_encontrados_ignorados ?? 0;
+  const avisosPacientes = res?.avisos_pacientes_novos ?? [];
+
   return (
     <Card className="max-w-2xl p-6">
       <p className="mb-1 font-display text-base font-bold text-sus-950">Carga massiva de fila de espera e exames</p>
       <p className="mb-4 text-xs text-ink/55">
         CSV, Excel (.xlsx) ou XML de exportação (Vivver / e-SUS).
-        Colunas e tags aceitas: nome/paciente, cpf, cns/cartao_sus, data_nascimento, telefone,
-        codigo_procedimento, servico_tipo_nome/tipo_servico, data_pedido, data_agendamento, urgencia,
-        observacao, unidade_referencia. Máx 30MB / 50 mil linhas. Idempotente (reenvio não duplica).
+        O importador busca e vincula prioritariamente os pacientes já sincronizados do <strong>e-SUS PEC</strong> no banco local (por CPF, CNS, nome/nascimento e nome compatível).
+        Novos cadastros só são criados quando o paciente realmente não existir no banco e exibem aviso explícito. Máx 60MB / 200 mil linhas.
       </p>
       <div className="space-y-3">
         <div>
@@ -435,14 +458,31 @@ function AbaFilas() {
             ref={inputRef}
             type="file"
             accept=".csv,.xlsx,.xlsm,.xml"
-            onChange={(e) => setArq(e.target.files?.[0] ?? null)}
+            onChange={(e) => {
+              setArq(e.target.files?.[0] ?? null);
+              setRes(null);
+            }}
             className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink file:mr-3 file:rounded-lg file:border-0 file:bg-sus-900 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white"
           />
           {arq && <p className="mt-1 text-xs text-ink/55">{arq.name} · {(arq.size / 1024).toFixed(0)} KB</p>}
         </div>
         <label className="flex items-center gap-2 text-sm text-ink/70">
           <input type="checkbox" checked={simular} onChange={(e) => setSimular(e.target.checked)} className="h-4 w-4 accent-teal-700" />
-          Simular primeiro (não grava — mostra o que seria importado)
+          Simular primeiro (não grava — mostra quais pacientes existem no PEC e se algum novo seria criado)
+        </label>
+        <label className="flex items-start gap-2 text-sm text-ink/70">
+          <input
+            type="checkbox"
+            checked={criarPacientesNovos}
+            onChange={(e) => setCriarPacientesNovos(e.target.checked)}
+            className="mt-0.5 h-4 w-4 accent-teal-700"
+          />
+          <span>
+            Permitir cadastrar paciente novo somente se não existir no banco/PEC (com aviso)
+            <span className="block text-[11px] text-ink/50">
+              Desmarque para modo estrito: apenas vincula a pacientes já cadastrados (PEC/local) e ignora linhas de pacientes inexistentes.
+            </span>
+          </span>
         </label>
         {erro && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{erro}</p>}
         <Button onClick={enviar} disabled={busy || !arq} className="w-full">
@@ -455,18 +495,51 @@ function AbaFilas() {
             <Badge variant={res.simulacao ? "warning" : "success"}>{res.simulacao ? "SIMULAÇÃO — nada gravado" : "IMPORTADO"}</Badge>
             <span className="font-mono text-xs text-ink/60">{res.arquivo}</span>
           </div>
+
+          {/* Alerta explícito quando houver criação ou bloqueio de pacientes não encontrados no PEC */}
+          {(Boolean(res.aviso_criacao_pacientes) || qtdSemPec > 0 || qtdIgnoradosSemPec > 0) && (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-amber-950 space-y-2">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-700 mt-0.5" />
+                <div className="text-xs leading-relaxed">
+                  <p className="font-bold text-amber-900">
+                    {res.aviso_criacao_pacientes ||
+                      `Atenção: ${qtdSemPec} paciente(s) não foram encontrados na base do e-SUS PEC.`}
+                  </p>
+                  {res.simulacao && qtdSemPec > 0 && (
+                    <p className="mt-0.5 text-amber-800">
+                      Revise a lista abaixo antes de gravar. Se não quiser criar esses cadastros, desmarque a opção de criação automática acima ou sincronize o e-SUS PEC primeiro.
+                    </p>
+                  )}
+                </div>
+              </div>
+              {avisosPacientes.length > 0 && (
+                <ul className="max-h-36 space-y-1 overflow-auto rounded-lg bg-white/80 p-2 font-mono text-[11px] text-amber-950 border border-amber-200">
+                  {avisosPacientes.map((a, idx) => (
+                    <li key={idx}>
+                      linha {a.linha}: <strong>{a.nome}</strong>
+                      {a.prontuario ? ` (pront. ${a.prontuario})` : ""} — {a.acao === "ignorado" ? "ignorado" : "novo cadastro sem PEC"}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
             {[
-              ["Lidas", res.lidas],
-              ["Pacientes novos", res.pacientes_novos],
-              ["Exames novos", res.exames_novos],
-              ["Atualizados", res.atualizados],
-              ["Duplicados", res.duplicados],
-              ["Ignoradas", res.ignoradas],
-            ].map(([k, v]) => (
-              <div key={k as string} className="rounded-xl bg-sand px-3 py-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-ink/50">{k}</p>
-                <p className="font-display text-lg font-extrabold text-sus-950">{v}</p>
+              ["Lidas", res.lidas, "bg-sand text-sus-950"],
+              ["Vinculados ao PEC", (res.pacientes_vinculados_pec ?? 0) + (res.pacientes_sincronizados_pec ?? 0), "bg-emerald-50 text-emerald-900"],
+              ["Pacientes novos (sem PEC)", qtdSemPec, qtdSemPec > 0 ? "bg-amber-50 text-amber-900" : "bg-sand text-sus-950"],
+              ["Exames/Pedidos novos", res.exames_novos, "bg-sand text-sus-950"],
+              ["Atualizados", res.atualizados, "bg-sand text-sus-950"],
+              ["Duplicados", res.duplicados, "bg-sand text-sus-950"],
+              ["Ignoradas", res.ignoradas, "bg-sand text-sus-950"],
+              ...(res.itens_lab_novos ? [["Itens lab novos", res.itens_lab_novos, "bg-teal-50 text-teal-900"]] : []),
+            ].map(([k, v, cls]) => (
+              <div key={k as string} className={`rounded-xl px-3 py-2 ${cls}`}>
+                <p className="text-[11px] font-semibold uppercase tracking-wide opacity-65">{k}</p>
+                <p className="font-display text-lg font-extrabold">{v}</p>
               </div>
             ))}
           </div>

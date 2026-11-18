@@ -416,16 +416,40 @@ export const validarRnds = () =>
     certificado: { configurado: boolean; subject?: string; issuer?: string; valido_de?: string; valido_ate?: string; dias_restantes?: number; expirado?: boolean };
     chave_configurada: boolean; pendencias: string[];
   }>("/api/integracoes/rnds/validar").then((r) => r.data);
+export type AvisoPacienteNovoImport = {
+  linha: number;
+  nome: string;
+  prontuario?: string;
+  acao: "criado_sem_pec" | "ignorado";
+  motivo: string;
+};
 export type ImportFilasOut = {
   simulacao: boolean; arquivo: string; lidas: number; pacientes_novos: number;
+  pacientes_vinculados_pec?: number;
+  pacientes_vinculados_locais?: number;
+  pacientes_sincronizados_pec?: number;
+  pacientes_criados_sem_pec?: number;
+  pacientes_nao_encontrados_ignorados?: number;
+  aviso_criacao_pacientes?: string;
+  avisos_pacientes_novos?: AvisoPacienteNovoImport[];
+  itens_lab_novos?: number;
+  sigtap_criados?: number;
   exames_novos: number; atualizados: number; duplicados: number; ignoradas: number;
   catalogo: { tipos_novos: number; especialidades_novas: number; procedimentos_novos: number };
   erros: { linha: number; motivo: string }[];
 };
-export const importarFilas = (arquivo: File, simular: boolean) => {
+export const importarFilas = (
+  arquivo: File,
+  simular: boolean,
+  criarPacientesNovos = true
+) => {
   const form = new FormData();
   form.append("file", arquivo);
-  return api.post<ImportFilasOut>("/api/integracoes/filas/importar", form, { params: { simular } }).then((r) => r.data);
+  return api
+    .post<ImportFilasOut>("/api/integracoes/filas/importar", form, {
+      params: { simular, criar_pacientes_novos: criarPacientesNovos },
+    })
+    .then((r) => r.data);
 };
 
 // ---------- Versão / auto-update ----------

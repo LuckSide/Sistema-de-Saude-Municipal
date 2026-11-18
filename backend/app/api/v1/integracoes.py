@@ -581,6 +581,7 @@ def validar_rnds(db: Session = Depends(get_db), user: User = Depends(need_perm("
 def importar_filas(
     file: UploadFile = File(...),
     simular: bool = Query(default=False),
+    criar_pacientes_novos: bool = Query(default=True),
     db: Session = Depends(get_db),
     user: User = Depends(need_perm("cfg_filas", "criar")),
 ):
@@ -610,7 +611,12 @@ def importar_filas(
     if len(linhas) > MAX_LINHAS:
         raise HTTPException(status_code=400, detail=f"Acima de {MAX_LINHAS} linhas — divida o arquivo")
     try:
-        resumo = processar_linhas(linhas, db, simular=simular)
+        resumo = processar_linhas(
+            linhas,
+            db,
+            simular=simular,
+            criar_pacientes_novos=criar_pacientes_novos,
+        )
         if simular:
             db.rollback()
         else:

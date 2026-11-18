@@ -320,3 +320,95 @@ def test_fila_nao_lab_continua_em_tfd_exames_fila(db_session: Session):
     assert len(db_session.exec(select(ExameFila)).all()) == 1
     assert len(db_session.exec(select(FilaPsf)).all()) == 0
     assert len(db_session.exec(select(SolicitacaoMestre)).all()) == 0
+
+
+def test_vinculo_pec_prioritario_sem_duplicar_e_aviso_novos_pacientes(db_session: Session):
+    # 1. Seed de pacientes vindos do PEC + stub legado com mesmo nome + colisão de prontuário
+    pec_maria = Paciente(
+        nome="MARIA APARECIDA DA SILVA SANTOS",
+        cpf="12345678909",
+        co_seq_cidadao_pec=5001,
+        codigo_prontuario="5001",
+        situacao_cadastral="ativo",
+    )
+    stub_maria = Paciente(
+        nome="MARIA APARECIDA DA SILVA SANTOS",
+        cpf="",
+        co_seq_cidadao_pec=None,
+        codigo_prontuario="99999",
+        situacao_cadastral="ativo",
+    )
+    pec_joao = Paciente(
+        nome="JOAO CARLOS OLIVEIRA",
+        cpf="98765432100",
+        co_seq_cidadao_pec=147465,
+        codigo_prontuario="147465",  # Mesmo número que o prontuário Vivver da Maria!
+        situacao_cadastral="ativo",
+    )
+    db_session.add_all([pec_maria, stub_maria, pec_joao])
+    db_session.commit()
+    id_pec_maria = pec_maria.id
+    id_pec_joao = pec_joao.id
+
+    # 2. XML estilo Vivver (sem CPF/CNS/nascimento):
+    # - Linha 1: Maria com prontuário 147465 (que no banco pertence ao João!) e nome abreviado -> DEVE vincular à Maria do PEC, NÃO ao João e NÃO criar novo!
+    # - Linha 2: João exato sem nascimento -> DEVE vincular ao João do PEC!
+    # - Linha 3: Paciente inexistente -> DEVE gerar aviso!
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <exames>
+      <exame>
+        <prontuario>147465</prontuario>
+        <paciente>MARIA APARECIDA SILVA</paciente>
+        <tipo_servico>ROTINA</tipo_servico>
+        <data_agendamento>20/11/2026</data_agendamento>
+        <status>agendado</status>
+        <codigo_procedimento>0202020380</codigo_procedimento>
+      </exame>
+      <exame>
+        <prontuario>88888</prontuario>
+        <paciente>JOAO CARLOS OLIVEIRA</paciente>
+        <tipo_servico>ROTINA</tipo_servico>
+        <data_agendamento>20/11/2026</data_agendamento>
+        <status>agendado</status>
+        <codigo_procedimento>0202010473</codigo_procedimento>
+      </exame>
+      <exame>
+        <prontuario>77777</prontuario>
+        <paciente>FULANO INEXISTENTE NO PEC</paciente>
+        <tipo_servico>ROTINA</tipo_servico>
+        <data_agendamento>20/11/2026</data_agendamento>
+        <status>agendado</status>
+        <codigo_procedimento>0202020380</codigo_procedimento>
+      </exame>
+    </exames>
+    """.encode("utf-8")
+
+    linhas = ler_xml(xml)
+
+    # 3. Teste em modo estrito (criar_pacientes_novos=False): zero pacientes criados, avisa o ausente
+    res_estrito = processar_linhas(linhas, db_session, simular=False, criar_pacientes_novos=False)
+    assert res_estrito["pacientes_novos"] == 0
+    assert res_estrito["pacientes_vinculados_pec"] == 2
+    assert res_estrito["pacientes_criados_sem_pec"] == 0
+    assert res_estrito["pacientes_nao_encontrados_ignorados"] == 1
+    assert "ignoradas" in res_estrito["aviso_criacao_pacientes"]
+    assert len(res_estrito["avisos_pacientes_novos"]) == 1
+    assert res_estrito["avisos_pacientes_novos"][0]["nome"] == "FULANO INEXISTENTE NO PEC"
+    assert res_estrito["avisos_pacientes_novos"][0]["acao"] == "ignorado"
+
+    # Confirma que Maria foi vinculada ao registro PEC dela (não ao João e não ao stub!)
+    # Além disso, a consolidação pós-importação ainda unificou o stub duplicado na Maria do PEC (restam apenas os 2 PEC).
+    filas = db_session.exec(select(FilaPsf)).all()
+    assert {f.paciente_id for f in filas} == {id_pec_maria, id_pec_joao}
+    assert len(db_session.exec(select(Paciente)).all()) == 2  # Nenhum paciente novo criado e stub duplicado consolidado!
+
+    # 4. Teste permitindo criar ausentes (criar_pacientes_novos=True): cria apenas o inexistente e avisa
+    res_criar = processar_linhas(linhas, db_session, simular=False, criar_pacientes_novos=True)
+    assert res_criar["pacientes_vinculados_pec"] == 2
+    assert res_criar["pacientes_novos"] == 1
+    assert res_criar["pacientes_criados_sem_pec"] == 1
+    assert "não foram encontrados" in res_criar["aviso_criacao_pacientes"]
+    assert len(res_criar["avisos_pacientes_novos"]) == 1
+    assert res_criar["avisos_pacientes_novos"][0]["nome"] == "FULANO INEXISTENTE NO PEC"
+    assert res_criar["avisos_pacientes_novos"][0]["acao"] == "criado_sem_pec"
+    assert len(db_session.exec(select(Paciente)).all()) == 3
