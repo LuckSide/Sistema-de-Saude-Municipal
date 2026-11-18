@@ -79,6 +79,7 @@ from app.schemas.gerenciamento_dados import (
     AuditoriaGerenciamentoResponse,
     DetalhesDiagnostico,
     DiagnosticoResponse,
+    FilaResumoLimpeza,
     LimpezaMassaExecutarRequest,
     LimpezaMassaExecutarResponse,
     LimpezaMassaPreviewRequest,
@@ -90,6 +91,7 @@ from app.schemas.gerenciamento_dados import (
     ResolverLoteResponse,
     ResumoDiagnostico,
     ResumoDominio,
+    ResumoLimpezaManualResponse,
     UnificarRegistrosRequest,
     UnificarRegistrosResponse,
 )
@@ -2217,8 +2219,403 @@ def _unificar_laboratorios(
 
 
 # ==============================================================================
-# R4: LIMPEZA EM MASSA ADMINISTRATIVA (COM SENHA DE CONFIRMAÇÃO)
+# R4: LIMPEZA EM MASSA ADMINISTRATIVA E LIMPEZA MANUAL POR ÁREA
 # ==============================================================================
+
+TABELAS_LIMPEZA_PERMITIDAS: frozenset[str] = frozenset({
+    # Filas e TFD
+    "tfd_exames_fila",
+    "tfd_viagem_fila",
+    "tfd_viagem_pacientes",
+    "tfd_faturamento",
+    "tfd_viagens",
+    "tfd_veiculos",
+    "tfd_motoristas",
+    "tfd_destinos",
+    "tfd_pacientes_historico",
+    # Laboratório
+    "lab_inconsistencias_justificativas",
+    "lab_conferencias_automaticas",
+    "lab_resultado_arquivos",
+    "lab_pedidos_ajuste",
+    "lab_lote_itens",
+    "lab_lote_artefatos",
+    "lab_solic_itens",
+    "lab_solic_mestre",
+    "lab_fila_psf",
+    "lab_lotes_liberacao",
+    "lab_solicitacoes",
+    "lab_feriados_bloqueios",
+    "lab_vagas",
+    "lab_faturamento_fechamentos",
+    "lab_fpo_itens",
+    "lab_fpo_competencias",
+    "lab_orcamentos_mensais",
+    # Oxigênio
+    "oxigenio_trocas_historico",
+    "oxigenio_emprestimo_itens",
+    "oxigenio_cilindros_vazios",
+    "oxigenio_emprestimos",
+    "oxigenio_comodato_movimentacoes",
+    "oxigenio_compras",
+    "oxigenio_equipamentos",
+    "oxigenio_licitacoes",
+    "oxigenio_empresas",
+    # APAC
+    "apac_anexos",
+    "apac_procedimentos_secundarios",
+    "apac_solicitacoes",
+    "apac_lotes",
+    "apac_faixas",
+    # Farmácia
+    "farmacia_movimentacoes",
+    "farmacia_movimentacoes_insumos",
+    "farmacia_links_publicos",
+    "farmacia_medicamentos",
+    "farmacia_insumos",
+})
+
+TIPOS_LIMPEZA_VALIDOS: frozenset[str] = frozenset({
+    "fila_importada",
+    "pedidos_orfaos",
+    "agendamentos_duplicados",
+    "cadastros_fantasmas",
+    "limpar_filas_manual",
+    "limpar_laboratorio_completo",
+    "limpar_oxigenio",
+    "limpar_tfd_viagens",
+    "limpar_apac",
+    "limpar_farmacia",
+    "limpar_pacientes_manual",
+})
+
+
+def _contar_tabela(db: Session, tabs: Set[str], tabela: str) -> int:
+    if tabela not in tabs or tabela not in TABELAS_LIMPEZA_PERMITIDAS:
+        return 0
+    try:
+        return int(db.execute(text(f"SELECT COUNT(*) FROM {tabela}")).scalar() or 0)
+    except Exception:
+        return 0
+
+
+def _deletar_tabela_inteira(db: Session, tabs: Set[str], tabela: str) -> int:
+    if tabela not in tabs or tabela not in TABELAS_LIMPEZA_PERMITIDAS:
+        return 0
+    qtd = _contar_tabela(db, tabs, tabela)
+    if qtd > 0:
+        db.execute(text(f"DELETE FROM {tabela}"))
+    return qtd
+
+
+def _coletar_pacientes_vinculados_todos_modulos(db: Session, tabs: Set[str]) -> Set[int]:
+    """Coleta todos os IDs de tfd_pacientes referenciados em qualquer módulo do sistema."""
+    pids: Set[int] = set()
+    referencias = (
+        ("tfd_exames_fila", "paciente_id"),
+        ("tfd_viagem_pacientes", "paciente_id"),
+        ("tfd_viagem_pacientes", "acompanhante_id"),
+        ("tfd_viagem_fila", "paciente_id"),
+        ("tfd_viagem_fila", "acompanhante_id"),
+        ("tfd_faturamento", "paciente_id"),
+        ("lab_fila_psf", "paciente_id"),
+        ("lab_solic_mestre", "paciente_id"),
+        ("lab_lote_itens", "paciente_id"),
+        ("lab_resultado_arquivos", "paciente_id"),
+        ("lab_solicitacoes", "paciente_id"),
+        ("oxigenio_emprestimos", "paciente_id"),
+        ("oxigenio_trocas_historico", "paciente_id"),
+        ("oxigenio_cilindros_vazios", "paciente_id"),
+        ("apac_solicitacoes", "paciente_id"),
+        ("usuarios", "paciente_id"),
+    )
+    for t, col in referencias:
+        if t in tabs:
+            try:
+                rows = db.execute(text(f"SELECT DISTINCT {col} FROM {t} WHERE {col} IS NOT NULL")).all()
+                pids.update(int(r[0]) for r in rows if r[0] is not None)
+            except Exception:
+                pass
+    return pids
+
+
+def _contar_sigtap_manual_removivel(db: Session, tabs: Set[str]) -> List[int]:
+    """Retorna IDs de SigtapProcedimento criados manualmente (origem_manual=True) sem vínculos."""
+    if "sigtap_procedimentos" not in tabs:
+        return []
+    manuais = list(
+        db.exec(
+            select(SigtapProcedimento.id).where(SigtapProcedimento.origem_manual == True)  # noqa: E712
+        ).all()
+    )
+    manuais_ids = {int(x) for x in manuais if x is not None}
+    if not manuais_ids:
+        return []
+    em_uso: Set[int] = set()
+    for t, col in (
+        ("lab_solic_itens", "sigtap_id"),
+        ("lab_contratos_precos", "sigtap_id"),
+        ("lab_fpo_itens", "sigtap_id"),
+        ("lab_solicitacoes", "sigtap_id"),
+    ):
+        if t in tabs:
+            try:
+                rows = db.execute(text(f"SELECT DISTINCT {col} FROM {t} WHERE {col} IS NOT NULL")).all()
+                em_uso.update(int(r[0]) for r in rows if r[0] is not None)
+            except Exception:
+                pass
+    return sorted(manuais_ids - em_uso)
+
+
+def _consultar_alvos_filas_manual(
+    db: Session,
+    tabs: Set[str],
+    filtro: Dict[str, Any],
+) -> Tuple[List[ExameFila], List[FilaPsf], List[SolicitacaoMestre]]:
+    """Seleciona registros de filas (TFD e/ou Lab) e agendamentos vinculados conforme filtro manual."""
+    from sqlmodel import or_
+
+    origem = str(filtro.get("origem") or "todas").strip().lower()
+    fila_id_raw = filtro.get("fila_id")
+    tipo_fila_txt = str(filtro.get("tipo_fila") or "").strip()
+    dt_ini = filtro.get("data_inicio")
+    dt_fim = filtro.get("data_fim")
+    incluir_agendados = bool(filtro.get("incluir_agendados", True))
+    incluir_agendamentos_lab = bool(filtro.get("incluir_agendamentos_lab_vinculados", False))
+
+    tf_obj: Optional[TipoFila] = None
+    filtrar_sem_vinculo = False
+    if str(fila_id_raw or "").strip().lower() == "sem_vinculo":
+        filtrar_sem_vinculo = True
+    elif fila_id_raw not in (None, "", "todas", "todos"):
+        try:
+            tf_obj = db.get(TipoFila, int(fila_id_raw))
+        except (TypeError, ValueError):
+            tf_obj = None
+
+    alvos_tfd: List[ExameFila] = []
+    alvos_lab: List[FilaPsf] = []
+    alvos_solic: List[SolicitacaoMestre] = []
+
+    if origem in ("todas", "apenas_tfd") and "tfd_exames_fila" in tabs:
+        stmt = select(ExameFila)
+        if filtrar_sem_vinculo:
+            stmt = stmt.where(ExameFila.fila_id.is_(None))
+        elif tf_obj is not None:
+            nome_u = (tf_obj.nome or "").strip().upper()
+            if nome_u:
+                stmt = stmt.where(
+                    or_(
+                        ExameFila.fila_id == tf_obj.id,
+                        (ExameFila.fila_id.is_(None) & (func.upper(ExameFila.tipo_fila) == nome_u)),
+                    )
+                )
+            else:
+                stmt = stmt.where(ExameFila.fila_id == tf_obj.id)
+        elif tipo_fila_txt:
+            stmt = stmt.where(func.upper(ExameFila.tipo_fila) == tipo_fila_txt.upper())
+
+        if dt_ini:
+            stmt = stmt.where(ExameFila.data_pedido >= date.fromisoformat(str(dt_ini)))
+        if dt_fim:
+            stmt = stmt.where(ExameFila.data_pedido <= date.fromisoformat(str(dt_fim)))
+        if not incluir_agendados:
+            stmt = stmt.where(ExameFila.status.in_(["aguardando", "pendente"]))
+            stmt = stmt.where(ExameFila.data_agendada.is_(None))
+        alvos_tfd = list(db.exec(stmt).all())
+
+    if origem in ("todas", "apenas_lab") and "lab_fila_psf" in tabs:
+        stmt = select(FilaPsf)
+        if filtrar_sem_vinculo:
+            stmt = stmt.where(FilaPsf.fila_id.is_(None))
+        elif tf_obj is not None:
+            nome_u = (tf_obj.nome or "").strip().upper()
+            if nome_u:
+                stmt = stmt.where(
+                    or_(
+                        FilaPsf.fila_id == tf_obj.id,
+                        (
+                            FilaPsf.fila_id.is_(None)
+                            & or_(
+                                func.upper(FilaPsf.tipo_fila) == nome_u,
+                                func.upper(FilaPsf.especialidade) == nome_u,
+                            )
+                        ),
+                    )
+                )
+            else:
+                stmt = stmt.where(FilaPsf.fila_id == tf_obj.id)
+        elif tipo_fila_txt:
+            tf_u = tipo_fila_txt.upper()
+            stmt = stmt.where(
+                or_(
+                    func.upper(FilaPsf.tipo_fila) == tf_u,
+                    func.upper(FilaPsf.especialidade) == tf_u,
+                )
+            )
+
+        if dt_ini:
+            stmt = stmt.where(FilaPsf.data_solicitacao >= date.fromisoformat(str(dt_ini)))
+        if dt_fim:
+            stmt = stmt.where(FilaPsf.data_solicitacao <= date.fromisoformat(str(dt_fim)))
+        if not incluir_agendados:
+            stmt = stmt.where(FilaPsf.status.in_(["na_fila", "pendente"]))
+            stmt = stmt.where(FilaPsf.data_agendada.is_(None))
+        alvos_lab = list(db.exec(stmt).all())
+
+    if incluir_agendamentos_lab and alvos_lab and "lab_solic_mestre" in tabs:
+        lab_ids = [lf.id for lf in alvos_lab if lf.id]
+        if lab_ids:
+            alvos_solic = list(
+                db.exec(
+                    select(SolicitacaoMestre).where(SolicitacaoMestre.origem_fila_id.in_(lab_ids))
+                ).all()
+            )
+
+    return alvos_tfd, alvos_lab, alvos_solic
+
+
+def obter_resumo_limpeza_manual(db: Session) -> ResumoLimpezaManualResponse:
+    """Retorna contagens atuais por fila e por módulo principal para o painel de limpeza manual."""
+    tabs = tabelas_existentes(db)
+
+    tfd_por_fila: Dict[int, int] = {}
+    lab_por_fila: Dict[int, int] = {}
+    tfd_sem_fila = 0
+    lab_sem_fila = 0
+
+    if "tfd_exames_fila" in tabs:
+        for fid, cnt in db.execute(
+            text("SELECT fila_id, COUNT(*) FROM tfd_exames_fila GROUP BY fila_id")
+        ).all():
+            if fid is None:
+                tfd_sem_fila = int(cnt or 0)
+            else:
+                tfd_por_fila[int(fid)] = int(cnt or 0)
+
+    if "lab_fila_psf" in tabs:
+        for fid, cnt in db.execute(
+            text("SELECT fila_id, COUNT(*) FROM lab_fila_psf GROUP BY fila_id")
+        ).all():
+            if fid is None:
+                lab_sem_fila = int(cnt or 0)
+            else:
+                lab_por_fila[int(fid)] = int(cnt or 0)
+
+    filas_out: List[FilaResumoLimpeza] = []
+    if "tfd_tipos_fila" in tabs:
+        tipos = list(db.exec(select(TipoFila).order_by(TipoFila.nome.asc())).all())
+        for tf in tipos:
+            if not tf.id:
+                continue
+            q_tfd = tfd_por_fila.get(tf.id, 0)
+            q_lab = lab_por_fila.get(tf.id, 0)
+            filas_out.append(
+                FilaResumoLimpeza(
+                    id=tf.id,
+                    nome=tf.nome or f"Fila #{tf.id}",
+                    codigo=tf.codigo or "",
+                    tipo_fila=getattr(tf, "tipo_fila", None) or "REGULACAO_GERAL",
+                    qtd_tfd=q_tfd,
+                    qtd_lab=q_lab,
+                    total=q_tfd + q_lab,
+                )
+            )
+
+    pac_total = 0
+    pac_sem_pec = 0
+    if "tfd_pacientes" in tabs:
+        pac_total = int(db.execute(text("SELECT COUNT(*) FROM tfd_pacientes")).scalar() or 0)
+        pac_sem_pec = int(
+            db.execute(text("SELECT COUNT(*) FROM tfd_pacientes WHERE co_seq_cidadao_pec IS NULL")).scalar() or 0
+        )
+
+    sigtap_manual = 0
+    if "sigtap_procedimentos" in tabs:
+        try:
+            sigtap_manual = int(
+                db.exec(
+                    select(func.count(SigtapProcedimento.id)).where(
+                        SigtapProcedimento.origem_manual == True  # noqa: E712
+                    )
+                ).one()
+                or 0
+            )
+        except Exception:
+            sigtap_manual = 0
+
+    areas: Dict[str, int] = {
+        "filas_tfd": _contar_tabela(db, tabs, "tfd_exames_fila"),
+        "filas_lab": _contar_tabela(db, tabs, "lab_fila_psf"),
+        "lab_agendamentos": _contar_tabela(db, tabs, "lab_solic_mestre") + _contar_tabela(db, tabs, "lab_solicitacoes"),
+        "lab_itens": _contar_tabela(db, tabs, "lab_solic_itens"),
+        "lab_vagas": _contar_tabela(db, tabs, "lab_vagas"),
+        "lab_lotes": _contar_tabela(db, tabs, "lab_lotes_liberacao"),
+        "lab_faturamento": (
+            _contar_tabela(db, tabs, "lab_faturamento_fechamentos")
+            + _contar_tabela(db, tabs, "lab_fpo_competencias")
+            + _contar_tabela(db, tabs, "lab_orcamentos_mensais")
+        ),
+        "lab_sigtap_manual": sigtap_manual,
+        "oxigenio_operacional": (
+            _contar_tabela(db, tabs, "oxigenio_emprestimos")
+            + _contar_tabela(db, tabs, "oxigenio_trocas_historico")
+            + _contar_tabela(db, tabs, "oxigenio_cilindros_vazios")
+            + _contar_tabela(db, tabs, "oxigenio_compras")
+            + _contar_tabela(db, tabs, "oxigenio_comodato_movimentacoes")
+        ),
+        "oxigenio_equipamentos": _contar_tabela(db, tabs, "oxigenio_equipamentos"),
+        "oxigenio_empresas": _contar_tabela(db, tabs, "oxigenio_empresas") + _contar_tabela(db, tabs, "oxigenio_licitacoes"),
+        "tfd_viagens": _contar_tabela(db, tabs, "tfd_viagens"),
+        "tfd_viagem_fila": _contar_tabela(db, tabs, "tfd_viagem_fila"),
+        "tfd_faturamento": _contar_tabela(db, tabs, "tfd_faturamento"),
+        "tfd_frota": (
+            _contar_tabela(db, tabs, "tfd_veiculos")
+            + _contar_tabela(db, tabs, "tfd_motoristas")
+            + _contar_tabela(db, tabs, "tfd_destinos")
+        ),
+        "apac_solicitacoes": _contar_tabela(db, tabs, "apac_solicitacoes") + _contar_tabela(db, tabs, "apac_lotes"),
+        "apac_faixas": _contar_tabela(db, tabs, "apac_faixas"),
+        "farmacia_movimentacoes": (
+            _contar_tabela(db, tabs, "farmacia_movimentacoes")
+            + _contar_tabela(db, tabs, "farmacia_movimentacoes_insumos")
+            + _contar_tabela(db, tabs, "farmacia_links_publicos")
+        ),
+        "farmacia_catalogo": _contar_tabela(db, tabs, "farmacia_medicamentos") + _contar_tabela(db, tabs, "farmacia_insumos"),
+        "pacientes_total": pac_total,
+        "pacientes_sem_pec": pac_sem_pec,
+    }
+
+    return ResumoLimpezaManualResponse(
+        filas=filas_out,
+        filas_sem_vinculo_tfd=tfd_sem_fila,
+        filas_sem_vinculo_lab=lab_sem_fila,
+        areas=areas,
+    )
+
+
+def _registrar_tabelas_preview(
+    db: Session,
+    tabs: Set[str],
+    tabelas: List[str],
+    resumo_tabelas: Dict[str, int],
+    detalhes: List[Dict[str, Any]],
+) -> int:
+    sub = 0
+    for t in tabelas:
+        qtd = _contar_tabela(db, tabs, t)
+        if qtd > 0:
+            resumo_tabelas[t] = resumo_tabelas.get(t, 0) + qtd
+            sub += qtd
+            if len(detalhes) < 50:
+                detalhes.append({
+                    "tabela": t,
+                    "id": "-",
+                    "tipo": "limpeza_area",
+                    "exame": f"{qtd} registro(s) na tabela {t}",
+                })
+    return sub
+
 
 def preview_limpeza_massa(
     db: Session,
@@ -2226,10 +2623,16 @@ def preview_limpeza_massa(
 ) -> LimpezaMassaPreviewResponse:
     """Pré-visualização (dry-run) da limpeza em massa sem executar remoções."""
     tipo = request.tipo_limpeza
+    if tipo not in TIPOS_LIMPEZA_VALIDOS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Tipo de limpeza inválido: '{tipo}'.",
+        )
     filtro = request.filtro or {}
     tabs = tabelas_existentes(db)
 
     detalhes: List[Dict[str, Any]] = []
+    resumo_tabelas: Dict[str, int] = {}
     total = 0
 
     if tipo == "fila_importada":
@@ -2411,9 +2814,212 @@ def preview_limpeza_massa(
                             "cpf": p.cpf,
                         })
 
+    elif tipo == "limpar_filas_manual":
+        alvos_tfd, alvos_lab, alvos_solic = _consultar_alvos_filas_manual(db, tabs, filtro)
+        if alvos_tfd:
+            resumo_tabelas["tfd_exames_fila"] = len(alvos_tfd)
+            total += len(alvos_tfd)
+            for ef in alvos_tfd[:25]:
+                detalhes.append({
+                    "tabela": "tfd_exames_fila",
+                    "id": ef.id,
+                    "paciente_id": ef.paciente_id,
+                    "exame": ef.exame,
+                    "tipo_fila": ef.tipo_fila,
+                    "data_pedido": str(ef.data_pedido) if ef.data_pedido else None,
+                    "status": ef.status,
+                })
+        if alvos_lab:
+            resumo_tabelas["lab_fila_psf"] = len(alvos_lab)
+            total += len(alvos_lab)
+            for lf in alvos_lab[:25]:
+                detalhes.append({
+                    "tabela": "lab_fila_psf",
+                    "id": lf.id,
+                    "paciente_id": lf.paciente_id,
+                    "especialidade": lf.especialidade,
+                    "tipo_fila": lf.tipo_fila,
+                    "data_solicitacao": str(lf.data_solicitacao) if lf.data_solicitacao else None,
+                    "status": lf.status,
+                })
+        if alvos_solic:
+            solic_ids = [s.id for s in alvos_solic if s.id]
+            resumo_tabelas["lab_solic_mestre"] = len(solic_ids)
+            total += len(solic_ids)
+            if solic_ids and "lab_solic_itens" in tabs:
+                qtd_it = int(
+                    db.exec(
+                        select(func.count(ItemSolic.id)).where(ItemSolic.solicitacao_id.in_(solic_ids))
+                    ).one()
+                    or 0
+                )
+                if qtd_it:
+                    resumo_tabelas["lab_solic_itens"] = qtd_it
+                    total += qtd_it
+
+    elif tipo == "limpar_laboratorio_completo":
+        incluir_fila = bool(filtro.get("incluir_fila", True))
+        incluir_agendamentos = bool(filtro.get("incluir_agendamentos", True))
+        incluir_vagas = bool(filtro.get("incluir_vagas", False))
+        incluir_faturamento = bool(filtro.get("incluir_faturamento", False))
+        incluir_sigtap_manual = bool(filtro.get("incluir_sigtap_manual", False))
+
+        tabelas_alvo: List[str] = []
+        if incluir_agendamentos:
+            tabelas_alvo.extend([
+                "lab_inconsistencias_justificativas",
+                "lab_conferencias_automaticas",
+                "lab_resultado_arquivos",
+                "lab_pedidos_ajuste",
+                "lab_lote_itens",
+                "lab_lote_artefatos",
+                "lab_solic_itens",
+                "lab_solic_mestre",
+                "lab_lotes_liberacao",
+                "lab_solicitacoes",
+            ])
+        if incluir_fila:
+            if not incluir_agendamentos and "lab_lote_itens" not in tabelas_alvo:
+                tabelas_alvo.append("lab_lote_itens")
+            tabelas_alvo.append("lab_fila_psf")
+        if incluir_vagas:
+            tabelas_alvo.extend(["lab_feriados_bloqueios", "lab_vagas"])
+        if incluir_faturamento:
+            tabelas_alvo.extend([
+                "lab_faturamento_fechamentos",
+                "lab_fpo_itens",
+                "lab_fpo_competencias",
+                "lab_orcamentos_mensais",
+            ])
+
+        total += _registrar_tabelas_preview(db, tabs, tabelas_alvo, resumo_tabelas, detalhes)
+
+        if incluir_sigtap_manual:
+            if incluir_agendamentos and incluir_faturamento:
+                qtd_sm = int(
+                    db.exec(
+                        select(func.count(SigtapProcedimento.id)).where(
+                            SigtapProcedimento.origem_manual == True  # noqa: E712
+                        )
+                    ).one()
+                    or 0
+                ) if "sigtap_procedimentos" in tabs else 0
+            else:
+                qtd_sm = len(_contar_sigtap_manual_removivel(db, tabs))
+            if qtd_sm > 0:
+                resumo_tabelas["sigtap_procedimentos (manuais)"] = qtd_sm
+                total += qtd_sm
+                detalhes.append({
+                    "tabela": "sigtap_procedimentos",
+                    "id": "-",
+                    "tipo": "sigtap_manual",
+                    "exame": f"{qtd_sm} procedimento(s) criado(s) manualmente",
+                })
+
+    elif tipo == "limpar_oxigenio":
+        incluir_cadastros = bool(filtro.get("incluir_cadastros_empresas", False))
+        incluir_equipamentos = bool(filtro.get("incluir_equipamentos", False)) or incluir_cadastros
+        incluir_operacional = bool(filtro.get("incluir_operacional", True)) or incluir_equipamentos
+
+        tabelas_alvo = []
+        if incluir_operacional:
+            tabelas_alvo.extend([
+                "oxigenio_trocas_historico",
+                "oxigenio_emprestimo_itens",
+                "oxigenio_cilindros_vazios",
+                "oxigenio_emprestimos",
+                "oxigenio_comodato_movimentacoes",
+                "oxigenio_compras",
+            ])
+        if incluir_equipamentos:
+            tabelas_alvo.append("oxigenio_equipamentos")
+        if incluir_cadastros:
+            tabelas_alvo.extend(["oxigenio_licitacoes", "oxigenio_empresas"])
+
+        total += _registrar_tabelas_preview(db, tabs, tabelas_alvo, resumo_tabelas, detalhes)
+
+    elif tipo == "limpar_tfd_viagens":
+        incluir_viagens = bool(filtro.get("incluir_viagens", True))
+        incluir_exames_fila = bool(filtro.get("incluir_exames_fila", False))
+        incluir_frota = bool(filtro.get("incluir_cadastros_frota", False))
+
+        tabelas_alvo = []
+        if incluir_viagens:
+            tabelas_alvo.extend([
+                "tfd_faturamento",
+                "tfd_viagem_pacientes",
+                "tfd_viagem_fila",
+                "tfd_viagens",
+            ])
+        if incluir_exames_fila:
+            tabelas_alvo.append("tfd_exames_fila")
+        if incluir_frota:
+            tabelas_alvo.extend(["tfd_veiculos", "tfd_motoristas", "tfd_destinos"])
+
+        total += _registrar_tabelas_preview(db, tabs, tabelas_alvo, resumo_tabelas, detalhes)
+
+    elif tipo == "limpar_apac":
+        incluir_solic = bool(filtro.get("incluir_solicitacoes", True))
+        incluir_faixas = bool(filtro.get("incluir_faixas", False))
+
+        tabelas_alvo = []
+        if incluir_solic:
+            tabelas_alvo.extend([
+                "apac_anexos",
+                "apac_procedimentos_secundarios",
+                "apac_solicitacoes",
+                "apac_lotes",
+            ])
+        if incluir_faixas:
+            tabelas_alvo.append("apac_faixas")
+
+        total += _registrar_tabelas_preview(db, tabs, tabelas_alvo, resumo_tabelas, detalhes)
+
+    elif tipo == "limpar_farmacia":
+        incluir_catalogo = bool(filtro.get("incluir_catalogo", False))
+        incluir_mov = bool(filtro.get("incluir_movimentacoes", True)) or incluir_catalogo
+
+        tabelas_alvo = []
+        if incluir_mov:
+            tabelas_alvo.extend([
+                "farmacia_movimentacoes",
+                "farmacia_movimentacoes_insumos",
+                "farmacia_links_publicos",
+            ])
+        if incluir_catalogo:
+            tabelas_alvo.extend([
+                "farmacia_medicamentos",
+                "farmacia_insumos",
+            ])
+
+        total += _registrar_tabelas_preview(db, tabs, tabelas_alvo, resumo_tabelas, detalhes)
+
+    elif tipo == "limpar_pacientes_manual":
+        modo = str(filtro.get("modo") or "sem_vinculos_nao_pec").strip().lower()
+        if "tfd_pacientes" in tabs:
+            pids_vinc = _coletar_pacientes_vinculados_todos_modulos(db, tabs)
+            pacs = list(db.exec(select(Paciente)).all())
+            for p in pacs:
+                if p.id in pids_vinc:
+                    continue
+                if modo == "sem_vinculos_nao_pec" and p.co_seq_cidadao_pec is not None:
+                    continue
+                total += 1
+                if len(detalhes) < 50:
+                    detalhes.append({
+                        "tabela": "tfd_pacientes",
+                        "id": p.id,
+                        "nome": p.nome,
+                        "cpf": p.cpf,
+                        "tipo": "sem_pec" if p.co_seq_cidadao_pec is None else "pec_sem_vinculo",
+                    })
+            if total > 0:
+                resumo_tabelas["tfd_pacientes"] = total
+
     return LimpezaMassaPreviewResponse(
         total_afetados=total,
         detalhes=detalhes,
+        resumo_tabelas=resumo_tabelas or None,
         mensagem=f"Pré-visualização concluída: {total} registro(s) elegível(is) para a limpeza '{tipo}'.",
     )
 
@@ -2443,6 +3049,12 @@ def executar_limpeza_massa(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Senha de administrador incorreta. Ação abortada.",
+        )
+
+    if request.tipo_limpeza not in TIPOS_LIMPEZA_VALIDOS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Tipo de limpeza inválido: '{request.tipo_limpeza}'.",
         )
 
     # 2. Bloqueio transacional de concorrência
@@ -2616,6 +3228,309 @@ def executar_limpeza_massa(
                     db.delete(p)
                 total_removidos += len(fantasmas)
                 detalhes_execucao["pacientes_fantasmas_removidos"] = len(fantasmas)
+
+        elif tipo == "limpar_filas_manual":
+            alvos_tfd, alvos_lab, alvos_solic = _consultar_alvos_filas_manual(db, tabs, filtro)
+            vagas_recalc: Set[Tuple[int, date]] = set()
+
+            # 1. Remove agendamentos laboratoriais vinculados (se solicitado) em ordem segura de FK
+            if alvos_solic:
+                solic_ids = [s.id for s in alvos_solic if s.id]
+                if solic_ids:
+                    for sm in alvos_solic:
+                        if sm.laboratorio_id and sm.data_agendada:
+                            vagas_recalc.add((int(sm.laboratorio_id), sm.data_agendada))
+                    for tab_dep, col_dep in (
+                        ("lab_inconsistencias_justificativas", "solicitacao_id"),
+                        ("lab_conferencias_automaticas", "solicitacao_id"),
+                        ("lab_resultado_arquivos", "solicitacao_id"),
+                        ("lab_pedidos_ajuste", "solicitacao_id"),
+                        ("lab_lote_itens", "solicitacao_mestre_id"),
+                        ("lab_solic_itens", "solicitacao_id"),
+                    ):
+                        if tab_dep in tabs:
+                            for idx_chunk in range(0, len(solic_ids), 500):
+                                chunk = solic_ids[idx_chunk: idx_chunk + 500]
+                                ph = ",".join(str(int(x)) for x in chunk)
+                                res_del = db.execute(text(f"DELETE FROM {tab_dep} WHERE {col_dep} IN ({ph})"))
+                                if res_del.rowcount and res_del.rowcount > 0:
+                                    detalhes_execucao[tab_dep] = detalhes_execucao.get(tab_dep, 0) + int(res_del.rowcount)
+                                    total_removidos += int(res_del.rowcount)
+                    for sm in alvos_solic:
+                        db.delete(sm)
+                    detalhes_execucao["lab_solic_mestre"] = len(solic_ids)
+                    total_removidos += len(solic_ids)
+
+            # 2. Remove lab_fila_psf
+            if alvos_lab:
+                lab_ids = [lf.id for lf in alvos_lab if lf.id]
+                if lab_ids:
+                    if "lab_solic_mestre" in tabs:
+                        for idx_chunk in range(0, len(lab_ids), 500):
+                            chunk = lab_ids[idx_chunk: idx_chunk + 500]
+                            ph = ",".join(str(int(x)) for x in chunk)
+                            db.execute(text(f"UPDATE lab_solic_mestre SET origem_fila_id = NULL WHERE origem_fila_id IN ({ph})"))
+                    if "lab_lote_itens" in tabs:
+                        for idx_chunk in range(0, len(lab_ids), 500):
+                            chunk = lab_ids[idx_chunk: idx_chunk + 500]
+                            ph = ",".join(str(int(x)) for x in chunk)
+                            db.execute(text(f"DELETE FROM lab_lote_itens WHERE fila_psf_id IN ({ph})"))
+                    for lf in alvos_lab:
+                        db.delete(lf)
+                    detalhes_execucao["lab_fila_psf"] = len(lab_ids)
+                    total_removidos += len(lab_ids)
+
+            # 3. Remove tfd_exames_fila
+            if alvos_tfd:
+                tfd_ids = [ef.id for ef in alvos_tfd if ef.id]
+                if tfd_ids:
+                    if "tfd_viagem_fila" in tabs:
+                        for idx_chunk in range(0, len(tfd_ids), 500):
+                            chunk = tfd_ids[idx_chunk: idx_chunk + 500]
+                            ph = ",".join(str(int(x)) for x in chunk)
+                            db.execute(text(f"UPDATE tfd_viagem_fila SET exame_fila_id = NULL WHERE exame_fila_id IN ({ph})"))
+                    for ef in alvos_tfd:
+                        db.delete(ef)
+                    detalhes_execucao["tfd_exames_fila"] = len(tfd_ids)
+                    total_removidos += len(tfd_ids)
+
+            # 4. Recalcula lab_vagas.vagas_ocupadas se algum agendamento foi removido
+            if vagas_recalc and "lab_vagas" in tabs and "lab_solic_mestre" in tabs:
+                db.flush()
+                for lab_id_v, dt_v in vagas_recalc:
+                    vaga = db.exec(
+                        select(VagaLab).where(VagaLab.laboratorio_id == lab_id_v, VagaLab.data == dt_v)
+                    ).first()
+                    if vaga:
+                        real_cnt = int(
+                            db.exec(
+                                select(func.count(SolicitacaoMestre.id)).where(
+                                    SolicitacaoMestre.laboratorio_id == lab_id_v,
+                                    SolicitacaoMestre.data_agendada == dt_v,
+                                    SolicitacaoMestre.status != "cancelado",
+                                )
+                            ).one()
+                            or 0
+                        )
+                        vaga.vagas_ocupadas = real_cnt
+                        db.add(vaga)
+
+        elif tipo == "limpar_laboratorio_completo":
+            incluir_fila = bool(filtro.get("incluir_fila", True))
+            incluir_agendamentos = bool(filtro.get("incluir_agendamentos", True))
+            incluir_vagas = bool(filtro.get("incluir_vagas", False))
+            incluir_faturamento = bool(filtro.get("incluir_faturamento", False))
+            incluir_sigtap_manual = bool(filtro.get("incluir_sigtap_manual", False))
+
+            if incluir_agendamentos:
+                for tab in (
+                    "lab_inconsistencias_justificativas",
+                    "lab_conferencias_automaticas",
+                    "lab_resultado_arquivos",
+                    "lab_pedidos_ajuste",
+                    "lab_lote_itens",
+                    "lab_lote_artefatos",
+                    "lab_solic_itens",
+                    "lab_solic_mestre",
+                    "lab_solicitacoes",
+                ):
+                    q = _deletar_tabela_inteira(db, tabs, tab)
+                    if q:
+                        detalhes_execucao[tab] = q
+                        total_removidos += q
+                if "lab_fila_psf" in tabs and not incluir_fila:
+                    db.execute(text("UPDATE lab_fila_psf SET lote_id = NULL WHERE lote_id IS NOT NULL"))
+                if incluir_fila:
+                    q_fila = _deletar_tabela_inteira(db, tabs, "lab_fila_psf")
+                    if q_fila:
+                        detalhes_execucao["lab_fila_psf"] = q_fila
+                        total_removidos += q_fila
+                q_lotes = _deletar_tabela_inteira(db, tabs, "lab_lotes_liberacao")
+                if q_lotes:
+                    detalhes_execucao["lab_lotes_liberacao"] = q_lotes
+                    total_removidos += q_lotes
+                if "lab_vagas" in tabs and not incluir_vagas:
+                    db.execute(text("UPDATE lab_vagas SET vagas_ocupadas = 0 WHERE vagas_ocupadas != 0"))
+                if "lab_orcamentos_mensais" in tabs and not incluir_faturamento:
+                    db.execute(text("UPDATE lab_orcamentos_mensais SET valor_consumido = 0 WHERE valor_consumido != 0"))
+            elif incluir_fila:
+                if "lab_solic_mestre" in tabs:
+                    db.execute(text("UPDATE lab_solic_mestre SET origem_fila_id = NULL WHERE origem_fila_id IS NOT NULL"))
+                q_li = _deletar_tabela_inteira(db, tabs, "lab_lote_itens")
+                if q_li:
+                    detalhes_execucao["lab_lote_itens"] = q_li
+                    total_removidos += q_li
+                q_fila = _deletar_tabela_inteira(db, tabs, "lab_fila_psf")
+                if q_fila:
+                    detalhes_execucao["lab_fila_psf"] = q_fila
+                    total_removidos += q_fila
+
+            if incluir_vagas:
+                for tab in ("lab_feriados_bloqueios", "lab_vagas"):
+                    q = _deletar_tabela_inteira(db, tabs, tab)
+                    if q:
+                        detalhes_execucao[tab] = q
+                        total_removidos += q
+
+            if incluir_faturamento:
+                if "lab_lotes_liberacao" in tabs:
+                    db.execute(text("UPDATE lab_lotes_liberacao SET orcamento_id = NULL WHERE orcamento_id IS NOT NULL"))
+                for tab in (
+                    "lab_faturamento_fechamentos",
+                    "lab_fpo_itens",
+                    "lab_fpo_competencias",
+                    "lab_orcamentos_mensais",
+                ):
+                    q = _deletar_tabela_inteira(db, tabs, tab)
+                    if q:
+                        detalhes_execucao[tab] = q
+                        total_removidos += q
+
+            if incluir_sigtap_manual and "sigtap_procedimentos" in tabs:
+                db.flush()
+                ids_manuais = _contar_sigtap_manual_removivel(db, tabs)
+                if ids_manuais:
+                    for idx_chunk in range(0, len(ids_manuais), 500):
+                        chunk = ids_manuais[idx_chunk: idx_chunk + 500]
+                        ph = ",".join(str(int(x)) for x in chunk)
+                        db.execute(text(f"DELETE FROM sigtap_procedimentos WHERE id IN ({ph})"))
+                    detalhes_execucao["sigtap_procedimentos_manuais"] = len(ids_manuais)
+                    total_removidos += len(ids_manuais)
+
+        elif tipo == "limpar_oxigenio":
+            incluir_cadastros = bool(filtro.get("incluir_cadastros_empresas", False))
+            incluir_equipamentos = bool(filtro.get("incluir_equipamentos", False)) or incluir_cadastros
+            incluir_operacional = bool(filtro.get("incluir_operacional", True)) or incluir_equipamentos
+
+            if incluir_operacional:
+                for tab in (
+                    "oxigenio_trocas_historico",
+                    "oxigenio_emprestimo_itens",
+                    "oxigenio_cilindros_vazios",
+                    "oxigenio_emprestimos",
+                    "oxigenio_comodato_movimentacoes",
+                    "oxigenio_compras",
+                ):
+                    q = _deletar_tabela_inteira(db, tabs, tab)
+                    if q:
+                        detalhes_execucao[tab] = q
+                        total_removidos += q
+                if "oxigenio_equipamentos" in tabs and not incluir_equipamentos:
+                    try:
+                        db.execute(text("UPDATE oxigenio_equipamentos SET status = 'DISPONIVEL' WHERE UPPER(status) IN ('EM_USO', 'EMPRESTADO')"))
+                    except Exception:
+                        pass
+            if incluir_equipamentos:
+                q = _deletar_tabela_inteira(db, tabs, "oxigenio_equipamentos")
+                if q:
+                    detalhes_execucao["oxigenio_equipamentos"] = q
+                    total_removidos += q
+            if incluir_cadastros:
+                for tab in ("oxigenio_licitacoes", "oxigenio_empresas"):
+                    q = _deletar_tabela_inteira(db, tabs, tab)
+                    if q:
+                        detalhes_execucao[tab] = q
+                        total_removidos += q
+
+        elif tipo == "limpar_tfd_viagens":
+            incluir_viagens = bool(filtro.get("incluir_viagens", True))
+            incluir_exames_fila = bool(filtro.get("incluir_exames_fila", False))
+            incluir_frota = bool(filtro.get("incluir_cadastros_frota", False))
+
+            if incluir_viagens:
+                for tab in (
+                    "tfd_faturamento",
+                    "tfd_viagem_pacientes",
+                    "tfd_viagem_fila",
+                    "tfd_viagens",
+                ):
+                    q = _deletar_tabela_inteira(db, tabs, tab)
+                    if q:
+                        detalhes_execucao[tab] = q
+                        total_removidos += q
+            if incluir_exames_fila:
+                if "tfd_viagem_fila" in tabs and not incluir_viagens:
+                    db.execute(text("UPDATE tfd_viagem_fila SET exame_fila_id = NULL WHERE exame_fila_id IS NOT NULL"))
+                q = _deletar_tabela_inteira(db, tabs, "tfd_exames_fila")
+                if q:
+                    detalhes_execucao["tfd_exames_fila"] = q
+                    total_removidos += q
+            if incluir_frota:
+                if "tfd_viagens" in tabs and not incluir_viagens:
+                    db.execute(text("UPDATE tfd_viagens SET veiculo_id = NULL, motorista_id = NULL"))
+                for tab in ("tfd_veiculos", "tfd_motoristas", "tfd_destinos"):
+                    q = _deletar_tabela_inteira(db, tabs, tab)
+                    if q:
+                        detalhes_execucao[tab] = q
+                        total_removidos += q
+
+        elif tipo == "limpar_apac":
+            incluir_solic = bool(filtro.get("incluir_solicitacoes", True))
+            incluir_faixas = bool(filtro.get("incluir_faixas", False))
+
+            if incluir_solic:
+                for tab in (
+                    "apac_anexos",
+                    "apac_procedimentos_secundarios",
+                    "apac_solicitacoes",
+                    "apac_lotes",
+                ):
+                    q = _deletar_tabela_inteira(db, tabs, tab)
+                    if q:
+                        detalhes_execucao[tab] = q
+                        total_removidos += q
+            if incluir_faixas:
+                q = _deletar_tabela_inteira(db, tabs, "apac_faixas")
+                if q:
+                    detalhes_execucao["apac_faixas"] = q
+                    total_removidos += q
+
+        elif tipo == "limpar_farmacia":
+            incluir_catalogo = bool(filtro.get("incluir_catalogo", False))
+            incluir_mov = bool(filtro.get("incluir_movimentacoes", True)) or incluir_catalogo
+
+            if incluir_mov:
+                for tab in (
+                    "farmacia_movimentacoes",
+                    "farmacia_movimentacoes_insumos",
+                    "farmacia_links_publicos",
+                ):
+                    q = _deletar_tabela_inteira(db, tabs, tab)
+                    if q:
+                        detalhes_execucao[tab] = q
+                        total_removidos += q
+            if incluir_catalogo:
+                for tab in ("farmacia_medicamentos", "farmacia_insumos"):
+                    q = _deletar_tabela_inteira(db, tabs, tab)
+                    if q:
+                        detalhes_execucao[tab] = q
+                        total_removidos += q
+
+        elif tipo == "limpar_pacientes_manual":
+            modo = str(filtro.get("modo") or "sem_vinculos_nao_pec").strip().lower()
+            if "tfd_pacientes" in tabs:
+                pids_vinc = _coletar_pacientes_vinculados_todos_modulos(db, tabs)
+                pacs = list(db.exec(select(Paciente)).all())
+                alvos_pac_ids: List[int] = []
+                for p in pacs:
+                    if not p.id or p.id in pids_vinc:
+                        continue
+                    if modo == "sem_vinculos_nao_pec" and p.co_seq_cidadao_pec is not None:
+                        continue
+                    alvos_pac_ids.append(int(p.id))
+
+                if alvos_pac_ids:
+                    if "tfd_pacientes_historico" in tabs:
+                        for idx_chunk in range(0, len(alvos_pac_ids), 500):
+                            chunk = alvos_pac_ids[idx_chunk: idx_chunk + 500]
+                            ph = ",".join(str(x) for x in chunk)
+                            db.execute(text(f"DELETE FROM tfd_pacientes_historico WHERE paciente_id IN ({ph})"))
+                    for idx_chunk in range(0, len(alvos_pac_ids), 500):
+                        chunk = alvos_pac_ids[idx_chunk: idx_chunk + 500]
+                        ph = ",".join(str(x) for x in chunk)
+                        db.execute(text(f"DELETE FROM tfd_pacientes WHERE id IN ({ph})"))
+                    detalhes_execucao["tfd_pacientes"] = len(alvos_pac_ids)
+                    total_removidos += len(alvos_pac_ids)
 
         db.flush()
 

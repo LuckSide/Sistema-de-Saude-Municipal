@@ -30,6 +30,7 @@ from app.schemas.gerenciamento_dados import (
     ResolverInconsistenciaResultado,
     ResolverLoteRequest,
     ResolverLoteResponse,
+    ResumoLimpezaManualResponse,
     UnificarRegistrosRequest,
     UnificarRegistrosResponse,
 )
@@ -37,6 +38,7 @@ from app.services.gerenciamento_dados import (
     diagnosticar_dados,
     executar_limpeza_massa,
     listar_logs_auditoria_gerenciamento,
+    obter_resumo_limpeza_manual,
     preview_limpeza_massa,
     resolver_inconsistencia,
     resolver_inconsistencias_lote,
@@ -136,6 +138,19 @@ def unificar_dados(
         client_ip=client_ip,
         user_agent=user_agent,
     )
+
+
+@router.get(
+    "/limpeza-manual/resumo",
+    response_model=ResumoLimpezaManualResponse,
+    summary="Resumo de volumes por fila e por área principal para limpeza manual",
+    description="Retorna a lista de filas cadastradas com suas contagens atuais e o total de registros em cada módulo do sistema.",
+)
+def resumo_limpeza_manual(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_superuser),
+) -> ResumoLimpezaManualResponse:
+    return obter_resumo_limpeza_manual(db=db)
 
 
 @router.post(

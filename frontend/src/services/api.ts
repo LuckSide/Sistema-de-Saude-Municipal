@@ -4406,7 +4406,31 @@ export type TipoLimpezaMassa =
   | "fila_importada"
   | "pedidos_orfaos"
   | "agendamentos_duplicados"
-  | "cadastros_fantasmas";
+  | "cadastros_fantasmas"
+  | "limpar_filas_manual"
+  | "limpar_laboratorio_completo"
+  | "limpar_oxigenio"
+  | "limpar_tfd_viagens"
+  | "limpar_apac"
+  | "limpar_farmacia"
+  | "limpar_pacientes_manual";
+
+export type FilaResumoLimpeza = {
+  id: number;
+  nome: string;
+  codigo: string;
+  tipo_fila: string;
+  qtd_tfd: number;
+  qtd_lab: number;
+  total: number;
+};
+
+export type ResumoLimpezaManualResponse = {
+  filas: FilaResumoLimpeza[];
+  filas_sem_vinculo_tfd: number;
+  filas_sem_vinculo_lab: number;
+  areas: Record<string, number>;
+};
 
 export type LimpezaMassaPreviewRequest = {
   tipo_limpeza: string;
@@ -4416,6 +4440,7 @@ export type LimpezaMassaPreviewRequest = {
 export type LimpezaMassaPreviewResponse = {
   total_afetados: number;
   detalhes: Array<Record<string, unknown>>;
+  resumo_tabelas?: Record<string, number> | null;
   mensagem?: string | null;
 };
 
@@ -4491,6 +4516,11 @@ export const resolverInconsistenciasLoteDados = (
 export const unificarRegistros = (payload: UnificarRequest): Promise<UnificarResponse> =>
   api
     .post<UnificarResponse>("/api/v1/gerenciamento-dados/unificar", payload)
+    .then((r) => r.data);
+
+export const obterResumoLimpezaManual = (): Promise<ResumoLimpezaManualResponse> =>
+  api
+    .get<ResumoLimpezaManualResponse>("/api/v1/gerenciamento-dados/limpeza-manual/resumo")
     .then((r) => r.data);
 
 export const previewLimpezaMassa = (

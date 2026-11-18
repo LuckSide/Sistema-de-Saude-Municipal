@@ -50,7 +50,14 @@ from app.models.lab_fase6 import (
     SolicitacaoMestre,
     VagaLab,
 )
-from app.models.oxigenio import EmprestimoOxigenio
+from app.models.apac import FaixaNumeracaoAPAC, SolicitacaoAPAC
+from app.models.farmacia import Medicamento, MovimentacaoMedicamento
+from app.models.oxigenio import (
+    EmpresaOxigenio,
+    EmprestimoOxigenio,
+    EquipamentoRespiratorio,
+    TrocaCilindroHistorico,
+)
 from app.models.tfd import (
     ExameFila,
     Faturamento,
@@ -1700,3 +1707,278 @@ def test_resolver_lote_multidominio_e_idempotencia(api_client: TestClient, db: S
         assert pos["resumo"][dom]["inconsistencias"] == 0
 
 
+
+
+def test_limpeza_manual_resumo_e_todas_areas(api_client: TestClient, db: Session):
+    """Testa GET /limpeza-manual/resumo e a limpeza manual de todas as áreas principais."""
+    # 1. Popula todas as áreas principais
+    p_vinc = Paciente(nome="PACIENTE COM VINCULO", cpf="11122233344", co_seq_cidadao_pec=9991)
+    p_livre_sem_pec = Paciente(nome="PACIENTE LIVRE SEM PEC", cpf="55566677788", co_seq_cidadao_pec=None)
+    p_livre_com_pec = Paciente(nome="PACIENTE LIVRE COM PEC", cpf="99988877766", co_seq_cidadao_pec=9992)
+    db.add_all([p_vinc, p_livre_sem_pec, p_livre_com_pec])
+    db.flush()
+
+    med = Medico(nome="DR TESTE APAC", crm="12345")
+    db.add(med)
+    db.flush()
+
+    tf_lab = TipoFila(nome="ROTINA", codigo="ROT", tipo_fila="EXAME_LABORATORIAL", ativo=True)
+    tf_tfd = TipoFila(nome="OFTALMOLOGIA", codigo="OFT", tipo_fila="REGULACAO_GERAL", ativo=True)
+    db.add_all([tf_lab, tf_tfd])
+    db.flush()
+
+    ef1 = ExameFila(
+        paciente_id=p_vinc.id,
+        exame="CONSULTA OFTALMO",
+        tipo_fila="OFTALMOLOGIA",
+        fila_id=tf_tfd.id,
+        data_pedido=date(2026, 11, 10),
+        status="aguardando",
+    )
+    db.add(ef1)
+
+    lab = Laboratorio(nome="Lab Municipal", ativo=True)
+    db.add(lab)
+    db.flush()
+
+    vaga = VagaLab(laboratorio_id=lab.id, data=date(2026, 11, 20), vagas_totais=20, vagas_ocupadas=1)
+    db.add(vaga)
+
+    sp_oficial = SigtapProcedimento(codigo="0202020380", descricao="HEMOGRAMA", origem_manual=False)
+    sp_manual = SigtapProcedimento(codigo="IMP-TESTE001", descricao="EXAME MANUAL", origem_manual=True)
+    db.add_all([sp_oficial, sp_manual])
+    db.flush()
+
+    fp = FilaPsf(
+        paciente_id=p_vinc.id,
+        especialidade="ROTINA",
+        tipo_fila="ROTINA",
+        fila_id=tf_lab.id,
+        data_solicitacao=date(2026, 11, 10),
+        status="agendado",
+        data_agendada=date(2026, 11, 20),
+        sigtap_ids_json=json.dumps([sp_oficial.id]),
+    )
+    db.add(fp)
+    db.flush()
+
+    sm = SolicitacaoMestre(
+        paciente_id=p_vinc.id,
+        data_agendada=date(2026, 11, 20),
+        laboratorio_id=lab.id,
+        origem_fila_id=fp.id,
+        status="agendado",
+    )
+    db.add(sm)
+    db.flush()
+    db.add(ItemSolic(solicitacao_id=sm.id, sigtap_id=sp_oficial.id, quantidade=1))
+
+    # Oxigenio
+    emp = EmpresaOxigenio(razao_social="OXI MED LTDA", cnpj="12345678000199")
+    db.add(emp)
+    db.flush()
+    eq = EquipamentoRespiratorio(patrimonio="PAT-001", tipo="CONCENTRADOR", empresa_id=emp.id, status="EM_USO")
+    db.add(eq)
+    db.flush()
+    empr = EmprestimoOxigenio(
+        paciente_id=p_vinc.id,
+        paciente_nome=p_vinc.nome,
+        tipo_servico="MAQUINA",
+        equipamento_id=eq.id,
+        empresa_id=emp.id,
+        data_instalacao=date(2026, 11, 1),
+    )
+    db.add(empr)
+    db.flush()
+    db.add(
+        TrocaCilindroHistorico(
+            emprestimo_id=empr.id,
+            paciente_id=p_vinc.id,
+            empresa_id=emp.id,
+            data_troca=date(2026, 11, 5),
+            tipo_cilindro="10m3",
+        )
+    )
+
+    # APAC
+    db.add(
+        FaixaNumeracaoAPAC(
+            ano=2026,
+            numero_inicial=3126000000010,
+            numero_final=3126000000050,
+            proximo_numero=3126000000010,
+        )
+    )
+    db.add(
+        SolicitacaoAPAC(
+            paciente_id=p_vinc.id,
+            paciente_nome=p_vinc.nome,
+            medico_solicitante_id=med.id,
+            medico_solicitante_nome=med.nome,
+            cid_principal_codigo="I10",
+            procedimento_principal_codigo="0301010072",
+            procedimento_principal_nome="PROCEDIMENTO TESTE",
+            data_solicitacao=date(2026, 11, 10),
+            competencia="2026-11",
+        )
+    )
+
+    # Farmácia
+    fmed = Medicamento(codigo="MED-001", nome="DIPIRONA 500MG", principio_ativo="DIPIRONA", estoque_atual=100)
+    db.add(fmed)
+    db.flush()
+    db.add(MovimentacaoMedicamento(medicamento_id=fmed.id, tipo="ENTRADA_COMPRA", quantidade=100))
+    db.commit()
+
+    # 2. Consulta resumo de limpeza manual
+    r_res = api_client.get("/api/v1/gerenciamento-dados/limpeza-manual/resumo")
+    assert r_res.status_code == 200
+    resumo = r_res.json()
+    assert len(resumo["filas"]) == 2
+    assert resumo["areas"]["filas_tfd"] == 1
+    assert resumo["areas"]["filas_lab"] == 1
+    assert resumo["areas"]["lab_agendamentos"] == 1
+    assert resumo["areas"]["oxigenio_operacional"] >= 2
+    assert resumo["areas"]["oxigenio_equipamentos"] == 1
+    assert resumo["areas"]["apac_solicitacoes"] == 1
+    assert resumo["areas"]["farmacia_movimentacoes"] == 1
+    assert resumo["areas"]["farmacia_catalogo"] == 1
+
+    # 3. Limpeza manual de 1 fila específica (OFTALMOLOGIA) preserva fila de laboratório (ROTINA)
+    r_prev_fila = api_client.post(
+        "/api/v1/gerenciamento-dados/limpeza-massa/preview",
+        json={
+            "tipo_limpeza": "limpar_filas_manual",
+            "filtro": {"fila_id": tf_tfd.id, "origem": "todas", "incluir_agendados": True},
+        },
+    )
+    assert r_prev_fila.status_code == 200
+    assert r_prev_fila.json()["total_afetados"] == 1
+    assert r_prev_fila.json()["resumo_tabelas"]["tfd_exames_fila"] == 1
+
+    r_exec_fila = api_client.post(
+        "/api/v1/gerenciamento-dados/limpeza-massa/executar",
+        json={
+            "tipo_limpeza": "limpar_filas_manual",
+            "filtro": {"fila_id": tf_tfd.id, "origem": "todas", "incluir_agendados": True},
+            "senha": "admin_pass_123",
+            "confirmacao_explicita": True,
+        },
+    )
+    assert r_exec_fila.status_code == 200
+    assert r_exec_fila.json()["total_removidos"] == 1
+    assert len(db.exec(select(ExameFila)).all()) == 0
+    assert len(db.exec(select(FilaPsf)).all()) == 1  # ROTINA preservada!
+
+    # 4. Limpeza completa de Laboratório (preserva Lab, VagaLab zerada, e SIGTAP oficial; remove SIGTAP manual)
+    r_exec_lab = api_client.post(
+        "/api/v1/gerenciamento-dados/limpeza-massa/executar",
+        json={
+            "tipo_limpeza": "limpar_laboratorio_completo",
+            "filtro": {
+                "incluir_fila": True,
+                "incluir_agendamentos": True,
+                "incluir_vagas": False,
+                "incluir_faturamento": False,
+                "incluir_sigtap_manual": True,
+            },
+            "senha": "admin_pass_123",
+            "confirmacao_explicita": True,
+        },
+    )
+    assert r_exec_lab.status_code == 200
+    assert len(db.exec(select(FilaPsf)).all()) == 0
+    assert len(db.exec(select(SolicitacaoMestre)).all()) == 0
+    assert len(db.exec(select(ItemSolic)).all()) == 0
+    db.refresh(vaga)
+    assert vaga.vagas_ocupadas == 0
+    # SIGTAP oficial mantido, manual removido
+    sigtaps_rest = db.exec(select(SigtapProcedimento)).all()
+    assert len(sigtaps_rest) == 1
+    assert sigtaps_rest[0].codigo == "0202020380"
+    assert len(db.exec(select(Laboratorio)).all()) == 1
+
+    # 5. Limpeza de Oxigênio (operacional primeiro -> equipamento volta p/ DISPONIVEL; depois completo)
+    r_exec_oxi = api_client.post(
+        "/api/v1/gerenciamento-dados/limpeza-massa/executar",
+        json={
+            "tipo_limpeza": "limpar_oxigenio",
+            "filtro": {
+                "incluir_operacional": True,
+                "incluir_equipamentos": False,
+                "incluir_cadastros_empresas": False,
+            },
+            "senha": "admin_pass_123",
+            "confirmacao_explicita": True,
+        },
+    )
+    assert r_exec_oxi.status_code == 200
+    assert len(db.exec(select(EmprestimoOxigenio)).all()) == 0
+    db.refresh(eq)
+    assert eq.status == "DISPONIVEL"
+
+    # Agora limpa equipamentos + empresas também
+    r_exec_oxi2 = api_client.post(
+        "/api/v1/gerenciamento-dados/limpeza-massa/executar",
+        json={
+            "tipo_limpeza": "limpar_oxigenio",
+            "filtro": {"incluir_cadastros_empresas": True},
+            "senha": "admin_pass_123",
+            "confirmacao_explicita": True,
+        },
+    )
+    assert r_exec_oxi2.status_code == 200
+    assert len(db.exec(select(EquipamentoRespiratorio)).all()) == 0
+    assert len(db.exec(select(EmpresaOxigenio)).all()) == 0
+
+    # 6. Limpeza de APAC e Farmácia
+    r_apac = api_client.post(
+        "/api/v1/gerenciamento-dados/limpeza-massa/executar",
+        json={
+            "tipo_limpeza": "limpar_apac",
+            "filtro": {"incluir_solicitacoes": True, "incluir_faixas": True},
+            "senha": "admin_pass_123",
+            "confirmacao_explicita": True,
+        },
+    )
+    assert r_apac.status_code == 200
+    assert len(db.exec(select(SolicitacaoAPAC)).all()) == 0
+    assert len(db.exec(select(FaixaNumeracaoAPAC)).all()) == 0
+
+    r_farm = api_client.post(
+        "/api/v1/gerenciamento-dados/limpeza-massa/executar",
+        json={
+            "tipo_limpeza": "limpar_farmacia",
+            "filtro": {"incluir_movimentacoes": True, "incluir_catalogo": True},
+            "senha": "admin_pass_123",
+            "confirmacao_explicita": True,
+        },
+    )
+    assert r_farm.status_code == 200
+    assert len(db.exec(select(MovimentacaoMedicamento)).all()) == 0
+    assert len(db.exec(select(Medicamento)).all()) == 0
+
+    # 7. Limpeza manual de pacientes (modo sem_vinculos_nao_pec remove apenas p_livre_sem_pec)
+    id_livre_sem_pec = p_livre_sem_pec.id
+    id_livre_com_pec = p_livre_com_pec.id
+    r_pac = api_client.post(
+        "/api/v1/gerenciamento-dados/limpeza-massa/executar",
+        json={
+            "tipo_limpeza": "limpar_pacientes_manual",
+            "filtro": {"modo": "sem_vinculos_nao_pec"},
+            "senha": "admin_pass_123",
+            "confirmacao_explicita": True,
+        },
+    )
+    assert r_pac.status_code == 200
+    assert r_pac.json()["total_removidos"] == 1
+    db.expire_all()
+    assert db.get(Paciente, id_livre_sem_pec) is None
+    assert db.get(Paciente, id_livre_com_pec) is not None
+
+    # 8. Tipo de limpeza inválido retorna 400
+    r_inv = api_client.post(
+        "/api/v1/gerenciamento-dados/limpeza-massa/preview",
+        json={"tipo_limpeza": "inexistente_xyz"},
+    )
+    assert r_inv.status_code == 400

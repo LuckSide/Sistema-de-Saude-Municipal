@@ -73,7 +73,7 @@ class UnificarRegistrosResponse(BaseModel):
 
 
 # ==============================================================================
-# LIMPEZA EM MASSA (R4)
+# LIMPEZA EM MASSA (R4) E LIMPEZA MANUAL POR ÁREA
 # ==============================================================================
 
 TipoLimpezaMassa = Literal[
@@ -81,12 +81,36 @@ TipoLimpezaMassa = Literal[
     "pedidos_orfaos",
     "agendamentos_duplicados",
     "cadastros_fantasmas",
+    "limpar_filas_manual",
+    "limpar_laboratorio_completo",
+    "limpar_oxigenio",
+    "limpar_tfd_viagens",
+    "limpar_apac",
+    "limpar_farmacia",
+    "limpar_pacientes_manual",
 ]
+
+
+class FilaResumoLimpeza(BaseModel):
+    id: int
+    nome: str
+    codigo: str = ""
+    tipo_fila: str = "REGULACAO_GERAL"
+    qtd_tfd: int = 0
+    qtd_lab: int = 0
+    total: int = 0
+
+
+class ResumoLimpezaManualResponse(BaseModel):
+    filas: List[FilaResumoLimpeza] = Field(default_factory=list)
+    filas_sem_vinculo_tfd: int = 0
+    filas_sem_vinculo_lab: int = 0
+    areas: Dict[str, int] = Field(default_factory=dict)
 
 
 class LimpezaMassaPreviewRequest(BaseModel):
     tipo_limpeza: str = Field(
-        description="Tipo de limpeza: 'fila_importada', 'pedidos_orfaos', 'agendamentos_duplicados'"
+        description="Tipo de limpeza: higienização automática ou limpeza manual por área"
     )
     filtro: Optional[Dict[str, Any]] = Field(
         default=None, description="Filtros específicos para a operação de limpeza"
@@ -96,12 +120,13 @@ class LimpezaMassaPreviewRequest(BaseModel):
 class LimpezaMassaPreviewResponse(BaseModel):
     total_afetados: int
     detalhes: List[Dict[str, Any]] = Field(default_factory=list)
+    resumo_tabelas: Optional[Dict[str, int]] = None
     mensagem: Optional[str] = None
 
 
 class LimpezaMassaExecutarRequest(BaseModel):
     tipo_limpeza: str = Field(
-        description="Tipo de limpeza: 'fila_importada', 'pedidos_orfaos', 'agendamentos_duplicados'"
+        description="Tipo de limpeza: higienização automática ou limpeza manual por área"
     )
     filtro: Optional[Dict[str, Any]] = Field(
         default=None, description="Filtros específicos para a operação de limpeza"

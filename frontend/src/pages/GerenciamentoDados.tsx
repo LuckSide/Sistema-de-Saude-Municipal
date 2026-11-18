@@ -3,6 +3,7 @@ import {
   Activity,
   AlertTriangle,
   Building2,
+  Bus,
   Calendar,
   CheckCheck,
   CheckCircle2,
@@ -11,6 +12,7 @@ import {
   Eraser,
   Eye,
   EyeOff,
+  FileCheck2,
   FileSpreadsheet,
   FlaskConical,
   GitMerge,
@@ -18,11 +20,13 @@ import {
   Info,
   ListOrdered,
   Loader2,
+  Pill,
   RefreshCw,
   Search,
   ShieldAlert,
   Trash2,
   Users,
+  Wind,
   Wrench,
   X,
 } from "lucide-react";
@@ -34,6 +38,7 @@ import {
   msgErro,
   obterAuditoriaDados,
   obterDiagnosticoDados,
+  obterResumoLimpezaManual,
   previewLimpezaMassa,
   resolverInconsistenciaDados,
   resolverInconsistenciasLoteDados,
@@ -45,6 +50,7 @@ import {
   type LimpezaMassaPreviewResponse,
   type ResolverInconsistenciaItem,
   type ResolverLoteResponse,
+  type ResumoLimpezaManualResponse,
   type TipoLimpezaMassa,
   type UnificarResponse,
 } from "../services/api";
@@ -133,10 +139,11 @@ export default function GerenciamentoDados() {
   const [resolvendoChave, setResolvendoChave] = useState<string | null>(null);
 
   const [modalLimpezaAberto, setModalLimpezaAberto] = useState<boolean>(false);
+  const [limpezaRefreshKey, setLimpezaRefreshKey] = useState<number>(0);
   const [limpezaConfigurada, setLimpezaConfigurada] = useState<{
     tipo: TipoLimpezaMassa;
     filtro: Record<string, unknown>;
-    previewInfo?: { totalAfetados: number; detalhes?: any[] };
+    previewInfo?: { totalAfetados: number; detalhes?: any[]; resumoTabelas?: Record<string, number> | null };
   } | null>(null);
   const [modalDetalhesItem, setModalDetalhesItem] = useState<ItemDiagnostico | null>(null);
 
@@ -426,6 +433,7 @@ export default function GerenciamentoDados() {
       {subAba === "limpeza" && (
         <SecaoLimpeza
           isSuperuser={!!user?.is_superuser}
+          refreshKey={limpezaRefreshKey}
           onAbrirModalConfirmacao={(tipo, filtro, previewInfo) => {
             if (!user?.is_superuser) return;
             setLimpezaConfigurada({ tipo, filtro, previewInfo });
@@ -497,6 +505,7 @@ export default function GerenciamentoDados() {
             setModalLimpezaAberto(false);
             setLimpezaConfigurada(null);
             setAlertaSucesso(msg);
+            setLimpezaRefreshKey((k) => k + 1);
             salvarCacheSessao(null);
             carregarDiagnostico(true);
           }}
@@ -1357,38 +1366,222 @@ interface SecaoLimpezaProps {
   onAbrirModalConfirmacao: (
     tipo: TipoLimpezaMassa,
     filtro: Record<string, unknown>,
-    previewInfo?: { totalAfetados: number; detalhes?: any[] }
+    previewInfo?: { totalAfetados: number; detalhes?: any[]; resumoTabelas?: Record<string, number> | null }
   ) => void;
   onErro: (err: string) => void;
   isSuperuser?: boolean;
+  refreshKey?: number;
 }
 
 function SecaoLimpeza({
   onAbrirModalConfirmacao,
   onErro,
   isSuperuser = false,
+  refreshKey = 0,
 }: SecaoLimpezaProps) {
-  const [tipoLimpeza, setTipoLimpeza] = useState<TipoLimpezaMassa>("fila_importada");
+  const [tipoLimpeza, setTipoLimpeza] = useState<TipoLimpezaMassa>("limpar_filas_manual");
+  const [resumoManual, setResumoManual] = useState<ResumoLimpezaManualResponse | null>(null);
+  const [carregandoResumo, setCarregandoResumo] = useState<boolean>(false);
+
+  // Filtros — Higienização: fila_importada
   const [tipoFila, setTipoFila] = useState<string>("");
   const [dataInicio, setDataInicio] = useState<string>("");
   const [dataFim, setDataFim] = useState<string>("");
   const [apenasNaoAgendados, setApenasNaoAgendados] = useState<boolean>(true);
 
+  // Filtros — Limpeza Manual: Filas (1 fila ou todas)
+  const [filaManualId, setFilaManualId] = useState<string>("todas");
+  const [filaManualOrigem, setFilaManualOrigem] = useState<string>("todas");
+  const [filaManualDataIni, setFilaManualDataIni] = useState<string>("");
+  const [filaManualDataFim, setFilaManualDataFim] = useState<string>("");
+  const [filaManualIncluirAgendados, setFilaManualIncluirAgendados] = useState<boolean>(true);
+  const [filaManualIncluirSolicLab, setFilaManualIncluirSolicLab] = useState<boolean>(false);
+
+  // Filtros — Limpeza Manual: Laboratório
+  const [labIncluirFila, setLabIncluirFila] = useState<boolean>(true);
+  const [labIncluirAgendamentos, setLabIncluirAgendamentos] = useState<boolean>(true);
+  const [labIncluirVagas, setLabIncluirVagas] = useState<boolean>(false);
+  const [labIncluirFaturamento, setLabIncluirFaturamento] = useState<boolean>(false);
+  const [labIncluirSigtapManual, setLabIncluirSigtapManual] = useState<boolean>(false);
+
+  // Filtros — Limpeza Manual: Oxigênio
+  const [oxiIncluirOperacional, setOxiIncluirOperacional] = useState<boolean>(true);
+  const [oxiIncluirEquipamentos, setOxiIncluirEquipamentos] = useState<boolean>(false);
+  const [oxiIncluirEmpresas, setOxiIncluirEmpresas] = useState<boolean>(false);
+
+  // Filtros — Limpeza Manual: TFD e Viagens
+  const [tfdIncluirViagens, setTfdIncluirViagens] = useState<boolean>(true);
+  const [tfdIncluirExamesFila, setTfdIncluirExamesFila] = useState<boolean>(false);
+  const [tfdIncluirFrota, setTfdIncluirFrota] = useState<boolean>(false);
+
+  // Filtros — Limpeza Manual: APAC
+  const [apacIncluirSolic, setApacIncluirSolic] = useState<boolean>(true);
+  const [apacIncluirFaixas, setApacIncluirFaixas] = useState<boolean>(false);
+
+  // Filtros — Limpeza Manual: Farmácia
+  const [farmIncluirMov, setFarmIncluirMov] = useState<boolean>(true);
+  const [farmIncluirCatalogo, setFarmIncluirCatalogo] = useState<boolean>(false);
+
+  // Filtros — Limpeza Manual: Pacientes
+  const [pacModo, setPacModo] = useState<string>("sem_vinculos_nao_pec");
+
   const [preview, setPreview] = useState<LimpezaMassaPreviewResponse | null>(null);
   const [carregandoPreview, setCarregandoPreview] = useState<boolean>(false);
 
-  function obterFiltroAtual(): Record<string, unknown> {
-    const filtroPayload: Record<string, unknown> = {};
-    if (tipoLimpeza === "fila_importada") {
-      if (tipoFila.trim()) filtroPayload.tipo_fila = tipoFila.trim();
-      if (dataInicio) filtroPayload.data_inicio = dataInicio;
-      if (dataFim) filtroPayload.data_fim = dataFim;
-      filtroPayload.apenas_nao_agendados = apenasNaoAgendados;
+  async function carregarResumoManual() {
+    if (!isSuperuser) return;
+    setCarregandoResumo(true);
+    try {
+      const dados = await obterResumoLimpezaManual();
+      setResumoManual(dados);
+    } catch {
+      // Silencioso para não bloquear a tela se ainda houver tabela em migração
+    } finally {
+      setCarregandoResumo(false);
     }
-    return filtroPayload;
   }
 
-  const ferramentas: Array<{
+  useEffect(() => {
+    carregarResumoManual();
+    setPreview(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuperuser, refreshKey]);
+
+  function obterFiltroAtual(): Record<string, unknown> {
+    if (tipoLimpeza === "fila_importada") {
+      const f: Record<string, unknown> = { apenas_nao_agendados: apenasNaoAgendados };
+      if (tipoFila.trim()) f.tipo_fila = tipoFila.trim();
+      if (dataInicio) f.data_inicio = dataInicio;
+      if (dataFim) f.data_fim = dataFim;
+      return f;
+    }
+    if (tipoLimpeza === "limpar_filas_manual") {
+      const f: Record<string, unknown> = {
+        origem: filaManualOrigem,
+        incluir_agendados: filaManualIncluirAgendados,
+        incluir_agendamentos_lab_vinculados: filaManualIncluirSolicLab,
+      };
+      if (filaManualId && filaManualId !== "todas") {
+        f.fila_id = filaManualId === "sem_vinculo" ? "sem_vinculo" : Number(filaManualId);
+        const filaObj = resumoManual?.filas.find((x) => String(x.id) === filaManualId);
+        if (filaObj) f.fila_nome_label = filaObj.nome;
+      } else {
+        f.fila_nome_label = "Todas as filas";
+      }
+      if (filaManualDataIni) f.data_inicio = filaManualDataIni;
+      if (filaManualDataFim) f.data_fim = filaManualDataFim;
+      return f;
+    }
+    if (tipoLimpeza === "limpar_laboratorio_completo") {
+      return {
+        incluir_fila: labIncluirFila,
+        incluir_agendamentos: labIncluirAgendamentos,
+        incluir_vagas: labIncluirVagas,
+        incluir_faturamento: labIncluirFaturamento,
+        incluir_sigtap_manual: labIncluirSigtapManual,
+      };
+    }
+    if (tipoLimpeza === "limpar_oxigenio") {
+      return {
+        incluir_operacional: oxiIncluirOperacional || oxiIncluirEquipamentos || oxiIncluirEmpresas,
+        incluir_equipamentos: oxiIncluirEquipamentos || oxiIncluirEmpresas,
+        incluir_cadastros_empresas: oxiIncluirEmpresas,
+      };
+    }
+    if (tipoLimpeza === "limpar_tfd_viagens") {
+      return {
+        incluir_viagens: tfdIncluirViagens,
+        incluir_exames_fila: tfdIncluirExamesFila,
+        incluir_cadastros_frota: tfdIncluirFrota,
+      };
+    }
+    if (tipoLimpeza === "limpar_apac") {
+      return {
+        incluir_solicitacoes: apacIncluirSolic,
+        incluir_faixas: apacIncluirFaixas,
+      };
+    }
+    if (tipoLimpeza === "limpar_farmacia") {
+      return {
+        incluir_movimentacoes: farmIncluirMov || farmIncluirCatalogo,
+        incluir_catalogo: farmIncluirCatalogo,
+      };
+    }
+    if (tipoLimpeza === "limpar_pacientes_manual") {
+      return { modo: pacModo };
+    }
+    return {};
+  }
+
+  const areas = resumoManual?.areas || {};
+
+  const ferramentasManuais: Array<{
+    tipo: TipoLimpezaMassa;
+    titulo: string;
+    icone: React.ComponentType<{ className?: string }>;
+    desc: string;
+    contadorLabel: string;
+    qtdTotal: number;
+  }> = [
+    {
+      tipo: "limpar_filas_manual",
+      titulo: "Filas de Espera (1 Fila ou Todas)",
+      icone: ListOrdered,
+      desc: "Limpe todos os pedidos de uma fila específica ou zere todas as filas para reimportação limpa.",
+      contadorLabel: `${(areas.filas_tfd || 0) + (areas.filas_lab || 0)} pedidos nas filas`,
+      qtdTotal: (areas.filas_tfd || 0) + (areas.filas_lab || 0),
+    },
+    {
+      tipo: "limpar_laboratorio_completo",
+      titulo: "Laboratório (Exames de Sangue)",
+      icone: FlaskConical,
+      desc: "Zere fila PSF, agendamentos, itens de exames, lotes, vagas ou faturamento para reimportar o XML.",
+      contadorLabel: `${(areas.filas_lab || 0) + (areas.lab_agendamentos || 0)} pedidos/agend. · ${areas.lab_itens || 0} itens`,
+      qtdTotal: (areas.filas_lab || 0) + (areas.lab_agendamentos || 0) + (areas.lab_itens || 0),
+    },
+    {
+      tipo: "limpar_oxigenio",
+      titulo: "Oxigenoterapia",
+      icone: Wind,
+      desc: "Limpe empréstimos, trocas de cilindros, compras, comodato e opcionalmente equipamentos e empresas.",
+      contadorLabel: `${areas.oxigenio_operacional || 0} movim. · ${areas.oxigenio_equipamentos || 0} equip.`,
+      qtdTotal: (areas.oxigenio_operacional || 0) + (areas.oxigenio_equipamentos || 0) + (areas.oxigenio_empresas || 0),
+    },
+    {
+      tipo: "limpar_tfd_viagens",
+      titulo: "TFD e Viagens",
+      icone: Bus,
+      desc: "Limpe viagens, passageiros, fila de viagem, faturamento TFD e opcionalmente fila geral ou frota.",
+      contadorLabel: `${areas.tfd_viagens || 0} viagens · ${areas.tfd_viagem_fila || 0} na fila`,
+      qtdTotal: (areas.tfd_viagens || 0) + (areas.tfd_viagem_fila || 0) + (areas.tfd_faturamento || 0),
+    },
+    {
+      tipo: "limpar_apac",
+      titulo: "APAC",
+      icone: FileCheck2,
+      desc: "Limpe solicitações APAC, procedimentos secundários, anexos, lotes e opcionalmente faixas numéricas.",
+      contadorLabel: `${areas.apac_solicitacoes || 0} solic./lotes · ${areas.apac_faixas || 0} faixas`,
+      qtdTotal: (areas.apac_solicitacoes || 0) + (areas.apac_faixas || 0),
+    },
+    {
+      tipo: "limpar_farmacia",
+      titulo: "Farmácia",
+      icone: Pill,
+      desc: "Limpe movimentações de medicamentos/insumos, links públicos e opcionalmente o catálogo de estoque.",
+      contadorLabel: `${areas.farmacia_movimentacoes || 0} movim. · ${areas.farmacia_catalogo || 0} itens`,
+      qtdTotal: (areas.farmacia_movimentacoes || 0) + (areas.farmacia_catalogo || 0),
+    },
+    {
+      tipo: "limpar_pacientes_manual",
+      titulo: "Pacientes (Sem Vínculos)",
+      icone: Users,
+      desc: "Remova cadastros de pacientes que não possuem vínculos em nenhum módulo (preserva contas e histórico ativo).",
+      contadorLabel: `${areas.pacientes_total || 0} total · ${areas.pacientes_sem_pec || 0} sem PEC`,
+      qtdTotal: areas.pacientes_total || 0,
+    },
+  ];
+
+  const ferramentasHigienizacao: Array<{
     tipo: TipoLimpezaMassa;
     titulo: string;
     icone: React.ComponentType<{ className?: string }>;
@@ -1424,6 +1617,11 @@ function SecaoLimpeza({
       impacto: "Elimina cadastros de teste ou gerados por erros de sincronização.",
     },
   ];
+
+  const tituloSelecionado =
+    ferramentasManuais.find((f) => f.tipo === tipoLimpeza)?.titulo ||
+    ferramentasHigienizacao.find((f) => f.tipo === tipoLimpeza)?.titulo ||
+    tipoLimpeza;
 
   async function handlePreview() {
     setCarregandoPreview(true);
@@ -1467,72 +1665,504 @@ function SecaoLimpeza({
         <ShieldAlert className="h-6 w-6 shrink-0 text-red-600 mt-0.5" />
         <div className="space-y-1">
           <h4 className="font-display text-sm font-black uppercase tracking-wider text-red-900">
-            Acesso Restrito: Ferramenta de Exclusão em Massa (Superusuários)
+            Acesso Restrito: Limpeza Manual e Exclusão em Massa (Superusuários)
           </h4>
           <p className="text-xs leading-relaxed text-red-800">
-            As operações nesta seção realizam exclusões físicas permanentes na base de dados.
-            Por medida estrita de segurança, qualquer exclusão exige <strong>pré-visualização obrigatória</strong>,
+            As operações nesta seção realizam exclusões físicas permanentes respeitando integridade referencial.
+            Por medida estrita de segurança, qualquer limpeza exige <strong>pré-visualização obrigatória</strong>,
             <strong> confirmação explícita de ciência</strong> e <strong>digitação da senha do administrador logado</strong>.
           </p>
         </div>
       </div>
 
-      {/* Grid de Opções de Ferramentas de Limpeza */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        {ferramentas.map((f) => {
-          const Icone = f.icone;
-          const selecionado = tipoLimpeza === f.tipo;
+      {/* SEÇÃO 1: LIMPEZA MANUAL POR ÁREA DO SISTEMA */}
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="font-display text-base font-extrabold text-sus-950 flex items-center gap-2">
+              <Database className="h-5 w-5 text-red-700" />
+              Limpeza Manual por Área do Sistema (Reset para Reimportação)
+            </h3>
+            <p className="text-xs text-ink/65">
+              Escolha o módulo que deseja zerar ou limpar antes de importar novos arquivos, sem duplicar registros ou quebrar vínculos.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            onClick={carregarResumoManual}
+            disabled={carregandoResumo || !isSuperuser}
+            className="!w-auto !py-1.5 !px-3 text-xs"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${carregandoResumo ? "animate-spin" : ""}`} />
+            Atualizar Contagens
+          </Button>
+        </div>
 
-          return (
-            <Card
-              key={f.tipo}
-              onClick={() => {
-                setTipoLimpeza(f.tipo);
-                setPreview(null);
-              }}
-              className={`cursor-pointer p-5 transition ${
-                selecionado
-                  ? "border-2 border-red-600 bg-red-50/20 shadow-md"
-                  : "hover:border-sus-700/30"
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <div
-                  className={`rounded-xl p-2.5 ${
-                    selecionado ? "bg-red-600 text-white" : "bg-sand text-sus-900"
-                  }`}
-                >
-                  <Icone className="h-5 w-5" />
-                </div>
+        <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {ferramentasManuais.map((f) => {
+            const Icone = f.icone;
+            const selecionado = tipoLimpeza === f.tipo;
+            return (
+              <Card
+                key={f.tipo}
+                onClick={() => {
+                  setTipoLimpeza(f.tipo);
+                  setPreview(null);
+                }}
+                className={`cursor-pointer p-4 transition flex flex-col justify-between ${
+                  selecionado
+                    ? "border-2 border-red-600 bg-red-50/25 shadow-md"
+                    : "hover:border-sus-700/30"
+                }`}
+              >
                 <div>
-                  <h4 className="font-display text-sm font-bold text-sus-950">{f.titulo}</h4>
-                  <Badge variant={selecionado ? "danger" : "outline"} className="mt-0.5">
-                    {selecionado ? "Selecionado" : "Clique para Escolher"}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <div
+                        className={`rounded-xl p-2 ${
+                          selecionado ? "bg-red-600 text-white" : "bg-sand text-sus-900"
+                        }`}
+                      >
+                        <Icone className="h-4 w-4" />
+                      </div>
+                      <h4 className="font-display text-sm font-bold text-sus-950 leading-tight">
+                        {f.titulo}
+                      </h4>
+                    </div>
+                  </div>
+                  <p className="mt-2.5 text-xs leading-relaxed text-ink/75">{f.desc}</p>
+                </div>
+                <div className="mt-3 pt-2.5 border-t border-sus-900/10 flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-semibold text-sus-900 truncate">
+                    {resumoManual ? f.contadorLabel : "Calculando..."}
+                  </span>
+                  <Badge variant={selecionado ? "danger" : f.qtdTotal > 0 ? "outline" : "success"}>
+                    {selecionado ? "Ativo" : f.qtdTotal > 0 ? "Limpar" : "Vazio"}
                   </Badge>
                 </div>
-              </div>
-
-              <p className="mt-3 text-xs leading-relaxed text-ink/75">{f.desc}</p>
-              <div className="mt-2 text-[11px] font-semibold text-sus-900">
-                Regra: {f.impacto}
-              </div>
-            </Card>
-          );
-        })}
+              </Card>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Painel de Filtros e Execução */}
-      <Card className="p-6">
-        <h4 className="font-display text-base font-bold text-sus-950 border-b border-sus-900/10 pb-3">
-          Configuração da Operação: {ferramentas.find((f) => f.tipo === tipoLimpeza)?.titulo}
-        </h4>
+      {/* PAINEL DE CONFIGURAÇÃO DA OPERAÇÃO SELECIONADA */}
+      <Card className="p-6 border-red-200/70">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-sus-900/10 pb-3">
+          <h4 className="font-display text-base font-bold text-sus-950">
+            Configuração da Operação: {tituloSelecionado}
+          </h4>
+          <Badge variant="danger">Modo Administrativo</Badge>
+        </div>
 
+        {/* Opções: Limpeza Manual de Filas (1 fila ou todas) */}
+        {tipoLimpeza === "limpar_filas_manual" && (
+          <div className="mt-4 space-y-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="sm:col-span-2">
+                <Label>Selecionar Fila</Label>
+                <Select
+                  value={filaManualId}
+                  onChange={(e) => {
+                    setFilaManualId(e.target.value);
+                    setPreview(null);
+                  }}
+                >
+                  <option value="todas">
+                    Todas as filas ({(areas.filas_tfd || 0) + (areas.filas_lab || 0)} registros no total)
+                  </option>
+                  {(resumoManual?.filas || []).map((fl) => (
+                    <option key={fl.id} value={String(fl.id)}>
+                      {fl.nome} [{fl.tipo_fila === "EXAME_LABORATORIAL" ? "Laboratório" : "Regulação Geral"}] — {fl.total} reg.
+                    </option>
+                  ))}
+                  {Boolean((resumoManual?.filas_sem_vinculo_tfd || 0) + (resumoManual?.filas_sem_vinculo_lab || 0) > 0) && (
+                    <option value="sem_vinculo">
+                      Registros sem fila vinculada ({(resumoManual?.filas_sem_vinculo_tfd || 0) + (resumoManual?.filas_sem_vinculo_lab || 0)} reg.)
+                    </option>
+                  )}
+                </Select>
+              </div>
+              <div>
+                <Label>Origem da Fila</Label>
+                <Select
+                  value={filaManualOrigem}
+                  onChange={(e) => {
+                    setFilaManualOrigem(e.target.value);
+                    setPreview(null);
+                  }}
+                >
+                  <option value="todas">Todas (TFD + Laboratório)</option>
+                  <option value="apenas_lab">Apenas Filas de Laboratório (Sangue)</option>
+                  <option value="apenas_tfd">Apenas Filas Gerais (TFD/Regulação)</option>
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label>Data Início</Label>
+                  <Input
+                    type="date"
+                    value={filaManualDataIni}
+                    onChange={(e) => {
+                      setFilaManualDataIni(e.target.value);
+                      setPreview(null);
+                    }}
+                  />
+                </div>
+                <div>
+                  <Label>Data Fim</Label>
+                  <Input
+                    type="date"
+                    value={filaManualDataFim}
+                    onChange={(e) => {
+                      setFilaManualDataFim(e.target.value);
+                      setPreview(null);
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-6 rounded-xl bg-sand/50 p-3.5 text-xs">
+              <label className="flex cursor-pointer items-center gap-2 font-semibold text-sus-950">
+                <input
+                  type="checkbox"
+                  checked={filaManualIncluirAgendados}
+                  onChange={(e) => {
+                    setFilaManualIncluirAgendados(e.target.checked);
+                    setPreview(null);
+                  }}
+                  className="h-4 w-4 rounded border-sus-900/30 text-red-700 focus:ring-red-600"
+                />
+                <span>Incluir registros já agendados/realizados (limpeza total da fila selecionada)</span>
+              </label>
+
+              <label className="flex cursor-pointer items-center gap-2 font-semibold text-sus-950">
+                <input
+                  type="checkbox"
+                  checked={filaManualIncluirSolicLab}
+                  onChange={(e) => {
+                    setFilaManualIncluirSolicLab(e.target.checked);
+                    setPreview(null);
+                  }}
+                  className="h-4 w-4 rounded border-sus-900/30 text-red-700 focus:ring-red-600"
+                />
+                <span>Remover também agendamentos de laboratório vinculados a esta fila</span>
+              </label>
+            </div>
+          </div>
+        )}
+
+        {/* Opções: Laboratório Completo */}
+        {tipoLimpeza === "limpar_laboratorio_completo" && (
+          <div className="mt-4 space-y-3">
+            <p className="text-xs text-ink/70">
+              Selecione quais blocos do módulo de Laboratório deseja limpar. Cadastros de Laboratórios e Contratos são preservados automaticamente.
+            </p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 text-xs">
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-sus-900/15 bg-sand/40 p-3">
+                <input
+                  type="checkbox"
+                  checked={labIncluirFila}
+                  onChange={(e) => {
+                    setLabIncluirFila(e.target.checked);
+                    setPreview(null);
+                  }}
+                  className="mt-0.5 h-4 w-4 rounded border-sus-900/30 text-red-700"
+                />
+                <div>
+                  <span className="font-bold text-sus-950 block">Fila de Exames de Sangue (PSF)</span>
+                  <span className="text-ink/65">Limpa `lab_fila_psf` ({areas.filas_lab || 0} reg.)</span>
+                </div>
+              </label>
+
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-sus-900/15 bg-sand/40 p-3">
+                <input
+                  type="checkbox"
+                  checked={labIncluirAgendamentos}
+                  onChange={(e) => {
+                    setLabIncluirAgendamentos(e.target.checked);
+                    setPreview(null);
+                  }}
+                  className="mt-0.5 h-4 w-4 rounded border-sus-900/30 text-red-700"
+                />
+                <div>
+                  <span className="font-bold text-sus-950 block">Agendamentos, Itens, Lotes e Laudos</span>
+                  <span className="text-ink/65">
+                    Limpa agenda, exames individuais ({areas.lab_agendamentos || 0} solic. / {areas.lab_itens || 0} itens) e zera vagas ocupadas
+                  </span>
+                </div>
+              </label>
+
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-sus-900/15 bg-sand/40 p-3">
+                <input
+                  type="checkbox"
+                  checked={labIncluirVagas}
+                  onChange={(e) => {
+                    setLabIncluirVagas(e.target.checked);
+                    setPreview(null);
+                  }}
+                  className="mt-0.5 h-4 w-4 rounded border-sus-900/30 text-red-700"
+                />
+                <div>
+                  <span className="font-bold text-sus-950 block">Grade de Vagas e Feriados</span>
+                  <span className="text-ink/65">Remove `lab_vagas` e bloqueios ({areas.lab_vagas || 0} datas)</span>
+                </div>
+              </label>
+
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-sus-900/15 bg-sand/40 p-3">
+                <input
+                  type="checkbox"
+                  checked={labIncluirFaturamento}
+                  onChange={(e) => {
+                    setLabIncluirFaturamento(e.target.checked);
+                    setPreview(null);
+                  }}
+                  className="mt-0.5 h-4 w-4 rounded border-sus-900/30 text-red-700"
+                />
+                <div>
+                  <span className="font-bold text-sus-950 block">Faturamento, FPO e Orçamentos</span>
+                  <span className="text-ink/65">Remove fechamentos e tetos ({areas.lab_faturamento || 0} reg.)</span>
+                </div>
+              </label>
+
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-sus-900/15 bg-sand/40 p-3">
+                <input
+                  type="checkbox"
+                  checked={labIncluirSigtapManual}
+                  onChange={(e) => {
+                    setLabIncluirSigtapManual(e.target.checked);
+                    setPreview(null);
+                  }}
+                  className="mt-0.5 h-4 w-4 rounded border-sus-900/30 text-red-700"
+                />
+                <div>
+                  <span className="font-bold text-sus-950 block">Procedimentos SIGTAP Manuais</span>
+                  <span className="text-ink/65">
+                    Remove apenas manuais/importados sem uso ({areas.lab_sigtap_manual || 0}); mantém tabela oficial DATASUS
+                  </span>
+                </div>
+              </label>
+            </div>
+          </div>
+        )}
+
+        {/* Opções: Oxigenoterapia */}
+        {tipoLimpeza === "limpar_oxigenio" && (
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3 text-xs">
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-sus-900/15 bg-sand/40 p-3">
+              <input
+                type="checkbox"
+                checked={oxiIncluirOperacional || oxiIncluirEquipamentos || oxiIncluirEmpresas}
+                disabled={oxiIncluirEquipamentos || oxiIncluirEmpresas}
+                onChange={(e) => {
+                  setOxiIncluirOperacional(e.target.checked);
+                  setPreview(null);
+                }}
+                className="mt-0.5 h-4 w-4 rounded border-sus-900/30 text-red-700"
+              />
+              <div>
+                <span className="font-bold text-sus-950 block">Empréstimos, Trocas, Cilindros e Compras</span>
+                <span className="text-ink/65">Zera operacional de oxigênio ({areas.oxigenio_operacional || 0} reg.)</span>
+              </div>
+            </label>
+
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-sus-900/15 bg-sand/40 p-3">
+              <input
+                type="checkbox"
+                checked={oxiIncluirEquipamentos || oxiIncluirEmpresas}
+                disabled={oxiIncluirEmpresas}
+                onChange={(e) => {
+                  setOxiIncluirEquipamentos(e.target.checked);
+                  setPreview(null);
+                }}
+                className="mt-0.5 h-4 w-4 rounded border-sus-900/30 text-red-700"
+              />
+              <div>
+                <span className="font-bold text-sus-950 block">Equipamentos (Concentradores/Cilindros)</span>
+                <span className="text-ink/65">Remove `oxigenio_equipamentos` ({areas.oxigenio_equipamentos || 0} reg.)</span>
+              </div>
+            </label>
+
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-sus-900/15 bg-sand/40 p-3">
+              <input
+                type="checkbox"
+                checked={oxiIncluirEmpresas}
+                onChange={(e) => {
+                  setOxiIncluirEmpresas(e.target.checked);
+                  setPreview(null);
+                }}
+                className="mt-0.5 h-4 w-4 rounded border-sus-900/30 text-red-700"
+              />
+              <div>
+                <span className="font-bold text-sus-950 block">Empresas Fornecedoras e Licitações</span>
+                <span className="text-ink/65">Reset completo do módulo ({areas.oxigenio_empresas || 0} reg.)</span>
+              </div>
+            </label>
+          </div>
+        )}
+
+        {/* Opções: TFD e Viagens */}
+        {tipoLimpeza === "limpar_tfd_viagens" && (
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3 text-xs">
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-sus-900/15 bg-sand/40 p-3">
+              <input
+                type="checkbox"
+                checked={tfdIncluirViagens}
+                onChange={(e) => {
+                  setTfdIncluirViagens(e.target.checked);
+                  setPreview(null);
+                }}
+                className="mt-0.5 h-4 w-4 rounded border-sus-900/30 text-red-700"
+              />
+              <div>
+                <span className="font-bold text-sus-950 block">Viagens, Passageiros, Fila de Viagem e Faturamento</span>
+                <span className="text-ink/65">
+                  {areas.tfd_viagens || 0} viagens · {areas.tfd_viagem_fila || 0} na fila · {areas.tfd_faturamento || 0} fatur.
+                </span>
+              </div>
+            </label>
+
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-sus-900/15 bg-sand/40 p-3">
+              <input
+                type="checkbox"
+                checked={tfdIncluirExamesFila}
+                onChange={(e) => {
+                  setTfdIncluirExamesFila(e.target.checked);
+                  setPreview(null);
+                }}
+                className="mt-0.5 h-4 w-4 rounded border-sus-900/30 text-red-700"
+              />
+              <div>
+                <span className="font-bold text-sus-950 block">Fila Geral de Exames/Consultas TFD</span>
+                <span className="text-ink/65">Remove `tfd_exames_fila` ({areas.filas_tfd || 0} reg.)</span>
+              </div>
+            </label>
+
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-sus-900/15 bg-sand/40 p-3">
+              <input
+                type="checkbox"
+                checked={tfdIncluirFrota}
+                onChange={(e) => {
+                  setTfdIncluirFrota(e.target.checked);
+                  setPreview(null);
+                }}
+                className="mt-0.5 h-4 w-4 rounded border-sus-900/30 text-red-700"
+              />
+              <div>
+                <span className="font-bold text-sus-950 block">Cadastros de Veículos, Motoristas e Destinos</span>
+                <span className="text-ink/65">Remove frota cadastrada ({areas.tfd_frota || 0} reg.)</span>
+              </div>
+            </label>
+          </div>
+        )}
+
+        {/* Opções: APAC */}
+        {tipoLimpeza === "limpar_apac" && (
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 text-xs">
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-sus-900/15 bg-sand/40 p-3">
+              <input
+                type="checkbox"
+                checked={apacIncluirSolic}
+                onChange={(e) => {
+                  setApacIncluirSolic(e.target.checked);
+                  setPreview(null);
+                }}
+                className="mt-0.5 h-4 w-4 rounded border-sus-900/30 text-red-700"
+              />
+              <div>
+                <span className="font-bold text-sus-950 block">Solicitações, Procedimentos Secundários, Anexos e Lotes</span>
+                <span className="text-ink/65">{areas.apac_solicitacoes || 0} solicitações/lotes</span>
+              </div>
+            </label>
+
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-sus-900/15 bg-sand/40 p-3">
+              <input
+                type="checkbox"
+                checked={apacIncluirFaixas}
+                onChange={(e) => {
+                  setApacIncluirFaixas(e.target.checked);
+                  setPreview(null);
+                }}
+                className="mt-0.5 h-4 w-4 rounded border-sus-900/30 text-red-700"
+              />
+              <div>
+                <span className="font-bold text-sus-950 block">Faixas Numéricas APAC</span>
+                <span className="text-ink/65">{areas.apac_faixas || 0} faixa(s) cadastrada(s)</span>
+              </div>
+            </label>
+          </div>
+        )}
+
+        {/* Opções: Farmácia */}
+        {tipoLimpeza === "limpar_farmacia" && (
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 text-xs">
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-sus-900/15 bg-sand/40 p-3">
+              <input
+                type="checkbox"
+                checked={farmIncluirMov || farmIncluirCatalogo}
+                disabled={farmIncluirCatalogo}
+                onChange={(e) => {
+                  setFarmIncluirMov(e.target.checked);
+                  setPreview(null);
+                }}
+                className="mt-0.5 h-4 w-4 rounded border-sus-900/30 text-red-700"
+              />
+              <div>
+                <span className="font-bold text-sus-950 block">Movimentações de Estoque e Links Públicos</span>
+                <span className="text-ink/65">{areas.farmacia_movimentacoes || 0} movimentações/links</span>
+              </div>
+            </label>
+
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-sus-900/15 bg-sand/40 p-3">
+              <input
+                type="checkbox"
+                checked={farmIncluirCatalogo}
+                onChange={(e) => {
+                  setFarmIncluirCatalogo(e.target.checked);
+                  setPreview(null);
+                }}
+                className="mt-0.5 h-4 w-4 rounded border-sus-900/30 text-red-700"
+              />
+              <div>
+                <span className="font-bold text-sus-950 block">Catálogo de Medicamentos e Insumos</span>
+                <span className="text-ink/65">{areas.farmacia_catalogo || 0} itens cadastrados (inclui movimentações)</span>
+              </div>
+            </label>
+          </div>
+        )}
+
+        {/* Opções: Pacientes */}
+        {tipoLimpeza === "limpar_pacientes_manual" && (
+          <div className="mt-4 space-y-2 text-xs">
+            <Label>Critério de Seleção de Pacientes</Label>
+            <Select
+              value={pacModo}
+              onChange={(e) => {
+                setPacModo(e.target.value);
+                setPreview(null);
+              }}
+            >
+              <option value="sem_vinculos_nao_pec">
+                Apenas pacientes sem vínculos em nenhum módulo E sem chave do e-SUS PEC (Recomendado)
+              </option>
+              <option value="sem_vinculos_todos">
+                Todos os pacientes sem vínculos em nenhum módulo (inclui cadastros importados do PEC sem atendimentos)
+              </option>
+            </Select>
+            <p className="text-[11px] text-ink/60">
+              Por segurança relacional, pacientes que ainda possuam exames, viagens, empréstimos de oxigênio, APAC ou conta de usuário nunca são removidos — limpe primeiro os módulos desejados acima.
+            </p>
+          </div>
+        )}
+
+        {/* Opções: Higienização fila_importada */}
         {tipoLimpeza === "fila_importada" && (
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <Label>Nome ou Sigla da Fila</Label>
               <Input
-                placeholder="Ex: OFTALMOLOGIA, SANGUE"
+                placeholder="Ex: OFTALMOLOGIA, ROTINA"
                 value={tipoFila}
                 onChange={(e) => {
                   setTipoFila(e.target.value);
@@ -1596,9 +2226,10 @@ function SecaoLimpeza({
               onAbrirModalConfirmacao(tipoLimpeza, obterFiltroAtual(), {
                 totalAfetados: preview.total_afetados,
                 detalhes: preview.detalhes,
+                resumoTabelas: preview.resumo_tabelas,
               });
             }}
-            disabled={!isSuperuser || !preview || carregandoPreview}
+            disabled={!isSuperuser || !preview || preview.total_afetados === 0 || carregandoPreview}
             className="!w-auto !bg-red-700 !text-white hover:!bg-red-800 disabled:opacity-50"
           >
             <Trash2 className="h-4 w-4" /> 2. Prosseguir para Exclusão com Senha
@@ -1607,8 +2238,8 @@ function SecaoLimpeza({
 
         {/* Exibição do Resultado da Prévia */}
         {preview && (
-          <div className="mt-6 rounded-xl border border-sus-900/15 bg-sand/40 p-4">
-            <div className="flex items-center justify-between">
+          <div className="mt-6 rounded-xl border border-sus-900/15 bg-sand/40 p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Info className="h-5 w-5 text-sus-900" />
                 <span className="font-display text-sm font-bold text-sus-950">
@@ -1616,14 +2247,29 @@ function SecaoLimpeza({
                 </span>
               </div>
               <Badge variant={preview.total_afetados > 0 ? "warning" : "success"}>
-                {preview.total_afetados} registros elegíveis
+                {preview.total_afetados} registro(s) elegível(is)
               </Badge>
             </div>
 
-            <p className="mt-1 text-xs text-ink/75">{preview.mensagem}</p>
+            <p className="text-xs text-ink/75">{preview.mensagem}</p>
+
+            {/* Detalhamento por tabela afetada */}
+            {preview.resumo_tabelas && Object.keys(preview.resumo_tabelas).length > 0 && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                {Object.entries(preview.resumo_tabelas).map(([tab, qtd]) => (
+                  <span
+                    key={tab}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-sus-950"
+                  >
+                    <span className="font-mono text-[11px] text-ink/70">{tab}:</span>
+                    <strong className="font-mono text-red-700">{qtd}</strong>
+                  </span>
+                ))}
+              </div>
+            )}
 
             {preview.detalhes && preview.detalhes.length > 0 && (
-              <div className="mt-3 overflow-x-auto">
+              <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-sus-900/5 text-sus-950">
                     <tr>
@@ -1635,20 +2281,28 @@ function SecaoLimpeza({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-sus-900/10">
-                    {preview.detalhes.slice(0, 10).map((item, idx) => (
+                    {preview.detalhes.slice(0, 12).map((item, idx) => (
                       <tr key={idx} className="hover:bg-white/80">
-                        <td className="p-2 font-mono font-bold">#{String(item.id || "")}</td>
-                        <td className="p-2">{String(item.tabela || "")}</td>
-                        <td className="p-2">{String(item.paciente_id ? `Paciente #${item.paciente_id}` : item.nome || "")}</td>
-                        <td className="p-2 truncate max-w-[200px]">{String(item.exame || item.especialidade || item.tipo || "")}</td>
-                        <td className="p-2">{String(item.data_pedido || item.data_solicitacao || item.data_agendada || "-")}</td>
+                        <td className="p-2 font-mono font-bold">
+                          {item.id === "-" ? "-" : `#${String(item.id || "")}`}
+                        </td>
+                        <td className="p-2 font-mono text-[11px]">{String(item.tabela || "")}</td>
+                        <td className="p-2">
+                          {String(item.paciente_id ? `Paciente #${item.paciente_id}` : item.nome || "-")}
+                        </td>
+                        <td className="p-2 truncate max-w-[240px]">
+                          {String(item.exame || item.especialidade || item.tipo || "")}
+                        </td>
+                        <td className="p-2">
+                          {String(item.data_pedido || item.data_solicitacao || item.data_agendada || "-")}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-                {preview.detalhes.length > 10 && (
+                {preview.detalhes.length > 12 && (
                   <p className="mt-2 text-center text-[11px] text-ink/50">
-                    Exibindo 10 de {preview.total_afetados} registros identificados.
+                    Exibindo 12 de {preview.total_afetados} registros identificados.
                   </p>
                 )}
               </div>
@@ -1656,6 +2310,62 @@ function SecaoLimpeza({
           </div>
         )}
       </Card>
+
+      {/* SEÇÃO 2: FERRAMENTAS DE HIGIENIZAÇÃO AUTOMÁTICA */}
+      <div className="space-y-3 pt-2">
+        <div>
+          <h3 className="font-display text-base font-extrabold text-sus-950 flex items-center gap-2">
+            <Eraser className="h-5 w-5 text-sus-900" />
+            Ferramentas de Higienização Pontual
+          </h3>
+          <p className="text-xs text-ink/65">
+            Limpezas direcionadas para corrigir sobras, registros órfãos ou duplicidades específicas sem apagar o módulo inteiro.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {ferramentasHigienizacao.map((f) => {
+            const Icone = f.icone;
+            const selecionado = tipoLimpeza === f.tipo;
+
+            return (
+              <Card
+                key={f.tipo}
+                onClick={() => {
+                  setTipoLimpeza(f.tipo);
+                  setPreview(null);
+                }}
+                className={`cursor-pointer p-5 transition ${
+                  selecionado
+                    ? "border-2 border-red-600 bg-red-50/20 shadow-md"
+                    : "hover:border-sus-700/30"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`rounded-xl p-2.5 ${
+                      selecionado ? "bg-red-600 text-white" : "bg-sand text-sus-900"
+                    }`}
+                  >
+                    <Icone className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-display text-sm font-bold text-sus-950">{f.titulo}</h4>
+                    <Badge variant={selecionado ? "danger" : "outline"} className="mt-0.5">
+                      {selecionado ? "Selecionado" : "Clique para Escolher"}
+                    </Badge>
+                  </div>
+                </div>
+
+                <p className="mt-3 text-xs leading-relaxed text-ink/75">{f.desc}</p>
+                <div className="mt-2 text-[11px] font-semibold text-sus-900">
+                  Regra: {f.impacto}
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1985,7 +2695,7 @@ interface ModalLimpezaMassaProps {
   limpezaConfigurada: {
     tipo: TipoLimpezaMassa;
     filtro: Record<string, unknown>;
-    previewInfo?: { totalAfetados: number; detalhes?: any[] };
+    previewInfo?: { totalAfetados: number; detalhes?: any[]; resumoTabelas?: Record<string, number> | null };
   } | null;
   onFechar: () => void;
   onSucesso: (mensagem: string) => void;
@@ -2009,6 +2719,20 @@ function ModalLimpezaMassa({
 
   function obterRotuloTipo(tipo: TipoLimpezaMassa): string {
     switch (tipo) {
+      case "limpar_filas_manual":
+        return "Limpeza Manual: Filas de Espera";
+      case "limpar_laboratorio_completo":
+        return "Limpeza Manual: Laboratório (Exames de Sangue)";
+      case "limpar_oxigenio":
+        return "Limpeza Manual: Oxigenoterapia";
+      case "limpar_tfd_viagens":
+        return "Limpeza Manual: TFD e Viagens";
+      case "limpar_apac":
+        return "Limpeza Manual: APAC";
+      case "limpar_farmacia":
+        return "Limpeza Manual: Farmácia";
+      case "limpar_pacientes_manual":
+        return "Limpeza Manual: Pacientes Sem Vínculos";
       case "fila_importada":
         return "Fila Importada em Lote";
       case "pedidos_orfaos":
@@ -2122,6 +2846,38 @@ function ModalLimpezaMassa({
                   </span>
                 </div>
               )}
+              {limpezaConfigurada.previewInfo?.resumoTabelas &&
+                Object.keys(limpezaConfigurada.previewInfo.resumoTabelas).length > 0 && (
+                  <div className="border-t border-red-200/60 pt-2 flex flex-wrap gap-1.5">
+                    {Object.entries(limpezaConfigurada.previewInfo.resumoTabelas).map(([tab, qtd]) => (
+                      <span
+                        key={tab}
+                        className="inline-flex items-center gap-1 rounded bg-white/90 px-2 py-0.5 text-[11px] font-mono text-sus-950 border border-red-200/70"
+                      >
+                        <span>{tab}:</span>
+                        <strong className="text-red-700">{qtd}</strong>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              {limpezaConfigurada.tipo === "limpar_filas_manual" && (
+                <div className="border-t border-red-200/60 pt-2 space-y-1 text-ink/75">
+                  <p>
+                    <span className="font-semibold">Fila selecionada:</span>{" "}
+                    <span className="font-mono text-sus-950">
+                      {String(limpezaConfigurada.filtro.fila_nome_label || "Todas as filas")}
+                    </span>
+                  </p>
+                  <p>
+                    <span className="font-semibold">Origem:</span>{" "}
+                    {limpezaConfigurada.filtro.origem === "apenas_lab"
+                      ? "Apenas Laboratório"
+                      : limpezaConfigurada.filtro.origem === "apenas_tfd"
+                      ? "Apenas TFD / Regulação Geral"
+                      : "Todas (TFD + Laboratório)"}
+                  </p>
+                </div>
+              )}
               {limpezaConfigurada.tipo === "fila_importada" && (
                 <div className="border-t border-red-200/60 pt-2 space-y-1 text-ink/75">
                   <p>
@@ -2150,16 +2906,11 @@ function ModalLimpezaMassa({
 
           <div>
             <Label>Tipo de Limpeza</Label>
-            <Select
-              value={tipoLimpeza}
+            <Input
+              value={obterRotuloTipo(tipoLimpeza)}
               disabled={true}
               className="bg-sand/30 font-medium cursor-not-allowed"
-            >
-              <option value="fila_importada">Fila Importada em Lote</option>
-              <option value="pedidos_orfaos">Pedidos e Agendamentos Órfãos</option>
-              <option value="agendamentos_duplicados">Agendamentos Laboratoriais Duplicados</option>
-              <option value="cadastros_fantasmas">Cadastros de Pacientes Sem Vínculo (Fantasmas)</option>
-            </Select>
+            />
             <span className="text-[11px] text-ink/50 mt-1 block">
               Bloqueado conforme configuração pré-visualizada na etapa anterior.
             </span>
