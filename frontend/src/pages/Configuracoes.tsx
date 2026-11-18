@@ -600,6 +600,8 @@ function AbaPec() {
   const [logsSync, setLogsSync] = useState<PecSyncLogItem[]>([]);
   const [modalLogsAberto, setModalLogsAberto] = useState(false);
   const [carregandoLogs, setCarregandoLogs] = useState(false);
+  const [syncOk, setSyncOk] = useState("");
+  const [syncErro, setSyncErro] = useState("");
 
   const [busy, setBusy] = useState(false);
   const [testando, setTestando] = useState(false);
@@ -706,7 +708,7 @@ function AbaPec() {
       const logs = await fetchPecSyncLogs(25);
       setLogsSync(logs);
     } catch (e: unknown) {
-      setErro(msgErro(e, "Falha ao carregar logs de sincronização."));
+      setSyncErro(msgErro(e, "Falha ao carregar logs de sincronização."));
     } finally {
       setCarregandoLogs(false);
     }
@@ -733,17 +735,17 @@ function AbaPec() {
 
   async function salvarConfigSync() {
     setSalvandoConfigSync(true);
-    setErro("");
-    setOk("");
+    setSyncErro("");
+    setSyncOk("");
     try {
       await salvarPecSyncConfig({
         pec_sync_automatica: syncAuto,
         pec_sync_intervalo_horas: syncIntervalo,
       });
-      setOk("Configuração de sincronização periódica salva com sucesso!");
+      setSyncOk("Configuração de sincronização periódica salva com sucesso!");
       await carregarSyncStatus();
     } catch (e: unknown) {
-      setErro(msgErro(e, "Erro ao salvar agendamento de sincronização."));
+      setSyncErro(msgErro(e, "Erro ao salvar agendamento de sincronização."));
     } finally {
       setSalvandoConfigSync(false);
     }
@@ -751,15 +753,15 @@ function AbaPec() {
 
   async function dispararSyncAgora() {
     setDisparandoSync(true);
-    setErro("");
-    setOk("");
+    setSyncErro("");
+    setSyncOk("");
     try {
       const res = await sincronizarPecPacientes(true);
-      setOk(res.mensagem || "Sincronização de pacientes iniciada em segundo plano!");
+      setSyncOk(res.mensagem || "Sincronização de pacientes iniciada em segundo plano!");
       await carregarSyncStatus();
       await carregarLogsSync();
     } catch (e: unknown) {
-      setErro(msgErro(e, "Falha ao disparar sincronização com o e-SUS PEC."));
+      setSyncErro(msgErro(e, "Falha ao disparar sincronização com o e-SUS PEC."));
     } finally {
       setDisparandoSync(false);
     }
@@ -767,16 +769,16 @@ function AbaPec() {
 
   async function limparDuplicadosAgora() {
     setLimpandoDup(true);
-    setErro("");
-    setOk("");
+    setSyncErro("");
+    setSyncOk("");
     try {
       const r = await limparDuplicadosPec();
-      setOk(
+      setSyncOk(
         `Limpeza e unificação concluídas: ${r.duplicados_mesclados} duplicado(s) mesclado(s), ${r.inelegiveis_removidos} cadastro(s) inativo(s)/óbito/mudança sem vínculo removido(s). Total na base: ${r.total_depois.toLocaleString("pt-BR")} (antes: ${r.total_antes.toLocaleString("pt-BR")}).`,
       );
       await carregarSyncStatus();
     } catch (e: unknown) {
-      setErro(msgErro(e, "Falha ao limpar duplicados e cadastros inelegíveis."));
+      setSyncErro(msgErro(e, "Falha ao limpar duplicados e cadastros inelegíveis."));
     } finally {
       setLimpandoDup(false);
     }
@@ -1326,6 +1328,24 @@ function AbaPec() {
           Histórico e Auditoria de Sincronizações ({logsSync.length} logs)
         </button>
       </div>
+
+      {/* Mensagens de Feedback da Sincronização */}
+      {syncErro && (
+        <div className="mt-4 flex items-start gap-2 rounded-xl bg-red-50 p-3 text-sm font-medium text-red-700">
+          <AlertTriangle className="h-5 w-5 shrink-0 text-red-500" />
+          <div>
+            <p className="font-bold">Aviso / Erro na Sincronização</p>
+            <p className="text-xs">{syncErro}</p>
+          </div>
+        </div>
+      )}
+
+      {syncOk && (
+        <div className="mt-4 flex items-center gap-2 rounded-xl bg-emerald-50 p-3 text-sm font-medium text-emerald-800">
+          <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
+          <span>{syncOk}</span>
+        </div>
+      )}
     </Card>
 
     {/* Modal: Histórico de Sincronizações PEC */}
