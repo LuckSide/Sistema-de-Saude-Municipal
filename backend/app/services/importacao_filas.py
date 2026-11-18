@@ -636,36 +636,68 @@ def processar_linhas(
     except Exception:
         pec_engine = None
 
+    pec_cidadao_cols: set[str] | None = None
+
+    def _garantir_cols_pec(conn) -> set[str]:
+        nonlocal pec_cidadao_cols
+        if pec_cidadao_cols is not None:
+            return pec_cidadao_cols
+        from sqlalchemy import text
+        try:
+            rows = conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema IN ('public', current_schema()) AND table_name = 'tb_cidadao'"
+                )
+            ).all()
+            pec_cidadao_cols = {str(r[0]) for r in rows}
+        except Exception:
+            pec_cidadao_cols = set()
+        return pec_cidadao_cols
+
     def _buscar_pec_cidadao(cpf_val: str, cns_val: str, nome_val: str, nasc_val: date | None) -> dict | None:
         if not pec_engine:
             return None
         from sqlalchemy import text
         try:
             with pec_engine.connect() as conn:
+                cols = _garantir_cols_pec(conn)
+                col_faleceu = "st_faleceu" if "st_faleceu" in cols else "NULL AS st_faleceu"
+                if "st_mudanca" in cols:
+                    col_mudou = "st_mudanca AS st_mudou_se"
+                elif "st_mudou_se" in cols:
+                    col_mudou = "st_mudou_se"
+                else:
+                    col_mudou = "NULL AS st_mudou_se"
+                sel_cols = (
+                    f"co_seq_cidadao, no_cidadao, nu_cpf, nu_cns, dt_nascimento, no_mae, "
+                    f"nu_telefone_celular, {col_faleceu}, {col_mudou}"
+                )
                 if cpf_val:
                     row = conn.execute(
-                        text("SELECT co_seq_cidadao, no_cidadao, nu_cpf, nu_cns, dt_nascimento, no_mae, nu_telefone_celular, st_faleceu, st_mudou_se FROM tb_cidadao WHERE nu_cpf = :cpf LIMIT 1"),
+                        text(f"SELECT {sel_cols} FROM tb_cidadao WHERE nu_cpf = :cpf LIMIT 1"),
                         {"cpf": cpf_val}
                     ).mappings().first()
                     if row:
                         return dict(row)
                 if cns_val:
                     row = conn.execute(
-                        text("SELECT co_seq_cidadao, no_cidadao, nu_cpf, nu_cns, dt_nascimento, no_mae, nu_telefone_celular, st_faleceu, st_mudou_se FROM tb_cidadao WHERE nu_cns = :cns LIMIT 1"),
+                        text(f"SELECT {sel_cols} FROM tb_cidadao WHERE nu_cns = :cns LIMIT 1"),
                         {"cns": cns_val}
                     ).mappings().first()
                     if row:
                         return dict(row)
                 if nome_val and nasc_val:
                     row = conn.execute(
-                        text("SELECT co_seq_cidadao, no_cidadao, nu_cpf, nu_cns, dt_nascimento, no_mae, nu_telefone_celular, st_faleceu, st_mudou_se FROM tb_cidadao WHERE UPPER(TRIM(no_cidadao)) = :nome AND dt_nascimento = :nasc LIMIT 1"),
+                        text(f"SELECT {sel_cols} FROM tb_cidadao WHERE UPPER(TRIM(no_cidadao)) = :nome AND dt_nascimento = :nasc LIMIT 1"),
                         {"nome": nome_val.strip().upper(), "nasc": nasc_val}
                     ).mappings().first()
                     if row:
                         return dict(row)
                 if nome_val and not nasc_val:
+                    filtro_ativo = " AND COALESCE(st_ativo::text, '1') IN ('1', 'true', 't', 'TRUE')" if "st_ativo" in cols else ""
                     rows = conn.execute(
-                        text("SELECT co_seq_cidadao, no_cidadao, nu_cpf, nu_cns, dt_nascimento, no_mae, nu_telefone_celular, st_faleceu, st_mudou_se FROM tb_cidadao WHERE UPPER(TRIM(no_cidadao)) = :nome AND COALESCE(st_ativo, 1) = 1 LIMIT 2"),
+                        text(f"SELECT {sel_cols} FROM tb_cidadao WHERE UPPER(TRIM(no_cidadao)) = :nome{filtro_ativo} LIMIT 2"),
                         {"nome": nome_val.strip().upper()}
                     ).mappings().all()
                     if len(rows) == 1:

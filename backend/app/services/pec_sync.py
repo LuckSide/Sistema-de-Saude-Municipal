@@ -456,7 +456,7 @@ def aplicar_baixa_automatica_paciente(
 
 
 def _inspecionar_colunas_pec(pec_conn) -> dict[str, set[str]]:
-    """Descobre colunas existentes nas tabelas do e-SUS PEC para compatibilidade entre versões."""
+    """Descobre colunas existentes nas tabelas do e-SUS PEC para compatibilidade entre versões (PEC 3/4 e PEC 5+)."""
     mapa: dict[str, set[str]] = {}
     try:
         rows = pec_conn.execute(
@@ -464,12 +464,15 @@ def _inspecionar_colunas_pec(pec_conn) -> dict[str, set[str]]:
                 """
                 SELECT table_name, column_name
                 FROM information_schema.columns
-                WHERE table_schema = 'public'
+                WHERE table_schema IN ('public', current_schema())
                   AND table_name IN (
                       'tb_cidadao',
+                      'tb_ods_cidadaos_vinculados',
                       'tb_acomp_cidadaos_vinculados',
                       'tb_fat_cidadao_pec',
                       'tb_dim_tipo_saida_cadastro',
+                      'tb_dim_unidade_saude',
+                      'tb_dim_equipe',
                       'tb_localidade',
                       'tb_municipio',
                       'tb_dim_municipio',
@@ -485,16 +488,56 @@ def _inspecionar_colunas_pec(pec_conn) -> dict[str, set[str]]:
     return mapa
 
 
+def _resolver_tabela_vinculados_pec(cols_pec: dict[str, set[str]]) -> tuple[str | None, set[str]]:
+    """Detecta automaticamente a tabela de cidadãos vinculados do e-SUS PEC:
+    - PEC 5.x+: `tb_ods_cidadaos_vinculados`
+    - PEC 3.x / 4.x (legado): `tb_acomp_cidadaos_vinculados`
+    - Fallback seguro: `(None, set())` caso nenhuma exista.
+    """
+    for cand in ("tb_ods_cidadaos_vinculados", "tb_acomp_cidadaos_vinculados"):
+        cols = cols_pec.get(cand, set())
+        if cols and "co_cidadao" in cols:
+            return cand, cols
+    return None, set()
+
+
+def _coalesce_colunas_v(
+    v_cols: set[str],
+    colunas_v: tuple[str, ...],
+    fallback_expr: str,
+) -> str:
+    """Monta COALESCE seguro usando apenas colunas realmente presentes na tabela de vinculados `v`."""
+    partes = [f"NULLIF(TRIM(v.{col}::text), '')" for col in colunas_v if col in v_cols]
+    if not partes:
+        return fallback_expr
+    return f"COALESCE({', '.join(partes)}, {fallback_expr})"
+
+
 def _construir_query_pec(cols_pec: dict[str, set[str]]) -> str:
     """Constrói SELECT deduplicado por `co_seq_cidadao` adaptando-se às colunas da versão do e-SUS PEC."""
     c_cols = cols_pec.get("tb_cidadao", set())
-    v_cols = cols_pec.get("tb_acomp_cidadaos_vinculados", set())
+    tabela_v, v_cols = _resolver_tabela_vinculados_pec(cols_pec)
     f_cols = cols_pec.get("tb_fat_cidadao_pec", set())
     ts_cols = cols_pec.get("tb_dim_tipo_saida_cadastro", set())
+    u_cols = cols_pec.get("tb_dim_unidade_saude", set())
+    e_cols = cols_pec.get("tb_dim_equipe", set())
     loc_cols = cols_pec.get("tb_localidade", set())
     mun_cols = cols_pec.get("tb_municipio", set())
     dm_cols = cols_pec.get("tb_dim_municipio", set())
     fci_cols = cols_pec.get("tb_cds_cad_individual", set())
+
+    logger.info(
+        "PEC Sync: tabela de cidadãos vinculados detectada = %s",
+        tabela_v or "nenhuma (usando apenas tb_cidadao)",
+    )
+
+    join_v = f"LEFT JOIN {tabela_v} v ON v.co_cidadao = c.co_seq_cidadao" if tabela_v else ""
+    tem_f = bool(f_cols and "co_cidadao" in f_cols)
+    join_f = "LEFT JOIN tb_fat_cidadao_pec f ON f.co_cidadao = c.co_seq_cidadao" if tem_f else ""
+    tem_u = bool(tem_f and "co_dim_unidade_saude_vinc" in f_cols and (not u_cols or "co_seq_dim_unidade_saude" in u_cols))
+    join_u = "LEFT JOIN tb_dim_unidade_saude u ON u.co_seq_dim_unidade_saude = f.co_dim_unidade_saude_vinc" if tem_u else ""
+    tem_e = bool(tem_f and "co_dim_equipe_vinc" in f_cols and (not e_cols or "co_seq_dim_equipe" in e_cols))
+    join_e = "LEFT JOIN tb_dim_equipe e ON e.co_seq_dim_equipe = f.co_dim_equipe_vinc" if tem_e else ""
 
     # Join de localidade -> município real de residência
     join_loc = ""
@@ -510,7 +553,7 @@ def _construir_query_pec(cols_pec: dict[str, set[str]]) -> str:
 
     join_dm = ""
     dm_expr = None
-    if "co_dim_municipio" in f_cols and "co_seq_dim_municipio" in dm_cols and "no_municipio" in dm_cols:
+    if tem_f and "co_dim_municipio" in f_cols and "co_seq_dim_municipio" in dm_cols and "no_municipio" in dm_cols:
         join_dm = "LEFT JOIN tb_dim_municipio dm ON dm.co_seq_dim_municipio = f.co_dim_municipio"
         dm_expr = "NULLIF(TRIM(dm.no_municipio), '')"
 
@@ -554,7 +597,7 @@ def _construir_query_pec(cols_pec: dict[str, set[str]]) -> str:
     faleceu_exprs = []
     if "st_faleceu" in c_cols:
         faleceu_exprs.append("NULLIF(TRIM(c.st_faleceu::text), '')")
-    if "st_faleceu" in f_cols:
+    if tem_f and "st_faleceu" in f_cols:
         faleceu_exprs.append("NULLIF(TRIM(f.st_faleceu::text), '')")
     if join_fci and "st_faleceu" in fci_cols:
         faleceu_exprs.append("NULLIF(TRIM(fci.st_faleceu::text), '')")
@@ -573,11 +616,11 @@ def _construir_query_pec(cols_pec: dict[str, set[str]]) -> str:
     )
 
     mudanca_exprs = []
-    if "st_mudanca_territorio" in v_cols:
+    if tabela_v and "st_mudanca_territorio" in v_cols:
         mudanca_exprs.append("NULLIF(TRIM(v.st_mudanca_territorio::text), '')")
     if "st_mudanca" in c_cols:
         mudanca_exprs.append("NULLIF(TRIM(c.st_mudanca::text), '')")
-    if "st_mudou_se" in f_cols:
+    if tem_f and "st_mudou_se" in f_cols:
         mudanca_exprs.append("NULLIF(TRIM(f.st_mudou_se::text), '')")
     if join_fci and "st_mudanca" in fci_cols:
         mudanca_exprs.append("NULLIF(TRIM(fci.st_mudanca::text), '')")
@@ -595,7 +638,7 @@ def _construir_query_pec(cols_pec: dict[str, set[str]]) -> str:
     )
 
     co_saida_exprs = []
-    if "co_dim_tipo_saida_cadastro" in f_cols:
+    if tem_f and "co_dim_tipo_saida_cadastro" in f_cols:
         co_saida_exprs.append("NULLIF(TRIM(f.co_dim_tipo_saida_cadastro::text), '')")
     if join_fci:
         for fc in ("co_tipo_saida", "tp_saida_cadastro", "co_cds_tipo_saida", "tp_cds_tipo_saida", "co_dim_tipo_saida_cadastro"):
@@ -607,7 +650,7 @@ def _construir_query_pec(cols_pec: dict[str, set[str]]) -> str:
         else "'' AS co_tipo_saida_pec"
     )
 
-    if "co_dim_tipo_saida_cadastro" in f_cols and ts_cols and "ds_tipo_saida" in ts_cols:
+    if tem_f and "co_dim_tipo_saida_cadastro" in f_cols and ts_cols and "ds_tipo_saida" in ts_cols:
         join_saida = "LEFT JOIN tb_dim_tipo_saida_cadastro ts ON ts.co_seq_dim_tipo_saida_cadastro = f.co_dim_tipo_saida_cadastro"
         sel_ds_saida = "COALESCE(ts.ds_tipo_saida, '') AS ds_tipo_saida_pec"
     else:
@@ -619,22 +662,37 @@ def _construir_query_pec(cols_pec: dict[str, set[str]]) -> str:
     master_col = "co_cidadao_master" if "co_cidadao_master" in c_cols else ("co_unico_cidadao_master" if "co_unico_cidadao_master" in c_cols else "")
     sel_master = f"c.{master_col}::text AS co_cidadao_master_pec" if master_col else "'' AS co_cidadao_master_pec"
 
-    muni_exprs = [
-        "NULLIF(TRIM(v.no_municipio_domicilio), '')",
-        "NULLIF(TRIM(v.no_municipio_tb_cidadao), '')",
-    ]
+    muni_exprs = []
+    if tabela_v:
+        for mc in ("no_municipio_domicilio", "no_municipio_tb_cidadao"):
+            if mc in v_cols:
+                muni_exprs.append(f"NULLIF(TRIM(v.{mc}::text), '')")
     if mun_loc_expr:
         muni_exprs.append(mun_loc_expr)
     if dm_expr:
         muni_exprs.append(dm_expr)
     if "no_municipio" in c_cols:
         muni_exprs.append("NULLIF(TRIM(c.no_municipio), '')")
-    co_muni_sql = f"COALESCE({', '.join(muni_exprs)}, '')"
+    co_muni_sql = f"COALESCE({', '.join(muni_exprs)}, '')" if muni_exprs else "''"
 
-    inner_order = ["c.co_seq_cidadao DESC", "(v.co_cidadao IS NOT NULL) DESC"]
-    if "co_dim_tipo_saida_cadastro" in f_cols:
+    sel_logradouro = _coalesce_colunas_v(v_cols, ("ds_logradouro_domicilio", "ds_logradouro_tb_cidadao"), "c.ds_logradouro")
+    sel_numero = _coalesce_colunas_v(v_cols, ("nu_numero_domicilio", "nu_numero_tb_cidadao"), "c.nu_numero")
+    sel_complemento = _coalesce_colunas_v(v_cols, ("ds_complemento_domicilio", "ds_complemento_tb_cidadao"), "c.ds_complemento")
+    sel_bairro = _coalesce_colunas_v(v_cols, ("no_bairro_domicilio", "no_bairro_tb_cidadao"), "c.no_bairro")
+    sel_cep = _coalesce_colunas_v(v_cols, ("ds_cep_domicilio", "ds_cep_tb_cidadao"), "c.ds_cep")
+    sel_micro_area = _coalesce_colunas_v(v_cols, ("nu_micro_area_domicilio", "nu_micro_area_tb_cidadao"), "c.nu_micro_area")
+    sel_tem_vinculo = "CASE WHEN v.co_cidadao IS NOT NULL THEN 1 ELSE 0 END AS tem_vinculo_v" if tabela_v else "0 AS tem_vinculo_v"
+    sel_cnes = _coalesce_colunas_v(v_cols, ("nu_cnes_vinc_equipe",), "u.nu_cnes" if tem_u else "NULL")
+    sel_unidade = "u.no_unidade_saude" if tem_u else "NULL AS no_unidade_saude"
+    sel_ine = _coalesce_colunas_v(v_cols, ("nu_ine_vinc_equipe",), "e.nu_ine" if tem_e else "NULL")
+    sel_equipe = _coalesce_colunas_v(v_cols, ("no_equipe_vinc_equipe",), "e.no_equipe" if tem_e else "NULL")
+
+    inner_order = ["c.co_seq_cidadao DESC"]
+    if tabela_v:
+        inner_order.append("(v.co_cidadao IS NOT NULL) DESC")
+    if tem_f and "co_dim_tipo_saida_cadastro" in f_cols:
         inner_order.append("(f.co_dim_tipo_saida_cadastro IS NOT NULL) DESC")
-    if "co_seq_fat_cidadao_pec" in f_cols:
+    if tem_f and "co_seq_fat_cidadao_pec" in f_cols:
         inner_order.append("f.co_seq_fat_cidadao_pec DESC NULLS LAST")
     inner_order_sql = ", ".join(inner_order)
 
@@ -652,13 +710,13 @@ def _construir_query_pec(cols_pec: dict[str, set[str]]) -> str:
                 c.nu_telefone_celular,
                 c.nu_telefone_contato,
                 c.nu_telefone_residencial,
-                COALESCE(NULLIF(TRIM(v.ds_logradouro_domicilio), ''), NULLIF(TRIM(v.ds_logradouro_tb_cidadao), ''), c.ds_logradouro) AS ds_logradouro,
-                COALESCE(NULLIF(TRIM(v.nu_numero_domicilio), ''), NULLIF(TRIM(v.nu_numero_tb_cidadao), ''), c.nu_numero) AS nu_numero,
-                COALESCE(NULLIF(TRIM(v.ds_complemento_domicilio), ''), NULLIF(TRIM(v.ds_complemento_tb_cidadao), ''), c.ds_complemento) AS ds_complemento,
-                COALESCE(NULLIF(TRIM(v.no_bairro_domicilio), ''), NULLIF(TRIM(v.no_bairro_tb_cidadao), ''), c.no_bairro) AS no_bairro,
-                COALESCE(NULLIF(TRIM(v.ds_cep_domicilio), ''), NULLIF(TRIM(v.ds_cep_tb_cidadao), ''), c.ds_cep) AS ds_cep,
+                {sel_logradouro} AS ds_logradouro,
+                {sel_numero} AS nu_numero,
+                {sel_complemento} AS ds_complemento,
+                {sel_bairro} AS no_bairro,
+                {sel_cep} AS ds_cep,
                 c.ds_ponto_referencia,
-                COALESCE(NULLIF(TRIM(v.nu_micro_area_domicilio), ''), NULLIF(TRIM(v.nu_micro_area_tb_cidadao), ''), c.nu_micro_area) AS nu_micro_area,
+                {sel_micro_area} AS nu_micro_area,
                 {co_muni_sql} AS no_municipio,
                 {co_muni_sql} AS no_municipio_raw,
                 {sel_faleceu},
@@ -672,27 +730,66 @@ def _construir_query_pec(cols_pec: dict[str, set[str]]) -> str:
                 {sel_exibicao},
                 {sel_unificado},
                 {sel_master},
-                CASE WHEN v.co_cidadao IS NOT NULL THEN 1 ELSE 0 END AS tem_vinculo_v,
+                {sel_tem_vinculo},
                 c.dt_atualizado,
                 c.st_ativo,
-                COALESCE(NULLIF(TRIM(v.nu_cnes_vinc_equipe), ''), u.nu_cnes) AS nu_cnes,
-                u.no_unidade_saude,
-                COALESCE(NULLIF(TRIM(v.nu_ine_vinc_equipe), ''), e.nu_ine) AS nu_ine,
-                COALESCE(NULLIF(TRIM(v.no_equipe_vinc_equipe), ''), e.no_equipe) AS no_equipe
+                {sel_cnes} AS nu_cnes,
+                {sel_unidade},
+                {sel_ine} AS nu_ine,
+                {sel_equipe} AS no_equipe
             FROM tb_cidadao c
-            LEFT JOIN tb_acomp_cidadaos_vinculados v ON v.co_cidadao = c.co_seq_cidadao
-            LEFT JOIN tb_fat_cidadao_pec f ON f.co_cidadao = c.co_seq_cidadao
+            {join_v}
+            {join_f}
             {join_loc}
             {join_dm}
             {join_saida}
             {join_fci}
-            LEFT JOIN tb_dim_unidade_saude u ON u.co_seq_dim_unidade_saude = f.co_dim_unidade_saude_vinc
-            LEFT JOIN tb_dim_equipe e ON e.co_seq_dim_equipe = f.co_dim_equipe_vinc
+            {join_u}
+            {join_e}
             ORDER BY {inner_order_sql}
         ) sub_pec
         ORDER BY CASE WHEN COALESCE(sub_pec.st_ativo::text, '1') IN ('1', 'true', 't', 'TRUE') THEN 0 ELSE 1 END,
                  sub_pec.dt_atualizado DESC NULLS LAST,
                  sub_pec.co_seq_cidadao DESC;
+    """
+
+
+def _construir_query_enderecos_pec(cols_pec: dict[str, set[str]]) -> str:
+    """Constrói SELECT de enriquecimento de endereços adaptando-se automaticamente ao PEC 4 e PEC 5+."""
+    tabela_v, v_cols = _resolver_tabela_vinculados_pec(cols_pec)
+    join_v = f"LEFT JOIN {tabela_v} v ON v.co_cidadao = c.co_seq_cidadao" if tabela_v else ""
+    sel_logradouro = _coalesce_colunas_v(v_cols, ("ds_logradouro_domicilio", "ds_logradouro_tb_cidadao"), "c.ds_logradouro")
+    sel_numero = _coalesce_colunas_v(v_cols, ("nu_numero_domicilio", "nu_numero_tb_cidadao"), "c.nu_numero")
+    sel_complemento = _coalesce_colunas_v(v_cols, ("ds_complemento_domicilio", "ds_complemento_tb_cidadao"), "c.ds_complemento")
+    sel_bairro = _coalesce_colunas_v(v_cols, ("no_bairro_domicilio", "no_bairro_tb_cidadao"), "c.no_bairro")
+    sel_cep = _coalesce_colunas_v(v_cols, ("ds_cep_domicilio", "ds_cep_tb_cidadao"), "c.ds_cep")
+    sel_municipio = _coalesce_colunas_v(v_cols, ("no_municipio_domicilio", "no_municipio_tb_cidadao"), "'Guapé'")
+    sel_microarea = _coalesce_colunas_v(v_cols, ("nu_micro_area_domicilio", "nu_micro_area_tb_cidadao"), "c.nu_micro_area")
+    order_extra = ", (v.co_cidadao IS NOT NULL) DESC" if tabela_v else ""
+
+    return f"""
+        SELECT DISTINCT ON (c.co_seq_cidadao)
+            c.co_seq_cidadao,
+            c.nu_cpf,
+            c.nu_cns,
+            c.no_cidadao,
+            c.dt_nascimento,
+            {sel_logradouro} as logradouro,
+            {sel_numero} as numero,
+            {sel_complemento} as complemento,
+            {sel_bairro} as bairro,
+            {sel_cep} as cep,
+            {sel_municipio} as municipio,
+            c.ds_ponto_referencia as ponto_ref,
+            {sel_microarea} as microarea
+        FROM tb_cidadao c
+        {join_v}
+        WHERE COALESCE(c.st_ativo::text, '1') IN ('1', 'true', 't', 'TRUE')
+          AND (
+              {sel_logradouro} IS NOT NULL
+              OR {sel_bairro} IS NOT NULL
+          )
+        ORDER BY c.co_seq_cidadao DESC{order_extra}
     """
 
 
@@ -1826,32 +1923,9 @@ def atualizar_enderecos_pacientes_pec(db: Session) -> dict:
     from sqlalchemy import create_engine
     pec_engine = create_engine(dsn, pool_pre_ping=True, connect_args={"connect_timeout": 8})
 
-    query = text("""
-        SELECT DISTINCT ON (c.co_seq_cidadao)
-            c.co_seq_cidadao,
-            c.nu_cpf,
-            c.nu_cns,
-            c.no_cidadao,
-            c.dt_nascimento,
-            COALESCE(NULLIF(TRIM(v.ds_logradouro_domicilio), ''), NULLIF(TRIM(v.ds_logradouro_tb_cidadao), ''), c.ds_logradouro) as logradouro,
-            COALESCE(NULLIF(TRIM(v.nu_numero_domicilio), ''), NULLIF(TRIM(v.nu_numero_tb_cidadao), ''), c.nu_numero) as numero,
-            COALESCE(NULLIF(TRIM(v.ds_complemento_domicilio), ''), NULLIF(TRIM(v.ds_complemento_tb_cidadao), ''), c.ds_complemento) as complemento,
-            COALESCE(NULLIF(TRIM(v.no_bairro_domicilio), ''), NULLIF(TRIM(v.no_bairro_tb_cidadao), ''), c.no_bairro) as bairro,
-            COALESCE(NULLIF(TRIM(v.ds_cep_domicilio), ''), NULLIF(TRIM(v.ds_cep_tb_cidadao), ''), c.ds_cep) as cep,
-            COALESCE(NULLIF(TRIM(v.no_municipio_domicilio), ''), NULLIF(TRIM(v.no_municipio_tb_cidadao), ''), 'Guapé') as municipio,
-            c.ds_ponto_referencia as ponto_ref,
-            COALESCE(NULLIF(TRIM(v.nu_micro_area_domicilio), ''), NULLIF(TRIM(v.nu_micro_area_tb_cidadao), ''), c.nu_micro_area) as microarea
-        FROM tb_cidadao c
-        LEFT JOIN tb_acomp_cidadaos_vinculados v ON v.co_cidadao = c.co_seq_cidadao
-        WHERE COALESCE(c.st_ativo::text, '1') IN ('1', 'true', 't', 'TRUE')
-          AND (
-              COALESCE(NULLIF(TRIM(v.ds_logradouro_domicilio), ''), NULLIF(TRIM(v.ds_logradouro_tb_cidadao), ''), c.ds_logradouro) IS NOT NULL
-              OR COALESCE(NULLIF(TRIM(v.no_bairro_domicilio), ''), NULLIF(TRIM(v.no_bairro_tb_cidadao), ''), c.no_bairro) IS NOT NULL
-          )
-        ORDER BY c.co_seq_cidadao DESC, (v.co_cidadao IS NOT NULL) DESC
-    """)
-
     with pec_engine.connect() as pec_conn:
+        cols_pec = _inspecionar_colunas_pec(pec_conn)
+        query = text(_construir_query_enderecos_pec(cols_pec))
         pec_rows = pec_conn.execute(query).mappings().all()
 
     pec_by_co_seq: dict[int, dict] = {}
