@@ -269,16 +269,36 @@ def _init_db_impl() -> None:
             except Exception:
                 pass
 
-        # Backfill codigo_curto imutável para exames
+        # Backfill codigo_curto aleatório (não-procedural) para exames sem código
         try:
-            if conn.dialect.name == "postgresql":
-                conn.execute(text("UPDATE tfd_exames_fila SET codigo_curto = 'EX-' || LPAD(id::text, 6, '0') WHERE (codigo_curto IS NULL OR codigo_curto = '') AND id IS NOT NULL"))
-            else:
-                conn.execute(text("UPDATE tfd_exames_fila SET codigo_curto = 'EX-' || substr('000000' || id, -6, 6) WHERE (codigo_curto IS NULL OR codigo_curto = '') AND id IS NOT NULL"))
+            import secrets as _sec
+            usados_ex = {
+                str(r[0])
+                for r in conn.execute(
+                    text("SELECT codigo_curto FROM tfd_exames_fila WHERE codigo_curto IS NOT NULL AND codigo_curto != ''")
+                ).all()
+            }
+            pend_ex = conn.execute(
+                text("SELECT id FROM tfd_exames_fila WHERE (codigo_curto IS NULL OR codigo_curto = '') AND id IS NOT NULL LIMIT 10000")
+            ).all()
+            for (eid,) in pend_ex:
+                cod = ""
+                for _ in range(30):
+                    cand = f"SL-{100000 + _sec.randbelow(900000)}"
+                    if cand not in usados_ex:
+                        cod = cand
+                        usados_ex.add(cand)
+                        break
+                if not cod:
+                    cod = f"SL-{_sec.token_hex(4).upper()}"
+                conn.execute(
+                    text("UPDATE tfd_exames_fila SET codigo_curto = :cod WHERE id = :eid"),
+                    {"cod": cod, "eid": eid},
+                )
         except Exception:
             pass
 
-        # Prontuário curto para Pacientes
+        # Prontuário curto aleatório (não-procedural) para Pacientes
         try:
             cols_pac = [c["name"] for c in inspect(conn).get_columns("tfd_pacientes")]
         except Exception:
@@ -289,12 +309,32 @@ def _init_db_impl() -> None:
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tfd_pacientes_codigo_prontuario ON tfd_pacientes (codigo_prontuario)"))
             except Exception:
                 pass
-        # Backfill codigo_prontuario imutável para pacientes
+        # Backfill codigo_prontuario aleatório para pacientes sem código
         try:
-            if conn.dialect.name == "postgresql":
-                conn.execute(text("UPDATE tfd_pacientes SET codigo_prontuario = 'PR-' || LPAD(id::text, 5, '0') WHERE (codigo_prontuario IS NULL OR codigo_prontuario = '') AND id IS NOT NULL"))
-            else:
-                conn.execute(text("UPDATE tfd_pacientes SET codigo_prontuario = 'PR-' || substr('00000' || id, -5, 5) WHERE (codigo_prontuario IS NULL OR codigo_prontuario = '') AND id IS NOT NULL"))
+            import secrets as _sec
+            usados_pr = {
+                str(r[0])
+                for r in conn.execute(
+                    text("SELECT codigo_prontuario FROM tfd_pacientes WHERE codigo_prontuario IS NOT NULL AND codigo_prontuario != ''")
+                ).all()
+            }
+            pend_pr = conn.execute(
+                text("SELECT id FROM tfd_pacientes WHERE (codigo_prontuario IS NULL OR codigo_prontuario = '') AND id IS NOT NULL LIMIT 25000")
+            ).all()
+            for (pid,) in pend_pr:
+                cod = ""
+                for _ in range(30):
+                    cand = f"PR-{100000 + _sec.randbelow(900000)}"
+                    if cand not in usados_pr:
+                        cod = cand
+                        usados_pr.add(cand)
+                        break
+                if not cod:
+                    cod = f"PR-{_sec.token_hex(4).upper()}"
+                conn.execute(
+                    text("UPDATE tfd_pacientes SET codigo_prontuario = :cod WHERE id = :pid"),
+                    {"cod": cod, "pid": pid},
+                )
         except Exception:
             pass
         # Backfill token p/ linhas existentes sem token
@@ -1104,25 +1144,73 @@ def _init_db_impl() -> None:
         except Exception:
             cols_fila_psf = []
         for col, ddl in {
+            "codigo_solicitacao": "VARCHAR(30) DEFAULT '' NOT NULL",
             "prioridade": "VARCHAR(20) DEFAULT 'rotina' NOT NULL",
             "sigtap_ids_json": "TEXT DEFAULT '[]' NOT NULL",
             "lote_id": "INTEGER NULL",
         }.items():
-            if col not in cols_fila_psf:
+            if col not in cols_fila_psf and cols_fila_psf:
                 try:
                     with conn.begin_nested():
                         conn.execute(text(f"ALTER TABLE lab_fila_psf ADD COLUMN {col} {ddl}"))
                 except Exception:
                     pass
+        if cols_fila_psf:
+            try:
+                with conn.begin_nested():
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_fila_psf_codigo_solicitacao ON lab_fila_psf (codigo_solicitacao)"))
+            except Exception:
+                pass
 
         try:
             cols_solic_mestre = [c["name"] for c in inspect(conn).get_columns("lab_solic_mestre")]
         except Exception:
             cols_solic_mestre = []
-        if "lote_id" not in cols_solic_mestre:
+        for col, ddl in {
+            "codigo_solicitacao": "VARCHAR(30) DEFAULT '' NOT NULL",
+            "lote_id": "INTEGER NULL",
+        }.items():
+            if col not in cols_solic_mestre and cols_solic_mestre:
+                try:
+                    with conn.begin_nested():
+                        conn.execute(text(f"ALTER TABLE lab_solic_mestre ADD COLUMN {col} {ddl}"))
+                except Exception:
+                    pass
+        if cols_solic_mestre:
             try:
                 with conn.begin_nested():
-                    conn.execute(text("ALTER TABLE lab_solic_mestre ADD COLUMN lote_id INTEGER NULL"))
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_solic_mestre_codigo_solicitacao ON lab_solic_mestre (codigo_solicitacao)"))
+            except Exception:
+                pass
+            # Backfill aleatório para solicitações laboratoriais sem codigo_solicitacao
+            try:
+                import secrets as _sec
+                from datetime import datetime as _dt
+                ym_atual = _dt.now().strftime("%y%m")
+                usados_sl = {
+                    str(r[0])
+                    for r in conn.execute(
+                        text("SELECT codigo_solicitacao FROM lab_solic_mestre WHERE codigo_solicitacao IS NOT NULL AND codigo_solicitacao != ''")
+                    ).all()
+                }
+                pend_sl = conn.execute(
+                    text("SELECT id, data_agendada FROM lab_solic_mestre WHERE (codigo_solicitacao IS NULL OR codigo_solicitacao = '') AND id IS NOT NULL LIMIT 10000")
+                ).all()
+                for sid, dt_ag in pend_sl:
+                    ym_row = dt_ag.strftime("%y%m") if hasattr(dt_ag, "strftime") else (str(dt_ag)[2:4] + str(dt_ag)[5:7] if dt_ag and len(str(dt_ag)) >= 7 else ym_atual)
+                    cod = ""
+                    for _ in range(30):
+                        cand = f"SL-{ym_row}-{100000 + _sec.randbelow(900000)}"
+                        if cand not in usados_sl:
+                            cod = cand
+                            usados_sl.add(cand)
+                            break
+                    if not cod:
+                        cod = f"SL-{ym_row}-{_sec.token_hex(4).upper()}"
+                    conn.execute(
+                        text("UPDATE lab_solic_mestre SET codigo_solicitacao = :cod WHERE id = :sid"),
+                        {"cod": cod, "sid": sid},
+                    )
             except Exception:
                 pass
 

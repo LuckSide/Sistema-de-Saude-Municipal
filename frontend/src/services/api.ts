@@ -397,6 +397,35 @@ export const limparDuplicadosPec = () =>
     inelegiveis_removidos: number;
   }>("/api/integracoes/pec/limpar-duplicados").then((r) => r.data);
 
+export type PecResetPreview = {
+  total_pacientes: number;
+  pacientes_sem_vinculo: number;
+  pacientes_com_vinculo: number;
+  usuarios_vinculados: number;
+  tabelas_vinculadas: Record<string, number>;
+  em_execucao: boolean;
+};
+
+export const fetchPecResetPreview = () =>
+  api.get<PecResetPreview>("/api/integracoes/pec/sync/reset-preview").then((r) => r.data);
+
+export const resetarERessincronizarPec = (payload: {
+  limpar_vinculos_operacionais: boolean;
+  disparar_sync: boolean;
+  senha: string;
+  confirmacao_explicita: boolean;
+}) =>
+  api
+    .post<{
+      ok: boolean;
+      pacientes_removidos: number;
+      pacientes_preservados: number;
+      sync_iniciada: boolean;
+      detalhes: Record<string, number>;
+      mensagem: string;
+    }>("/api/integracoes/pec/sync/reset-ressincronizar", payload)
+    .then((r) => r.data);
+
 export const sincronizarEnderecosPec = () =>
   api.post<{
     ok: boolean;

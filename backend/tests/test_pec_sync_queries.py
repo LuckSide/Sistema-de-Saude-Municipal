@@ -115,3 +115,160 @@ def test_colunas_parciais_em_tb_ods_cidadaos_vinculados():
     assert "v.ds_logradouro_tb_cidadao" not in sql_main
     assert "v.no_bairro_domicilio" not in sql_main
     assert "v.st_mudanca_territorio" not in sql_main
+
+
+def test_geradores_aleatorios_nao_sao_procedurais():
+    from datetime import date
+    import re
+    from app.services.geradores import (
+        gerar_exame_curto_aleatorio,
+        gerar_numero_pedido_aleatorio,
+        gerar_prontuario_aleatorio,
+        gerar_protocolo_lab_aleatorio,
+    )
+
+    pronts = [gerar_prontuario_aleatorio(None, pac_id=i) for i in range(1, 21)]
+    assert all(re.match(r"^PR-\d{6}$", p) for p in pronts)
+    # Nunca procedural a partir do ID
+    assert "PR-00001" not in pronts
+    assert "PR-000001" not in pronts
+    assert "1" not in pronts
+    # Não sequencial (diferenças não são todas +1)
+    nums_pr = [int(p.split("-")[1]) for p in pronts]
+    assert len(set(nums_pr)) >= 18
+    assert not all(nums_pr[i + 1] - nums_pr[i] == 1 for i in range(len(nums_pr) - 1))
+
+    curtos = [gerar_exame_curto_aleatorio(None, exame_id=i) for i in range(1, 21)]
+    assert all(re.match(r"^SL-\d{6}$", c) for c in curtos)
+    assert "SL-000001" not in curtos
+    nums_sl = [int(c.split("-")[1]) for c in curtos]
+    assert len(set(nums_sl)) >= 18
+
+    pedidos = [gerar_numero_pedido_aleatorio(None) for _ in range(20)]
+    assert all(re.match(r"^SL-\d{4}-\d{6}$", p) for p in pedidos)
+    assert len(set(pedidos)) >= 18
+
+    prots = [gerar_protocolo_lab_aleatorio(date(2026, 11, 20), mestre_id=i) for i in range(1, 21)]
+    assert all(re.match(r"^SL-2611-\d{6}$", p) for p in prots)
+    assert "SL-2611-000001" not in prots
+    assert len(set(prots)) >= 18
+
+
+def test_reset_pacientes_pec_modo_seguro_e_total():
+    import bcrypt
+    from datetime import date
+    import pytest
+    from fastapi import HTTPException
+    from sqlalchemy.pool import StaticPool
+    from sqlmodel import Session, SQLModel, create_engine, select
+
+    if not hasattr(bcrypt, "__about__"):
+        bcrypt.__about__ = type("About", (), {"__version__": getattr(bcrypt, "__version__", "4.0.0")})()
+
+    from app.core.security import hash_password
+    from app.models.audit import AuditLog
+    from app.models.lab_fase6 import FilaPsf, Laboratorio, SolicitacaoMestre, VagaLab
+    from app.models.tfd import ExameFila, Paciente
+    from app.models.user import User
+    from app.services.pec_sync import (
+        obter_preview_reset_pacientes_pec,
+        resetar_e_ressincronizar_pacientes_pec,
+    )
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as db:
+        admin = User(
+            username="admin_reset_pec",
+            password_hash=hash_password("senha_forte_123"),
+            is_superuser=True,
+            must_change_password=False,
+        )
+        db.add(admin)
+
+        p1 = Paciente(nome="PACIENTE SEM VINCULO", cpf="11122233344", co_seq_cidadao_pec=101)
+        p2 = Paciente(nome="PACIENTE COM FILA", cpf="55566677788", co_seq_cidadao_pec=102)
+        db.add_all([p1, p2])
+        db.flush()
+
+        lab = Laboratorio(nome="Lab Teste", ativo=True)
+        db.add(lab)
+        db.flush()
+        vaga = VagaLab(laboratorio_id=lab.id, data=date(2026, 11, 20), vagas_totais=10, vagas_ocupadas=1)
+        db.add(vaga)
+
+        fp = FilaPsf(
+            codigo_solicitacao="SL-2611-482917",
+            paciente_id=p2.id,
+            especialidade="ROTINA",
+            data_solicitacao=date(2026, 11, 10),
+        )
+        db.add(fp)
+        db.flush()
+        sm = SolicitacaoMestre(
+            codigo_solicitacao="SL-2611-482917",
+            paciente_id=p2.id,
+            data_agendada=date(2026, 11, 20),
+            laboratorio_id=lab.id,
+            origem_fila_id=fp.id,
+        )
+        db.add(sm)
+        db.add(ExameFila(paciente_id=p2.id, exame="CARDIO", data_pedido=date(2026, 11, 10)))
+        db.commit()
+
+        prev = obter_preview_reset_pacientes_pec(db)
+        assert prev["total_pacientes"] == 2
+        assert prev["pacientes_sem_vinculo"] == 1
+        assert prev["pacientes_com_vinculo"] == 1
+        assert "lab_fila_psf" in prev["tabelas_vinculadas"]
+
+        # Senha errada -> 403
+        with pytest.raises(HTTPException) as exc:
+            resetar_e_ressincronizar_pacientes_pec(
+                db,
+                limpar_vinculos_operacionais=False,
+                disparar_sync=False,
+                admin=admin,
+                senha="errada",
+                confirmacao_explicita=True,
+            )
+        assert exc.value.status_code == 403
+
+        # Modo seguro: remove p1, preserva p2
+        r_seg = resetar_e_ressincronizar_pacientes_pec(
+            db,
+            limpar_vinculos_operacionais=False,
+            disparar_sync=False,
+            admin=admin,
+            senha="senha_forte_123",
+            confirmacao_explicita=True,
+        )
+        assert r_seg["ok"] is True
+        assert r_seg["pacientes_removidos"] == 1
+        assert r_seg["pacientes_preservados"] == 1
+        assert len(db.exec(select(Paciente)).all()) == 1
+
+        # Modo total: limpa vínculos operacionais, zera vagas e remove p2 também
+        r_tot = resetar_e_ressincronizar_pacientes_pec(
+            db,
+            limpar_vinculos_operacionais=True,
+            disparar_sync=False,
+            admin=admin,
+            senha="senha_forte_123",
+            confirmacao_explicita=True,
+        )
+        assert r_tot["ok"] is True
+        assert r_tot["pacientes_removidos"] == 1
+        assert len(db.exec(select(Paciente)).all()) == 0
+        assert len(db.exec(select(FilaPsf)).all()) == 0
+        assert len(db.exec(select(SolicitacaoMestre)).all()) == 0
+        assert len(db.exec(select(ExameFila)).all()) == 0
+        db.refresh(vaga)
+        assert vaga.vagas_ocupadas == 0
+        logs = db.exec(select(AuditLog).where(AuditLog.action == "DATA_PEC_RESET_RESYNC")).all()
+        assert len(logs) == 2

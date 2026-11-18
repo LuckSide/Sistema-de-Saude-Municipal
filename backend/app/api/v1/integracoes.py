@@ -8,11 +8,11 @@ import re
 import time
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
-from app.core.deps import get_db
+from app.core.deps import get_db, require_senha_ok, require_superuser
 from app.services.permissoes import need_any_perm, need_perm
 from app.models.integracoes import IntegrationSettings
 from app.models.user import User
@@ -413,6 +413,50 @@ def sincronizar_pec(
             "total_removidos_inativos": getattr(log, "total_removidos_inativos", 0) or 0,
             "duracao_segundos": log.duracao_segundos,
         }
+
+
+class PecResetRessincronizarIn(BaseModel):
+    limpar_vinculos_operacionais: bool = False
+    disparar_sync: bool = True
+    senha: str = ""
+    confirmacao_explicita: bool = False
+
+
+@router.get("/integracoes/pec/sync/reset-preview")
+def preview_reset_pacientes_pec(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_superuser),
+):
+    """Prévia (dry-run) da limpeza da base de pacientes antes da ressincronização com o e-SUS PEC."""
+    _ = admin
+    from app.services.pec_sync import obter_preview_reset_pacientes_pec
+
+    return obter_preview_reset_pacientes_pec(db)
+
+
+@router.post("/integracoes/pec/sync/reset-ressincronizar")
+def executar_reset_ressincronizar_pec(
+    payload: PecResetRessincronizarIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_superuser),
+    _senha_guard: User = Depends(require_senha_ok),
+):
+    """Limpa os pacientes do banco de dados (com senha de superusuário) e dispara ressincronização com o PEC."""
+    from app.services.pec_sync import resetar_e_ressincronizar_pacientes_pec
+
+    client_ip = request.client.host if request.client else ""
+    user_agent = request.headers.get("user-agent", "")
+    return resetar_e_ressincronizar_pacientes_pec(
+        db,
+        limpar_vinculos_operacionais=payload.limpar_vinculos_operacionais,
+        disparar_sync=payload.disparar_sync,
+        admin=admin,
+        senha=payload.senha,
+        confirmacao_explicita=payload.confirmacao_explicita,
+        client_ip=client_ip,
+        user_agent=user_agent,
+    )
 
 
 @router.post("/integracoes/pec/limpar-duplicados")

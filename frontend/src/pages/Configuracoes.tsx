@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
@@ -27,6 +27,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Terminal,
+  Trash2,
   UploadCloud,
   Users,
   X,
@@ -43,6 +44,7 @@ import {
   exportarBackup,
   fetchExamesPermitidos,
   fetchIntegracoes,
+  fetchPecResetPreview,
   fetchPecSyncLogs,
   fetchPecSyncStatus,
   fetchSettings,
@@ -53,6 +55,7 @@ import {
   labsRemover,
   labSigtapCriar,
   limparDuplicadosPec,
+  resetarERessincronizarPec,
   restaurarBackup,
   salvarExamesPermitidos,
   salvarPecSyncConfig,
@@ -73,6 +76,7 @@ import {
   type ImportFilasOut,
   type Integracoes,
   type Laboratorio,
+  type PecResetPreview,
   type PecSyncLogItem,
   type PecSyncStatus,
   type UpdateStatus,
@@ -569,6 +573,7 @@ function AbaFilas() {
 
 // ---------- PEC: conexão e teste ----------
 function AbaPec() {
+  const { user } = useAuth();
   const [cfg, setCfg] = useState<Integracoes | null>(null);
   const [loading, setLoading] = useState(true);
   const [fonte, setFonte] = useState("auto");
@@ -602,6 +607,16 @@ function AbaPec() {
   const [carregandoLogs, setCarregandoLogs] = useState(false);
   const [syncOk, setSyncOk] = useState("");
   const [syncErro, setSyncErro] = useState("");
+
+  // Modal: Limpar pacientes e ressincronizar PEC
+  const [modalResetAberto, setModalResetAberto] = useState(false);
+  const [resetPreview, setResetPreview] = useState<PecResetPreview | null>(null);
+  const [carregandoResetPreview, setCarregandoResetPreview] = useState(false);
+  const [resetLimparVinculos, setResetLimparVinculos] = useState(false);
+  const [resetSenha, setResetSenha] = useState("");
+  const [resetConfirmado, setResetConfirmado] = useState(false);
+  const [executandoReset, setExecutandoReset] = useState(false);
+  const [resetErroModal, setResetErroModal] = useState("");
 
   const [busy, setBusy] = useState(false);
   const [testando, setTestando] = useState(false);
@@ -781,6 +796,58 @@ function AbaPec() {
       setSyncErro(msgErro(e, "Falha ao limpar duplicados e cadastros inelegíveis."));
     } finally {
       setLimpandoDup(false);
+    }
+  }
+
+  async function abrirModalResetPec() {
+    setResetErroModal("");
+    setResetSenha("");
+    setResetConfirmado(false);
+    setResetLimparVinculos(false);
+    setResetPreview(null);
+    setModalResetAberto(true);
+    setCarregandoResetPreview(true);
+    try {
+      const prev = await fetchPecResetPreview();
+      setResetPreview(prev);
+    } catch (e: unknown) {
+      setResetErroModal(msgErro(e, "Falha ao calcular prévia de pacientes para limpeza."));
+    } finally {
+      setCarregandoResetPreview(false);
+    }
+  }
+
+  async function executarResetRessincronizar(e: FormEvent) {
+    e.preventDefault();
+    setResetErroModal("");
+    if (!resetConfirmado) {
+      setResetErroModal("Marque a confirmação explícita de ciência antes de prosseguir.");
+      return;
+    }
+    if (!resetSenha.trim()) {
+      setResetErroModal("Informe sua senha de administrador para autorizar.");
+      return;
+    }
+    setExecutandoReset(true);
+    setSyncErro("");
+    setSyncOk("");
+    try {
+      const resp = await resetarERessincronizarPec({
+        limpar_vinculos_operacionais: resetLimparVinculos,
+        disparar_sync: true,
+        senha: resetSenha.trim(),
+        confirmacao_explicita: true,
+      });
+      setModalResetAberto(false);
+      setResetSenha("");
+      setResetConfirmado(false);
+      setSyncOk(resp.mensagem);
+      await carregarSyncStatus();
+      await carregarLogsSync();
+    } catch (err: unknown) {
+      setResetErroModal(msgErro(err, "Falha ao limpar pacientes e iniciar ressincronização."));
+    } finally {
+      setExecutandoReset(false);
     }
   }
 
@@ -1314,6 +1381,18 @@ function AbaPec() {
             {limpandoDup ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5 text-emerald-700" />}
             {limpandoDup ? "Unificando base..." : "Unificar Duplicados e Limpar Inativos"}
           </button>
+
+          {user?.is_superuser && (
+            <button
+              type="button"
+              onClick={abrirModalResetPec}
+              disabled={syncStatus?.em_execucao || disparandoSync || executandoReset}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-red-300 bg-red-50 px-3.5 py-2.5 text-xs font-bold text-red-800 shadow-xs hover:bg-red-100 disabled:opacity-50"
+            >
+              <Trash2 className="h-3.5 w-3.5 text-red-700" />
+              Limpar Pacientes e Ressincronizar PEC
+            </button>
+          )}
         </div>
 
         <button
@@ -1347,6 +1426,168 @@ function AbaPec() {
         </div>
       )}
     </Card>
+
+    {/* Modal: Limpar Pacientes e Ressincronizar PEC */}
+    {modalResetAberto && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs"
+        onClick={() => !executandoReset && setModalResetAberto(false)}
+      >
+        <div
+          className="max-h-[90vh] w-full max-w-lg overflow-auto rounded-2xl bg-white p-6 shadow-2xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="mb-4 flex items-center justify-between border-b border-sus-900/10 pb-3">
+            <div className="flex items-center gap-2">
+              <div className="rounded-lg bg-red-100 p-2 text-red-700">
+                <ShieldAlert className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-display text-base font-bold text-sus-950">
+                  Limpar Pacientes e Ressincronizar com o PEC
+                </h3>
+                <p className="text-xs text-ink/60">
+                  Exclusivo para superusuários · Todos os prontuários serão gerados com códigos aleatórios
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => !executandoReset && setModalResetAberto(false)}
+              className="rounded-lg p-1 text-ink/40 hover:bg-sand hover:text-ink/80"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <form onSubmit={executarResetRessincronizar} className="space-y-4">
+            {carregandoResetPreview ? (
+              <div className="flex items-center gap-2 rounded-xl bg-sand/50 p-4 text-xs text-ink/70">
+                <Loader2 className="h-4 w-4 animate-spin" /> Analisando base de pacientes...
+              </div>
+            ) : resetPreview ? (
+              <div className="rounded-xl border border-sus-900/15 bg-sand/30 p-3.5 space-y-2 text-xs">
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-lg bg-white p-2">
+                    <p className="text-[10px] font-bold uppercase text-ink/50">Total Atual</p>
+                    <p className="font-display text-base font-black text-sus-950">
+                      {resetPreview.total_pacientes.toLocaleString("pt-BR")}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-white p-2">
+                    <p className="text-[10px] font-bold uppercase text-ink/50">Sem Vínculos</p>
+                    <p className="font-display text-base font-black text-emerald-700">
+                      {resetPreview.pacientes_sem_vinculo.toLocaleString("pt-BR")}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-white p-2">
+                    <p className="text-[10px] font-bold uppercase text-ink/50">Com Vínculos</p>
+                    <p className="font-display text-base font-black text-amber-700">
+                      {resetPreview.pacientes_com_vinculo.toLocaleString("pt-BR")}
+                    </p>
+                  </div>
+                </div>
+                {Object.keys(resetPreview.tabelas_vinculadas).length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {Object.entries(resetPreview.tabelas_vinculadas).map(([t, q]) => (
+                      <span
+                        key={t}
+                        className="rounded border border-amber-200 bg-amber-50 px-2 py-0.5 font-mono text-[10px] text-amber-900"
+                      >
+                        {t}: {q}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : null}
+
+            <div className="space-y-2 rounded-xl border border-red-200 bg-red-50/50 p-3.5 text-xs">
+              <label className="flex cursor-pointer items-start gap-2.5">
+                <input
+                  type="radio"
+                  name="modoResetPec"
+                  checked={!resetLimparVinculos}
+                  onChange={() => setResetLimparVinculos(false)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <strong className="text-sus-950 block">Modo Seguro (Recomendado): remover apenas pacientes sem vínculos</strong>
+                  <span className="text-ink/70">
+                    Preserva pacientes que possuem filas, exames, viagens, oxigênio, APAC ou conta de usuário, remove todos os demais e ressincroniza com o e-SUS PEC.
+                  </span>
+                </span>
+              </label>
+
+              <label className="flex cursor-pointer items-start gap-2.5 pt-1 border-t border-red-200/70">
+                <input
+                  type="radio"
+                  name="modoResetPec"
+                  checked={resetLimparVinculos}
+                  onChange={() => setResetLimparVinculos(true)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <strong className="text-red-800 block">Reset TOTAL (100%): zerar todos os pacientes e registros vinculados</strong>
+                  <span className="text-red-900/80">
+                    Apaga também filas, exames lab, viagens, oxigênio operacional e APAC, desvincula contas de pacientes, zera 100% da tabela de pacientes e ressincroniza limpa do e-SUS PEC.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <div>
+              <Label>Senha do Administrador *</Label>
+              <Input
+                type="password"
+                value={resetSenha}
+                onChange={(e) => setResetSenha(e.target.value)}
+                placeholder="Digite sua senha atual de superusuário"
+                autoComplete="current-password"
+              />
+            </div>
+
+            <label className="flex cursor-pointer items-start gap-2 text-xs font-medium text-sus-950">
+              <input
+                type="checkbox"
+                checked={resetConfirmado}
+                onChange={(e) => setResetConfirmado(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-sus-900/30 text-red-700"
+              />
+              <span>
+                Confirmo que compreendo que esta limpeza é irreversível e autorizo a ressincronização imediata com o e-SUS PEC.
+              </span>
+            </label>
+
+            {resetErroModal && (
+              <p className="rounded-xl bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                {resetErroModal}
+              </p>
+            )}
+
+            <div className="flex items-center justify-end gap-2 border-t border-sus-900/10 pt-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setModalResetAberto(false)}
+                disabled={executandoReset}
+                className="!w-auto"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                disabled={executandoReset || carregandoResetPreview}
+                className="!w-auto !bg-red-700 !text-white hover:!bg-red-800 gap-2"
+              >
+                {executandoReset ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                {executandoReset ? "Limpando e iniciando sync…" : "Limpar e Ressincronizar PEC"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )}
 
     {/* Modal: Histórico de Sincronizações PEC */}
     {modalLogsAberto && (

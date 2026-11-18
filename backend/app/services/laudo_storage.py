@@ -128,21 +128,30 @@ def vincular_laudo_prontuario(
     db.add(solicitacao)
 
     # Injeta registro formal de histórico no prontuário do paciente (integrado com base do PEC)
-    prontuario_cod = getattr(paciente, "codigo_prontuario", "") or (
-        f"PEC-{paciente.co_seq_cidadao_pec}" if getattr(paciente, "co_seq_cidadao_pec", None) else f"PR-{paciente.id:05d}"
-    )
+    from app.services.geradores import gerar_prontuario_aleatorio, gerar_protocolo_lab_aleatorio
+    prontuario_cod = (getattr(paciente, "codigo_prontuario", "") or "").strip()
+    if not prontuario_cod:
+        prontuario_cod = gerar_prontuario_aleatorio(db=db)
+        paciente.codigo_prontuario = prontuario_cod
+        db.add(paciente)
+
+    cod_solic = (getattr(solicitacao, "codigo_solicitacao", "") or "").strip()
+    if not cod_solic:
+        cod_solic = gerar_protocolo_lab_aleatorio(getattr(solicitacao, "data_agendada", None), db=db)
+        solicitacao.codigo_solicitacao = cod_solic
+        db.add(solicitacao)
 
     evento_historico = PacienteHistorico(
         paciente_id=paciente.id or 0,
         tipo_evento="LAUDO_EXAME_REALIZADO",
         motivo="Resultado de Exames Laboratoriais Homologado",
         descricao=(
-            f"Laudo laboratorial concluído e homologado para a solicitação SL-{solicitacao.id:06d}. "
+            f"Laudo laboratorial concluído e homologado para a solicitação {cod_solic}. "
             f"Arquivo anexado ao prontuário: {arquivo.nome_arquivo_original} (SHA256: {arquivo.sha256_hash[:8]})."
         ),
         origem="laboratorio_laudo",
         exames_baixados_qtd=1,
-        exames_baixados_ids=f"SL-{solicitacao.id:06d}",
+        exames_baixados_ids=cod_solic,
         registrado_por=usuario_nome or "Sistema de Conferência Laboratorial",
         registrado_em=agora,
     )
@@ -150,8 +159,8 @@ def vincular_laudo_prontuario(
     db.commit()
     db.refresh(solicitacao)
     logger.info(
-        "Solicitação SL-%06d marcada como realizada e vinculada ao prontuário %s do paciente #%d.",
-        solicitacao.id,
+        "Solicitação %s marcada como realizada e vinculada ao prontuário %s do paciente #%d.",
+        cod_solic,
         prontuario_cod,
         paciente.id,
     )

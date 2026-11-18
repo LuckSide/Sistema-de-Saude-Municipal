@@ -864,8 +864,10 @@ def consolidar_lote_atomico(
             pac = pacs_map.get(f.paciente_id)
             pront = obter_prontuario_real(pac, pac.id if pac else None, db)
 
-            # Cria SolicitacaoMestre
+            # Cria SolicitacaoMestre com código de solicitação aleatório persistido
+            cod_solic = (getattr(f, "codigo_solicitacao", "") or "").strip() or gerar_protocolo_lab_aleatorio(dt_agenda, db=db)
             mestre = SolicitacaoMestre(
+                codigo_solicitacao=cod_solic,
                 paciente_id=f.paciente_id,
                 data_agendada=dt_agenda,
                 hora_agendada=dados.hora_padrao or "07:00",
@@ -929,7 +931,7 @@ def consolidar_lote_atomico(
             # Prepara dados para comprovante oficial
             nomes_procs = [p.descricao for p in procs]
             _, prep_inst, _ = determinar_preparo(nomes_procs)
-            protocolo_comprovante = gerar_protocolo_lab_aleatorio(dt_agenda, mestre.id)
+            protocolo_comprovante = mestre.codigo_solicitacao or gerar_protocolo_lab_aleatorio(dt_agenda, db=db)
 
             comprovantes_dados.append({
                 "protocolo": protocolo_comprovante,

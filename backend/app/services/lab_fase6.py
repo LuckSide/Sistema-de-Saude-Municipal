@@ -137,7 +137,11 @@ def criar_solicitacao_mestre(
 
     # Transação única
     try:
+        cod_solic = (getattr(fila, "codigo_solicitacao", "") or "").strip() if fila else ""
+        if not cod_solic:
+            cod_solic = gerar_protocolo_lab_aleatorio(data_agendada=data_agendada, db=db)
         mestre = SolicitacaoMestre(
+            codigo_solicitacao=cod_solic,
             paciente_id=paciente_id,
             data_agendada=data_agendada,
             hora_agendada=hora_agendada or "07:00",
@@ -356,8 +360,18 @@ def gerar_comprovante_agendamento(db: Session, mestre_id: int) -> dict:
     jejum, prep, orient = determinar_preparo(nomes_procs)
     pac = db.get(Paciente, m.paciente_id)
     lab = db.get(Laboratorio, m.laboratorio_id)
-    protocolo = getattr(m, "protocolo", "") or gerar_protocolo_lab_aleatorio(m.data_agendada, m.id)
-    prontuario = getattr(pac, "codigo_prontuario", "") or getattr(pac, "prontuario", "") or (gerar_prontuario_aleatorio(None, pac.id) if pac and pac.id else "")
+    protocolo = (getattr(m, "codigo_solicitacao", "") or getattr(m, "protocolo", "") or "").strip()
+    if not protocolo:
+        protocolo = gerar_protocolo_lab_aleatorio(m.data_agendada, db=db)
+        m.codigo_solicitacao = protocolo
+        db.add(m)
+        db.commit()
+    prontuario = (getattr(pac, "codigo_prontuario", "") or "").strip()
+    if not prontuario and pac and pac.id:
+        prontuario = gerar_prontuario_aleatorio(db=db)
+        pac.codigo_prontuario = prontuario
+        db.add(pac)
+        db.commit()
     qr_data = f"PEDIDO:{protocolo}|PRONT:{prontuario}|PAC:{pac.id if pac else ''}"
     qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={urllib.parse.quote(qr_data)}"
 

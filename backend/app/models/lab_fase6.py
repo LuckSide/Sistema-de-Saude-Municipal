@@ -55,6 +55,7 @@ class FilaPsf(SQLModel, table=True):
     __tablename__ = "lab_fila_psf"
 
     id: int | None = Field(default=None, primary_key=True)
+    codigo_solicitacao: str = Field(default="", max_length=30, index=True)
     paciente_id: int = Field(foreign_key="tfd_pacientes.id", index=True)
     especialidade: str = Field(default="", max_length=120, index=True)
     unidade_psf: str = Field(default="", max_length=120, index=True)
@@ -78,6 +79,7 @@ class SolicitacaoMestre(SQLModel, table=True):
     __tablename__ = "lab_solic_mestre"
 
     id: int | None = Field(default=None, primary_key=True)
+    codigo_solicitacao: str = Field(default="", max_length=30, index=True)
     paciente_id: int = Field(foreign_key="tfd_pacientes.id", index=True)
     data_agendada: date = Field(sa_column=Column(Date, index=True))
     laboratorio_id: int = Field(foreign_key="lab_laboratorios.id", index=True)

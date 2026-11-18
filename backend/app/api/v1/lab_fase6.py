@@ -810,7 +810,9 @@ def criar_fila(
 
     d_solic = data.data_solicitacao or date.today()
     d_ped = data.data_pedido or d_solic
+    from app.services.geradores import gerar_protocolo_lab_aleatorio
     obj = FilaPsf(
+        codigo_solicitacao=gerar_protocolo_lab_aleatorio(d_solic, db=db),
         paciente_id=data.paciente_id,
         especialidade=data.especialidade.strip(),
         unidade_psf=data.unidade_psf,
@@ -2067,7 +2069,8 @@ def listar_auditoria_laudos(
 
         p_nome = pac.nome if pac else ""
         p_cpf = getattr(pac, "cpf", "") or ""
-        p_pront = getattr(pac, "codigo_prontuario", "") or f"PR-{s.paciente_id:05d}"
+        p_pront = (getattr(pac, "codigo_prontuario", "") or "").strip()
+        cod_solic = (getattr(s, "codigo_solicitacao", "") or "").strip() or f"SL-{s.id:06d}"
 
         if termo:
             match_termo = (
@@ -2075,7 +2078,7 @@ def listar_auditoria_laudos(
                 or termo in p_cpf.lower()
                 or termo in p_pront.lower()
                 or termo in (lab.nome if lab else "").lower()
-                or termo in f"sl-{s.id:06d}"
+                or termo in cod_solic.lower()
             )
             if not match_termo:
                 continue
@@ -2087,7 +2090,7 @@ def listar_auditoria_laudos(
         itens_out.append(
             LabAuditoriaItemOut(
                 solicitacao_id=s.id or 0,
-                codigo_solicitacao=f"SL-{s.id:06d}",
+                codigo_solicitacao=cod_solic,
                 paciente_id=s.paciente_id,
                 paciente_nome=p_nome,
                 paciente_cpf=p_cpf,

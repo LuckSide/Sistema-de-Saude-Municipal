@@ -613,7 +613,16 @@ def processar_linhas(
         u.nome.strip().upper(): u for u in db.exec(select(UnidadeSaude).where(UnidadeSaude.ativo == True)).all() if u.nome
     }
 
-    from app.services.geradores import gerar_prontuario_aleatorio
+    from app.services.geradores import (
+        gerar_exame_curto_aleatorio,
+        gerar_numero_pedido_aleatorio,
+        gerar_prontuario_aleatorio,
+        gerar_protocolo_lab_aleatorio,
+    )
+    prontuarios_usados: set[str] = set()
+    codigos_curtos_usados: set[str] = set()
+    numeros_pedido_usados: set[str] = set()
+    codigos_solic_usados: set[str] = set()
     from app.services.pec_sync import (
         limpar_cns as _limpar_cns,
         limpar_cpf as _limpar_cpf,
@@ -894,7 +903,7 @@ def processar_linhas(
                         telefone=(pec_cidadao.get("nu_telefone_celular") or r.get("telefone") or "")[:50],
                         co_seq_cidadao_pec=co_seq,
                         situacao_cadastral=sit,
-                        codigo_prontuario=pront_lin or (str(co_seq) if co_seq else ""),
+                        codigo_prontuario=pront_lin or gerar_prontuario_aleatorio(db, usados=prontuarios_usados),
                     )
                     db.add(pac)
                     db.flush()
@@ -903,7 +912,7 @@ def processar_linhas(
                     if pac.id:
                         ids_vinculados_pec.add(pac.id)
                     if not getattr(pac, "codigo_prontuario", ""):
-                        pac.codigo_prontuario = pront_lin or (str(co_seq) if co_seq else str(pac.id))
+                        pac.codigo_prontuario = pront_lin or gerar_prontuario_aleatorio(db, usados=prontuarios_usados)
                         db.add(pac)
                     _indexar_paciente_cache(pac)
             else:
@@ -929,7 +938,7 @@ def processar_linhas(
                     nome=nome, cpf=cpf, cns=cns,
                     nascimento=nasc_lin,
                     telefone=(r.get("telefone") or "")[:20],
-                    codigo_prontuario=pront_lin or "",
+                    codigo_prontuario=pront_lin or gerar_prontuario_aleatorio(db, usados=prontuarios_usados),
                 )
                 db.add(pac)
                 db.flush()
@@ -945,7 +954,7 @@ def processar_linhas(
                         "motivo": "Paciente não encontrado no banco local nem no e-SUS PEC — criado como novo cadastro local",
                     })
                 if not getattr(pac, "codigo_prontuario", ""):
-                    pac.codigo_prontuario = pront_lin or str(pac.id)
+                    pac.codigo_prontuario = pront_lin or gerar_prontuario_aleatorio(db, usados=prontuarios_usados)
                     db.add(pac)
                 _indexar_paciente_cache(pac)
 
@@ -1093,6 +1102,8 @@ def processar_linhas(
                     unidade_nome=unidade_nome[:150],
                     unidade_cnes=unidade_cnes[:20],
                     observacoes=(r.get("observacao") or "")[:500],
+                    codigo_curto=gerar_exame_curto_aleatorio(db, usados=codigos_curtos_usados),
+                    numero_pedido=gerar_numero_pedido_aleatorio(db, usados=numeros_pedido_usados),
                     public_token=secrets.token_urlsafe(24),
                 ))
                 exames_novos += 1
@@ -1171,6 +1182,7 @@ def processar_linhas(
                     db.add(ja_lab)
             else:
                 ja_lab = FilaPsf(
+                    codigo_solicitacao=gerar_protocolo_lab_aleatorio(data_ref_lab, db=db, usados=codigos_solic_usados),
                     paciente_id=pac.id,
                     especialidade=tipo_lab_label,
                     tipo_fila=tipo_lab_label,
@@ -1223,7 +1235,11 @@ def processar_linhas(
                 if solic_obj is None:
                     cod_ped = (r.get("codigo_pedido") or "").strip()
                     obs_lab = f"Agendamento Vivver #{cod_ped}" if cod_ped else "Importação XML"
+                    cod_solic_lab = (getattr(ja_lab, "codigo_solicitacao", "") or "").strip() if ja_lab else ""
+                    if not cod_solic_lab:
+                        cod_solic_lab = gerar_protocolo_lab_aleatorio(dt_solic_mestre, db=db, usados=codigos_solic_usados)
                     solic_obj = SolicitacaoMestre(
+                        codigo_solicitacao=cod_solic_lab,
                         paciente_id=pac.id,
                         data_agendada=dt_solic_mestre,
                         hora_agendada=hora_agend_lin or "07:00",

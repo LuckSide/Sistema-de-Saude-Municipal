@@ -1153,7 +1153,7 @@ def criar_emprestimo(
         paciente_nome=pac.nome,
         paciente_cpf=pac.cpf or "",
         paciente_cns=pac.cns or "",
-        paciente_prontuario=pac.codigo_prontuario or (f"PR-{pac.id:05d}" if pac.id else ""),
+        paciente_prontuario=pac.codigo_prontuario or "",
         paciente_telefone=pac.telefone or "",
         paciente_endereco=end_fmt,
         tipo_servico=primeiro_tipo_servico,

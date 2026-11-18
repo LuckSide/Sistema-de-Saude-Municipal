@@ -795,12 +795,15 @@ def _construir_query_enderecos_pec(cols_pec: dict[str, set[str]]) -> str:
 
 def _tabelas_existentes(db: Session) -> set[str]:
     try:
-        bind = db.get_bind()
-        if bind is None:
-            return set()
-        return set(sa_inspect(bind).get_table_names())
+        return set(sa_inspect(db.connection()).get_table_names())
     except Exception:
-        return set()
+        try:
+            bind = db.get_bind()
+            if bind is None:
+                return set()
+            return set(sa_inspect(bind).get_table_names())
+        except Exception:
+            return set()
 
 
 def _coletar_ids_com_vinculo(
@@ -1454,6 +1457,11 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
         nome_sp_nasc_map: dict[tuple[str, str], list[int]] = {}
         nome_sp_sem_nasc_map: dict[str, list[int]] = {}
         pec_id_map: dict[int, int] = {}
+        prontuarios_usados: set[str] = {
+            (p.codigo_prontuario or "").strip()
+            for p in pacientes_locais
+            if (p.codigo_prontuario or "").strip()
+        }
 
         def _indexar_paciente(p: Paciente) -> None:
             if not p.id:
@@ -1654,7 +1662,7 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
                             db.add(novo_p)
                             db.flush()
                             if novo_p.id and not novo_p.codigo_prontuario:
-                                novo_p.codigo_prontuario = str(pec_id) if pec_id else str(novo_p.id)
+                                novo_p.codigo_prontuario = gerar_prontuario_aleatorio(db, usados=prontuarios_usados)
                                 db.add(novo_p)
 
                             _indexar_paciente(novo_p)
@@ -1775,6 +1783,8 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
                                 if p.id:
                                     pacientes_ativos_nesta_execucao.add(p.id)
 
+                            if not (p.codigo_prontuario or "").strip():
+                                p.codigo_prontuario = gerar_prontuario_aleatorio(db, usados=prontuarios_usados)
                             p.sincronizado_em = agora
                             p.updated_at = agora
                             db.add(p)
@@ -2019,4 +2029,271 @@ def atualizar_enderecos_pacientes_pec(db: Session) -> dict:
         "total_analisados": total_analisados,
         "total_atualizados": total_atualizados,
         "mensagem": f"{total_atualizados} cadastros de pacientes atualizados com seus endereços do e-SUS PEC!",
+    }
+
+
+def obter_preview_reset_pacientes_pec(db: Session) -> dict:
+    """Retorna prévia do impacto para limpeza da base de pacientes e ressincronização com o PEC."""
+    tabs = _tabelas_existentes(db)
+    total_pacientes = 0
+    if "tfd_pacientes" in tabs:
+        total_pacientes = int(db.execute(text("SELECT COUNT(*) FROM tfd_pacientes")).scalar() or 0)
+
+    pids_com_vinculo: set[int] = set()
+    tabelas_vinculadas: dict[str, int] = {}
+    usuarios_vinculados = 0
+
+    referencias_operacionais = (
+        ("tfd_exames_fila", "paciente_id"),
+        ("tfd_viagem_pacientes", "paciente_id"),
+        ("tfd_viagem_pacientes", "acompanhante_id"),
+        ("tfd_viagem_fila", "paciente_id"),
+        ("tfd_viagem_fila", "acompanhante_id"),
+        ("tfd_faturamento", "paciente_id"),
+        ("lab_fila_psf", "paciente_id"),
+        ("lab_solic_mestre", "paciente_id"),
+        ("lab_lote_itens", "paciente_id"),
+        ("lab_resultado_arquivos", "paciente_id"),
+        ("lab_solicitacoes", "paciente_id"),
+        ("oxigenio_emprestimos", "paciente_id"),
+        ("oxigenio_trocas_historico", "paciente_id"),
+        ("oxigenio_cilindros_vazios", "paciente_id"),
+        ("apac_solicitacoes", "paciente_id"),
+    )
+    for t, col in referencias_operacionais:
+        if t in tabs:
+            try:
+                rows = db.execute(text(f"SELECT DISTINCT {col} FROM {t} WHERE {col} IS NOT NULL")).all()
+                ids_t = {int(r[0]) for r in rows if r[0] is not None}
+                if ids_t:
+                    pids_com_vinculo.update(ids_t)
+                    qtd_tab = int(db.execute(text(f"SELECT COUNT(*) FROM {t}")).scalar() or 0)
+                    if qtd_tab > 0:
+                        tabelas_vinculadas[t] = qtd_tab
+            except Exception:
+                pass
+
+    if "usuarios" in tabs:
+        try:
+            rows_u = db.execute(text("SELECT DISTINCT paciente_id FROM usuarios WHERE paciente_id IS NOT NULL")).all()
+            ids_u = {int(r[0]) for r in rows_u if r[0] is not None}
+            usuarios_vinculados = len(ids_u)
+            pids_com_vinculo.update(ids_u)
+        except Exception:
+            pass
+
+    pacientes_com_vinculo = len(pids_com_vinculo)
+    pacientes_sem_vinculo = max(0, total_pacientes - pacientes_com_vinculo)
+
+    return {
+        "total_pacientes": total_pacientes,
+        "pacientes_sem_vinculo": pacientes_sem_vinculo,
+        "pacientes_com_vinculo": pacientes_com_vinculo,
+        "usuarios_vinculados": usuarios_vinculados,
+        "tabelas_vinculadas": tabelas_vinculadas,
+        "em_execucao": is_sync_running(),
+    }
+
+
+def resetar_e_ressincronizar_pacientes_pec(
+    db: Session,
+    *,
+    limpar_vinculos_operacionais: bool = False,
+    disparar_sync: bool = True,
+    admin=None,
+    senha: str = "",
+    confirmacao_explicita: bool = False,
+    client_ip: str = "",
+    user_agent: str = "",
+) -> dict:
+    """Limpa a base de pacientes (modo seguro sem vínculos ou reset total 100%) e dispara ressincronização com o PEC."""
+    from fastapi import HTTPException, status
+    from app.core.security import verify_password
+    from app.services.gerenciamento_dados import (
+        LOCK_DATA_CLEANUP,
+        acquire_advisory_lock,
+        invalidar_cache_diagnostico,
+        registrar_auditoria,
+    )
+
+    if not confirmacao_explicita:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A confirmação explícita é obrigatória para limpar os pacientes do banco.",
+        )
+    if not senha or not senha.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A senha do administrador é obrigatória.",
+        )
+    if admin is None or not verify_password(senha.strip(), admin.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Senha de administrador incorreta. Operação abortada.",
+        )
+    if is_sync_running():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Já existe uma sincronização com o e-SUS PEC em andamento. Aguarde a conclusão.",
+        )
+
+    acquire_advisory_lock(db, LOCK_DATA_CLEANUP)
+    tabs = _tabelas_existentes(db)
+    detalhes: dict[str, int] = {}
+    pacientes_removidos = 0
+    pacientes_preservados = 0
+
+    try:
+        if limpar_vinculos_operacionais:
+            # Ordem estrita de integridade referencial (filhos -> pais)
+            ordem_reset_total = (
+                "lab_inconsistencias_justificativas",
+                "lab_conferencias_automaticas",
+                "lab_resultado_arquivos",
+                "lab_pedidos_ajuste",
+                "lab_lote_itens",
+                "lab_lote_artefatos",
+                "lab_solic_itens",
+                "lab_solic_mestre",
+                "lab_fila_psf",
+                "lab_lotes_liberacao",
+                "lab_solicitacoes",
+                "tfd_faturamento",
+                "tfd_viagem_pacientes",
+                "tfd_viagem_fila",
+                "tfd_exames_fila",
+                "tfd_viagens",
+                "oxigenio_trocas_historico",
+                "oxigenio_emprestimo_itens",
+                "oxigenio_cilindros_vazios",
+                "oxigenio_emprestimos",
+                "apac_anexos",
+                "apac_procedimentos_secundarios",
+                "apac_solicitacoes",
+                "apac_lotes",
+                "tfd_pacientes_historico",
+            )
+            for tab in ordem_reset_total:
+                if tab in tabs:
+                    qtd_t = int(db.execute(text(f"SELECT COUNT(*) FROM {tab}")).scalar() or 0)
+                    if qtd_t > 0:
+                        db.execute(text(f"DELETE FROM {tab}"))
+                        detalhes[tab] = qtd_t
+            if "lab_vagas" in tabs:
+                db.execute(text("UPDATE lab_vagas SET vagas_ocupadas = 0 WHERE vagas_ocupadas != 0"))
+            if "lab_orcamentos_mensais" in tabs:
+                db.execute(text("UPDATE lab_orcamentos_mensais SET valor_consumido = 0 WHERE valor_consumido != 0"))
+            if "oxigenio_equipamentos" in tabs:
+                try:
+                    db.execute(text("UPDATE oxigenio_equipamentos SET status = 'DISPONIVEL' WHERE UPPER(status) IN ('EM_USO', 'EMPRESTADO')"))
+                except Exception:
+                    pass
+            if "usuarios" in tabs:
+                db.execute(text("UPDATE usuarios SET paciente_id = NULL WHERE paciente_id IS NOT NULL"))
+            if "tfd_pacientes" in tabs:
+                pacientes_removidos = int(db.execute(text("SELECT COUNT(*) FROM tfd_pacientes")).scalar() or 0)
+                if pacientes_removidos > 0:
+                    db.execute(text("DELETE FROM tfd_pacientes"))
+                    detalhes["tfd_pacientes"] = pacientes_removidos
+        else:
+            # Modo seguro: remove todos os pacientes sem vínculos em outros módulos/contas
+            prev = obter_preview_reset_pacientes_pec(db)
+            pids_vinc: set[int] = set()
+            for t, col in (
+                ("tfd_exames_fila", "paciente_id"),
+                ("tfd_viagem_pacientes", "paciente_id"),
+                ("tfd_viagem_pacientes", "acompanhante_id"),
+                ("tfd_viagem_fila", "paciente_id"),
+                ("tfd_viagem_fila", "acompanhante_id"),
+                ("tfd_faturamento", "paciente_id"),
+                ("lab_fila_psf", "paciente_id"),
+                ("lab_solic_mestre", "paciente_id"),
+                ("lab_lote_itens", "paciente_id"),
+                ("lab_resultado_arquivos", "paciente_id"),
+                ("lab_solicitacoes", "paciente_id"),
+                ("oxigenio_emprestimos", "paciente_id"),
+                ("oxigenio_trocas_historico", "paciente_id"),
+                ("oxigenio_cilindros_vazios", "paciente_id"),
+                ("apac_solicitacoes", "paciente_id"),
+                ("usuarios", "paciente_id"),
+            ):
+                if t in tabs:
+                    try:
+                        rows = db.execute(text(f"SELECT DISTINCT {col} FROM {t} WHERE {col} IS NOT NULL")).all()
+                        pids_vinc.update(int(r[0]) for r in rows if r[0] is not None)
+                    except Exception:
+                        pass
+
+            todos_ids = [
+                int(r[0])
+                for r in db.execute(text("SELECT id FROM tfd_pacientes")).all()
+                if r[0] is not None
+            ]
+            alvos_ids = [pid for pid in todos_ids if pid not in pids_vinc]
+            pacientes_preservados = len(todos_ids) - len(alvos_ids)
+            if alvos_ids:
+                if "tfd_pacientes_historico" in tabs:
+                    for idx_c in range(0, len(alvos_ids), 500):
+                        ph = ",".join(str(x) for x in alvos_ids[idx_c: idx_c + 500])
+                        db.execute(text(f"DELETE FROM tfd_pacientes_historico WHERE paciente_id IN ({ph})"))
+                for idx_c in range(0, len(alvos_ids), 500):
+                    ph = ",".join(str(x) for x in alvos_ids[idx_c: idx_c + 500])
+                    db.execute(text(f"DELETE FROM tfd_pacientes WHERE id IN ({ph})"))
+                pacientes_removidos = len(alvos_ids)
+                detalhes["tfd_pacientes"] = pacientes_removidos
+            _ = prev
+
+        registrar_auditoria(
+            db=db,
+            action="DATA_PEC_RESET_RESYNC",
+            entity="tfd_pacientes",
+            entity_id=None,
+            user=admin,
+            details={
+                "limpar_vinculos_operacionais": limpar_vinculos_operacionais,
+                "pacientes_removidos": pacientes_removidos,
+                "pacientes_preservados": pacientes_preservados,
+                "disparar_sync": disparar_sync,
+                "detalhes": detalhes,
+                "ip": client_ip,
+            },
+            device=user_agent,
+        )
+        invalidar_cache_diagnostico(db)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Falha ao resetar pacientes antes da ressincronização PEC: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao limpar pacientes: {exc}",
+        )
+
+    sync_iniciada = False
+    if disparar_sync:
+        try:
+            from app.services.pec_worker import sincronizar_em_segundo_plano
+            sincronizar_em_segundo_plano(origem="reset_ressincronizacao")
+            sync_iniciada = True
+        except Exception as exc:
+            logger.exception("Pacientes limpos, mas falha ao iniciar ressincronização em segundo plano: %s", exc)
+
+    msg = f"Limpeza concluída: {pacientes_removidos} paciente(s) removido(s)"
+    if pacientes_preservados > 0:
+        msg += f" ({pacientes_preservados} preservado(s) por possuírem vínculos ativos)"
+    if sync_iniciada:
+        msg += ". Ressincronização com o e-SUS PEC iniciada em segundo plano com geração de prontuários aleatórios."
+    else:
+        msg += "."
+
+    return {
+        "ok": True,
+        "pacientes_removidos": pacientes_removidos,
+        "pacientes_preservados": pacientes_preservados,
+        "sync_iniciada": sync_iniciada,
+        "detalhes": detalhes,
+        "mensagem": msg,
     }

@@ -1,111 +1,183 @@
-"""Geradores e formatadores de identificadores oficiais do sistema.
+"""Geradores criptograficamente aleatórios de identificadores do sistema.
 
-Subagente 1 & Diretriz Arquitetural 1:
-- Troca do prefixo de pedidos de 'EX' para 'SL' (Solicitação).
-- Eliminação de números aleatórios procedurais: prioriza IDs reais do banco ou registro do e-SUS PEC.
+Garante que prontuários (`PR-XXXXXX`) e números de solicitação/pedido
+(`SL-XXXXXX`, `SL-AAMM-XXXXXX`, `LAB-AAMM-XXXXXX`) sejam SEMPRE gerados com
+números aleatórios (`secrets.randbelow`) verificados contra colisões no banco,
+nunca de forma procedural/sequencial a partir do `id` ou `co_seq_cidadao_pec`.
 """
 
+import secrets
 from datetime import date, datetime
 from typing import Any
 from sqlmodel import Session, select
 
 
-def obter_prontuario_real(paciente: Any = None, pac_id: int | None = None, db: Session | None = None) -> str:
-    """Retorna o código de prontuário oficial e real do paciente:
-    1. co_seq_cidadao_pec (se oriundo do e-SUS PEC)
-    2. codigo_prontuario já persistido (se não-aleatório)
-    3. ID numérico real do paciente no banco de dados
+def _gerar_digitos_aleatorios(digitos: int = 6) -> str:
+    """Gera string numérica aleatória criptograficamente segura (ex.: 6 dígitos -> 100000..999999)."""
+    minimo = 10 ** (digitos - 1)
+    alcance = 9 * minimo
+    return str(minimo + secrets.randbelow(alcance))
+
+
+def gerar_prontuario_aleatorio(
+    db: Session | None = None,
+    pac_id: int | None = None,
+    usados: set[str] | None = None,
+) -> str:
+    """Gera um código de prontuário aleatório único no formato `PR-XXXXXX`.
+
+    Nunca utiliza `id`, `pac_id`, `co_seq_cidadao_pec` ou sequência incremental.
+    Quando `usados` (set em memória) ou `db` são fornecidos, garante unicidade.
     """
+    _ = pac_id  # mantido apenas na assinatura por compatibilidade; nunca usado na geração
+    for digitos in (6, 7, 8):
+        for _ in range(40):
+            cod = f"PR-{_gerar_digitos_aleatorios(digitos)}"
+            if usados is not None and cod in usados:
+                continue
+            if db is not None:
+                from app.models.tfd import Paciente
+                if db.exec(select(Paciente.id).where(Paciente.codigo_prontuario == cod)).first():
+                    if usados is not None:
+                        usados.add(cod)
+                    continue
+            if usados is not None:
+                usados.add(cod)
+            return cod
+    cod = f"PR-{secrets.token_hex(4).upper()}"
+    if usados is not None:
+        usados.add(cod)
+    return cod
+
+
+def obter_prontuario_real(
+    paciente: Any = None,
+    pac_id: int | None = None,
+    db: Session | None = None,
+) -> str:
+    """Retorna o código de prontuário persistido do paciente (ou gera e persiste um aleatório se vazio)."""
     if paciente is not None:
-        pec_id = getattr(paciente, "co_seq_cidadao_pec", None)
-        if pec_id:
-            return str(pec_id)
-        cod_existente = getattr(paciente, "codigo_prontuario", "")
-        if cod_existente and not cod_existente.startswith("PR-"):
-            return str(cod_existente)
-        pid = getattr(paciente, "id", None)
-        if pid:
-            return str(pid)
+        cod_existente = (getattr(paciente, "codigo_prontuario", "") or "").strip()
+        if cod_existente:
+            return cod_existente
+        novo = gerar_prontuario_aleatorio(db=db)
+        if db is not None and getattr(paciente, "id", None):
+            try:
+                paciente.codigo_prontuario = novo
+                db.add(paciente)
+            except Exception:
+                pass
+        return novo
 
-    if pac_id:
-        if db:
-            from app.models.tfd import Paciente
-            p = db.get(Paciente, pac_id)
-            if p:
-                if p.co_seq_cidadao_pec:
-                    return str(p.co_seq_cidadao_pec)
-                if p.codigo_prontuario and not p.codigo_prontuario.startswith("PR-"):
-                    return str(p.codigo_prontuario)
-                return str(p.id)
-        return str(pac_id)
-
-    return ""
-
-
-def gerar_prontuario_aleatorio(db: Session | None = None, pac_id: int | None = None) -> str:
-    """Compatibilidade retroativa: agora retorna o ID real do paciente ou registro do PEC,
-    cessando a geração de códigos procedurais aleatórios falsos.
-    """
-    if pac_id:
-        return obter_prontuario_real(pac_id=pac_id, db=db)
-    if db:
+    if pac_id and db is not None:
         from app.models.tfd import Paciente
-        ultimo = db.exec(select(Paciente.id).order_by(Paciente.id.desc())).first()
-        proximo = (ultimo or 0) + 1
-        return str(proximo)
-    return "1"
+        p = db.get(Paciente, pac_id)
+        if p:
+            if (p.codigo_prontuario or "").strip():
+                return p.codigo_prontuario.strip()
+            novo = gerar_prontuario_aleatorio(db=db)
+            p.codigo_prontuario = novo
+            db.add(p)
+            return novo
+
+    return gerar_prontuario_aleatorio(db=db)
 
 
-def gerar_exame_curto_aleatorio(db: Session | None = None, exame_id: int | None = None) -> str:
-    """Gera identificador curto e imutável para a solicitação de exame.
-    Substitui obrigatoriamente o prefixo 'EX' por 'SL' (Solicitação) e utiliza o ID real quando disponível.
-    Exemplo: SL-000142 ou SL-104921
-    """
-    if exame_id:
-        return f"SL-{exame_id:06d}"
-
-    if db:
-        from app.models.tfd import ExameFila
-        # Tenta derivar do próximo ID sequencial
-        ultimo = db.exec(select(ExameFila.id).order_by(ExameFila.id.desc())).first()
-        if ultimo:
-            cand = f"SL-{(ultimo + 1):06d}"
-            if not db.exec(select(ExameFila.id).where(ExameFila.codigo_curto == cand)).first():
-                return cand
-
-        # Fallback determinístico seguro com prefixo SL
-        import random
-        for _ in range(50):
-            num = random.randint(100000, 999999)
-            cod = f"SL-{num}"
-            if not db.exec(select(ExameFila.id).where(ExameFila.codigo_curto == cod)).first():
-                return cod
-
-    import random
-    return f"SL-{random.randint(100000, 999999)}"
+def gerar_exame_curto_aleatorio(
+    db: Session | None = None,
+    exame_id: int | None = None,
+    usados: set[str] | None = None,
+) -> str:
+    """Gera código curto aleatório e imutável para solicitação no formato `SL-XXXXXX`."""
+    _ = exame_id  # nunca deriva sequencialmente do ID
+    for digitos in (6, 7, 8):
+        for _ in range(40):
+            cod = f"SL-{_gerar_digitos_aleatorios(digitos)}"
+            if usados is not None and cod in usados:
+                continue
+            if db is not None:
+                from app.models.tfd import ExameFila
+                if db.exec(select(ExameFila.id).where(ExameFila.codigo_curto == cod)).first():
+                    if usados is not None:
+                        usados.add(cod)
+                    continue
+            if usados is not None:
+                usados.add(cod)
+            return cod
+    cod = f"SL-{secrets.token_hex(4).upper()}"
+    if usados is not None:
+        usados.add(cod)
+    return cod
 
 
-def gerar_numero_pedido_aleatorio(db: Session | None = None, prefixo_ano_mes: bool = True) -> str:
-    """Gera um número de solicitação/pedido oficial com prefixo SL (ex: SL-2611-000123)."""
+def gerar_numero_pedido_aleatorio(
+    db: Session | None = None,
+    prefixo_ano_mes: bool = True,
+    usados: set[str] | None = None,
+) -> str:
+    """Gera um número de solicitação/pedido aleatório com prefixo `SL` (ex.: `SL-2611-482917`)."""
     ym = datetime.now().strftime("%y%m")
     prefixo = f"SL-{ym}" if prefixo_ano_mes else "SL"
-    if db:
-        from app.models.tfd import ExameFila
-        ultimo = db.exec(select(ExameFila.id).order_by(ExameFila.id.desc())).first()
-        if ultimo:
-            cod = f"{prefixo}-{(ultimo + 1):06d}"
-            if not db.exec(select(ExameFila.id).where(ExameFila.numero_pedido == cod)).first():
-                return cod
+    for digitos in (6, 7, 8):
+        for _ in range(40):
+            cod = f"{prefixo}-{_gerar_digitos_aleatorios(digitos)}"
+            if usados is not None and cod in usados:
+                continue
+            if db is not None:
+                from app.models.tfd import ExameFila
+                if db.exec(select(ExameFila.id).where(ExameFila.numero_pedido == cod)).first():
+                    if usados is not None:
+                        usados.add(cod)
+                    continue
+                try:
+                    from app.models.lab_fase6 import SolicitacaoMestre
+                    if db.exec(
+                        select(SolicitacaoMestre.id).where(SolicitacaoMestre.codigo_solicitacao == cod)
+                    ).first():
+                        if usados is not None:
+                            usados.add(cod)
+                        continue
+                except Exception:
+                    pass
+            if usados is not None:
+                usados.add(cod)
+            return cod
+    cod = f"{prefixo}-{secrets.token_hex(4).upper()}"
+    if usados is not None:
+        usados.add(cod)
+    return cod
 
-    import random
-    return f"{prefixo}-{random.randint(100000, 999999)}"
 
-
-def gerar_protocolo_lab_aleatorio(data_agendada: date | None = None, mestre_id: int | None = None) -> str:
-    """Gera um protocolo de agendamento de laboratório baseado no ID real (ex: LAB-2611-000123)."""
+def gerar_protocolo_lab_aleatorio(
+    data_agendada: date | None = None,
+    mestre_id: int | None = None,
+    db: Session | None = None,
+    usados: set[str] | None = None,
+) -> str:
+    """Gera um protocolo/número de solicitação laboratorial aleatório (ex.: `SL-2611-739204`)."""
+    _ = mestre_id  # nunca deriva sequencialmente do ID
     dt = data_agendada if data_agendada else datetime.now().date()
     ym = dt.strftime("%y%m")
-    if mestre_id:
-        return f"LAB-{ym}-{mestre_id:06d}"
-    import random
-    return f"LAB-{ym}-{random.randint(100000, 999999)}"
+    for digitos in (6, 7, 8):
+        for _ in range(40):
+            cod = f"SL-{ym}-{_gerar_digitos_aleatorios(digitos)}"
+            if usados is not None and cod in usados:
+                continue
+            if db is not None:
+                try:
+                    from app.models.lab_fase6 import SolicitacaoMestre
+                    if db.exec(
+                        select(SolicitacaoMestre.id).where(SolicitacaoMestre.codigo_solicitacao == cod)
+                    ).first():
+                        if usados is not None:
+                            usados.add(cod)
+                        continue
+                except Exception:
+                    pass
+            if usados is not None:
+                usados.add(cod)
+            return cod
+    cod = f"SL-{ym}-{secrets.token_hex(4).upper()}"
+    if usados is not None:
+        usados.add(cod)
+    return cod
