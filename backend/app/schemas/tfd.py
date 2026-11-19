@@ -481,6 +481,8 @@ class ExameOut(ExameBase):
     unidade_municipio: str = ""
     unidade_cep: str = ""
     # Alerta de situação cadastral do paciente (óbito, mudança, inativo)
+    criado_por_nome: str = ""
+    agendado_por_nome: str = ""
     paciente_situacao_cadastral: str = "ativo"
     paciente_motivo_situacao: str = ""
     paciente_obito_ou_mudanca: bool = False

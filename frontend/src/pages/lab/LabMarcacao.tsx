@@ -48,6 +48,7 @@ import ComprovanteExameModal from "../../components/ComprovanteExameModal";
 import AlertaPedidoDuplicado from "../../components/AlertaPedidoDuplicado";
 import { useAuth } from "../../hooks/useAuth";
 import { useConfirm } from "../../components/ConfirmDialog";
+import { useBackdropClose } from "../../hooks/useBackdropClose";
 
 type ItemLote = { sigtap: SigtapProc; quantidade: number };
 
@@ -328,6 +329,12 @@ export default function LabMarcacao() {
     setIgnorarDuplicidadeLab(false);
   }
 
+  const isDirty = useMemo(() => {
+    if (!modal) return false;
+    return Boolean(pacienteId || itens.length > 0 || justificativa.trim());
+  }, [modal, pacienteId, itens.length, justificativa]);
+  const modalBackdrop = useBackdropClose({ onClose: fecharModal, aberto: modal, isDirty });
+
   async function salvar() {
     setErro("");
     setOk("");
@@ -562,6 +569,12 @@ export default function LabMarcacao() {
                             <span className="text-ink/75">Dr(a). {m.medico_solicitante}</span>
                           </div>
                         )}
+                        {(m.agendado_por_nome || m.criado_por_nome || m.agendado_por) && (
+                          <div className="col-span-2">
+                            <span className="text-[10px] text-ink/50 block">Agendado por</span>
+                            <span className="font-semibold text-sus-900">{m.agendado_por_nome || m.criado_por_nome || m.agendado_por}</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Exames Solicitados */}
@@ -651,7 +664,7 @@ export default function LabMarcacao() {
 
       {/* Modal Redesenhado em 2 Colunas */}
       {modal && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/60 p-3 sm:p-5" onClick={fecharModal}>
+        <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/60 p-3 sm:p-5" {...modalBackdrop}>
           <div
             className="rise max-h-[92vh] w-full max-w-6xl overflow-auto rounded-3xl bg-white p-5 sm:p-7 shadow-2xl"
             onClick={(e) => e.stopPropagation()}

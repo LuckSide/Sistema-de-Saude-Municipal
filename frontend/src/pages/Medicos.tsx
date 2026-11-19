@@ -37,6 +37,7 @@ const vazio = {
   crm: "",
   cbo_codigo: "",
   cbo_descricao: "",
+  especialidade: "",
   especialidades: "",
   telefone: "",
   email: "",
@@ -51,6 +52,7 @@ export default function Medicos() {
   const [unidades, setUnidades] = useState<UnidadeSaude[]>([]);
   const [sp] = useSearchParams();
   const [form, setForm] = useState<typeof vazio>(vazio);
+  const [formInicial, setFormInicial] = useState<typeof vazio>(vazio);
   const [editId, setEditId] = useState<number | null>(null);
   const [modal, setModal] = useState(false);
   const [salvando, setSalvando] = useState(false);
@@ -79,12 +81,13 @@ export default function Medicos() {
       const unis = (m.unidades_ids || [])
         .map((uid) => unidades.find((u) => u.id === uid)?.nome || "")
         .join(" ");
-      const texto = `${m.nome} ${m.crm || ""} ${m.cpf || ""} ${m.cbo_codigo || ""} ${m.cbo_descricao || ""} ${m.especialidades || ""} ${m.telefone || ""} ${m.email || ""} ${unis}`.toLowerCase();
+      const texto = `${m.nome} ${m.crm || ""} ${m.cpf || ""} ${m.cbo_codigo || ""} ${m.cbo_descricao || ""} ${m.especialidade || ""} ${m.especialidades || ""} ${m.telefone || ""} ${m.email || ""} ${unis}`.toLowerCase();
       return texto.includes(termo);
     });
   }, [lista, buscaTabela, filtroStatus, unidades]);
 
-  const backdrop = useBackdropClose(fechar, modal);
+  const isDirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(formInicial), [form, formInicial]);
+  const backdrop = useBackdropClose({ onClose: fechar, aberto: modal, isDirty });
 
   const ROTULOS: Record<string, string> = {
     nome: "Nome completo", cpf: "CPF", crm: "CRM", telefone: "Telefone", email: "E-mail",
@@ -181,21 +184,25 @@ export default function Medicos() {
     setErroModal(""); setErros({}); setOk("");
     if (m) {
       setEditId(m.id);
-      setForm({
+      const val = {
         nome: m.nome,
         cpf: m.cpf,
         crm: m.crm,
         cbo_codigo: m.cbo_codigo ?? "",
         cbo_descricao: m.cbo_descricao ?? "",
+        especialidade: m.especialidade ?? "",
         especialidades: m.especialidades,
         telefone: m.telefone,
         email: m.email,
         ativo: m.ativo,
         unidades_ids: m.unidades_ids ? [...m.unidades_ids] : [],
-      });
+      };
+      setForm(val);
+      setFormInicial(val);
     } else {
       setEditId(null);
       setForm(vazio);
+      setFormInicial(vazio);
     }
     setBuscaCbo("");
     setModal(true);
@@ -204,6 +211,7 @@ export default function Medicos() {
     setModal(false);
     setEditId(null);
     setForm(vazio);
+    setFormInicial(vazio);
     setErroModal("");
     setErros({});
     setBuscaCbo("");
@@ -242,7 +250,18 @@ export default function Medicos() {
 
     setSalvando(true);
     try {
-      const payload = { ...form, crm: normalizaCrm(form.crm), unidades_ids: form.unidades_ids };
+      const espPrincipal = (form.especialidade || form.especialidades.split(",")[0] || "").trim();
+      let espsLista = form.especialidades.trim();
+      if (espPrincipal && !espsLista) {
+        espsLista = espPrincipal;
+      }
+      const payload = {
+        ...form,
+        especialidade: espPrincipal,
+        especialidades: espsLista,
+        crm: normalizaCrm(form.crm),
+        unidades_ids: form.unidades_ids,
+      };
       if (editId) {
         await updateMedico(editId, payload);
         setOk("Médico atualizado com sucesso.");
@@ -404,7 +423,10 @@ export default function Medicos() {
                     <span className="text-xs text-ink/40">Todas / Não restrito</span>
                   )}
                 </td>
-                <td className="px-4 py-3 text-xs text-ink/60">{m.especialidades || "—"}</td>
+                <td className="px-4 py-3 text-xs text-ink/60">
+                  {m.especialidade && <p className="font-semibold text-sus-950">{m.especialidade}</p>}
+                  <p className="text-[11px] text-ink/50">{m.especialidades || "—"}</p>
+                </td>
                 <td className="px-4 py-3 text-xs text-ink/60">{m.telefone || "—"} {m.email ? `· ${m.email}` : ""}</td>
                 <td className="px-4 py-3 text-xs">
                   <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${m.ativo ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-600"}`}>
@@ -451,6 +473,17 @@ export default function Medicos() {
                   ))}
                 </div>
               )}
+              <div className="md:col-span-2">
+                <Label>Especialidade Principal (Atuação primária)</Label>
+                <Input
+                  value={form.especialidade}
+                  onChange={(e) => setForm({ ...form, especialidade: e.target.value })}
+                  placeholder="Ex: Clínico Geral, Cardiologia, Pediatria, Ginecologia..."
+                />
+                <span className="text-[11px] text-ink/50">
+                  Preenchida automaticamente nos formulários e filas ao selecionar este médico.
+                </span>
+              </div>
               <div className="md:col-span-2">
                 <Label>
                   Especialidade(s){" "}
@@ -509,13 +542,16 @@ export default function Medicos() {
                               ? form.especialidades.split(",").map((s) => s.trim()).filter(Boolean)
                               : [];
                             if (jaTem) {
+                              const novas = atuais.filter((s) => s.toLowerCase() !== esp.nome.toLowerCase());
                               setForm({
                                 ...form,
-                                especialidades: atuais.filter((s) => s.toLowerCase() !== esp.nome.toLowerCase()).join(", "),
+                                especialidades: novas.join(", "),
+                                especialidade: form.especialidade.toLowerCase() === esp.nome.toLowerCase() ? (novas[0] || "") : form.especialidade,
                               });
                             } else {
                               setForm({
                                 ...form,
+                                especialidade: form.especialidade || esp.nome,
                                 especialidades: [...atuais, esp.nome].join(", "),
                               });
                             }

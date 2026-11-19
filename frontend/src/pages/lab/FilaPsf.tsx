@@ -7,6 +7,7 @@ import {
   CalendarDays,
   CheckCircle2,
   Edit2,
+  Eye,
   Filter,
   FlaskConical,
   Layers,
@@ -33,6 +34,7 @@ import {
   labSigtap,
   labVerificarDuplicidade,
   tfdTipos,
+  tfdEspecialidades,
   pagData,
   pagMeta,
   type FilaPsfItem,
@@ -43,6 +45,7 @@ import {
   type TipoFila,
   type UnidadeSaude,
   type PedidoDuplicadoLab,
+  type EspecialidadeCat,
 } from "../../services/api";
 import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
@@ -53,6 +56,7 @@ import AlertaPedidoDuplicado from "../../components/AlertaPedidoDuplicado";
 import { useAuth } from "../../hooks/useAuth";
 import { useConfirm } from "../../components/ConfirmDialog";
 import ModalPedidosInelegiveis from "../../components/ModalPedidosInelegiveis";
+import { useBackdropClose } from "../../hooks/useBackdropClose";
 
 const MEDICO_GENERICO = "Médico da Unidade / Responsável Técnico";
 
@@ -64,16 +68,19 @@ function fmtData(s?: string) {
 
 export default function FilaPsf() {
   const { confirmar } = useConfirm();
-  const { user } = useAuth();
+  const { user, can } = useAuth();
+  const podeEditar = Boolean(user?.is_superuser || can("lab_fila") || can("lab"));
   const [lista, setLista] = useState<FilaPsfItem[]>([]);
   const [unidades, setUnidades] = useState<UnidadeSaude[]>([]);
   const [medicos, setMedicos] = useState<Medico[]>([]);
   const [labs, setLabs] = useState<Laboratorio[]>([]);
+  const [listaEspecialidades, setListaEspecialidades] = useState<EspecialidadeCat[]>([]);
 
   // Modais
   const [modalAberto, setModalAberto] = useState(false);
   const [modalInelegiveisAberto, setModalInelegiveisAberto] = useState(false);
   const [itemEditando, setItemEditando] = useState<FilaPsfItem | null>(null);
+  const [detalheItem, setDetalheItem] = useState<FilaPsfItem | null>(null);
 
   const [modalLote, setModalLote] = useState(false);
   const [selecionados, setSelecionados] = useState<Set<number>>(new Set());
@@ -195,7 +202,7 @@ export default function FilaPsf() {
   const [filtroEspecialidade, setFiltroEspecialidade] = useState("");
   const [termoBusca, setTermoBusca] = useState("");
   const [filtroUnidade, setFiltroUnidade] = useState("");
-  const [filtroStatus, setFiltroStatus] = useState("todos");
+  const [filtroStatus, setFiltroStatus] = useState("na_fila");
   const [dataDe, setDataDe] = useState("");
   const [dataAte, setDataAte] = useState("");
 
@@ -232,6 +239,9 @@ export default function FilaPsf() {
       .catch(() => {});
     fetchMedicos({ somente_ativos: true })
       .then((m) => setMedicos(m.filter((x) => x.ativo)))
+      .catch(() => {});
+    tfdEspecialidades({ limit: 300 })
+      .then((r) => setListaEspecialidades(pagData<EspecialidadeCat>(r)))
       .catch(() => {});
     labsListar()
       .then((l) => {
@@ -278,13 +288,13 @@ export default function FilaPsf() {
     setFiltroFilaId("");
     setTermoBusca("");
     setFiltroUnidade("");
-    setFiltroStatus("todos");
+    setFiltroStatus("na_fila");
     setDataDe("");
     setDataAte("");
   }
 
   const temFiltroAtivo = Boolean(
-    filtroFilaId || termoBusca.trim() || filtroUnidade || filtroStatus !== "todos" || dataDe || dataAte
+    filtroFilaId || termoBusca.trim() || filtroUnidade || filtroStatus !== "na_fila" || dataDe || dataAte
   );
 
   function set(k: string, v: string) {
@@ -365,6 +375,15 @@ export default function FilaPsf() {
     setDuplicidadeFila(null);
     setIgnorarDuplicidadeFila(false);
   }
+
+  const isModalDirty = useMemo(() => {
+    if (!modalAberto) return false;
+    return Boolean(form.paciente_id || itens.length > 0 || form.justificativa.trim());
+  }, [modalAberto, form.paciente_id, itens.length, form.justificativa]);
+
+  const modalBackdrop = useBackdropClose({ onClose: fecharModal, aberto: modalAberto, isDirty: isModalDirty });
+  const loteBackdrop = useBackdropClose(() => setModalLote(false), modalLote);
+  const detalheBackdrop = useBackdropClose(() => setDetalheItem(null), !!detalheItem);
 
   // Opções para o Combobox de Filtro de Filas de Sangue / Laboratório
   const opcoesFiltroFilas = useMemo<ComboOption[]>(() => {
@@ -977,6 +996,11 @@ export default function FilaPsf() {
                       <div className="flex items-center gap-2 text-xs text-ink/50">
                         {f.paciente_cpf && <span>CPF: {f.paciente_cpf}</span>}
                         {f.paciente_prontuario && <span>Pront.: {f.paciente_prontuario}</span>}
+                        {(f.criado_por_nome || f.criado_por) && (
+                          <span title={`Inserido por ${f.criado_por_nome || f.criado_por}`}>
+                            · Por: <strong className="font-semibold text-sus-900">{f.criado_por_nome || f.criado_por}</strong>
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-xs whitespace-nowrap">
@@ -989,19 +1013,16 @@ export default function FilaPsf() {
                     </td>
                     <td className="px-4 py-3 text-xs text-ink/75 font-medium">{f.unidade_psf}</td>
                     <td className="px-4 py-3 text-xs text-ink/75">{f.medico}</td>
-                    <td className="px-4 py-3 text-xs max-w-xs">
+                    <td className="px-4 py-3 text-xs whitespace-nowrap">
                       {f.exames_nomes && f.exames_nomes.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {f.exames_nomes.map((nome, idx) => (
-                            <span
-                              key={idx}
-                              className="inline-block rounded-md bg-teal/10 px-1.5 py-0.5 text-[10px] font-semibold text-teal"
-                              title={nome}
-                            >
-                              {nome}
-                            </span>
-                          ))}
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setDetalheItem(f)}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-teal/10 hover:bg-teal/20 px-2.5 py-1 text-xs font-bold text-teal transition cursor-pointer"
+                          title="Clique para ver os exames detalhados deste pedido"
+                        >
+                          📋 {f.exames_nomes.length} {f.exames_nomes.length === 1 ? "exame" : "exames"}
+                        </button>
                       ) : (
                         <span className="text-ink/40 text-[11px]">—</span>
                       )}
@@ -1044,11 +1065,29 @@ export default function FilaPsf() {
                     <td className="px-4 py-3 text-right">
                       <div className="inline-flex items-center gap-1">
                         <button
-                          onClick={() => abrirModalEditar(f)}
-                          className="rounded-lg p-1.5 text-teal hover:bg-teal/10 transition"
-                          title="Editar pedido"
+                          onClick={() => setDetalheItem(f)}
+                          className="rounded-lg p-1.5 text-sus-900 hover:bg-sand transition"
+                          title="Ver detalhes do pedido"
                         >
-                          <Edit2 className="h-4 w-4" />
+                          <Eye className="h-4 w-4" />
+                        </button>
+                        {podeEditar && (
+                          <button
+                            onClick={() => abrirModalEditar(f)}
+                            className="rounded-lg p-1.5 text-teal hover:bg-teal/10 transition"
+                            title="Editar pedido"
+                          >
+                            <Edit2 className="h-4 w-4" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => excluir(f.id)}
+                          className="rounded-lg p-1.5 text-red-600 hover:bg-red-50 transition"
+                          title="Remover da fila"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
                         </button>
                         <button
                           onClick={() => excluir(f.id)}
@@ -1084,7 +1123,7 @@ export default function FilaPsf() {
       {modalAberto && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-sus-950/60 p-3 sm:p-5"
-          onClick={fecharModal}
+          {...modalBackdrop}
         >
           <div
             className="rise max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 sm:p-8 shadow-2xl"
@@ -1193,10 +1232,18 @@ export default function FilaPsf() {
                       onChange={(e) => set("especialidade", e.target.value)}
                       placeholder="Ex: Clínica Geral, Pediatria…"
                       required
+                      list="especialidades-lab-datalist"
                       className="text-xs"
                     />
+                    <datalist id="especialidades-lab-datalist">
+                      {listaEspecialidades.map((esp) => (
+                        <option key={esp.id} value={esp.nome}>
+                          {esp.codigo_cbo ? `CBO ${esp.codigo_cbo} · ` : ""}{esp.nome}
+                        </option>
+                      ))}
+                    </datalist>
                     <p className="mt-1.5 text-[11px] text-ink/50">
-                      Especialidade solicitante (obrigatório).
+                      Especialidade solicitante (selecionada ou sugerida pelo médico).
                     </p>
                   </div>
 
@@ -1233,7 +1280,13 @@ export default function FilaPsf() {
                       </Label>
                       <button
                         type="button"
-                        onClick={() => set("medico", MEDICO_GENERICO)}
+                        onClick={() => {
+                          setForm((prev) => ({
+                            ...prev,
+                            medico: MEDICO_GENERICO,
+                            especialidade: prev.especialidade || "Clínica Geral",
+                          }));
+                        }}
                         className="inline-flex items-center rounded-md bg-teal/10 px-2 py-0.5 text-[10px] font-bold text-teal hover:bg-teal/20 transition"
                         title="Redefinir para Médico da Unidade"
                       >
@@ -1242,7 +1295,15 @@ export default function FilaPsf() {
                     </div>
                     <Combobox
                       value={form.medico}
-                      onChange={(v) => set("medico", v)}
+                      onChange={(v) => {
+                        const medObj = medicos.find((m) => m.nome === v);
+                        const espMed = (medObj?.especialidade || (medObj?.especialidades ? medObj.especialidades.split(",")[0].trim() : "") || "").trim();
+                        setForm((prev) => ({
+                          ...prev,
+                          medico: v,
+                          especialidade: espMed || prev.especialidade,
+                        }));
+                      }}
                       options={opcoesMedicos}
                       placeholder="Buscar médico requisitante…"
                       searchPlaceholder="Digite o nome do médico ou CRM…"
@@ -1448,7 +1509,7 @@ export default function FilaPsf() {
       {modalLote && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-sus-950/60 p-3 sm:p-5"
-          onClick={() => setModalLote(false)}
+          {...loteBackdrop}
         >
           <div
             className="rise max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl"
@@ -1567,6 +1628,164 @@ export default function FilaPsf() {
                   {loteSalvando ? "Processando lote..." : "Confirmar Agendamento em Lote"}
                 </Button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE DETALHES DO PEDIDO DA FILA */}
+      {detalheItem && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-sus-950/60 p-3 sm:p-5"
+          {...detalheBackdrop}
+        >
+          <div
+            className="rise max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between border-b border-sus-900/10 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-display text-lg font-bold text-sus-950">
+                    {detalheItem.paciente_nome}
+                  </h3>
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-bold ${
+                      detalheItem.status === "agendado"
+                        ? "bg-teal/15 text-teal border border-teal/30"
+                        : detalheItem.status === "realizado"
+                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        : "bg-amber-50 text-amber-700 border border-amber-200"
+                    }`}
+                  >
+                    {detalheItem.status === "agendado" ? "Agendado" : detalheItem.status === "realizado" ? "Realizado" : "Na Fila (Aguardando)"}
+                  </span>
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-ink/60">
+                  {detalheItem.paciente_cpf && <span>CPF: <b>{detalheItem.paciente_cpf}</b></span>}
+                  {detalheItem.paciente_cns && <span>CNS: <b>{detalheItem.paciente_cns}</b></span>}
+                  {detalheItem.paciente_prontuario && <span>Prontuário: <b>{detalheItem.paciente_prontuario}</b></span>}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetalheItem(null)}
+                className="rounded-xl p-2 text-ink/50 hover:bg-sand transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Informações da Solicitação */}
+            <div className="rounded-2xl border border-sus-900/10 p-4 space-y-2 text-xs">
+              <h4 className="text-[11px] font-bold uppercase tracking-wide text-sus-900/60">
+                Dados da Solicitação
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
+                <div>
+                  <span className="text-ink/45 block">Especialidade / Fila</span>
+                  <span className="font-semibold text-teal">{detalheItem.especialidade || "Geral"} {detalheItem.tipo_fila ? `(${detalheItem.tipo_fila})` : ""}</span>
+                </div>
+                <div>
+                  <span className="text-ink/45 block">Data do Pedido</span>
+                  <span className="font-semibold">{fmtData(detalheItem.data_pedido || detalheItem.data_solicitacao)}</span>
+                </div>
+                <div>
+                  <span className="text-ink/45 block">PSF / Unidade Solicitante</span>
+                  <span className="font-semibold">{detalheItem.unidade_psf || "—"}</span>
+                </div>
+                <div>
+                  <span className="text-ink/45 block">Médico(a) Requisitante</span>
+                  <span className="font-semibold">{detalheItem.medico || "—"}</span>
+                </div>
+                <div>
+                  <span className="text-ink/45 block">Inserido na Fila por</span>
+                  <span className="font-semibold text-sus-950">{detalheItem.criado_por_nome || detalheItem.criado_por || "Sistema / Automático"}</span>
+                </div>
+                {detalheItem.agendado_por_nome && (
+                  <div>
+                    <span className="text-ink/45 block">Agendado por</span>
+                    <span className="font-semibold text-sus-950">{detalheItem.agendado_por_nome}</span>
+                  </div>
+                )}
+                {detalheItem.data_agendada && (
+                  <div>
+                    <span className="text-ink/45 block">Data Agendada</span>
+                    <span className="font-semibold text-teal">{fmtData(detalheItem.data_agendada)} {detalheItem.hora_agendada ? `às ${detalheItem.hora_agendada}` : ""}</span>
+                  </div>
+                )}
+              </div>
+
+              {detalheItem.justificativa && (
+                <div className="mt-2 pt-2 border-t border-sus-900/10">
+                  <span className="text-ink/45 block mb-0.5">Justificativa Clínica:</span>
+                  <p className="font-medium text-sus-950 bg-sand/30 rounded-xl p-2.5">{detalheItem.justificativa}</p>
+                </div>
+              )}
+              {detalheItem.obs && (
+                <div className="mt-1">
+                  <span className="text-ink/45 block mb-0.5">Observações:</span>
+                  <p className="italic text-ink/70 bg-sand/20 rounded-xl p-2">{detalheItem.obs}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Listagem Completa de Exames */}
+            <div className="rounded-2xl border border-teal/20 bg-teal/5 p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold uppercase tracking-wide text-sus-900/70 flex items-center gap-1.5">
+                  <FlaskConical className="h-4 w-4 text-teal" />
+                  Procedimentos e Exames Solicitados ({detalheItem.exames_nomes?.length || 0})
+                </h4>
+              </div>
+              {detalheItem.exames_nomes && detalheItem.exames_nomes.length > 0 ? (
+                <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1">
+                  {detalheItem.exames_nomes.map((nome, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between rounded-xl bg-white border border-teal/20 px-3 py-2 text-xs font-semibold text-sus-950 shadow-2xs"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-teal/10 text-[10px] font-bold text-teal">
+                          {idx + 1}
+                        </span>
+                        {nome}
+                      </span>
+                      {detalheItem.sigtap_ids && detalheItem.sigtap_ids[idx] ? (
+                        <span className="font-mono text-[10px] text-ink/50 bg-sand/50 px-2 py-0.5 rounded">
+                          SIGTAP #{detalheItem.sigtap_ids[idx]}
+                        </span>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-ink/50 py-2">Nenhum procedimento detalhado.</p>
+              )}
+            </div>
+
+            {/* Rodapé do Modal de Detalhes */}
+            <div className="flex items-center justify-between pt-3 border-t border-sus-900/10">
+              <button
+                type="button"
+                onClick={() => setDetalheItem(null)}
+                className="rounded-xl border border-sus-900/15 px-4 py-2 text-xs font-semibold text-ink hover:bg-sand transition"
+              >
+                Fechar
+              </button>
+              {podeEditar && (
+                <Button
+                  onClick={() => {
+                    const item = detalheItem;
+                    setDetalheItem(null);
+                    abrirModalEditar(item);
+                  }}
+                  className="flex items-center gap-1.5 text-xs"
+                >
+                  <Edit2 className="h-3.5 w-3.5" />
+                  Editar Pedido
+                </Button>
+              )}
             </div>
           </div>
         </div>

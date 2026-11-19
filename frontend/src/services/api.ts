@@ -123,6 +123,7 @@ export type Medico = {
   crm: string;
   cbo_codigo: string;
   cbo_descricao: string;
+  especialidade?: string;
   especialidades: string;
   telefone: string;
   email: string;
@@ -934,6 +935,10 @@ export type Exame = {
   paciente_motivo_situacao?: string;
   paciente_obito_ou_mudanca?: boolean;
   alerta_situacao?: string;
+  criado_por?: string;
+  criado_por_nome?: string;
+  agendado_por?: string;
+  agendado_por_nome?: string;
 };
 
 export type ExamePublico = {
@@ -1837,6 +1842,10 @@ export type FilaPsfItem = {
   paciente_motivo_situacao?: string;
   paciente_obito_ou_mudanca?: boolean;
   alerta_situacao?: string;
+  criado_por?: string;
+  criado_por_nome?: string;
+  agendado_por?: string;
+  agendado_por_nome?: string;
 };
 
 export function mapFila(o: any): FilaPsfItem {
@@ -1871,6 +1880,10 @@ export function mapFila(o: any): FilaPsfItem {
     paciente_motivo_situacao: o.paciente_motivo_situacao ?? "",
     paciente_obito_ou_mudanca: Boolean(o.paciente_obito_ou_mudanca),
     alerta_situacao: o.alerta_situacao ?? "",
+    criado_por: o.criado_por ?? "",
+    criado_por_nome: o.criado_por_nome ?? o.criado_por ?? "",
+    agendado_por: o.agendado_por ?? "",
+    agendado_por_nome: o.agendado_por_nome ?? o.agendado_por ?? "",
   };
 }
 

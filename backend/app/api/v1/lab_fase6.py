@@ -675,6 +675,8 @@ def _formatar_fila_out(
         unidade_saude_id=getattr(o, "unidade_saude_id", None),
         data_agendada=getattr(o, "data_agendada", None),
         hora_agendada=getattr(o, "hora_agendada", "") or "",
+        criado_por=getattr(o, "criado_por", "") or "",
+        criado_por_nome=getattr(o, "criado_por", "") or "Sistema",
     )
 
 
@@ -815,7 +817,7 @@ def listar_fila(
 
 @router.post("/exames/fila-psf", response_model=FilaPsfOut, status_code=201)
 def criar_fila(
-    data: FilaPsfIn, db: Session = Depends(get_db), _=Depends(need_perm("lab_fila", "criar"))
+    data: FilaPsfIn, db: Session = Depends(get_db), user=Depends(need_perm("lab_fila", "criar"))
 ):
     pac = db.get(Paciente, data.paciente_id)
     if not pac:
@@ -854,6 +856,7 @@ def criar_fila(
         fila_id=data.fila_id,
         tipo_fila=data.tipo_fila or data.especialidade.strip(),
         unidade_saude_id=data.unidade_saude_id,
+        criado_por=(user.nome or user.username or "")[:120],
     )
     db.add(obj)
     db.commit()

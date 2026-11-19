@@ -133,6 +133,7 @@ class Viagem(SQLModel, table=True):
         default="Prefeitura Municipal de Guapé", max_length=150
     )
     observacoes: str = Field(default="", max_length=500)
+    criado_por: str = Field(default="", max_length=120)
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=False)),
@@ -188,6 +189,7 @@ class ViagemFila(SQLModel, table=True):
     status: str = Field(default="aguardando", max_length=20, index=True)  # aguardando|alocado|cancelado
     exame_fila_id: int | None = Field(default=None, index=True)
     observacoes: str = Field(default="", max_length=500)
+    criado_por: str = Field(default="", max_length=120)
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=False)),
@@ -312,6 +314,7 @@ class Faturamento(SQLModel, table=True):
         default="pendente", max_length=20, index=True
     )  # pendente|aprovado|rejeitado
     observacoes: str = Field(default="", max_length=500)
+    criado_por: str = Field(default="", max_length=120)
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
         sa_column=Column(DateTime(timezone=False)),

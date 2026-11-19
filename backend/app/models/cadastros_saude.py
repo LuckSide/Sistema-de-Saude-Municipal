@@ -10,6 +10,7 @@ class Medico(SQLModel, table=True):
     crm: str = Field(default="", max_length=40, index=True)
     cbo_codigo: str = Field(default="", max_length=10)
     cbo_descricao: str = Field(default="", max_length=120)
+    especialidade: str = Field(default="", max_length=120)  # especialidade principal
     especialidades: str = Field(default="", max_length=500)  # csv
     telefone: str = Field(default="", max_length=30)
     email: str = Field(default="", max_length=120)

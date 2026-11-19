@@ -16,6 +16,7 @@ class MedicoIn(BaseModel):
     crm: str = Field(default="", max_length=40)
     cbo_codigo: str = Field(default="", max_length=10)
     cbo_descricao: str = Field(default="", max_length=120)
+    especialidade: str = Field(default="", max_length=120)
     especialidades: str = Field(default="", max_length=500)
     telefone: str = Field(default="", max_length=30)
     email: str = Field(default="", max_length=120)
@@ -74,6 +75,7 @@ class MedicoOut(BaseModel):
     crm: str = ""
     cbo_codigo: str = ""
     cbo_descricao: str = ""
+    especialidade: str = ""
     especialidades: str = ""
     telefone: str = ""
     email: str = ""

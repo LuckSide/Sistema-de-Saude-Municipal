@@ -24,14 +24,17 @@ import {
   labUploadLaudo,
   labJustificarInconsistencia,
   labVisualizarLaudoPdfUrl,
+  labsListar,
   pagData,
   type SolicMestre,
   type LabConferenciaResultado,
+  type Laboratorio,
 } from "../../services/api";
-import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
+import { Button, Card, Input, Label, Select, cn } from "../../components/ui/primitives";
 import ModalLeituraRapidaQR from "../../components/ModalLeituraRapidaQR";
 import { useAuth } from "../../hooks/useAuth";
 import { useConfirm } from "../../components/ConfirmDialog";
+import { useBackdropClose } from "../../hooks/useBackdropClose";
 
 function hojeISO() {
   return new Date().toISOString().slice(0, 10);
@@ -45,10 +48,22 @@ export default function RecepcaoLab() {
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
 
+  // Permissões e Perfil
+  const isMasterAdmin = !user?.laboratorio_id || user?.is_superuser;
+  const [laboratorios, setLaboratorios] = useState<Laboratorio[]>([]);
+  const [filtroLab, setFiltroLab] = useState<string>("todos");
+
   // Filtros
   const [filtroStatus, setFiltroStatus] = useState<string>("todos");
   const [dataFiltro, setDataFiltro] = useState<string>(hojeISO());
   const [termoBusca, setTermoBusca] = useState("");
+
+  // Carrega lista de laboratórios caso seja administrador
+  useEffect(() => {
+    if (isMasterAdmin) {
+      labsListar().then(setLaboratorios).catch(() => {});
+    }
+  }, [isMasterAdmin]);
 
   // Modais
   const [modalLeituraQR, setModalLeituraQR] = useState(false);
@@ -76,6 +91,25 @@ export default function RecepcaoLab() {
   const [justificativaInconsistencia, setJustificativaInconsistencia] = useState("");
   const [enviandoInconsistencia, setEnviandoInconsistencia] = useState(false);
 
+  // Fechamento Seguro e Proteção Dirty State dos Modais
+  const backdropUpload = useBackdropClose({
+    onClose: () => !processandoUpload && setModalUpload(false),
+    modalAberto: modalUpload,
+    isDirty: !!arquivoUpload,
+  });
+
+  const backdropInconsistencia = useBackdropClose({
+    onClose: () => !enviandoInconsistencia && setModalInconsistencia(false),
+    modalAberto: modalInconsistencia,
+    isDirty: justificativaInconsistencia.trim().length > 0,
+  });
+
+  const backdropAjuste = useBackdropClose({
+    onClose: () => !enviandoAjuste && setModalAjuste(false),
+    modalAberto: modalAjuste,
+    isDirty: justificativaAjuste.trim().length > 0,
+  });
+
   async function carregar() {
     setCarregando(true);
     setErro("");
@@ -86,6 +120,7 @@ export default function RecepcaoLab() {
         status: filtroStatus !== "todos" ? filtroStatus : undefined,
         data_de: qVal ? undefined : (dataFiltro || undefined),
         data_ate: qVal ? undefined : (dataFiltro || undefined),
+        laboratorio_id: filtroLab !== "todos" ? Number(filtroLab) : undefined,
         limit: 100,
       });
       const arr = pagData<any>(res);
@@ -99,7 +134,7 @@ export default function RecepcaoLab() {
 
   useEffect(() => {
     carregar();
-  }, [filtroStatus, dataFiltro]);
+  }, [filtroStatus, dataFiltro, filtroLab]);
 
   // Busca inteligente com debounce
   useEffect(() => {
@@ -303,15 +338,15 @@ export default function RecepcaoLab() {
       )}
 
       {/* Barra de Filtros e Busca Rápida */}
-      <Card className="p-4 border-sus-900/10 shadow-xs">
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+      <Card className="p-3.5 sm:p-4 border-sus-900/10 shadow-xs">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-center">
           {/* Busca Inteligente */}
-          <div className="md:col-span-5 relative">
+          <div className={isMasterAdmin ? "md:col-span-4 relative" : "md:col-span-5 relative"}>
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-teal" />
             <Input
               value={termoBusca}
               onChange={(e) => setTermoBusca(e.target.value)}
-              placeholder="Buscar por paciente, CPF, CNS ou protocolo (#)..."
+              placeholder="Buscar paciente, CPF, CNS, protocolo (#)..."
               className="pl-10 pr-9 !h-10 text-xs sm:text-sm"
             />
             {termoBusca && (
@@ -324,8 +359,27 @@ export default function RecepcaoLab() {
             )}
           </div>
 
+          {/* Filtro por Laboratório (somente Administradores com visão global) */}
+          {isMasterAdmin && (
+            <div className="md:col-span-3">
+              <Select
+                value={filtroLab}
+                onChange={(e) => setFiltroLab(e.target.value)}
+                className="!h-10 text-xs font-medium"
+                title="Selecione o laboratório para filtrar"
+              >
+                <option value="todos">Todos os Laboratórios</option>
+                {laboratorios.map((l) => (
+                  <option key={l.id} value={String(l.id)}>
+                    {l.nome}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+
           {/* Filtro por Data */}
-          <div className="md:col-span-4 flex items-center gap-2">
+          <div className={isMasterAdmin ? "md:col-span-3 flex items-center gap-1.5" : "md:col-span-4 flex items-center gap-1.5"}>
             <Input
               type="date"
               value={dataFiltro}
@@ -335,7 +389,12 @@ export default function RecepcaoLab() {
             <Button
               type="button"
               onClick={() => setDataFiltro(hojeISO())}
-              className="border border-sus-900/15 bg-white text-ink hover:bg-sand !h-10 px-3 text-xs shrink-0"
+              className={cn(
+                "!h-10 px-3 text-xs shrink-0 font-bold transition",
+                dataFiltro === hojeISO()
+                  ? "bg-teal text-white hover:bg-teal-700 shadow-2xs"
+                  : "border border-sus-900/15 bg-white text-ink hover:bg-sand"
+              )}
               title="Filtrar exames de hoje"
             >
               Hoje
@@ -344,26 +403,26 @@ export default function RecepcaoLab() {
               <button
                 type="button"
                 onClick={() => setDataFiltro("")}
-                className="text-xs text-ink/50 hover:text-ink underline shrink-0"
+                className="text-xs text-ink/50 hover:text-ink underline shrink-0 ml-1"
               >
-                Limpar data
+                Limpar
               </button>
             )}
           </div>
 
           {/* Filtro por Status */}
-          <div className="md:col-span-3">
+          <div className={isMasterAdmin ? "md:col-span-2" : "md:col-span-3"}>
             <Select
               value={filtroStatus}
               onChange={(e) => setFiltroStatus(e.target.value)}
               className="!h-10 text-xs"
             >
               <option value="todos">Todos os status</option>
-              <option value="agendado">Aguardando Coleta (Agendados)</option>
-              <option value="coletado">Coletado / Aguardando Laudo</option>
-              <option value="aguardando_conferencia">Aguardando Justificativa de Laudo</option>
-              <option value="em_revisao_secretaria">Em Revisão da Secretaria</option>
-              <option value="realizado">Concluído (Laudo Validado)</option>
+              <option value="agendado">Aguardando Coleta</option>
+              <option value="coletado">Coletado / Aguard. Laudo</option>
+              <option value="aguardando_conferencia">Inconsistência Laudo</option>
+              <option value="em_revisao_secretaria">Em Revisão Secretaria</option>
+              <option value="realizado">Concluído (Validado)</option>
             </Select>
           </div>
         </div>
@@ -396,7 +455,7 @@ export default function RecepcaoLab() {
             return (
               <Card
                 key={item.id}
-                className={`p-5 border-sus-900/10 shadow-xs flex flex-col justify-between transition ${
+                className={`p-3.5 sm:p-4 rounded-xl border-sus-900/10 shadow-xs flex flex-col justify-between transition ${
                   isRealizado
                     ? "bg-emerald-50/20 border-emerald-300/70"
                     : isEmRevisao
@@ -409,18 +468,25 @@ export default function RecepcaoLab() {
                 }`}
               >
                 <div>
-                  {/* Cabeçalho do Card */}
-                  <div className="flex items-start justify-between gap-2 border-b border-sus-900/10 pb-3 mb-3">
+                  {/* Cabeçalho Compacto do Card */}
+                  <div className="flex items-start justify-between gap-2 border-b border-sus-900/10 pb-2.5 mb-2.5">
                     <div>
-                      <h3 className="font-bold text-sus-950 text-base leading-snug">
-                        {item.paciente_nome}
-                      </h3>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <h3 className="font-bold text-sus-950 text-sm sm:text-base leading-tight">
+                          {item.paciente_nome}
+                        </h3>
+                        {isMasterAdmin && item.laboratorio_nome && (
+                          <span className="rounded bg-teal/10 text-teal px-1.5 py-0.5 text-[10px] font-bold border border-teal/20">
+                            🏥 {item.laboratorio_nome}
+                          </span>
+                        )}
+                      </div>
                       <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] text-ink/65">
                         {item.paciente_cpf && <span>CPF: {item.paciente_cpf}</span>}
                         {item.paciente_cns && <span>CNS: {item.paciente_cns}</span>}
                         {item.paciente_prontuario && <span>Pront.: {item.paciente_prontuario}</span>}
                         {item.unidade_psf && (
-                          <span className="rounded bg-sand px-1.5 py-0.5 font-medium text-sus-900">
+                          <span className="rounded bg-sand px-1.5 py-0.5 font-medium text-sus-900 text-[10px]">
                             {item.unidade_psf}
                           </span>
                         )}
@@ -430,23 +496,23 @@ export default function RecepcaoLab() {
                       <span className="font-mono text-xs font-bold text-ink/50">#{item.id}</span>
                       <div>
                         {isRealizado ? (
-                          <span className="mt-1 inline-block rounded-md px-2 py-0.5 text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-300">
+                          <span className="mt-0.5 inline-block rounded px-1.5 py-0.5 text-[9px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-300">
                             ✓ Realizado
                           </span>
                         ) : isEmRevisao ? (
-                          <span className="mt-1 inline-block rounded-md px-2 py-0.5 text-[10px] font-bold uppercase bg-indigo-100 text-indigo-800 border border-indigo-200">
-                            Em Revisão Secretaria
+                          <span className="mt-0.5 inline-block rounded px-1.5 py-0.5 text-[9px] font-bold uppercase bg-indigo-100 text-indigo-800 border border-indigo-200">
+                            Revisão Sec.
                           </span>
                         ) : isAguardandoConf ? (
-                          <span className="mt-1 inline-block rounded-md px-2 py-0.5 text-[10px] font-bold uppercase bg-amber-100 text-amber-800 border border-amber-300">
-                            Inconsistência Laudo
+                          <span className="mt-0.5 inline-block rounded px-1.5 py-0.5 text-[9px] font-bold uppercase bg-amber-100 text-amber-800 border border-amber-300">
+                            Inconsistência
                           </span>
                         ) : isColetado ? (
-                          <span className="mt-1 inline-block rounded-md px-2 py-0.5 text-[10px] font-bold uppercase bg-teal/15 text-teal border border-teal/20">
+                          <span className="mt-0.5 inline-block rounded px-1.5 py-0.5 text-[9px] font-bold uppercase bg-teal/15 text-teal border border-teal/20">
                             Coletado
                           </span>
                         ) : (
-                          <span className="mt-1 inline-block rounded-md px-2 py-0.5 text-[10px] font-bold uppercase bg-sand text-ink/65 border border-sus-900/10">
+                          <span className="mt-0.5 inline-block rounded px-1.5 py-0.5 text-[9px] font-bold uppercase bg-sand text-ink/65 border border-sus-900/10">
                             Aguardando Coleta
                           </span>
                         )}
@@ -454,13 +520,13 @@ export default function RecepcaoLab() {
                     </div>
                   </div>
 
-                  {/* Detalhes de Agendamento */}
-                  <div className="grid grid-cols-2 gap-2 text-xs mb-3 bg-sand/30 p-2.5 rounded-xl border border-sus-900/5">
+                  {/* Detalhes de Agendamento e Autoria */}
+                  <div className="grid grid-cols-2 gap-2 text-xs mb-2.5 bg-sand/30 p-2 rounded-lg border border-sus-900/5">
                     <div>
                       <span className="text-[10px] text-ink/50 flex items-center gap-1">
                         <Calendar className="h-3 w-3 text-teal" /> Data Agendada
                       </span>
-                      <span className="font-semibold text-sus-950">
+                      <span className="font-semibold text-sus-950 text-xs">
                         {item.data_agendada
                           ? item.data_agendada.split("-").reverse().join("/")
                           : "—"}
@@ -470,54 +536,65 @@ export default function RecepcaoLab() {
                       <span className="text-[10px] text-ink/50 flex items-center gap-1">
                         <Clock className="h-3 w-3 text-teal" /> Horário Previsto
                       </span>
-                      <span className="font-semibold text-sus-950">
+                      <span className="font-semibold text-sus-950 text-xs">
                         {item.hora_agendada || "07:00 às 09:00"}
                       </span>
                     </div>
-                    {item.medico_solicitante && (
-                      <div className="col-span-2">
-                        <span className="text-[10px] text-ink/50 block">Médico Solicitante</span>
+                    <div className="col-span-2 flex flex-wrap items-center justify-between gap-1 text-[11px] pt-1 border-t border-sus-900/5">
+                      {item.medico_solicitante ? (
                         <span className="text-ink/80">Dr(a). {item.medico_solicitante}</span>
-                      </div>
-                    )}
+                      ) : (
+                        <span className="text-ink/40">Médico não especificado</span>
+                      )}
+                      <span className="text-[10px] text-ink/60">
+                        Agendado por: <strong className="text-sus-950">{item.agendado_por_nome || item.agendado_por || "Sistema"}</strong>
+                      </span>
+                    </div>
                   </div>
 
-                  {/* Procedimentos Solicitados */}
-                  <div className="mb-3">
-                    <p className="text-[11px] font-bold uppercase text-sus-900/70 mb-1">
-                      Procedimentos para Coleta ({item.itens?.length || 0})
-                    </p>
+                  {/* Procedimentos Solicitados (Compacto) */}
+                  <div className="mb-2.5">
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-[10px] font-bold uppercase text-sus-900/70">
+                        Procedimentos ({item.itens?.length || 0})
+                      </p>
+                      {item.jejum_horas && (
+                        <span className="text-[10px] text-amber-800 font-medium">
+                          ⏱️ Jejum: {item.jejum_horas}
+                        </span>
+                      )}
+                    </div>
                     <div className="space-y-1">
-                      {(item.itens || []).map((it: any, idx) => (
+                      {(item.itens || []).slice(0, 3).map((it: any, idx) => (
                         <div
                           key={idx}
-                          className="text-xs text-ink/85 flex items-center justify-between border-b border-sus-900/5 pb-1"
+                          className="text-xs text-ink/85 flex items-center justify-between border-b border-sus-900/5 pb-0.5"
                         >
-                          <span className="truncate mr-2">
-                            <span className="font-mono text-[10px] text-ink/50 mr-1.5">
+                          <span className="truncate mr-2 text-[11px]">
+                            <span className="font-mono text-[9px] text-ink/50 mr-1">
                               {it.codigo || it.procedimento_codigo}
                             </span>
                             {it.descricao || it.procedimento_descricao}
                           </span>
                           {it.quantidade > 1 && (
-                            <span className="text-[10px] font-bold text-teal bg-teal/10 px-1.5 rounded">
+                            <span className="text-[9px] font-bold text-teal bg-teal/10 px-1 rounded">
                               ×{it.quantidade}
                             </span>
                           )}
                         </div>
                       ))}
+                      {(item.itens || []).length > 3 && (
+                        <p className="text-[10px] font-semibold text-teal pt-0.5">
+                          + {(item.itens || []).length - 3} outro(s) procedimento(s)
+                        </p>
+                      )}
                     </div>
-                  </div>
-
-                  {/* Orientação de Jejum */}
-                  <div className="rounded-lg bg-amber-50/70 p-2 text-[11px] text-amber-900 border border-amber-200/50 mb-3">
-                    <span className="font-bold">⏱️ Jejum Clínico:</span> {item.jejum_horas || "8 a 12 horas"}
                   </div>
 
                   {/* Informações de Coleta e Laudo */}
                   {item.coletado_em && (
-                    <div className="rounded-lg bg-teal-50/80 p-2 text-[11px] text-teal-900 border border-teal-200 mb-3">
-                      ✓ Coleta registrada em <strong>{new Date(item.coletado_em).toLocaleString("pt-BR")}</strong>
+                    <div className="rounded-lg bg-teal-50/80 p-1.5 text-[10px] text-teal-900 border border-teal-200 mb-2">
+                      ✓ Coleta em <strong>{new Date(item.coletado_em).toLocaleString("pt-BR")}</strong>
                       {item.coletado_por && <span> por {item.coletado_por}</span>}.
                     </div>
                   )}
@@ -655,7 +732,9 @@ export default function RecepcaoLab() {
       {modalUpload && itemUpload && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-sus-950/60 p-3 sm:p-5"
-          onClick={() => !processandoUpload && setModalUpload(false)}
+          onMouseDown={backdropUpload.onMouseDown}
+          onMouseUp={backdropUpload.onMouseUp}
+          onClick={backdropUpload.onClick}
         >
           <div
             className="rise max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl"
@@ -674,7 +753,7 @@ export default function RecepcaoLab() {
               <button
                 type="button"
                 disabled={processandoUpload}
-                onClick={() => setModalUpload(false)}
+                onClick={backdropUpload.fecharProtegido}
                 className="rounded-xl p-2 text-ink/50 hover:bg-sand transition"
               >
                 <X className="h-5 w-5" />
@@ -783,7 +862,9 @@ export default function RecepcaoLab() {
       {modalInconsistencia && itemInconsistencia && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-sus-950/60 p-3 sm:p-5"
-          onClick={() => !enviandoInconsistencia && setModalInconsistencia(false)}
+          onMouseDown={backdropInconsistencia.onMouseDown}
+          onMouseUp={backdropInconsistencia.onMouseUp}
+          onClick={backdropInconsistencia.onClick}
         >
           <div
             className="rise max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl"
@@ -802,7 +883,7 @@ export default function RecepcaoLab() {
               <button
                 type="button"
                 disabled={enviandoInconsistencia}
-                onClick={() => setModalInconsistencia(false)}
+                onClick={backdropInconsistencia.fecharProtegido}
                 className="rounded-xl p-2 text-ink/50 hover:bg-sand transition"
               >
                 <X className="h-5 w-5" />
@@ -963,7 +1044,9 @@ export default function RecepcaoLab() {
       {modalAjuste && itemAjuste && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-sus-950/60 p-3 sm:p-5"
-          onClick={() => setModalAjuste(false)}
+          onMouseDown={backdropAjuste.onMouseDown}
+          onMouseUp={backdropAjuste.onMouseUp}
+          onClick={backdropAjuste.onClick}
         >
           <div
             className="rise max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl"
@@ -981,7 +1064,7 @@ export default function RecepcaoLab() {
               </div>
               <button
                 type="button"
-                onClick={() => setModalAjuste(false)}
+                onClick={backdropAjuste.fecharProtegido}
                 className="rounded-xl p-2 text-ink/50 hover:bg-sand transition"
               >
                 <X className="h-5 w-5" />

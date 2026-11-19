@@ -108,6 +108,8 @@ class FilaPsfOut(FilaPsfIn):
     paciente_prontuario: str = ""
     exames_nomes: list[str] = Field(default_factory=list)
     lote_id: int | None = None
+    criado_por: str = ""
+    criado_por_nome: str = ""
     paciente_situacao_cadastral: str = "ativo"
     paciente_motivo_situacao: str = ""
     paciente_obito_ou_mudanca: bool = False
@@ -262,6 +264,8 @@ class SolicMestreOut(BaseModel):
     laboratorio_nome: str = ""
     status: str = "agendado"
     agendado_por: str = ""
+    agendado_por_nome: str = ""
+    criado_por_nome: str = ""
     origem_fila_id: int | None = None
     status_auditoria: str = "pendente_conferencia"
     observacao_laboratorio: str = ""

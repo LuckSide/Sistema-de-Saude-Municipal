@@ -2373,6 +2373,8 @@ def _com_posicao(
         out.append(
             ExameOut(
                 **dump,
+                criado_por_nome=e.criado_por or "Sistema",
+                agendado_por_nome=e.criado_por or "Sistema",
                 paciente_nome=pac.nome if pac else "?",
                 paciente_cpf=pac.cpf if pac else "",
                 paciente_endereco=pac.endereco if pac else "",
@@ -3619,6 +3621,9 @@ def criar_exames_lote(
         else:
             payload_obj["status"] = "aguardando"
             total_na_fila += 1
+
+        if not payload_obj.get("criado_por"):
+            payload_obj["criado_por"] = (ator.nome or ator.username or "")[:120]
 
         obj = ExameFila(**payload_obj)
         _garantir_token(obj)

@@ -347,7 +347,11 @@ export default function FilaExames() {
 
   const detalheBackdrop = useBackdropClose(fecharDetalhe, !!detalhe);
   const perfilBackdrop = useBackdropClose(() => setPerfilId(null), perfilId !== null);
-  const modalBackdrop = useBackdropClose(fecharModal, modal);
+  const isModalDirty = useMemo(() => {
+    if (!modal) return false;
+    return Boolean(form.exame || form.paciente_id || form.justificativa.trim() || form.observacoes.trim());
+  }, [modal, form.exame, form.paciente_id, form.justificativa, form.observacoes]);
+  const modalBackdrop = useBackdropClose({ onClose: fecharModal, aberto: modal, isDirty: isModalDirty });
 
   // Modo de visualização da fila: por tipo de fila, por especialidade ou simultâneo (ambas)
   const [modoVisualizacao, setModoVisualizacao] = useState<"tipo" | "especialidade" | "ambas">("ambas");
@@ -1773,6 +1777,11 @@ export default function FilaExames() {
                       {tempoEspera(e.data_pedido) ? <span className="font-semibold text-amber-900/80">({tempoEspera(e.data_pedido)})</span> : null}
                     </span>
                     {e.destino && <span className="text-[11px] text-ink/60 truncate max-w-[180px]" title={e.destino}>· {e.destino}</span>}
+                    {(e.criado_por_nome || e.criado_por) && (
+                      <span className="text-[11px] text-ink/65 truncate max-w-[200px]" title={`Inserido por: ${e.criado_por_nome || e.criado_por}`}>
+                        · Por: <strong className="font-semibold text-sus-900">{e.criado_por_nome || e.criado_por}</strong>
+                      </span>
+                    )}
                   </div>
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap">
@@ -2446,14 +2455,22 @@ export default function FilaExames() {
                         : form.medico_id
                     }
                     onChange={(val) => {
+                      let novoMedId = val;
+                      let medObj: Medico | undefined;
                       if (val === GENERICO_UNIDADE) {
-                        setForm({
-                          ...form,
-                          medico_id: medGenerico ? String(medGenerico.id) : GENERICO_UNIDADE,
-                        });
+                        novoMedId = medGenerico ? String(medGenerico.id) : GENERICO_UNIDADE;
+                        medObj = medGenerico;
                       } else {
-                        setForm({ ...form, medico_id: val });
+                        medObj = medicos.find((m) => String(m.id) === String(val));
                       }
+                      const cboMed = (medObj?.cbo_codigo || "").trim();
+                      const espMed = (medObj?.especialidade || (medObj?.especialidades ? medObj.especialidades.split(",")[0].trim() : "") || "").trim();
+                      setForm((prev) => ({
+                        ...prev,
+                        medico_id: novoMedId,
+                        ...(cboMed ? { codigo_especialidade: cboMed } : {}),
+                        ...(espMed ? { nome_especialidade: espMed, especialidade: prev.especialidade || espMed } : {}),
+                      }));
                     }}
                     options={opcoesMedicos}
                     placeholder="Buscar médico requisitante…"
@@ -2757,14 +2774,22 @@ export default function FilaExames() {
                           : form.medico_id
                       }
                       onChange={(val) => {
+                        let novoMedId = val;
+                        let medObj: Medico | undefined;
                         if (val === GENERICO_UNIDADE) {
-                          setForm({
-                            ...form,
-                            medico_id: medGenerico ? String(medGenerico.id) : GENERICO_UNIDADE,
-                          });
+                          novoMedId = medGenerico ? String(medGenerico.id) : GENERICO_UNIDADE;
+                          medObj = medGenerico;
                         } else {
-                          setForm({ ...form, medico_id: val });
+                          medObj = medicos.find((m) => String(m.id) === String(val));
                         }
+                        const cboMed = (medObj?.cbo_codigo || "").trim();
+                        const espMed = (medObj?.especialidade || (medObj?.especialidades ? medObj.especialidades.split(",")[0].trim() : "") || "").trim();
+                        setForm((prev) => ({
+                          ...prev,
+                          medico_id: novoMedId,
+                          ...(cboMed ? { codigo_especialidade: cboMed } : {}),
+                          ...(espMed ? { nome_especialidade: espMed, especialidade: prev.especialidade || espMed } : {}),
+                        }));
                       }}
                       options={opcoesMedicos}
                       placeholder="Buscar médico do agendamento…"
@@ -2997,7 +3022,14 @@ export default function FilaExames() {
                 <p className="mt-2 break-all text-[11px] text-ink/40" title="Registro completo (legado)">{detalhe.exame}</p>
               </div>
               <div className="rounded-2xl border border-teal/25 bg-teal/5 p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-sus-900/60">Médico solicitante / atendente</p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-sus-900/60">Médico solicitante / atendente</p>
+                  {(detalhe.criado_por_nome || detalhe.criado_por) && (
+                    <span className="text-xs text-ink/70">
+                      Inserido na fila por: <b className="text-sus-950 font-bold">{detalhe.criado_por_nome || detalhe.criado_por}</b>
+                    </span>
+                  )}
+                </div>
                 <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2.5 text-xs md:grid-cols-3">
                   <div><dt className="text-ink/45">Nome</dt><dd className="font-semibold">{detalhe.medico_nome || "—"}</dd></div>
                   <div><dt className="text-ink/45">CPF</dt><dd className="font-semibold">{detalhe.medico_cpf || "—"}</dd></div>

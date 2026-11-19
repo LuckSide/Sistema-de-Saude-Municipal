@@ -1357,33 +1357,51 @@ def processar_linhas(
                 if houve_alt_lab:
                     db.add(ja_lab)
             else:
-                obs_psf_lin = (r.get("observacao") or (f"Código Vivver: {r.get('codigo_pedido') or ''}" if r.get("codigo_pedido") else ""))
-                if tag_alerta_inelegivel and tag_alerta_inelegivel not in obs_psf_lin:
-                    obs_psf_lin = f"{tag_alerta_inelegivel} {obs_psf_lin}".strip()
-                ja_lab = FilaPsf(
-                    codigo_solicitacao=gerar_protocolo_lab_aleatorio(data_ref_lab, db=None, usados=codigos_solic_usados),
-                    paciente_id=pac.id,
-                    especialidade=tipo_lab_label,
-                    tipo_fila=tipo_lab_label,
-                    fila_id=fila_id,
-                    unidade_psf=unidade_nome or dest_raw[:120] or tipo_lab_label or "PSF",
-                    unidade_saude_id=unidade_saude_id,
-                    medico_solicitante=(r.get("medico_nome") or "")[:120],
-                    data_solicitacao=data_ref_lab,
-                    data_pedido=data_ped,
-                    data_agendada=dt_agend_lin,
-                    hora_agendada=hora_agend_lin or ("07:00" if dt_agend_lin else ""),
-                    status=status_lab,
-                    prioridade=prioridade_de(r.get("prioridade") or ""),
-                    justificativa=(r.get("justificativa") or "")[:500],
-                    observacoes=obs_psf_lin[:500],
-                    sigtap_ids_json=json.dumps(novos_sigtap_ids),
-                )
-                db.add(ja_lab)
-                filas_psf_cache[chave_fila_ref] = ja_lab
-                if chave_fila_agend:
-                    filas_psf_cache[chave_fila_agend] = ja_lab
-                criou_lab = True
+                # Regra estrita: Exames cancelados ou recepcionados/realizados no Vivver NÃO devem
+                # entrar na fila de espera como pedidos na fila (lab_fila_psf). Eles constam exclusivamente
+                # no histórico do paciente (lab_solic_mestre para realizados / tfd_pacientes_historico para cancelados).
+                if status_lab not in ("realizado", "cancelado"):
+                    obs_psf_lin = (r.get("observacao") or (f"Código Vivver: {r.get('codigo_pedido') or ''}" if r.get("codigo_pedido") else ""))
+                    if tag_alerta_inelegivel and tag_alerta_inelegivel not in obs_psf_lin:
+                        obs_psf_lin = f"{tag_alerta_inelegivel} {obs_psf_lin}".strip()
+                    ja_lab = FilaPsf(
+                        codigo_solicitacao=gerar_protocolo_lab_aleatorio(data_ref_lab, db=None, usados=codigos_solic_usados),
+                        paciente_id=pac.id,
+                        especialidade=tipo_lab_label,
+                        tipo_fila=tipo_lab_label,
+                        fila_id=fila_id,
+                        unidade_psf=unidade_nome or dest_raw[:120] or tipo_lab_label or "PSF",
+                        unidade_saude_id=unidade_saude_id,
+                        medico_solicitante=(r.get("medico_nome") or "")[:120],
+                        data_solicitacao=data_ref_lab,
+                        data_pedido=data_ped,
+                        data_agendada=dt_agend_lin,
+                        hora_agendada=hora_agend_lin or ("07:00" if dt_agend_lin else ""),
+                        status=status_lab,
+                        prioridade=prioridade_de(r.get("prioridade") or ""),
+                        justificativa=(r.get("justificativa") or "")[:500],
+                        observacoes=obs_psf_lin[:500],
+                        sigtap_ids_json=json.dumps(novos_sigtap_ids),
+                    )
+                    db.add(ja_lab)
+                    filas_psf_cache[chave_fila_ref] = ja_lab
+                    if chave_fila_agend:
+                        filas_psf_cache[chave_fila_agend] = ja_lab
+                    criou_lab = True
+                elif status_lab == "cancelado":
+                    cod_ped = (r.get("codigo_pedido") or "").strip()
+                    obs_canc = (r.get("observacao") or "").strip()
+                    db.add(
+                        PacienteHistorico(
+                            paciente_id=pac.id,
+                            tipo_evento="EXAME_LAB_CANCELADO",
+                            motivo=obs_canc[:255] or "Cancelado/Desistência no Vivver",
+                            descricao=f"Solicitação Vivver #{cod_ped} ({tipo_lab_label}) cancelada/desistência: {nomes_desc_lab or exame_nome_ef}."[:500],
+                            origem="importacao_filas",
+                            exames_baixados_qtd=0,
+                            registrado_por="Importador de Filas",
+                        )
+                    )
 
             # Sincronização automática para SolicitacaoMestre (lab_solic_mestre) e ItemSolic (lab_solic_itens)
             deve_criar_solic = (

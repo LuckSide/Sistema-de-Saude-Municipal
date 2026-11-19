@@ -545,6 +545,7 @@ def _init_db_impl() -> None:
         for col, ddl in {
             "cbo_codigo": "VARCHAR(10) DEFAULT '' NOT NULL",
             "cbo_descricao": "VARCHAR(120) DEFAULT '' NOT NULL",
+            "especialidade": "VARCHAR(120) DEFAULT '' NOT NULL",
         }.items():
             if col not in cols_med:
                 try:
@@ -751,6 +752,7 @@ def _init_db_impl() -> None:
             "acompanhante_id": "INTEGER",
             "acompanhante_nome": "VARCHAR(150) DEFAULT '' NOT NULL",
             "acompanhante_cpf": "VARCHAR(14) DEFAULT '' NOT NULL",
+            "criado_por": "VARCHAR(120) DEFAULT '' NOT NULL",
         }.items():
             if col not in cols_vf:
                 try:
@@ -1166,6 +1168,7 @@ def _init_db_impl() -> None:
             "prioridade": "VARCHAR(20) DEFAULT 'rotina' NOT NULL",
             "sigtap_ids_json": "TEXT DEFAULT '[]' NOT NULL",
             "lote_id": "INTEGER NULL",
+            "criado_por": "VARCHAR(120) DEFAULT '' NOT NULL",
         }.items():
             if col not in cols_fila_psf and cols_fila_psf:
                 try:
