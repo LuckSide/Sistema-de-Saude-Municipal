@@ -1088,15 +1088,6 @@ export default function FilaPsf() {
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
-                        </button>
-                        <button
-                          onClick={() => excluir(f.id)}
-                          className="rounded-lg p-1.5 text-red-600 hover:bg-red-50 transition"
-                          title="Remover da fila"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
                     </td>
                   </tr>
                 );
