@@ -607,7 +607,8 @@ def processar_linhas(
     SOLIC_RANK = {"agendado": 1, "coletado": 2, "realizado": 3}
     solic_cache: dict[tuple[int, date], SolicitacaoMestre] = {}
     itens_solic_cache: dict[int, set[int]] = {}
-    filas_psf_cache: dict[tuple, FilaPsf] = {}
+    filas_psf_cache: dict[tuple, FilaPsf | None] = {}
+    exames_fila_cache: dict[tuple, ExameFila | None] = {}
     vagas_afetadas: set[tuple[int, date]] = set()
 
     filas_map: dict[str, TipoFila] = {
@@ -872,6 +873,7 @@ def processar_linhas(
     )
     for p in pacientes_existentes:
         _indexar_paciente_cache(p)
+    ids_pacientes_iniciais: set[int] = {p.id for p in pacientes_existentes if p.id}
 
     for i, bruta in enumerate(linhas, start=2):  # linha 1 = cabeçalho
         r = normalizar_linha(bruta)
@@ -1143,7 +1145,7 @@ def processar_linhas(
             status = "agendado"
             status_lab = "agendado"
             status_solic = "coletado"
-        elif raw_st in ("agendado", "marcado") or (dt_agend_lin is not None and raw_st in ("desconhecido", "")):
+        elif raw_st in ("agendado", "marcado"):
             status = "agendado"
             status_lab = "agendado"
             status_solic = "agendado"
@@ -1155,6 +1157,14 @@ def processar_linhas(
             status = "aguardando"
             status_lab = "na_fila"
             status_solic = None
+
+        data_ped_raw = parse_data(r.get("data_pedido") or "")
+        if not data_ped_raw and dt_agend_lin and status == "aguardando":
+            data_ped = dt_agend_lin
+            dt_agend_lin = None
+            hora_agend_lin = ""
+        else:
+            data_ped = data_ped_raw or dt_agend_lin or date.today()
 
         # Alerta cadastral para pacientes com registro de óbito ou mudança de município
         pac_sit_raw = (getattr(pac, "situacao_cadastral", "") or ("obito" if getattr(pac, "data_obito", None) else "")).lower()
@@ -1182,17 +1192,50 @@ def processar_linhas(
         if (cod and not _eh_placeholder(cod)) or (nproc and not _eh_placeholder(nproc)):
             procs_cat[(cod, (nproc or exame).upper())] = (tipo.upper(), cbo_raw, nome_esp)
 
+        # Resolução de exames individuais de laboratório (se aplicável)
+        procs_resolvidos: list[tuple[SigtapProcedimento, int]] = []
+        if eh_lab:
+            procs_brutos = _extrair_procs_da_linha(r)
+            ids_vistos_linha: set[int] = set()
+            for p_item in procs_brutos:
+                sp_res = _resolver_ou_criar_sigtap(
+                    p_item.get("codigo_procedimento") or "",
+                    p_item.get("nome_procedimento") or "",
+                )
+                if sp_res and sp_res.id and sp_res.id not in ids_vistos_linha:
+                    try:
+                        qtd_item = max(1, int(p_item.get("quantidade", 1)))
+                    except (TypeError, ValueError):
+                        qtd_item = 1
+                    procs_resolvidos.append((sp_res, qtd_item))
+                    ids_vistos_linha.add(sp_res.id)
+                    procs_cat[(sp_res.codigo, sp_res.descricao.upper())] = (tipo.upper(), cbo_raw, nome_esp)
+
+        tipo_lab_label = tipo[:80] or "EXAME_LABORATORIAL"
+        nomes_desc_lab = ", ".join(sp.descricao for sp, _ in procs_resolvidos) if procs_resolvidos else ""
+        exame_nome_ef = (nomes_desc_lab[:120] if nomes_desc_lab else exame)[:120]
+
         # Segregação de filas: exames laboratoriais vão exclusivamente para lab_fila_psf / lab_solic_mestre / lab_solic_itens
         # (evitando cruzamento indevido em tfd_exames_fila). Demais filas continuam em tfd_exames_fila.
         if not eh_lab:
-            ja = db.exec(
-                select(ExameFila).where(
-                    ExameFila.paciente_id == pac.id,
-                    ExameFila.exame == exame,
-                    ExameFila.data_pedido == data_ped,
-                    ExameFila.ativo == True,  # noqa: E712
-                )
-            ).first()
+            ja: ExameFila | None = None
+            chave_ef = (pac.id, exame_nome_ef, data_ped)
+            if pac.id in ids_pacientes_iniciais:
+                if chave_ef in exames_fila_cache:
+                    ja = exames_fila_cache[chave_ef]
+                else:
+                    ja = db.exec(
+                        select(ExameFila).where(
+                            ExameFila.paciente_id == pac.id,
+                            ExameFila.exame == exame_nome_ef,
+                            ExameFila.data_pedido == data_ped,
+                            ExameFila.ativo == True,  # noqa: E712
+                        )
+                    ).first()
+                    exames_fila_cache[chave_ef] = ja
+            else:
+                ja = exames_fila_cache.get(chave_ef)
+
             if ja:
                 houve_alt = False
                 if ja.status != status:
@@ -1221,9 +1264,10 @@ def processar_linhas(
                 obs_tfd_lin = (r.get("observacao") or "")
                 if tag_alerta_inelegivel and tag_alerta_inelegivel not in obs_tfd_lin:
                     obs_tfd_lin = f"{tag_alerta_inelegivel} {obs_tfd_lin}".strip()
-                db.add(ExameFila(
-                    paciente_id=pac.id, exame=exame,
-                    especialidade=tipo[:80], tipo_fila=tipo[:80],
+                novo_ef = ExameFila(
+                    paciente_id=pac.id, exame=exame_nome_ef,
+                    especialidade=tipo[:80],
+                    tipo_fila=tipo[:80],
                     fila_id=fila_id,
                     codigo_procedimento=cod[:20],
                     codigo_especialidade=cbo_raw[:10],
@@ -1239,27 +1283,11 @@ def processar_linhas(
                     codigo_curto=gerar_exame_curto_aleatorio(db=None, usados=codigos_curtos_usados),
                     numero_pedido=gerar_numero_pedido_aleatorio(db=None, usados=numeros_pedido_usados),
                     public_token=secrets.token_urlsafe(24),
-                ))
+                )
+                db.add(novo_ef)
+                exames_fila_cache[chave_ef] = novo_ef
                 exames_novos += 1
         else:
-            # Resolve procedimentos individuais de laboratório via SIGTAP (código -> nome -> criação controlada)
-            procs_brutos = _extrair_procs_da_linha(r)
-            procs_resolvidos: list[tuple[SigtapProcedimento, int]] = []
-            ids_vistos_linha: set[int] = set()
-            for p_item in procs_brutos:
-                sp_res = _resolver_ou_criar_sigtap(
-                    p_item.get("codigo_procedimento") or "",
-                    p_item.get("nome_procedimento") or "",
-                )
-                if sp_res and sp_res.id and sp_res.id not in ids_vistos_linha:
-                    try:
-                        qtd_item = max(1, int(p_item.get("quantidade", 1)))
-                    except (TypeError, ValueError):
-                        qtd_item = 1
-                    procs_resolvidos.append((sp_res, qtd_item))
-                    ids_vistos_linha.add(sp_res.id)
-                    procs_cat[(sp_res.codigo, sp_res.descricao.upper())] = (tipo.upper(), cbo_raw, nome_esp)
-
             novos_sigtap_ids = [sp.id for sp, _ in procs_resolvidos if sp.id]
             data_ref_lab = dt_agend_lin or data_ped
             tipo_lab_label = tipo[:80] or "EXAME_LABORATORIAL"
@@ -1285,15 +1313,15 @@ def processar_linhas(
             if not ja_lab and chave_fila_agend:
                 ja_lab = filas_psf_cache.get(chave_fila_agend)
 
-            if not ja_lab:
-                ja_lab = db.exec(
-                    select(FilaPsf).where(
-                        FilaPsf.paciente_id == pac.id,
-                        cond_data_fila,
-                        or_(*cond_fila_match),
-                    )
-                ).first()
-                if ja_lab:
+            if not ja_lab and pac.id in ids_pacientes_iniciais:
+                if chave_fila_ref not in filas_psf_cache and (not chave_fila_agend or chave_fila_agend not in filas_psf_cache):
+                    ja_lab = db.exec(
+                        select(FilaPsf).where(
+                            FilaPsf.paciente_id == pac.id,
+                            cond_data_fila,
+                            or_(*cond_fila_match),
+                        )
+                    ).first()
                     filas_psf_cache[chave_fila_ref] = ja_lab
                     if chave_fila_agend:
                         filas_psf_cache[chave_fila_agend] = ja_lab
@@ -1352,7 +1380,6 @@ def processar_linhas(
                     sigtap_ids_json=json.dumps(novos_sigtap_ids),
                 )
                 db.add(ja_lab)
-                db.flush()
                 filas_psf_cache[chave_fila_ref] = ja_lab
                 if chave_fila_agend:
                     filas_psf_cache[chave_fila_agend] = ja_lab
@@ -1364,6 +1391,8 @@ def processar_linhas(
                 and (dt_agend_lin is not None or status_solic in ("coletado", "realizado"))
             )
             if deve_criar_solic:
+                if ja_lab and not ja_lab.id:
+                    db.flush()
                 dt_solic_mestre = dt_agend_lin or data_ped
                 if not lab_padrao_cache:
                     lab_p = db.exec(select(Laboratorio).where(Laboratorio.ativo == True)).first()  # noqa: E712
