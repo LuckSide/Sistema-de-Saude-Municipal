@@ -2123,6 +2123,10 @@ export type SolicMestre = {
   tem_laudo?: boolean;
   jejum_horas?: string;
   preparo_instrucoes?: string[];
+  agendado_por?: string;
+  agendado_por_nome?: string;
+  criado_por?: string;
+  criado_por_nome?: string;
   itens: { id: number; solicitacao_id: number; sigtap_id: number; quantidade: number; status_auditoria: string; observacao: string; procedimento_codigo: string; procedimento_descricao: string; codigo: string; descricao: string; conferido: boolean; divergente: boolean }[];
 };
 
@@ -2236,6 +2240,10 @@ export function mapMestre(o: any): SolicMestre {
     tem_laudo: Boolean(o.tem_laudo ?? o.laudo_arquivo_id),
     jejum_horas: o.jejum_horas ?? "8 a 12 horas",
     preparo_instrucoes: o.preparo_instrucoes ?? [],
+    agendado_por: o.agendado_por ?? "",
+    agendado_por_nome: o.agendado_por_nome ?? o.agendado_por ?? "",
+    criado_por: o.criado_por ?? "",
+    criado_por_nome: o.criado_por_nome ?? o.criado_por ?? "",
     itens: (o.itens ?? []).map((it: any) => ({
       id: it.id,
       solicitacao_id: it.solicitacao_id,

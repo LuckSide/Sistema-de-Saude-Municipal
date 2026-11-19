@@ -4,6 +4,7 @@ import { useConfirm } from "../components/ConfirmDialog";
 export interface UseBackdropCloseOptions {
   onClose?: () => void;
   modalAberto?: boolean;
+  aberto?: boolean;
   isDirty?: boolean;
   mensagemDirty?: string;
   fecharComEsc?: boolean;
@@ -34,7 +35,7 @@ export function useBackdropClose(
     onClose = onCloseOrOptions;
   } else if (onCloseOrOptions && typeof onCloseOrOptions === "object") {
     onClose = onCloseOrOptions.onClose;
-    modalAberto = onCloseOrOptions.modalAberto ?? true;
+    modalAberto = onCloseOrOptions.aberto ?? onCloseOrOptions.modalAberto ?? true;
     isDirty = !!onCloseOrOptions.isDirty;
     if (onCloseOrOptions.mensagemDirty) mensagemDirty = onCloseOrOptions.mensagemDirty;
     if (onCloseOrOptions.fecharComEsc !== undefined) fecharComEsc = onCloseOrOptions.fecharComEsc;
