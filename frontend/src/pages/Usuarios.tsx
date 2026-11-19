@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  ClipboardList,
   Copy,
-  ExternalLink,
   KeyRound,
   Link2,
   Pencil,
@@ -25,7 +23,6 @@ import {
   fetchUsuariosResumo,
   labsListar,
   resetSenhaUsuario,
-  tfdPerfilPaciente,
   updateUsuario,
   pagData,
   pagMeta,
@@ -241,24 +238,6 @@ export default function Usuarios() {
     fetchUnidadesSaude().then(setUnidades).catch(() => {});
     labsListar().then(setLabs).catch(() => {});
   }, []);
-
-  // Demanda reprimida da pessoa vinculada (Subagente 2)
-  const [demandaPaciente, setDemandaPaciente] = useState<any[]>([]);
-  const [carregandoDemanda, setCarregandoDemanda] = useState(false);
-
-  useEffect(() => {
-    if (!form.paciente_id) {
-      setDemandaPaciente([]);
-      return;
-    }
-    setCarregandoDemanda(true);
-    tfdPerfilPaciente(Number(form.paciente_id))
-      .then((res) => {
-        setDemandaPaciente(res?.demanda || []);
-      })
-      .catch(() => setDemandaPaciente([]))
-      .finally(() => setCarregandoDemanda(false));
-  }, [form.paciente_id]);
 
   // Debounce na busca e filtros server-side
   useEffect(() => {
@@ -949,57 +928,6 @@ export default function Usuarios() {
                       >
                         Sincronizar nome da conta com "{pacienteVinculado.nome}"
                       </button>
-                    )}
-
-                    {/* Painel de Demanda Reprimida do Paciente (Subagente 2) */}
-                    {form.paciente_id && (
-                      <div className="mt-3 rounded-2xl border border-teal/20 bg-teal/5 p-4 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-xs font-bold uppercase tracking-wide text-teal-950 flex items-center gap-1.5">
-                            <ClipboardList className="h-4 w-4 text-teal" /> Demanda Reprimida do Paciente ({demandaPaciente.length})
-                          </h4>
-                          {carregandoDemanda && (
-                            <span className="text-[10px] text-teal font-semibold animate-pulse">Carregando fila…</span>
-                          )}
-                        </div>
-
-                        {demandaPaciente.length === 0 ? (
-                          <p className="text-xs text-ink/50 bg-white/60 p-3 rounded-xl border border-teal/10">
-                            Nenhuma solicitação aguardando na fila de exames ou consultas para este paciente.
-                          </p>
-                        ) : (
-                          <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                            {demandaPaciente.map((item, idx) => {
-                              const isLab = (item.tipo_fila || "").includes("PSF") || (item.tipo_fila || "").includes("SANGUE");
-                              const linkFila = isLab ? `/lab/fila?q=${item.id}` : `/fila-exames?registro=${item.id}&q=${item.id}`;
-                              return (
-                                <div key={idx} className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-white rounded-xl border border-teal/15 shadow-2xs text-xs">
-                                  <div>
-                                    <p className="font-bold text-sus-950">{item.exame || item.procedimento || "Procedimento"}</p>
-                                    <p className="text-[11px] text-ink/60">
-                                      {item.nome_especialidade || item.especialidade || item.tipo_fila || "Geral"} · Pedido em: {item.data_pedido ? item.data_pedido.split("-").reverse().join("/") : "—"}
-                                    </p>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-700 border border-amber-200">
-                                      {item.status || "aguardando"}
-                                    </span>
-                                    <a
-                                      href={linkFila}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex items-center gap-1 rounded-lg bg-teal text-white px-2.5 py-1 text-xs font-bold hover:bg-teal-700 transition shadow-2xs"
-                                      title="Abrir obrigatoriamente em uma nova aba"
-                                    >
-                                      <ExternalLink className="h-3 w-3" /> Abrir pedido na fila
-                                    </a>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
                     )}
                   </div>
 

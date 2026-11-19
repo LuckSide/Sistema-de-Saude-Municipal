@@ -52,6 +52,7 @@ PAI_DE: dict[str, str] = {
     "cfg_medicos": "integracoes",
     "cfg_unidades": "integracoes",
     "cfg_laboratorios": "integracoes",
+    "cfg_dados": "integracoes",
     "cfg_backup": "integracoes",
     "auditoria": "usuarios",
     "apac_solicitacao": "apac",

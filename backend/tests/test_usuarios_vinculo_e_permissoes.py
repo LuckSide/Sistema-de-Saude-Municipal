@@ -144,6 +144,7 @@ def test_matriz_permissoes_cobre_novas_telas_e_heranca():
         "cfg_medicos",
         "cfg_unidades",
         "cfg_laboratorios",
+        "cfg_dados",
     }
     assert telas_esperadas.issubset(TODAS_TELAS)
 
@@ -157,6 +158,7 @@ def test_matriz_permissoes_cobre_novas_telas_e_heranca():
     assert tem_tela(user_cfg, "cfg_medicos")
     assert tem_tela(user_cfg, "cfg_unidades")
     assert tem_tela(user_cfg, "cfg_laboratorios")
+    assert tem_tela(user_cfg, "cfg_dados")
 
     user_granular = User(username="u_gran", password_hash="x", telas="cfg_whatsapp,cfg_medicos")
     assert tem_tela(user_granular, "cfg_whatsapp")
