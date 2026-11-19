@@ -8,10 +8,13 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import re
 import secrets
 import unicodedata
 from datetime import date, datetime
+
+logger = logging.getLogger(__name__)
 
 from sqlmodel import Session, select
 
@@ -604,6 +607,7 @@ def processar_linhas(
     SOLIC_RANK = {"agendado": 1, "coletado": 2, "realizado": 3}
     solic_cache: dict[tuple[int, date], SolicitacaoMestre] = {}
     itens_solic_cache: dict[int, set[int]] = {}
+    filas_psf_cache: dict[tuple, FilaPsf] = {}
     vagas_afetadas: set[tuple[int, date]] = set()
 
     filas_map: dict[str, TipoFila] = {
@@ -619,10 +623,28 @@ def processar_linhas(
         gerar_prontuario_aleatorio,
         gerar_protocolo_lab_aleatorio,
     )
-    prontuarios_usados: set[str] = set()
-    codigos_curtos_usados: set[str] = set()
-    numeros_pedido_usados: set[str] = set()
-    codigos_solic_usados: set[str] = set()
+    # Pré-carrega identificadores existentes para que a geração aleatória seja O(1) em memória sem queries SQL repetidas
+    prontuarios_usados: set[str] = {
+        str(p).strip()
+        for p in db.exec(select(Paciente.codigo_prontuario).where(Paciente.codigo_prontuario != None)).all()
+        if p and str(p).strip()
+    }
+    codigos_curtos_usados: set[str] = {
+        str(c).strip()
+        for c in db.exec(select(ExameFila.codigo_curto).where(ExameFila.codigo_curto != None)).all()
+        if c and str(c).strip()
+    }
+    numeros_pedido_usados: set[str] = {
+        str(n).strip()
+        for n in db.exec(select(ExameFila.numero_pedido).where(ExameFila.numero_pedido != None)).all()
+        if n and str(n).strip()
+    }
+    codigos_solic_usados: set[str] = {
+        str(s).strip()
+        for s in db.exec(select(SolicitacaoMestre.codigo_solicitacao).where(SolicitacaoMestre.codigo_solicitacao != None)).all()
+        if s and str(s).strip()
+    }
+
     from app.services.pec_sync import (
         limpar_cns as _limpar_cns,
         limpar_cpf as _limpar_cpf,
@@ -641,11 +663,16 @@ def processar_linhas(
         if cfg_pec:
             conectado, dsn = garantir_tunel_db(cfg_pec)
             if conectado and dsn:
-                pec_engine = create_engine(dsn, pool_pre_ping=True, connect_args={"connect_timeout": 4})
-    except Exception:
+                pec_engine = create_engine(dsn, pool_pre_ping=True, pool_size=5, max_overflow=5, connect_args={"connect_timeout": 5})
+    except Exception as err:
+        logger.warning("Falha ao inicializar conexão com e-SUS PEC para importação de filas: %s", err)
         pec_engine = None
 
     pec_cidadao_cols: set[str] | None = None
+    pec_cache_cpf: dict[str, dict | None] = {}
+    pec_cache_cns: dict[str, dict | None] = {}
+    pec_cache_nome_nasc: dict[tuple[str, str], dict | None] = {}
+    pec_cache_nome: dict[str, dict | None] = {}
 
     def _garantir_cols_pec(conn) -> set[str]:
         nonlocal pec_cidadao_cols
@@ -665,8 +692,24 @@ def processar_linhas(
         return pec_cidadao_cols
 
     def _buscar_pec_cidadao(cpf_val: str, cns_val: str, nome_val: str, nasc_val: date | None) -> dict | None:
+        nonlocal pec_engine
         if not pec_engine:
             return None
+
+        # 1. Consulta prévia nos caches em memória para evitar queries repetidas pela rede/túnel
+        if cpf_val and cpf_val in pec_cache_cpf:
+            return pec_cache_cpf[cpf_val]
+        if cns_val and cns_val in pec_cache_cns:
+            return pec_cache_cns[cns_val]
+        nome_u = (nome_val or "").strip().upper()
+        if nome_u and nasc_val:
+            chave_nn = (nome_u, str(nasc_val))
+            if chave_nn in pec_cache_nome_nasc:
+                return pec_cache_nome_nasc[chave_nn]
+        elif nome_u and not nasc_val:
+            if nome_u in pec_cache_nome:
+                return pec_cache_nome[nome_u]
+
         from sqlalchemy import text
         try:
             with pec_engine.connect() as conn:
@@ -687,32 +730,45 @@ def processar_linhas(
                         text(f"SELECT {sel_cols} FROM tb_cidadao WHERE nu_cpf = :cpf LIMIT 1"),
                         {"cpf": cpf_val}
                     ).mappings().first()
-                    if row:
-                        return dict(row)
+                    res = dict(row) if row else None
+                    pec_cache_cpf[cpf_val] = res
+                    if res:
+                        return res
+
                 if cns_val:
                     row = conn.execute(
                         text(f"SELECT {sel_cols} FROM tb_cidadao WHERE nu_cns = :cns LIMIT 1"),
                         {"cns": cns_val}
                     ).mappings().first()
-                    if row:
-                        return dict(row)
-                if nome_val and nasc_val:
+                    res = dict(row) if row else None
+                    pec_cache_cns[cns_val] = res
+                    if res:
+                        return res
+
+                if nome_u and nasc_val:
                     row = conn.execute(
                         text(f"SELECT {sel_cols} FROM tb_cidadao WHERE UPPER(TRIM(no_cidadao)) = :nome AND dt_nascimento = :nasc LIMIT 1"),
-                        {"nome": nome_val.strip().upper(), "nasc": nasc_val}
+                        {"nome": nome_u, "nasc": nasc_val}
                     ).mappings().first()
-                    if row:
-                        return dict(row)
-                if nome_val and not nasc_val:
+                    res = dict(row) if row else None
+                    pec_cache_nome_nasc[(nome_u, str(nasc_val))] = res
+                    if res:
+                        return res
+
+                if nome_u and not nasc_val:
                     filtro_ativo = " AND COALESCE(st_ativo::text, '1') IN ('1', 'true', 't', 'TRUE')" if "st_ativo" in cols else ""
                     rows = conn.execute(
                         text(f"SELECT {sel_cols} FROM tb_cidadao WHERE UPPER(TRIM(no_cidadao)) = :nome{filtro_ativo} LIMIT 2"),
-                        {"nome": nome_val.strip().upper()}
+                        {"nome": nome_u}
                     ).mappings().all()
-                    if len(rows) == 1:
-                        return dict(rows[0])
-        except Exception:
-            pass
+                    res = dict(rows[0]) if len(rows) == 1 else None
+                    pec_cache_nome[nome_u] = res
+                    if res:
+                        return res
+        except Exception as err:
+            logger.warning("Erro/timeout ao consultar e-SUS PEC na importação de filas: %s. Desativando busca PEC para este lote.", err)
+            pec_engine = None
+
         return None
 
     pac_cpf_cache: dict[str, Paciente] = {}
@@ -934,7 +990,7 @@ def processar_linhas(
                         telefone=(pec_cidadao.get("nu_telefone_celular") or r.get("telefone") or "")[:50],
                         co_seq_cidadao_pec=co_seq,
                         situacao_cadastral=sit,
-                        codigo_prontuario=pront_lin or gerar_prontuario_aleatorio(db, usados=prontuarios_usados),
+                        codigo_prontuario=pront_lin or gerar_prontuario_aleatorio(db=None, usados=prontuarios_usados),
                     )
                     db.add(pac)
                     db.flush()
@@ -943,7 +999,7 @@ def processar_linhas(
                     if pac.id:
                         ids_vinculados_pec.add(pac.id)
                     if not getattr(pac, "codigo_prontuario", ""):
-                        pac.codigo_prontuario = pront_lin or gerar_prontuario_aleatorio(db, usados=prontuarios_usados)
+                        pac.codigo_prontuario = pront_lin or gerar_prontuario_aleatorio(db=None, usados=prontuarios_usados)
                         db.add(pac)
                     _indexar_paciente_cache(pac)
             else:
@@ -969,7 +1025,7 @@ def processar_linhas(
                     nome=nome, cpf=cpf, cns=cns,
                     nascimento=nasc_lin,
                     telefone=(r.get("telefone") or "")[:20],
-                    codigo_prontuario=pront_lin or gerar_prontuario_aleatorio(db, usados=prontuarios_usados),
+                    codigo_prontuario=pront_lin or gerar_prontuario_aleatorio(db=None, usados=prontuarios_usados),
                 )
                 db.add(pac)
                 db.flush()
@@ -985,7 +1041,7 @@ def processar_linhas(
                         "motivo": "Paciente não encontrado no banco local nem no e-SUS PEC — criado como novo cadastro local",
                     })
                 if not getattr(pac, "codigo_prontuario", ""):
-                    pac.codigo_prontuario = pront_lin or gerar_prontuario_aleatorio(db, usados=prontuarios_usados)
+                    pac.codigo_prontuario = pront_lin or gerar_prontuario_aleatorio(db=None, usados=prontuarios_usados)
                     db.add(pac)
                 _indexar_paciente_cache(pac)
 
@@ -1141,8 +1197,8 @@ def processar_linhas(
                     unidade_nome=unidade_nome[:150],
                     unidade_cnes=unidade_cnes[:20],
                     observacoes=obs_tfd_lin[:500],
-                    codigo_curto=gerar_exame_curto_aleatorio(db, usados=codigos_curtos_usados),
-                    numero_pedido=gerar_numero_pedido_aleatorio(db, usados=numeros_pedido_usados),
+                    codigo_curto=gerar_exame_curto_aleatorio(db=None, usados=codigos_curtos_usados),
+                    numero_pedido=gerar_numero_pedido_aleatorio(db=None, usados=numeros_pedido_usados),
                     public_token=secrets.token_urlsafe(24),
                 ))
                 exames_novos += 1
@@ -1184,13 +1240,24 @@ def processar_linhas(
             if fila_id is not None:
                 cond_fila_match.insert(0, FilaPsf.fila_id == fila_id)
 
-            ja_lab = db.exec(
-                select(FilaPsf).where(
-                    FilaPsf.paciente_id == pac.id,
-                    cond_data_fila,
-                    or_(*cond_fila_match),
-                )
-            ).first()
+            chave_fila_ref = (pac.id, data_ref_lab, tipo_lab_label)
+            chave_fila_agend = (pac.id, dt_agend_lin, tipo_lab_label) if dt_agend_lin else None
+            ja_lab = filas_psf_cache.get(chave_fila_ref)
+            if not ja_lab and chave_fila_agend:
+                ja_lab = filas_psf_cache.get(chave_fila_agend)
+
+            if not ja_lab:
+                ja_lab = db.exec(
+                    select(FilaPsf).where(
+                        FilaPsf.paciente_id == pac.id,
+                        cond_data_fila,
+                        or_(*cond_fila_match),
+                    )
+                ).first()
+                if ja_lab:
+                    filas_psf_cache[chave_fila_ref] = ja_lab
+                    if chave_fila_agend:
+                        filas_psf_cache[chave_fila_agend] = ja_lab
 
             criou_lab = False
             houve_alt_lab = False
@@ -1227,7 +1294,7 @@ def processar_linhas(
                 if tag_alerta_inelegivel and tag_alerta_inelegivel not in obs_psf_lin:
                     obs_psf_lin = f"{tag_alerta_inelegivel} {obs_psf_lin}".strip()
                 ja_lab = FilaPsf(
-                    codigo_solicitacao=gerar_protocolo_lab_aleatorio(data_ref_lab, db=db, usados=codigos_solic_usados),
+                    codigo_solicitacao=gerar_protocolo_lab_aleatorio(data_ref_lab, db=None, usados=codigos_solic_usados),
                     paciente_id=pac.id,
                     especialidade=tipo_lab_label,
                     tipo_fila=tipo_lab_label,
@@ -1247,6 +1314,9 @@ def processar_linhas(
                 )
                 db.add(ja_lab)
                 db.flush()
+                filas_psf_cache[chave_fila_ref] = ja_lab
+                if chave_fila_agend:
+                    filas_psf_cache[chave_fila_agend] = ja_lab
                 criou_lab = True
 
             # Sincronização automática para SolicitacaoMestre (lab_solic_mestre) e ItemSolic (lab_solic_itens)
@@ -1282,7 +1352,7 @@ def processar_linhas(
                     obs_lab = f"Agendamento Vivver #{cod_ped}" if cod_ped else "Importação XML"
                     cod_solic_lab = (getattr(ja_lab, "codigo_solicitacao", "") or "").strip() if ja_lab else ""
                     if not cod_solic_lab:
-                        cod_solic_lab = gerar_protocolo_lab_aleatorio(dt_solic_mestre, db=db, usados=codigos_solic_usados)
+                        cod_solic_lab = gerar_protocolo_lab_aleatorio(dt_solic_mestre, db=None, usados=codigos_solic_usados)
                     solic_obj = SolicitacaoMestre(
                         codigo_solicitacao=cod_solic_lab,
                         paciente_id=pac.id,
@@ -1407,15 +1477,19 @@ def processar_linhas(
 
     if not simular:
         db.commit()
-        try:
-            from app.services.pec_sync import consolidar_pacientes_duplicados
-            consolidar_pacientes_duplicados(db, remover_inelegiveis_sem_vinculo=False)
-            db.commit()
-        except Exception:
+        # Executa consolidação de duplicados em lotes moderados (<= 500 linhas)
+        # para evitar estourar o timeout HTTP da requisição em arquivos massivos (onde a cascata em memória já deduplica)
+        if len(linhas) <= 500:
             try:
-                db.rollback()
-            except Exception:
-                pass
+                from app.services.pec_sync import consolidar_pacientes_duplicados
+                consolidar_pacientes_duplicados(db, remover_inelegiveis_sem_vinculo=False)
+                db.commit()
+            except Exception as err:
+                logger.warning("Falha ao consolidar pacientes duplicados após importação: %s", err)
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
 
     aviso_criacao = ""
     if pacientes_criados_sem_pec > 0:

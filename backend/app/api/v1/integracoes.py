@@ -3,10 +3,13 @@
 Tudo restrito a superuser com senha OK. Segredos nunca retornam em claro.
 """
 
+import logging
 import os
 import re
 import time
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
@@ -667,10 +670,11 @@ def importar_filas(
             db.commit()
     except HTTPException:
         raise
-    except Exception:
+    except Exception as e:
+        logger.exception("Erro durante importação de filas: %s", e)
         try:
             db.rollback()
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail="Falha ao importar")
+        raise HTTPException(status_code=500, detail=f"Falha ao importar: {str(e)}")
     return {"simulacao": simular, "arquivo": nome[:120], **resumo}
