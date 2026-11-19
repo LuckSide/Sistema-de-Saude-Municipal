@@ -108,6 +108,40 @@ class FilaPsfOut(FilaPsfIn):
     paciente_prontuario: str = ""
     exames_nomes: list[str] = Field(default_factory=list)
     lote_id: int | None = None
+    paciente_situacao_cadastral: str = "ativo"
+    paciente_motivo_situacao: str = ""
+    paciente_obito_ou_mudanca: bool = False
+    alerta_situacao: str = ""
+
+
+class FilaPsfInelegivelItem(BaseModel):
+    id: int
+    codigo_solicitacao: str = ""
+    especialidade: str = ""
+    tipo_fila: str = ""
+    unidade_psf: str = ""
+    paciente_id: int
+    paciente_nome: str = ""
+    paciente_cpf: str = ""
+    data_solicitacao: date | None = None
+    data_pedido: date | None = None
+    situacao_cadastral: str = ""
+    motivo_situacao: str = ""
+    status: str = ""
+    exames_nomes: list[str] = Field(default_factory=list)
+
+
+class AnaliseFilaPsfInelegiveisOut(BaseModel):
+    total_pedidos: int = 0
+    pedidos_obito: int = 0
+    pedidos_mudanca: int = 0
+    pedidos_inativo: int = 0
+    pedidos: list[FilaPsfInelegivelItem] = []
+
+
+class BaixaFilaPsfInelegiveisIn(BaseModel):
+    ids: list[int] | None = None
+    motivo: str | None = None
 
 
 class FilaPsfStatusIn(BaseModel):

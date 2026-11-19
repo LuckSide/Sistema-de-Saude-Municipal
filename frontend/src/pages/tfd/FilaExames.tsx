@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { createPortal } from "react-dom";
-import { AlertTriangle, Building2, Bus, Calendar, CheckCircle2, ClipboardList, Copy, Download, Eye, Layers, MapPin, MessageSquare, Pencil, Plus, Printer, QrCode, RefreshCw, Search, Stethoscope, Trash2, X } from "lucide-react";
+import { AlertTriangle, Building2, Bus, Calendar, CheckCircle2, ClipboardList, Copy, Download, Eye, Layers, MapPin, MessageSquare, Pencil, Plus, Printer, QrCode, RefreshCw, Search, Stethoscope, Trash2, UserX, X } from "lucide-react";
 import {
   tfdAtualizarExame,
   tfdAtualizarExamesLote,
@@ -48,6 +48,7 @@ import ExportarExcel from "../../components/ExportarExcel";
 import PerfilPaciente from "../../components/PerfilPaciente";
 import BotaoWhatsApp from "../../components/BotaoWhatsApp";
 import ComprovanteExameModal from "../../components/ComprovanteExameModal";
+import ModalPedidosInelegiveis from "../../components/ModalPedidosInelegiveis";
 import ModalLeituraRapidaQR from "../../components/ModalLeituraRapidaQR";
 import { useBackdropClose } from "../../hooks/useBackdropClose";
 import { PRIO_ROTULO } from "../../utils/rotulos";
@@ -266,6 +267,7 @@ export default function FilaExames() {
   const [espsCboModal, setEspsCboModal] = useState<{ codigo_cbo: string; nome: string }[]>([]);
   const [pageSize, setPageSize] = useState(100);
   const [modalConfirmacaoLancamento, setModalConfirmacaoLancamento] = useState(false);
+  const [modalInelegiveisAberto, setModalInelegiveisAberto] = useState(false);
   const [modal, setModal] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState(novoForm());
@@ -1277,6 +1279,15 @@ export default function FilaExames() {
           >
             <QrCode className="h-4 w-4" /> Leitura Rápida QR
           </Button>
+          <Button
+            type="button"
+            onClick={() => setModalInelegiveisAberto(true)}
+            className="border border-rose-300 bg-rose-50 text-rose-800 hover:bg-rose-100 text-xs font-bold flex items-center gap-1.5 !h-9 shadow-xs"
+            title="Analisar e dar baixa em pedidos ligados a pacientes com óbito ou mudança"
+          >
+            <UserX className="h-4 w-4 text-rose-600" />
+            <span>Casos Inelegíveis (Óbito/Mudança)</span>
+          </Button>
           <Link to="/tfd/solicitacoes/nova?modo=lote">
             <Button
               type="button"
@@ -1733,6 +1744,15 @@ export default function FilaExames() {
                     >
                       {e.codigo_curto || `EX-${String(e.id).padStart(6, "0")}`}
                     </span>
+                    {e.paciente_obito_ou_mudanca && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded bg-rose-100 text-rose-800 border border-rose-300 px-2 py-0.5 text-[11px] font-bold shadow-xs animate-pulse"
+                        title={e.paciente_motivo_situacao ? `${e.alerta_situacao}: ${e.paciente_motivo_situacao}` : (e.alerta_situacao || "Paciente com pendência cadastral")}
+                      >
+                        <AlertTriangle className="h-3.5 w-3.5 text-rose-600 shrink-0" />
+                        {e.alerta_situacao || "Óbito / Mudança"}
+                      </span>
+                    )}
                   </div>
                   {(e.paciente_endereco || e.paciente_bairro) && (
                     <div
@@ -3197,6 +3217,19 @@ export default function FilaExames() {
             </div>
           </div>
         </div>
+      )}
+
+      {modalInelegiveisAberto && (
+        <ModalPedidosInelegiveis
+          aberto={modalInelegiveisAberto}
+          onClose={() => setModalInelegiveisAberto(false)}
+          onSuccess={() => {
+            setToast("Baixa realizada com sucesso nos pedidos inelegíveis!");
+            carregar(page);
+          }}
+          tipoFila="tfd"
+          titulo="Auditoria & Baixa de Pedidos Inelegíveis (TFD)"
+        />
       )}
     </div>
   );

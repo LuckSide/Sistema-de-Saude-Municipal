@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   Building2,
   Bus,
   Calendar,
@@ -17,6 +18,7 @@ import {
   Stethoscope,
   Trash2,
   User,
+  UserX,
   X,
 } from "lucide-react";
 import {
@@ -50,6 +52,7 @@ import BuscaPacienteAutocomplete from "../../components/BuscaPacienteAutocomplet
 import AlertaPedidoDuplicado from "../../components/AlertaPedidoDuplicado";
 import { useAuth } from "../../hooks/useAuth";
 import { useConfirm } from "../../components/ConfirmDialog";
+import ModalPedidosInelegiveis from "../../components/ModalPedidosInelegiveis";
 
 const MEDICO_GENERICO = "Médico da Unidade / Responsável Técnico";
 
@@ -69,6 +72,7 @@ export default function FilaPsf() {
 
   // Modais
   const [modalAberto, setModalAberto] = useState(false);
+  const [modalInelegiveisAberto, setModalInelegiveisAberto] = useState(false);
   const [itemEditando, setItemEditando] = useState<FilaPsfItem | null>(null);
 
   const [modalLote, setModalLote] = useState(false);
@@ -607,6 +611,17 @@ export default function FilaPsf() {
             }}
           />
 
+          {/* Botão de Análise e Baixa de Inelegíveis (Óbito/Mudança) */}
+          <Button
+            type="button"
+            onClick={() => setModalInelegiveisAberto(true)}
+            className="border border-rose-300 bg-rose-50 text-rose-800 hover:bg-rose-100 shadow-xs text-xs font-bold flex items-center gap-1.5"
+            title="Analisar pedidos vinculados a pacientes falecidos ou com mudança"
+          >
+            <UserX className="h-4 w-4 text-rose-600" />
+            <span>Casos Inelegíveis (Óbito/Mudança)</span>
+          </Button>
+
           {/* Botão de Agendamento em Lote */}
           <Button
             onClick={() => setModalLote(true)}
@@ -947,7 +962,18 @@ export default function FilaPsf() {
                       {fmtData(f.data_pedido || f.data_solicitacao)}
                     </td>
                     <td className="px-4 py-3">
-                      <p className="font-semibold text-sus-950">{f.paciente_nome}</p>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <p className="font-semibold text-sus-950">{f.paciente_nome}</p>
+                        {f.paciente_obito_ou_mudanca && (
+                          <span
+                            className="inline-flex items-center gap-1 rounded bg-rose-100 text-rose-800 border border-rose-300 px-1.5 py-0.5 text-[10px] font-bold shadow-xs animate-pulse"
+                            title={f.paciente_motivo_situacao ? `${f.alerta_situacao}: ${f.paciente_motivo_situacao}` : (f.alerta_situacao || "Paciente com pendência cadastral")}
+                          >
+                            <AlertTriangle className="h-3 w-3 text-rose-600 shrink-0" />
+                            {f.alerta_situacao || "Óbito / Mudança"}
+                          </span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-2 text-xs text-ink/50">
                         {f.paciente_cpf && <span>CPF: {f.paciente_cpf}</span>}
                         {f.paciente_prontuario && <span>Pront.: {f.paciente_prontuario}</span>}
@@ -1544,6 +1570,19 @@ export default function FilaPsf() {
             </div>
           </div>
         </div>
+      )}
+
+      {modalInelegiveisAberto && (
+        <ModalPedidosInelegiveis
+          aberto={modalInelegiveisAberto}
+          onClose={() => setModalInelegiveisAberto(false)}
+          onSuccess={() => {
+            setOk("Baixa realizada com sucesso nas solicitações PSF inelegíveis!");
+            carregar();
+          }}
+          tipoFila="psf"
+          titulo="Auditoria & Baixa de Pedidos Inelegíveis (Fila PSF)"
+        />
       )}
     </div>
   );

@@ -412,3 +412,253 @@ def test_vinculo_pec_prioritario_sem_duplicar_e_aviso_novos_pacientes(db_session
     assert res_criar["avisos_pacientes_novos"][0]["nome"] == "FULANO INEXISTENTE NO PEC"
     assert res_criar["avisos_pacientes_novos"][0]["acao"] == "criado_sem_pec"
     assert len(db_session.exec(select(Paciente)).all()) == 3
+
+
+def test_deduplicacao_robusta_cpf_cns_prontuario_e_nome_sem_duplicar(db_session: Session):
+    """Garante que variações de zeros à esquerda em CPF/CNS/Prontuário e preposições de nomes
+    não geram pacientes duplicados no sistema.
+    """
+    from app.services.importacao_filas import processar_linhas, ler_xml
+
+    p1 = Paciente(
+        nome="SEBASTIAO DA COSTA SANTOS",
+        cpf="00123456789",  # 11 dígitos com 2 zeros à esquerda
+        cns="000123456789012",  # 15 dígitos com 3 zeros
+        codigo_prontuario="004521",
+        nascimento=date(1965, 8, 20),
+        situacao_cadastral="ativo",
+    )
+    p2 = Paciente(
+        nome="MARIA APARECIDA DOS REIS",
+        cpf="98765432100",
+        cns="890123456789012",
+        codigo_prontuario="PR-009876",
+        nascimento=None,  # sem data registrada inicialmente
+        situacao_cadastral="ativo",
+    )
+    db_session.add(p1)
+    db_session.add(p2)
+    db_session.commit()
+    db_session.refresh(p1)
+    db_session.refresh(p2)
+
+    # XML vindo com:
+    # Linha 1: Sebastião com CPF "123456789" (perdeu os dois zeros no Excel), CNS "123456789012", Prontuário "4521"
+    # Linha 2: Maria sem preposição "MARIA APARECIDA REIS" com data de nascimento "1972-03-15" (que preenche o nascimento dela)
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <exames>
+      <exame>
+        <paciente>SEBASTIAO COSTA SANTOS</paciente>
+        <cpf>123456789</cpf>
+        <cns>123456789012</cns>
+        <prontuario>4521</prontuario>
+        <nascimento>1965-08-20</nascimento>
+        <tipo_servico>EXAME DE SANGUE</tipo_servico>
+        <status>aguardando</status>
+        <nome_procedimento>GLICOSE</nome_procedimento>
+      </exame>
+      <exame>
+        <paciente>MARIA APARECIDA REIS</paciente>
+        <cpf>98765432100</cpf>
+        <prontuario>9876</prontuario>
+        <nascimento>1972-03-15</nascimento>
+        <tipo_servico>CARDIOLOGIA</tipo_servico>
+        <status>aguardando</status>
+        <nome_procedimento>CONSULTA EM CARDIOLOGIA</nome_procedimento>
+      </exame>
+    </exames>
+    """.encode("utf-8")
+
+    linhas = ler_xml(xml)
+    res = processar_linhas(linhas, db_session, simular=False, criar_pacientes_novos=True)
+
+    # Nenhum paciente novo deve ser criado: ambos devem ser reutilizados
+    assert res["pacientes_novos"] == 0
+    pacs = db_session.exec(select(Paciente)).all()
+    assert len(pacs) == 2
+
+    # Verifica se os pedidos foram associados aos pacientes existentes
+    fila_psf = db_session.exec(select(FilaPsf)).first()
+    assert fila_psf is not None
+    assert fila_psf.paciente_id == p1.id
+
+    exame_tfd = db_session.exec(select(ExameFila)).first()
+    assert exame_tfd is not None
+    assert exame_tfd.paciente_id == p2.id
+
+    # Maria teve seu nascimento enriquecido sem conflito
+    db_session.refresh(p2)
+    assert p2.nascimento == date(1972, 3, 15)
+
+
+def test_alerta_obito_e_mudanca_nos_pedidos_e_baixa_em_lote(db_session: Session):
+    """Testa identificação de alerta em pedidos de pacientes com óbito ou mudança,
+    além dos endpoints de análise e baixa em lote.
+    """
+    from app.api.v1.tfd import (
+        _com_posicao,
+        analisar_pedidos_inelegiveis_tfd,
+        dar_baixa_pedidos_inelegiveis_tfd,
+    )
+    from app.api.v1.lab_fase6 import (
+        _formatar_fila_out,
+        analisar_pedidos_inelegiveis_psf,
+        dar_baixa_pedidos_inelegiveis_psf,
+    )
+    from app.schemas.tfd import BaixaPedidosInelegiveisIn
+    from app.schemas.lab_fase6 import BaixaFilaPsfInelegiveisIn
+    from app.models.user import User
+
+    usuario_teste = User(
+        username="operador_fila",
+        nome="Operador da Fila",
+        password_hash="hash",
+        ativo=True,
+    )
+    db_session.add(usuario_teste)
+
+    p_obito = Paciente(
+        nome="PACIENTE EM OBITO SILVA",
+        cpf="11122233344",
+        situacao_cadastral="obito",
+        data_obito=date(2026, 1, 10),
+        motivo_situacao="Certidão de óbito nº 123",
+    )
+    p_mudou = Paciente(
+        nome="PACIENTE QUE MUDOU OLIVEIRA",
+        cpf="55566677788",
+        situacao_cadastral="mudanca_municipio",
+        motivo_situacao="Mudou-se para Alfenas/MG",
+    )
+    p_ativo = Paciente(
+        nome="PACIENTE NORMAL ATIVO",
+        cpf="99988877766",
+        situacao_cadastral="ativo",
+    )
+    db_session.add(p_obito)
+    db_session.add(p_mudou)
+    db_session.add(p_ativo)
+    db_session.commit()
+    db_session.refresh(p_obito)
+    db_session.refresh(p_mudou)
+    db_session.refresh(p_ativo)
+
+    # 1. Pedidos na Fila TFD (ExameFila)
+    ex_obito = ExameFila(
+        paciente_id=p_obito.id,
+        exame="TOMOGRAFIA COMPUTADORIZADA",
+        tipo_fila="EXAMES ESPECIAIS",
+        status="aguardando",
+        data_pedido=date(2026, 2, 1),
+        ativo=True,
+    )
+    ex_mudou = ExameFila(
+        paciente_id=p_mudou.id,
+        exame="CONSULTA OFTALMOLOGIA",
+        tipo_fila="CONSULTAS",
+        status="aguardando",
+        data_pedido=date(2026, 2, 2),
+        ativo=True,
+    )
+    ex_ativo = ExameFila(
+        paciente_id=p_ativo.id,
+        exame="ULTRASSONOGRAFIA",
+        tipo_fila="EXAMES",
+        status="aguardando",
+        data_pedido=date(2026, 2, 3),
+        ativo=True,
+    )
+    db_session.add(ex_obito)
+    db_session.add(ex_mudou)
+    db_session.add(ex_ativo)
+
+    # 2. Pedidos na Fila PSF (FilaPsf)
+    fila_obito = FilaPsf(
+        paciente_id=p_obito.id,
+        especialidade="BIOQUIMICA",
+        status="na_fila",
+        data_solicitacao=date(2026, 2, 1),
+        unidade_psf="PSF 1",
+        medico_solicitante="Dr. Teste",
+    )
+    fila_ativo = FilaPsf(
+        paciente_id=p_ativo.id,
+        especialidade="HEMATOLOGIA",
+        status="na_fila",
+        data_solicitacao=date(2026, 2, 3),
+        unidade_psf="PSF 1",
+        medico_solicitante="Dr. Teste",
+    )
+    db_session.add(fila_obito)
+    db_session.add(fila_ativo)
+    db_session.commit()
+
+    # 3. Testa badges e alertas nos schemas de saída
+    out_tfd = _com_posicao(db_session, [ex_obito, ex_mudou, ex_ativo])
+    assert len(out_tfd) == 3
+    # ex_obito
+    assert out_tfd[0].paciente_obito_ou_mudanca is True
+    assert "óbito" in out_tfd[0].alerta_situacao.lower()
+    # ex_mudou
+    assert out_tfd[1].paciente_obito_ou_mudanca is True
+    assert "mudança" in out_tfd[1].alerta_situacao.lower()
+    # ex_ativo
+    assert out_tfd[2].paciente_obito_ou_mudanca is False
+    assert out_tfd[2].alerta_situacao == ""
+
+    out_psf_obito = _formatar_fila_out(fila_obito, p_obito)
+    assert out_psf_obito.paciente_obito_ou_mudanca is True
+    assert "óbito" in out_psf_obito.alerta_situacao.lower()
+
+    out_psf_ativo = _formatar_fila_out(fila_ativo, p_ativo)
+    assert out_psf_ativo.paciente_obito_ou_mudanca is False
+    assert out_psf_ativo.alerta_situacao == ""
+
+    # 4. Testa endpoint de análise de pedidos inelegíveis TFD
+    analise_tfd = analisar_pedidos_inelegiveis_tfd(db=db_session, ator=usuario_teste)
+    assert analise_tfd.total_pedidos == 2
+    assert analise_tfd.pedidos_obito == 1
+    assert analise_tfd.pedidos_mudanca == 1
+    assert analise_tfd.pedidos_inativo == 0
+    ids_analise_tfd = {p.id for p in analise_tfd.pedidos}
+    assert ids_analise_tfd == {ex_obito.id, ex_mudou.id}
+
+    # 5. Executa baixa em lote na fila TFD
+    res_baixa_tfd = dar_baixa_pedidos_inelegiveis_tfd(
+        payload=BaixaPedidosInelegiveisIn(ids=[ex_obito.id, ex_mudou.id]),
+        db=db_session,
+        ator=usuario_teste,
+    )
+    assert res_baixa_tfd["baixados"] == 2
+
+    db_session.refresh(ex_obito)
+    db_session.refresh(ex_mudou)
+    db_session.refresh(ex_ativo)
+    assert ex_obito.status == "cancelado"
+    assert ex_mudou.status == "cancelado"
+    assert ex_ativo.status == "aguardando"  # Permanece ativo intacto!
+
+    # 6. Testa análise e baixa na Fila PSF
+    analise_psf = analisar_pedidos_inelegiveis_psf(db=db_session)
+    assert analise_psf.total_pedidos == 1
+    assert analise_psf.pedidos_obito == 1
+    assert analise_psf.pedidos[0].id == fila_obito.id
+
+    res_baixa_psf = dar_baixa_pedidos_inelegiveis_psf(
+        payload=BaixaFilaPsfInelegiveisIn(ids=[fila_obito.id]),
+        db=db_session,
+        ator=usuario_teste,
+    )
+    assert res_baixa_psf["baixados"] == 1
+
+    db_session.refresh(fila_obito)
+    db_session.refresh(fila_ativo)
+    assert fila_obito.status == "cancelado"
+    assert fila_ativo.status == "na_fila"  # Permanece ativo intacto!
+
+    # 7. Verifica se histórico do paciente foi registrado
+    historico = db_session.exec(
+        select(PacienteHistorico).where(PacienteHistorico.paciente_id == p_obito.id)
+    ).all()
+    assert len(historico) >= 2
+    assert any("BAIXA" in h.tipo_evento for h in historico)

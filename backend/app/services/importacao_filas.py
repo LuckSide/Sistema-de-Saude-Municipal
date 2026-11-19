@@ -416,7 +416,7 @@ def _normalizar_cpf_excel(valor: str, limpar_cpf_fn) -> str:
     c = limpar_cpf_fn(dig)
     if c:
         return c
-    if 9 <= len(dig) <= 10:
+    if 1 <= len(dig) <= 10:
         c_pad = limpar_cpf_fn(dig.zfill(11))
         if c_pad:
             return c_pad
@@ -430,7 +430,7 @@ def _normalizar_cns_excel(raw: str, limpar_cns_fn) -> str:
     c = limpar_cns_fn(dig)
     if c:
         return c
-    if 13 <= len(dig) <= 14:
+    if 1 <= len(dig) <= 14:
         c_pad = limpar_cns_fn(dig.zfill(15))
         if c_pad:
             return c_pad
@@ -731,14 +731,26 @@ def processar_linhas(
         pront_p = (getattr(p, "codigo_prontuario", "") or "").strip()
         if cpf_p:
             pac_cpf_cache.setdefault(cpf_p, p)
+        dig_cpf_p = so_digitos(p.cpf or "")
+        if dig_cpf_p:
+            pac_cpf_cache.setdefault(dig_cpf_p, p)
+            if len(dig_cpf_p) < 11:
+                pac_cpf_cache.setdefault(dig_cpf_p.zfill(11), p)
         if cns_p:
             pac_cns_cache.setdefault(cns_p, p)
+        dig_cns_p = so_digitos(p.cns or "")
+        if dig_cns_p:
+            pac_cns_cache.setdefault(dig_cns_p, p)
+            if len(dig_cns_p) < 15:
+                pac_cns_cache.setdefault(dig_cns_p.zfill(15), p)
         if p.co_seq_cidadao_pec:
             pac_pec_cache.setdefault(p.co_seq_cidadao_pec, p)
         if pront_p:
-            lst = pac_prontuario_cache.setdefault(pront_p, [])
-            if p not in lst:
-                lst.append(p)
+            for pr_var in {pront_p, pront_p.upper(), pront_p.lstrip("0"), so_digitos(pront_p)}:
+                if pr_var:
+                    lst = pac_prontuario_cache.setdefault(pr_var, [])
+                    if p not in lst:
+                        lst.append(p)
         if p.nascimento:
             lst = pac_nasc_cache.setdefault(str(p.nascimento), [])
             if p not in lst:
@@ -818,29 +830,48 @@ def processar_linhas(
 
         pront_lin = (r.get("prontuario") or "").strip()
 
-        # Cascata de busca (SEMPRE tenta todas as etapas com `if not pac:` antes de criar qualquer registro)
+        # Cascata de busca exaustiva (evita qualquer duplicação)
         pac: Paciente | None = None
         if cpf_limpo_lin and cpf_limpo_lin in pac_cpf_cache:
             pac = pac_cpf_cache[cpf_limpo_lin]
+        if not pac:
+            dig_cpf_lin = so_digitos(r.get("cpf") or "")
+            if dig_cpf_lin:
+                if dig_cpf_lin in pac_cpf_cache:
+                    pac = pac_cpf_cache[dig_cpf_lin]
+                elif len(dig_cpf_lin) < 11 and dig_cpf_lin.zfill(11) in pac_cpf_cache:
+                    pac = pac_cpf_cache[dig_cpf_lin.zfill(11)]
         if not pac and cns_limpo_lin and cns_limpo_lin in pac_cns_cache:
             pac = pac_cns_cache[cns_limpo_lin]
-        if not pac and pront_lin and pront_lin in pac_prontuario_cache:
-            # Exige compatibilidade de nome p/ evitar colisão entre prontuário de sistema externo (ex: Vivver) e co_seq do PEC
-            cands_pront = [c for c in pac_prontuario_cache[pront_lin] if _nomes_compativeis(nome, c.nome)]
+        if not pac:
+            dig_cns_lin = so_digitos(r.get("cns") or "")
+            if dig_cns_lin:
+                if dig_cns_lin in pac_cns_cache:
+                    pac = pac_cns_cache[dig_cns_lin]
+                elif len(dig_cns_lin) < 15 and dig_cns_lin.zfill(15) in pac_cns_cache:
+                    pac = pac_cns_cache[dig_cns_lin.zfill(15)]
+        if not pac and pront_lin:
+            cands_pront: list[Paciente] = []
+            for pr_k in {pront_lin, pront_lin.upper(), pront_lin.lstrip("0"), so_digitos(pront_lin)}:
+                if pr_k and pr_k in pac_prontuario_cache:
+                    for cp in pac_prontuario_cache[pr_k]:
+                        if cp not in cands_pront and _nomes_compativeis(nome, cp.nome):
+                            cands_pront.append(cp)
             pac = _escolher_candidato_unico(cands_pront)
         if not pac and n_sp_lin and nasc_lin and (n_sp_lin, str(nasc_lin)) in pac_nn_cache:
             pac = _escolher_candidato_unico(pac_nn_cache[(n_sp_lin, str(nasc_lin))])
         if not pac and nome and nasc_lin:
             cands_nasc = [c for c in pac_nasc_cache.get(str(nasc_lin), []) if _nomes_compativeis(nome, c.nome)]
             pac = _escolher_candidato_unico(cands_nasc)
-        if not pac and n_sp_lin and not nasc_lin:
-            pac = _escolher_candidato_unico(pac_nome_cache.get(n_sp_lin, []))
-        if not pac and n_sp_lin and not nasc_lin:
+        if not pac and n_sp_lin:
+            cands_nome = [c for c in pac_nome_cache.get(n_sp_lin, []) if _sem_conflito_docs(c)]
+            pac = _escolher_candidato_unico(cands_nome)
+        if not pac and n_sp_lin:
             toks_lin = n_sp_lin.split()
             if len(toks_lin) >= 2:
                 cands_compat = [
                     c for c in pac_primeiro_nome_cache.get(toks_lin[0], [])
-                    if _nomes_compativeis(nome, c.nome)
+                    if _nomes_compativeis(nome, c.nome) and _sem_conflito_docs(c)
                 ]
                 pac = _escolher_candidato_unico(cands_compat)
 
@@ -1030,20 +1061,22 @@ def processar_linhas(
             status_lab = "na_fila"
             status_solic = None
 
-        # Baixa automática imediata se o paciente for óbito ou mudança de município no PEC
-        if (getattr(pac, "situacao_cadastral", "") or "").lower() in ("obito", "mudanca_municipio"):
-            status = "cancelado"
-            status_lab = "cancelado"
-            status_solic = "cancelado"
+        # Alerta cadastral para pacientes com registro de óbito ou mudança de município
+        pac_sit_raw = (getattr(pac, "situacao_cadastral", "") or ("obito" if getattr(pac, "data_obito", None) else "")).lower()
+        eh_inelegivel = pac_sit_raw in ("obito", "mudanca_municipio", "inativo") or bool(getattr(pac, "data_obito", None))
+        tag_alerta_inelegivel = ""
+        if eh_inelegivel:
+            label_inelegivel = "ÓBITO" if (pac_sit_raw == "obito" or getattr(pac, "data_obito", None)) else ("MUDANÇA DE MUNICÍPIO" if pac_sit_raw == "mudanca_municipio" else "INATIVO")
+            tag_alerta_inelegivel = f"[ALERTA CADASTRAL: Paciente com registro de {label_inelegivel}]"
             db.add(
                 PacienteHistorico(
                     paciente_id=pac.id,
-                    tipo_evento=f"BAIXA_{(pac.situacao_cadastral or 'INATIVO').upper()}",
-                    motivo=f"Baixa automática na importação de fila devido a registro de {pac.situacao_cadastral} no e-SUS PEC",
-                    descricao=f"Solicitação do exame '{exame}' arquivada automaticamente na carga de fila.",
+                    tipo_evento=f"ALERTA_{label_inelegivel.replace(' ', '_')}",
+                    motivo=f"Alerta na importação de fila: paciente em {label_inelegivel.lower()}",
+                    descricao=f"Solicitação do exame '{exame}' carregada na fila com alerta de pendência cadastral ({label_inelegivel}).",
                     origem="importacao_filas",
-                    exames_baixados_qtd=1,
-                    registrado_por="Sistema e-SUS PEC Sync",
+                    exames_baixados_qtd=0,
+                    registrado_por="Importador de Filas",
                 )
             )
 
@@ -1081,12 +1114,18 @@ def processar_linhas(
                     ja.unidade_nome = unidade_nome
                     ja.unidade_cnes = unidade_cnes
                     houve_alt = True
+                if tag_alerta_inelegivel and tag_alerta_inelegivel not in (ja.observacoes or ""):
+                    ja.observacoes = f"{tag_alerta_inelegivel} {ja.observacoes or ''}".strip()[:500]
+                    houve_alt = True
                 if houve_alt:
                     db.add(ja)
                     atualizados += 1
                 else:
                     duplicados += 1
             else:
+                obs_tfd_lin = (r.get("observacao") or "")
+                if tag_alerta_inelegivel and tag_alerta_inelegivel not in obs_tfd_lin:
+                    obs_tfd_lin = f"{tag_alerta_inelegivel} {obs_tfd_lin}".strip()
                 db.add(ExameFila(
                     paciente_id=pac.id, exame=exame,
                     especialidade=tipo[:80], tipo_fila=tipo[:80],
@@ -1101,7 +1140,7 @@ def processar_linhas(
                     unidade_saude_id=unidade_saude_id,
                     unidade_nome=unidade_nome[:150],
                     unidade_cnes=unidade_cnes[:20],
-                    observacoes=(r.get("observacao") or "")[:500],
+                    observacoes=obs_tfd_lin[:500],
                     codigo_curto=gerar_exame_curto_aleatorio(db, usados=codigos_curtos_usados),
                     numero_pedido=gerar_numero_pedido_aleatorio(db, usados=numeros_pedido_usados),
                     public_token=secrets.token_urlsafe(24),
@@ -1178,9 +1217,15 @@ def processar_linhas(
                     ja_lab.data_agendada = dt_agend_lin
                     ja_lab.hora_agendada = hora_agend_lin or "07:00"
                     houve_alt_lab = True
+                if tag_alerta_inelegivel and tag_alerta_inelegivel not in (ja_lab.observacoes or ""):
+                    ja_lab.observacoes = f"{tag_alerta_inelegivel} {ja_lab.observacoes or ''}".strip()[:500]
+                    houve_alt_lab = True
                 if houve_alt_lab:
                     db.add(ja_lab)
             else:
+                obs_psf_lin = (r.get("observacao") or (f"Código Vivver: {r.get('codigo_pedido') or ''}" if r.get("codigo_pedido") else ""))
+                if tag_alerta_inelegivel and tag_alerta_inelegivel not in obs_psf_lin:
+                    obs_psf_lin = f"{tag_alerta_inelegivel} {obs_psf_lin}".strip()
                 ja_lab = FilaPsf(
                     codigo_solicitacao=gerar_protocolo_lab_aleatorio(data_ref_lab, db=db, usados=codigos_solic_usados),
                     paciente_id=pac.id,
@@ -1197,7 +1242,7 @@ def processar_linhas(
                     status=status_lab,
                     prioridade=prioridade_de(r.get("prioridade") or ""),
                     justificativa=(r.get("justificativa") or "")[:500],
-                    observacoes=(r.get("observacao") or (f"Código Vivver: {r.get('codigo_pedido') or ''}" if r.get("codigo_pedido") else ""))[:500],
+                    observacoes=obs_psf_lin[:500],
                     sigtap_ids_json=json.dumps(novos_sigtap_ids),
                 )
                 db.add(ja_lab)

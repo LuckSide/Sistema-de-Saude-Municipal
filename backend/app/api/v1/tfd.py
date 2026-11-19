@@ -28,6 +28,9 @@ from app.models.tfd import (
 from app.models.user import User
 from app.core.pagination import Pagina, paginar
 from app.schemas.tfd import (
+    AnalisePedidosInelegiveisOut,
+    BaixaPedidosInelegiveisIn,
+    PedidoInelegivelItem,
     DemandaItemOut,
     DestinoIn,
     DestinoOut,
@@ -2349,6 +2352,24 @@ def _com_posicao(
         if not dump.get("codigo_curto") and e.id:
             dump["codigo_curto"] = gerar_exame_curto_aleatorio(None, e.id)
 
+        sit_cad = (getattr(pac, "situacao_cadastral", None) or ("obito" if getattr(pac, "data_obito", None) else "ativo")).strip().lower()
+        mot_cad = getattr(pac, "motivo_situacao", "") or ""
+        eh_obito_ou_mudanca = bool(
+            sit_cad in ("obito", "mudanca_municipio", "inativo")
+            or getattr(pac, "data_obito", None)
+            or ("obito" in mot_cad.lower() or "faleceu" in mot_cad.lower() or "mudan" in mot_cad.lower())
+        )
+        alerta_sit = ""
+        if eh_obito_ou_mudanca:
+            if sit_cad == "obito" or getattr(pac, "data_obito", None) or "obito" in mot_cad.lower() or "faleceu" in mot_cad.lower():
+                alerta_sit = "Paciente em óbito"
+            elif sit_cad == "mudanca_municipio" or "mudan" in mot_cad.lower():
+                alerta_sit = "Mudança de município"
+            elif sit_cad == "inativo":
+                alerta_sit = "Cadastro inativo"
+            else:
+                alerta_sit = "Inelegível"
+
         out.append(
             ExameOut(
                 **dump,
@@ -2362,6 +2383,10 @@ def _com_posicao(
                 paciente_telefone=pac.telefone if pac else "",
                 paciente_cns=pac.cns if pac else "",
                 paciente_nascimento=pac.nascimento if pac else None,
+                paciente_situacao_cadastral=sit_cad,
+                paciente_motivo_situacao=mot_cad,
+                paciente_obito_ou_mudanca=eh_obito_ou_mudanca,
+                alerta_situacao=alerta_sit,
                 posicao=pos_leg,
                 total_fila=tot_leg if tot_leg is not None else total_geral,
                 grupo_fila=rot_leg or "",
@@ -3715,6 +3740,152 @@ def atualizar_exames_lote(
         except Exception:
             pass
     return ExameLoteOut(atualizados=n, nao_encontrados=faltando)
+
+
+# ---------- Pedidos Inelegíveis da Fila (Óbito / Mudança de Município / Inativo) ----------
+@router.get("/exames/pedidos-inelegiveis/analise", response_model=AnalisePedidosInelegiveisOut)
+def analisar_pedidos_inelegiveis_tfd(
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("tfd_exames", "tfd", "tfd_medico")),
+):
+    """Analisa pedidos ativos na fila de regulação (TFD) vinculados a pacientes com óbito, mudança ou inativos."""
+    query = (
+        select(ExameFila, Paciente)
+        .join(Paciente, ExameFila.paciente_id == Paciente.id)
+        .where(
+            ExameFila.ativo == True,  # noqa: E712
+            ExameFila.status.in_(["aguardando", "agendado", "pendente"]),
+            or_(
+                Paciente.situacao_cadastral.in_(["obito", "mudanca_municipio", "inativo"]),
+                Paciente.data_obito.isnot(None),
+                Paciente.motivo_situacao.ilike("%obito%"),
+                Paciente.motivo_situacao.ilike("%faleceu%"),
+                Paciente.motivo_situacao.ilike("%mudan%"),
+            ),
+        )
+        .order_by(ExameFila.data_pedido.desc(), ExameFila.id.desc())
+    )
+    rows = db.exec(query).all()
+    itens_out: list[PedidoInelegivelItem] = []
+    tot_obito = tot_mudanca = tot_inativo = 0
+
+    for exame_fila, pac in rows:
+        sit = (pac.situacao_cadastral or ("obito" if pac.data_obito else "ativo")).strip().lower()
+        mot = pac.motivo_situacao or ""
+        if sit == "obito" or pac.data_obito or "obito" in mot.lower() or "faleceu" in mot.lower():
+            tot_obito += 1
+            sit_label = "obito"
+        elif sit == "mudanca_municipio" or "mudan" in mot.lower():
+            tot_mudanca += 1
+            sit_label = "mudanca_municipio"
+        elif sit == "inativo":
+            tot_inativo += 1
+            sit_label = "inativo"
+        else:
+            sit_label = sit
+
+        codigo_c = exame_fila.codigo_curto or f"EX-{exame_fila.id:06d}"
+        itens_out.append(
+            PedidoInelegivelItem(
+                id=exame_fila.id,
+                codigo_curto=codigo_c,
+                exame=exame_fila.exame or "",
+                tipo_fila=exame_fila.tipo_fila or "",
+                especialidade=exame_fila.especialidade or exame_fila.nome_especialidade or "",
+                paciente_id=pac.id,
+                paciente_nome=pac.nome,
+                paciente_cpf=pac.cpf or "",
+                data_pedido=exame_fila.data_pedido,
+                situacao_cadastral=sit_label,
+                motivo_situacao=mot,
+                status=exame_fila.status,
+            )
+        )
+
+    return AnalisePedidosInelegiveisOut(
+        total_pedidos=len(itens_out),
+        pedidos_obito=tot_obito,
+        pedidos_mudanca=tot_mudanca,
+        pedidos_inativo=tot_inativo,
+        pedidos=itens_out,
+    )
+
+
+@router.post("/exames/pedidos-inelegiveis/dar-baixa", response_model=dict)
+def dar_baixa_pedidos_inelegiveis_tfd(
+    payload: BaixaPedidosInelegiveisIn,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("tfd_exames", "tfd")),
+):
+    """Executa a baixa (cancelamento com histórico) de pedidos de pacientes inelegíveis (óbito/mudança)."""
+    conds = [
+        ExameFila.ativo == True,  # noqa: E712
+        ExameFila.status.in_(["aguardando", "agendado", "pendente"]),
+        or_(
+            Paciente.situacao_cadastral.in_(["obito", "mudanca_municipio", "inativo"]),
+            Paciente.data_obito.isnot(None),
+            Paciente.motivo_situacao.ilike("%obito%"),
+            Paciente.motivo_situacao.ilike("%faleceu%"),
+            Paciente.motivo_situacao.ilike("%mudan%"),
+        ),
+    ]
+    if payload.ids:
+        conds.append(ExameFila.id.in_(payload.ids))
+
+    query = select(ExameFila, Paciente).join(Paciente, ExameFila.paciente_id == Paciente.id).where(*conds)
+    rows = db.exec(query).all()
+
+    if not rows:
+        return {"baixados": 0, "mensagem": "Nenhum pedido inelegível encontrado para baixa."}
+
+    baixados = 0
+    pacs_afetados: dict[int, list[ExameFila]] = {}
+
+    for exame_fila, pac in rows:
+        sit = (pac.situacao_cadastral or ("obito" if pac.data_obito else "inativo")).strip().lower()
+        exame_fila.status = "cancelado"
+        motivo_txt = payload.motivo or f"Baixa cadastral: paciente em {sit.upper()} no cadastro/PEC"
+        obs_atual = exame_fila.observacoes or ""
+        exame_fila.observacoes = (f"{obs_atual} | {motivo_txt}").strip(" | ")[:500]
+        exame_fila.justificativa = motivo_txt[:500]
+        db.add(exame_fila)
+        pacs_afetados.setdefault(pac.id, []).append(exame_fila)
+        baixados += 1
+
+    # Registra histórico formal
+    for pac_id, lista_ex in pacs_afetados.items():
+        pac_obj = db.get(Paciente, pac_id)
+        sit_p = (pac_obj.situacao_cadastral if pac_obj else "INELEGIVEL") or "INELEGIVEL"
+        db.add(
+            PacienteHistorico(
+                paciente_id=pac_id,
+                tipo_evento=f"BAIXA_{sit_p.upper()}",
+                motivo=f"Baixa em lote na fila TFD: paciente em {sit_p}",
+                descricao=f"{len(lista_ex)} pedido(s) cancelado(s) na fila por inelegibilidade cadastral.",
+                origem="fila_tfd",
+                exames_baixados_qtd=len(lista_ex),
+                exames_baixados_ids=",".join(str(e.id) for e in lista_ex)[:500],
+                registrado_por=getattr(ator, "nome", "") or getattr(ator, "username", "Sistema"),
+            )
+        )
+
+    db.commit()
+
+    # Consolida duplicados conforme a diretriz: "lembrando que o paciente ser unificado não é um problema"
+    try:
+        from app.services.pec_sync import consolidar_pacientes_duplicados
+        consolidar_pacientes_duplicados(db, remover_inelegiveis_sem_vinculo=False)
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+    return {
+        "baixados": baixados,
+        "mensagem": f"Baixa realizada com sucesso em {baixados} pedido(s) com pendência cadastral.",
+    }
 
 
 # ---------- Catálogo de procedimentos (códigos curtos + dinâmico + SIGTAP estruturado) ----------

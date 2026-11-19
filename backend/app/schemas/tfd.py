@@ -480,6 +480,39 @@ class ExameOut(ExameBase):
     unidade_bairro: str = ""
     unidade_municipio: str = ""
     unidade_cep: str = ""
+    # Alerta de situação cadastral do paciente (óbito, mudança, inativo)
+    paciente_situacao_cadastral: str = "ativo"
+    paciente_motivo_situacao: str = ""
+    paciente_obito_ou_mudanca: bool = False
+    alerta_situacao: str = ""
+
+
+class PedidoInelegivelItem(BaseModel):
+    id: int
+    codigo_curto: str = ""
+    exame: str = ""
+    tipo_fila: str = ""
+    especialidade: str = ""
+    paciente_id: int
+    paciente_nome: str = ""
+    paciente_cpf: str = ""
+    data_pedido: date | None = None
+    situacao_cadastral: str = ""
+    motivo_situacao: str = ""
+    status: str = ""
+
+
+class AnalisePedidosInelegiveisOut(BaseModel):
+    total_pedidos: int = 0
+    pedidos_obito: int = 0
+    pedidos_mudanca: int = 0
+    pedidos_inativo: int = 0
+    pedidos: list[PedidoInelegivelItem] = []
+
+
+class BaixaPedidosInelegiveisIn(BaseModel):
+    ids: list[int] | None = None
+    motivo: str | None = None
 
 
 class ExameLoteCriarItemIn(BaseModel):

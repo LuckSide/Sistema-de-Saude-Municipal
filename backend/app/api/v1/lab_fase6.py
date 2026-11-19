@@ -19,16 +19,20 @@ from app.models.lab_fase6 import (
     SolicitacaoMestre,
     VagaLab,
 )
-from app.models.tfd import Paciente
+from app.models.tfd import Paciente, PacienteHistorico
+from app.models.user import User
 from app.services.geradores import gerar_prontuario_aleatorio
 from app.services.tfd import coluna_sem_acento, remover_acentos
 from app.core.pagination import Pagina, paginar
 from app.schemas.lab_fase6 import (
+    AnaliseFilaPsfInelegiveisOut,
     AuditoriaIn,
+    BaixaFilaPsfInelegiveisIn,
     BpaResumoOut,
     ComprovanteExameOut,
     FilaPsfAgendarLoteIn,
     FilaPsfIn,
+    FilaPsfInelegivelItem,
     FilaPsfOut,
     FilaPsfStatusIn,
     FilaPsfUpdateIn,
@@ -625,12 +629,31 @@ def _formatar_fila_out(
         nomes = [sigtap_nomes_map[sid] for sid in sids if sid in sigtap_nomes_map]
 
     prontuario = getattr(pac, "codigo_prontuario", "") or (gerar_prontuario_aleatorio(pac_id=pac.id) if pac and pac.id else "")
+
+    sit_cad = (getattr(pac, "situacao_cadastral", None) or ("obito" if getattr(pac, "data_obito", None) else "ativo")).strip().lower()
+    mot_cad = getattr(pac, "motivo_situacao", "") or ""
+    eh_obito_ou_mudanca = bool(
+        sit_cad in ("obito", "mudanca_municipio", "inativo")
+        or getattr(pac, "data_obito", None)
+        or ("obito" in mot_cad.lower() or "faleceu" in mot_cad.lower() or "mudan" in mot_cad.lower())
+    )
+    alerta_sit = ""
+    if eh_obito_ou_mudanca:
+        if sit_cad == "obito" or getattr(pac, "data_obito", None) or "obito" in mot_cad.lower() or "faleceu" in mot_cad.lower():
+            alerta_sit = "Paciente em óbito"
+        elif sit_cad == "mudanca_municipio" or "mudan" in mot_cad.lower():
+            alerta_sit = "Mudança de município"
+        elif sit_cad == "inativo":
+            alerta_sit = "Cadastro inativo"
+        else:
+            alerta_sit = "Inelegível"
+
     return FilaPsfOut(
         id=o.id,
         paciente_id=o.paciente_id,
         especialidade=getattr(o, "especialidade", "") or "",
-        unidade_psf=o.unidade_psf,
-        medico_solicitante=o.medico_solicitante,
+        unidade_psf=o.unidade_psf or "PSF",
+        medico_solicitante=o.medico_solicitante or "Médico Solicitante",
         data_solicitacao=o.data_solicitacao,
         data_pedido=o.data_pedido or o.data_solicitacao,
         justificativa=o.justificativa,
@@ -643,6 +666,10 @@ def _formatar_fila_out(
         paciente_cpf=getattr(pac, "cpf", "") or "",
         paciente_cns=getattr(pac, "cns", "") or "",
         paciente_prontuario=prontuario,
+        paciente_situacao_cadastral=sit_cad,
+        paciente_motivo_situacao=mot_cad,
+        paciente_obito_ou_mudanca=eh_obito_ou_mudanca,
+        alerta_situacao=alerta_sit,
         fila_id=getattr(o, "fila_id", None),
         tipo_fila=getattr(o, "tipo_fila", "") or getattr(o, "especialidade", ""),
         unidade_saude_id=getattr(o, "unidade_saude_id", None),
@@ -963,6 +990,178 @@ def agendar_fila_lote(
         "ok": True,
         "total_agendados": len(solicitacoes),
         "solicitacoes_ids": [s.id for s in solicitacoes],
+    }
+
+
+# ---------- Pedidos Inelegíveis da Fila PSF (Óbito / Mudança de Município / Inativo) ----------
+@router.get("/exames/fila-psf/pedidos-inelegiveis/analise", response_model=AnaliseFilaPsfInelegiveisOut)
+def analisar_pedidos_inelegiveis_psf(
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_fila", "lab_agenda", "lab_marcacao")),
+):
+    """Analisa pedidos ativos na fila PSF (Laboratório) vinculados a pacientes com óbito, mudança ou inativos."""
+    query = (
+        select(FilaPsf, Paciente)
+        .join(Paciente, FilaPsf.paciente_id == Paciente.id)
+        .where(
+            FilaPsf.status.in_(["na_fila", "aguardando", "agendado"]),
+            or_(
+                Paciente.situacao_cadastral.in_(["obito", "mudanca_municipio", "inativo"]),
+                Paciente.data_obito.isnot(None),
+                Paciente.motivo_situacao.ilike("%obito%"),
+                Paciente.motivo_situacao.ilike("%faleceu%"),
+                Paciente.motivo_situacao.ilike("%mudan%"),
+            ),
+        )
+        .order_by(FilaPsf.data_solicitacao.desc(), FilaPsf.id.desc())
+    )
+    rows = db.exec(query).all()
+    itens_out: list[FilaPsfInelegivelItem] = []
+    tot_obito = tot_mudanca = tot_inativo = 0
+
+    all_sids: set[int] = set()
+    for f_obj, _ in rows:
+        all_sids.update(_extrair_sigtap_ids_fila(f_obj))
+    sigtap_nomes_map: dict[int, str] = {}
+    if all_sids:
+        for sp_id, sp_desc in db.exec(
+            select(SigtapProcedimento.id, SigtapProcedimento.descricao).where(
+                SigtapProcedimento.id.in_(all_sids)
+            )
+        ).all():
+            if sp_id is not None:
+                sigtap_nomes_map[int(sp_id)] = sp_desc or ""
+
+    for f_obj, pac in rows:
+        sit = (pac.situacao_cadastral or ("obito" if pac.data_obito else "ativo")).strip().lower()
+        mot = pac.motivo_situacao or ""
+        if sit == "obito" or pac.data_obito or "obito" in mot.lower() or "faleceu" in mot.lower():
+            tot_obito += 1
+            sit_label = "obito"
+        elif sit == "mudanca_municipio" or "mudan" in mot.lower():
+            tot_mudanca += 1
+            sit_label = "mudanca_municipio"
+        elif sit == "inativo":
+            tot_inativo += 1
+            sit_label = "inativo"
+        else:
+            sit_label = sit
+
+        sids = _extrair_sigtap_ids_fila(f_obj)
+        nomes = [sigtap_nomes_map[sid] for sid in sids if sid in sigtap_nomes_map]
+
+        itens_out.append(
+            FilaPsfInelegivelItem(
+                id=f_obj.id,
+                codigo_solicitacao=getattr(f_obj, "codigo_solicitacao", "") or "",
+                especialidade=f_obj.especialidade or "",
+                tipo_fila=getattr(f_obj, "tipo_fila", "") or "",
+                unidade_psf=f_obj.unidade_psf or "",
+                paciente_id=pac.id,
+                paciente_nome=pac.nome,
+                paciente_cpf=pac.cpf or "",
+                data_solicitacao=f_obj.data_solicitacao,
+                data_pedido=f_obj.data_pedido,
+                situacao_cadastral=sit_label,
+                motivo_situacao=mot,
+                status=f_obj.status,
+                exames_nomes=nomes,
+            )
+        )
+
+    return AnaliseFilaPsfInelegiveisOut(
+        total_pedidos=len(itens_out),
+        pedidos_obito=tot_obito,
+        pedidos_mudanca=tot_mudanca,
+        pedidos_inativo=tot_inativo,
+        pedidos=itens_out,
+    )
+
+
+@router.post("/exames/fila-psf/pedidos-inelegiveis/dar-baixa", response_model=dict)
+def dar_baixa_pedidos_inelegiveis_psf(
+    payload: BaixaFilaPsfInelegiveisIn,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("lab_fila", "lab_agenda")),
+):
+    """Executa a baixa (cancelamento com histórico) de pedidos de pacientes inelegíveis da fila PSF."""
+    conds = [
+        FilaPsf.status.in_(["na_fila", "aguardando", "agendado"]),
+        or_(
+            Paciente.situacao_cadastral.in_(["obito", "mudanca_municipio", "inativo"]),
+            Paciente.data_obito.isnot(None),
+            Paciente.motivo_situacao.ilike("%obito%"),
+            Paciente.motivo_situacao.ilike("%faleceu%"),
+            Paciente.motivo_situacao.ilike("%mudan%"),
+        ),
+    ]
+    if payload.ids:
+        conds.append(FilaPsf.id.in_(payload.ids))
+
+    query = select(FilaPsf, Paciente).join(Paciente, FilaPsf.paciente_id == Paciente.id).where(*conds)
+    rows = db.exec(query).all()
+
+    if not rows:
+        return {"baixados": 0, "mensagem": "Nenhum pedido inelegível encontrado na Fila PSF."}
+
+    baixados = 0
+    pacs_afetados: dict[int, list[FilaPsf]] = {}
+
+    for f_obj, pac in rows:
+        sit = (pac.situacao_cadastral or ("obito" if pac.data_obito else "inativo")).strip().lower()
+        f_obj.status = "cancelado"
+        motivo_txt = payload.motivo or f"Baixa cadastral PSF: paciente em {sit.upper()} no cadastro/PEC"
+        f_obj.justificativa = motivo_txt[:500]
+        obs_atual = f_obj.observacoes or ""
+        f_obj.observacoes = (f"{obs_atual} | {motivo_txt}").strip(" | ")[:500]
+        db.add(f_obj)
+
+        # Se houver solicitação mestre vinculada ainda pendente/agendada, cancela também
+        solics = db.exec(
+            select(SolicitacaoMestre).where(
+                SolicitacaoMestre.origem_fila_id == f_obj.id,
+                SolicitacaoMestre.status != "realizado",
+            )
+        ).all()
+        for sm in solics:
+            sm.status = "cancelado"
+            sm.observacao_laboratorio = f"{sm.observacao_laboratorio or ''} | {motivo_txt}".strip(" | ")[:500]
+            db.add(sm)
+
+        pacs_afetados.setdefault(pac.id, []).append(f_obj)
+        baixados += 1
+
+    for pac_id, lista_psf in pacs_afetados.items():
+        pac_obj = db.get(Paciente, pac_id)
+        sit_p = (pac_obj.situacao_cadastral if pac_obj else "INELEGIVEL") or "INELEGIVEL"
+        db.add(
+            PacienteHistorico(
+                paciente_id=pac_id,
+                tipo_evento=f"BAIXA_{sit_p.upper()}",
+                motivo=f"Baixa em lote na fila PSF: paciente em {sit_p}",
+                descricao=f"{len(lista_psf)} solicitação(ões) de exame PSF cancelada(s) por inelegibilidade cadastral.",
+                origem="fila_psf",
+                exames_baixados_qtd=len(lista_psf),
+                exames_baixados_ids=",".join(str(f.id) for f in lista_psf)[:500],
+                registrado_por=getattr(ator, "nome", "") or getattr(ator, "username", "Sistema"),
+            )
+        )
+
+    db.commit()
+
+    try:
+        from app.services.pec_sync import consolidar_pacientes_duplicados
+        consolidar_pacientes_duplicados(db, remover_inelegiveis_sem_vinculo=False)
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+    return {
+        "baixados": baixados,
+        "mensagem": f"Baixa realizada com sucesso em {baixados} solicitação(ões) PSF com pendência cadastral.",
     }
 
 

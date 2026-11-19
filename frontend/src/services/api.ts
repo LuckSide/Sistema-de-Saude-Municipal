@@ -930,6 +930,10 @@ export type Exame = {
   unidade_bairro?: string;
   unidade_municipio?: string;
   unidade_cep?: string;
+  paciente_situacao_cadastral?: string;
+  paciente_motivo_situacao?: string;
+  paciente_obito_ou_mudanca?: boolean;
+  alerta_situacao?: string;
 };
 
 export type ExamePublico = {
@@ -1245,6 +1249,39 @@ export type ExameLotePayload = {
 };
 export const tfdAtualizarExamesLote = (p: ExameLotePayload) =>
   api.put<{ atualizados: number; nao_encontrados: number[] }>("/api/tfd/exames/lote", p).then((r) => r.data);
+
+export type PedidoInelegivelItem = {
+  id: number;
+  codigo_curto?: string;
+  codigo_solicitacao?: string;
+  exame?: string;
+  tipo_fila?: string;
+  especialidade?: string;
+  unidade_psf?: string;
+  paciente_id: number;
+  paciente_nome: string;
+  paciente_cpf?: string;
+  data_pedido?: string;
+  data_solicitacao?: string;
+  situacao_cadastral: string;
+  motivo_situacao?: string;
+  status: string;
+  exames_nomes?: string[];
+};
+
+export type AnalisePedidosInelegiveisOut = {
+  total_pedidos: number;
+  pedidos_obito: number;
+  pedidos_mudanca: number;
+  pedidos_inativo: number;
+  pedidos: PedidoInelegivelItem[];
+};
+
+export const tfdAnalisarPedidosInelegiveis = () =>
+  api.get<AnalisePedidosInelegiveisOut>("/api/tfd/exames/pedidos-inelegiveis/analise").then((r) => r.data);
+
+export const tfdDarBaixaPedidosInelegiveis = (p?: { ids?: number[]; motivo?: string }) =>
+  api.post<{ baixados: number; mensagem: string }>("/api/tfd/exames/pedidos-inelegiveis/dar-baixa", p || {}).then((r) => r.data);
 
 export interface ExameLoteCriarItemIn {
   paciente_id: number;
@@ -1796,6 +1833,10 @@ export type FilaPsfItem = {
   unidade_saude_id?: number | null;
   data_agendada?: string | null;
   hora_agendada?: string;
+  paciente_situacao_cadastral?: string;
+  paciente_motivo_situacao?: string;
+  paciente_obito_ou_mudanca?: boolean;
+  alerta_situacao?: string;
 };
 
 export function mapFila(o: any): FilaPsfItem {
@@ -1826,6 +1867,10 @@ export function mapFila(o: any): FilaPsfItem {
     unidade_saude_id: o.unidade_saude_id ?? null,
     data_agendada: o.data_agendada ?? null,
     hora_agendada: o.hora_agendada ?? "",
+    paciente_situacao_cadastral: o.paciente_situacao_cadastral ?? "ativo",
+    paciente_motivo_situacao: o.paciente_motivo_situacao ?? "",
+    paciente_obito_ou_mudanca: Boolean(o.paciente_obito_ou_mudanca),
+    alerta_situacao: o.alerta_situacao ?? "",
   };
 }
 
@@ -1922,6 +1967,12 @@ export const filaPsfExcluir = (id: number) =>
 
 export const filaPsfCancelar = (id: number) =>
   api.patch(`/api/exames/fila-psf/${id}`, { status: "cancelado" }).then((r) => mapFila(r.data));
+
+export const labAnalisarPedidosInelegiveis = () =>
+  api.get<AnalisePedidosInelegiveisOut>("/api/exames/fila-psf/pedidos-inelegiveis/analise").then((r) => r.data);
+
+export const labDarBaixaPedidosInelegiveis = (p?: { ids?: number[]; motivo?: string }) =>
+  api.post<{ baixados: number; mensagem: string }>("/api/exames/fila-psf/pedidos-inelegiveis/dar-baixa", p || {}).then((r) => r.data);
 
 export type VagaDia = {
   data: string;
