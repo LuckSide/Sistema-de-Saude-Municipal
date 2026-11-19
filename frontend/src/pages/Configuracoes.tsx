@@ -539,6 +539,9 @@ function AbaFilas() {
               ["Atualizados", res.atualizados, "bg-sand text-sus-950"],
               ["Duplicados", res.duplicados, "bg-sand text-sus-950"],
               ["Ignoradas", res.ignoradas, "bg-sand text-sus-950"],
+              ...(res.pedidos_fila_ativa !== undefined ? [["Fila de Espera Ativa", res.pedidos_fila_ativa, "bg-sky-50 text-sky-900"]] : []),
+              ...(res.pedidos_historico_prontuario !== undefined ? [["Histórico Prontuário", res.pedidos_historico_prontuario, "bg-blue-50 text-blue-900"]] : []),
+              ...(res.pedidos_historico_cancelados !== undefined ? [["Histórico Cancelados", res.pedidos_historico_cancelados, "bg-slate-100 text-slate-800"]] : []),
               ...(res.itens_lab_novos ? [["Itens lab novos", res.itens_lab_novos, "bg-teal-50 text-teal-900"]] : []),
             ].map(([k, v, cls]) => (
               <div key={k as string} className={`rounded-xl px-3 py-2 ${cls}`}>

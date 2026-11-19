@@ -1704,13 +1704,13 @@ def _init_db_impl() -> None:
                 COALESCE(lp.data_agendada, lp.data_solicitacao),
                 COALESCE(NULLIF(lp.hora_agendada, ''), '07:00'),
                 (SELECT id FROM lab_laboratorios WHERE ativo = true ORDER BY id ASC LIMIT 1),
-                'agendado',
+                CASE WHEN COALESCE(lp.data_agendada, lp.data_solicitacao) < CURRENT_DATE THEN 'realizado' ELSE 'agendado' END,
                 'Sincronização Automática Fila',
                 lp.id,
                 lp.medico_solicitante,
                 lp.unidade_psf,
                 COALESCE(lp.observacoes, ''),
-                'pendente_conferencia'
+                CASE WHEN COALESCE(lp.data_agendada, lp.data_solicitacao) < CURRENT_DATE THEN 'aprovado' ELSE 'pendente_conferencia' END
             FROM lab_fila_psf lp
             WHERE (lp.status = 'agendado' OR lp.data_agendada IS NOT NULL)
               AND NOT EXISTS (
@@ -1719,6 +1719,26 @@ def _init_db_impl() -> None:
                     AND sm.data_agendada = COALESCE(lp.data_agendada, lp.data_solicitacao)
                     AND sm.status != 'cancelado'
               )
+            """,
+            """
+            UPDATE lab_fila_psf
+            SET status = 'realizado'
+            WHERE status IN ('na_fila', 'agendado')
+              AND data_agendada IS NOT NULL
+              AND data_agendada < CURRENT_DATE
+            """,
+            """
+            UPDATE lab_solic_mestre
+            SET status = 'realizado', status_auditoria = 'aprovado'
+            WHERE status = 'agendado'
+              AND data_agendada < CURRENT_DATE
+            """,
+            """
+            UPDATE lab_solic_itens
+            SET status_auditoria = 'aprovado'
+            WHERE solicitacao_id IN (
+                SELECT id FROM lab_solic_mestre WHERE status = 'realizado'
+            ) AND status_auditoria = 'pendente_conferencia'
             """,
         ]:
             try:

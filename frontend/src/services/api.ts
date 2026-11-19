@@ -464,6 +464,9 @@ export type ImportFilasOut = {
   avisos_pacientes_novos?: AvisoPacienteNovoImport[];
   itens_lab_novos?: number;
   sigtap_criados?: number;
+  pedidos_fila_ativa?: number;
+  pedidos_historico_prontuario?: number;
+  pedidos_historico_cancelados?: number;
   exames_novos: number; atualizados: number; duplicados: number; ignoradas: number;
   catalogo: { tipos_novos: number; especialidades_novas: number; procedimentos_novos: number };
   erros: { linha: number; motivo: string }[];

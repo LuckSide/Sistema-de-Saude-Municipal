@@ -12,7 +12,7 @@ import logging
 import re
 import secrets
 import unicodedata
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +127,94 @@ ALIASES = {
     "hora_agendamento": "hora_agendada",
     "hora_agendada": "hora_agendada",
     "status": "status",
+    "situacao": "status",
+    "situacao_solicitacao": "status",
+    "status_solicitacao": "status",
+    "situacao_pedido": "status",
+    "status_pedido": "status",
+    "situacao_atendimento": "status",
+    "status_atendimento": "status",
+    "estado": "status",
+    "estado_solicitacao": "status",
+    "data_atendimento": "data_agendada",
+    "data_realizacao": "data_agendada",
+    "data_coleta": "data_agendada",
+    "data_execucao": "data_agendada",
+    "data_resultado": "data_agendada",
+    "resultado": "resultado",
+    "laudo": "resultado",
+    "laudo_resultado": "resultado",
+}
+
+TERMOS_REALIZADO = {
+    "realizado",
+    "realizada",
+    "recepcionado",
+    "recepcionada",
+    "concluido",
+    "concluído",
+    "concluida",
+    "concluída",
+    "finalizado",
+    "finalizada",
+    "atendido",
+    "atendida",
+    "executado",
+    "executada",
+    "laudado",
+    "laudada",
+    "entregue",
+    "liberado",
+    "liberada",
+}
+
+TERMOS_COLETADO = {
+    "coletado",
+    "coletada",
+}
+
+TERMOS_CANCELADO = {
+    "cancelado",
+    "cancelada",
+    "obito",
+    "óbito",
+    "desistiu",
+    "desistencia",
+    "desistência",
+    "falta",
+    "faltou",
+    "recusado",
+    "recusada",
+    "devolvido",
+    "devolvida",
+    "inativo",
+    "inativa",
+    "bloqueado",
+    "bloqueada",
+    "anulado",
+    "anulada",
+}
+
+TERMOS_AGUARDANDO = {
+    "aguardando",
+    "pendente",
+    "solicitado",
+    "solicitada",
+    "na_fila",
+    "fila",
+    "espera",
+    "triagem",
+    "aberto",
+    "aberta",
+    "em_espera",
+    "em espera",
+}
+
+TERMOS_AGENDADO = {
+    "agendado",
+    "agendada",
+    "marcado",
+    "marcada",
 }
 
 
@@ -440,6 +528,101 @@ def _normalizar_cns_excel(raw: str, limpar_cns_fn) -> str:
     return (raw or "").strip()[:20]
 
 
+def sanear_historico_fila_legada(db: Session, dias_limite: int = 180) -> dict:
+    """Saneia registros antigos de FilaPsf que ficaram indevidamente como 'na_fila' ou 'agendado'.
+
+    Exames com data_agendada passada (< hoje) ou data_solicitacao antiga (> 180 dias)
+    são migrados para status 'realizado', tirando-os da fila de espera ativa e
+    garantindo que constem no histórico clínico de SolicitacaoMestre/ItemSolic.
+    """
+    from app.models.lab_fase6 import FilaPsf, Laboratorio, SolicitacaoMestre, ItemSolic
+    from app.models.lab_exames import SigtapProcedimento
+    from app.services.geradores import gerar_protocolo_lab_aleatorio
+    from sqlmodel import or_, and_
+
+    hoje = date.today()
+    limite = hoje - timedelta(days=dias_limite)
+
+    filas_antigas = db.exec(
+        select(FilaPsf).where(
+            or_(
+                and_(FilaPsf.data_agendada != None, FilaPsf.data_agendada < hoje),
+                and_(FilaPsf.status == "na_fila", FilaPsf.data_solicitacao < limite),
+            )
+        )
+    ).all()
+
+    qtd_saneados = 0
+    lab_p = None
+    for f in filas_antigas:
+        if f.status in ("na_fila", "agendado"):
+            f.status = "realizado"
+            db.add(f)
+            qtd_saneados += 1
+
+            dt_ref = f.data_agendada or f.data_solicitacao or f.data_pedido or hoje
+            sm = db.exec(
+                select(SolicitacaoMestre).where(
+                    SolicitacaoMestre.paciente_id == f.paciente_id,
+                    SolicitacaoMestre.data_agendada == dt_ref,
+                )
+            ).first()
+            if not sm:
+                if not lab_p:
+                    lab_p = db.exec(select(Laboratorio).where(Laboratorio.ativo == True)).first()
+                    if not lab_p:
+                        lab_p = Laboratorio(nome="Laboratório Municipal de Guapé", ativo=True)
+                        db.add(lab_p)
+                        db.flush()
+                cod_s = f.codigo_solicitacao or gerar_protocolo_lab_aleatorio(dt_ref, db=None)
+                sm = SolicitacaoMestre(
+                    codigo_solicitacao=cod_s,
+                    paciente_id=f.paciente_id,
+                    data_agendada=dt_ref,
+                    hora_agendada=f.hora_agendada or "07:00",
+                    laboratorio_id=lab_p.id,
+                    status="realizado",
+                    status_auditoria="aprovado",
+                    agendado_por="Saneamento Histórico",
+                    origem_fila_id=f.id,
+                    unidade_saude_id=f.unidade_saude_id,
+                    unidade_psf=f.unidade_psf,
+                    medico_solicitante=f.medico_solicitante,
+                    observacao_laboratorio=f"Histórico sanado da fila: {f.observacoes or ''}".strip()[:500],
+                )
+                db.add(sm)
+                db.flush()
+
+                sids = []
+                if f.sigtap_ids_json:
+                    try:
+                        arr = json.loads(f.sigtap_ids_json)
+                        if isinstance(arr, list):
+                            sids = [int(x) for x in arr if x]
+                    except Exception:
+                        sids = []
+                if not sids and f.tipo_fila:
+                    sp_fb = db.exec(
+                        select(SigtapProcedimento).where(SigtapProcedimento.descricao == f.tipo_fila[:255])
+                    ).first()
+                    if sp_fb and sp_fb.id:
+                        sids = [sp_fb.id]
+                for sid in sids:
+                    db.add(
+                        ItemSolic(
+                            solicitacao_id=sm.id,
+                            sigtap_id=sid,
+                            quantidade=1,
+                            valor_unitario_aplicado=0.0,
+                            origem_preco="sigtap_padrao",
+                            status_auditoria="aprovado",
+                        )
+                    )
+    if qtd_saneados > 0:
+        db.flush()
+    return {"filas_saneadas": qtd_saneados}
+
+
 def processar_linhas(
     linhas: list[dict],
     db: Session,
@@ -450,6 +633,7 @@ def processar_linhas(
     lidas = len(linhas)
     pacientes_novos = exames_novos = atualizados = duplicados = ignoradas = 0
     itens_lab_novos = sigtap_criados = 0
+    pedidos_fila_ativa = pedidos_historico_prontuario = pedidos_historico_cancelados = 0
     pacientes_sincronizados_pec = pacientes_criados_sem_pec = pacientes_nao_encontrados_ignorados = 0
     ids_vinculados_pec: set[int] = set()
     ids_vinculados_locais: set[int] = set()
@@ -1133,38 +1317,64 @@ def processar_linhas(
         unidade_nome = uni_obj.nome if uni_obj else (dest_raw[:150] or "")
         unidade_cnes = getattr(uni_obj, "cnes", "") or ""
 
-        # Mapeamento do status e data agendada
+        # Mapeamento do status e data agendada (Classificação Automática: Fila Real vs Histórico Prontuário)
+        hoje = date.today()
         raw_st = (r.get("status") or "").strip().lower()
         dt_agend_lin = parse_data(r.get("data_agendada") or "")
         hora_agend_lin = (r.get("hora_agendada") or "").strip()[:10]
-        if raw_st in ("realizado", "recepcionado", "concluido", "concluído"):
+        data_ped_raw = parse_data(r.get("data_pedido") or "")
+        res_lin = (r.get("resultado") or "").strip().lower()
+        tem_resultado_real = bool(
+            res_lin and not _eh_placeholder(res_lin) and res_lin not in ("nao", "não", "sem resultado", "pendente")
+        )
+
+        if raw_st in TERMOS_CANCELADO:
+            status = "cancelado"
+            status_lab = "cancelado"
+            status_solic: str | None = "cancelado"
+            data_ped = data_ped_raw or dt_agend_lin or hoje
+        elif raw_st in TERMOS_REALIZADO or tem_resultado_real:
             status = "realizado"
             status_lab = "realizado"
-            status_solic: str | None = "realizado"
-        elif raw_st in ("coletado",):
-            status = "agendado"
-            status_lab = "agendado"
-            status_solic = "coletado"
-        elif raw_st in ("agendado", "marcado"):
+            status_solic = "realizado"
+            data_ped = data_ped_raw or dt_agend_lin or hoje
+        elif dt_agend_lin and dt_agend_lin < hoje:
+            # Exame já agendado no passado: constitui histórico clínico realizado do paciente (Prontuário)
+            # Preserva dt_agend_lin e NUNCA insere como pendência na fila de trabalho ativa
+            status = "realizado"
+            status_lab = "realizado"
+            status_solic = "realizado"
+            data_ped = data_ped_raw or dt_agend_lin or hoje
+        elif dt_agend_lin and dt_agend_lin >= hoje:
+            # Agendamento futuro ou de hoje: fila real com horário/vaga
             status = "agendado"
             status_lab = "agendado"
             status_solic = "agendado"
-        elif raw_st in ("cancelado", "obito", "óbito", "desistiu"):
-            status = "cancelado"
-            status_lab = "cancelado"
-            status_solic = "cancelado"
+            data_ped = data_ped_raw or hoje
+        elif raw_st in TERMOS_COLETADO:
+            status = "agendado"
+            status_lab = "agendado"
+            status_solic = "coletado"
+            data_ped = data_ped_raw or dt_agend_lin or hoje
+        elif raw_st in TERMOS_AGENDADO:
+            status = "agendado"
+            status_lab = "agendado"
+            status_solic = "agendado"
+            data_ped = data_ped_raw or dt_agend_lin or hoje
         else:
-            status = "aguardando"
-            status_lab = "na_fila"
-            status_solic = None
-
-        data_ped_raw = parse_data(r.get("data_pedido") or "")
-        if not data_ped_raw and dt_agend_lin and status == "aguardando":
-            data_ped = dt_agend_lin
-            dt_agend_lin = None
-            hora_agend_lin = ""
-        else:
-            data_ped = data_ped_raw or dt_agend_lin or date.today()
+            # Sem agendamento futuro
+            data_ped = data_ped_raw or hoje
+            limite_antigo = hoje - timedelta(days=180)
+            if raw_st not in TERMOS_AGUARDANDO and data_ped < limite_antigo:
+                # Solicitação muito antiga sem pendência recente: histórico legado
+                status = "realizado"
+                status_lab = "realizado"
+                status_solic = "realizado"
+            else:
+                # Fila de espera ativa real (aguardando agendamento)
+                status = "aguardando"
+                status_lab = "na_fila"
+                status_solic = None
 
         # Alerta cadastral para pacientes com registro de óbito ou mudança de município
         pac_sit_raw = (getattr(pac, "situacao_cadastral", "") or ("obito" if getattr(pac, "data_obito", None) else "")).lower()
@@ -1210,6 +1420,16 @@ def processar_linhas(
                     procs_resolvidos.append((sp_res, qtd_item))
                     ids_vistos_linha.add(sp_res.id)
                     procs_cat[(sp_res.codigo, sp_res.descricao.upper())] = (tipo.upper(), cbo_raw, nome_esp)
+
+            # Fallback seguro: se a linha de laboratório não discriminou exames
+            # (ex: <exames_realizados>desconhecido</exames_realizados> em arquivos do Vivver),
+            # resolve/cria procedimento pelo tipo de serviço ou exame para garantir item rastreável no prontuário
+            if not procs_resolvidos and status_solic in ("agendado", "coletado", "realizado"):
+                nome_fallback = (tipo[:80] or exame[:80] or "EXAMES LABORATORIAIS ROTINA").strip()
+                sp_fallback = _resolver_ou_criar_sigtap("", nome_fallback)
+                if sp_fallback and sp_fallback.id:
+                    procs_resolvidos.append((sp_fallback, 1))
+                    procs_cat[(sp_fallback.codigo, sp_fallback.descricao.upper())] = (tipo.upper(), cbo_raw, nome_esp)
 
         tipo_lab_label = tipo[:80] or "EXAME_LABORATORIAL"
         nomes_desc_lab = ", ".join(sp.descricao for sp, _ in procs_resolvidos) if procs_resolvidos else ""
@@ -1287,6 +1507,13 @@ def processar_linhas(
                 db.add(novo_ef)
                 exames_fila_cache[chave_ef] = novo_ef
                 exames_novos += 1
+
+            if status == "cancelado":
+                pedidos_historico_cancelados += 1
+            elif status == "realizado":
+                pedidos_historico_prontuario += 1
+            else:
+                pedidos_fila_ativa += 1
         else:
             novos_sigtap_ids = [sp.id for sp, _ in procs_resolvidos if sp.id]
             data_ref_lab = dt_agend_lin or data_ped
@@ -1500,6 +1727,13 @@ def processar_linhas(
                         itens_lab_novos += 1
                         houve_alt_lab = True
 
+            if status_lab == "cancelado":
+                pedidos_historico_cancelados += 1
+            elif status_lab == "realizado":
+                pedidos_historico_prontuario += 1
+            else:
+                pedidos_fila_ativa += 1
+
             if criou_lab:
                 exames_novos += 1
             elif houve_alt_lab:
@@ -1563,6 +1797,17 @@ def processar_linhas(
 
     if not simular:
         db.commit()
+        # Saneia filas legadas que possam ter ficado com status 'na_fila' ou 'agendado' com datas passadas
+        try:
+            sanear_historico_fila_legada(db)
+            db.commit()
+        except Exception as err:
+            logger.warning("Falha ao sanear histórico de fila legada após importação: %s", err)
+            try:
+                db.rollback()
+            except Exception:
+                pass
+
         # Executa consolidação de duplicados em lotes moderados (<= 500 linhas)
         # para evitar estourar o timeout HTTP da requisição em arquivos massivos (onde a cascata em memória já deduplica)
         if len(linhas) <= 500:
@@ -1608,6 +1853,9 @@ def processar_linhas(
         "ignoradas": ignoradas,
         "itens_lab_novos": itens_lab_novos,
         "sigtap_criados": sigtap_criados,
+        "pedidos_fila_ativa": pedidos_fila_ativa,
+        "pedidos_historico_prontuario": pedidos_historico_prontuario,
+        "pedidos_historico_cancelados": pedidos_historico_cancelados,
         "catalogo": {"tipos_novos": n_tipos, "especialidades_novas": n_esps, "procedimentos_novos": n_procs},
         "erros": erros,
     }

@@ -39,7 +39,7 @@ from app.models.tfd import (
     ProcedimentoCatalogo,  # noqa: F401
     TipoFila,
 )
-from app.services.importacao_filas import ler_xml, processar_linhas
+from app.services.importacao_filas import ler_xml, processar_linhas, sanear_historico_fila_legada
 from app.api.v1.lab_fase6 import _extrair_sigtap_ids_fila, _formatar_fila_out
 
 
@@ -662,3 +662,223 @@ def test_alerta_obito_e_mudanca_nos_pedidos_e_baixa_em_lote(db_session: Session)
     ).all()
     assert len(historico) >= 2
     assert any("BAIXA" in h.tipo_evento for h in historico)
+
+
+def test_separacao_automatica_historico_vs_fila_real_mesmo_xml(db_session: Session):
+    """Garante que em um ÚNICO arquivo XML:
+    1. Pedidos com data de agendamento passada (< hoje) ou status 'desconhecido' do Vivver
+       são classificados como HISTÓRICO REALIZADO:
+       - Vão para SolicitacaoMestre (status='realizado', status_auditoria='aprovado') e ItemSolic.
+       - NÃO criam registros 'na_fila' em FilaPsf (a fila de trabalho do PSF não é poluída!).
+    2. Pedidos com data futura (>= hoje) são classificados como FILA ATIVA AGENDADA:
+       - Vão para FilaPsf (status='agendado') e SolicitacaoMestre (status='agendado').
+    3. Pedidos recentes sem data agendada e status 'aguardando' são classificados como FILA ATIVA PENDENTE:
+       - Vão para FilaPsf (status='na_fila') e NÃO criam SolicitacaoMestre.
+    4. Pedidos cancelados são arquivados em PacienteHistorico sem entrar na fila ativa.
+    """
+    xml_conteudo = b"""<?xml version="1.0" encoding="UTF-8"?>
+    <exames_laboratorio>
+      <!-- 1. Exame Hist\xc3\xb3rico (2024, Vivver com status desconhecido) -->
+      <exame>
+        <codigo>10001</codigo>
+        <prontuario>147001</prontuario>
+        <paciente>Paciente Historico 2024</paciente>
+        <cpf>111.111.111-11</cpf>
+        <data_agendamento>26/02/2024</data_agendamento>
+        <hora_agendamento>08:00</hora_agendamento>
+        <status>desconhecido</status>
+        <tipo_servico>EX. LAB. PSF ROTINA</tipo_servico>
+        <profissional>DR. MEDICO TESTE</profissional>
+        <exames_realizados>desconhecido</exames_realizados>
+        <resultado>desconhecido</resultado>
+      </exame>
+
+      <!-- 2. Exame Fila Real Agendada Futura (ano 2029) -->
+      <exame>
+        <codigo>10002</codigo>
+        <prontuario>147002</prontuario>
+        <paciente>Paciente Fila Futura</paciente>
+        <cpf>222.222.222-22</cpf>
+        <data_agendamento>20/12/2029</data_agendamento>
+        <hora_agendamento>07:30</hora_agendamento>
+        <status>agendado</status>
+        <tipo_servico>EXAME_LABORATORIAL</tipo_servico>
+        <profissional>DRA. MEDICA TESTE</profissional>
+        <exames_realizados>0202020380 - HEMOGRAMA COMPLETO</exames_realizados>
+      </exame>
+
+      <!-- 3. Exame Fila Real Pendente (Aguardando convocacao) -->
+      <exame>
+        <codigo>10003</codigo>
+        <prontuario>147003</prontuario>
+        <paciente>Paciente Aguardando Fila</paciente>
+        <cpf>333.333.333-33</cpf>
+        <status>aguardando</status>
+        <tipo_servico>EXAME_LABORATORIAL</tipo_servico>
+        <profissional>DR. MEDICO TESTE</profissional>
+        <exames_realizados>0202010473 - DOSAGEM DE GLICOSE</exames_realizados>
+      </exame>
+
+      <!-- 4. Exame Cancelado / Desistencia -->
+      <exame>
+        <codigo>10004</codigo>
+        <prontuario>147004</prontuario>
+        <paciente>Paciente Cancelado</paciente>
+        <cpf>444.444.444-44</cpf>
+        <data_agendamento>15/01/2024</data_agendamento>
+        <status>cancelado</status>
+        <tipo_servico>EXAME_LABORATORIAL</tipo_servico>
+        <observacao>Paciente mudou de cidade e desistiu</observacao>
+      </exame>
+    </exames_laboratorio>
+    """
+
+    linhas = ler_xml(xml_conteudo)
+    res = processar_linhas(linhas, db=db_session, simular=False, criar_pacientes_novos=True)
+
+    # Valida contadores
+    assert res["lidas"] == 4
+    assert res["pedidos_fila_ativa"] == 2  # Paciente Fila Futura + Paciente Aguardando Fila
+    assert res["pedidos_historico_prontuario"] == 1  # Paciente Historico 2024
+    assert res["pedidos_historico_cancelados"] == 1  # Paciente Cancelado
+
+    # 1. Verifica Paciente 1 (Histórico 2024)
+    p1 = db_session.exec(select(Paciente).where(Paciente.cpf == "11111111111")).first()
+    assert p1 is not None
+
+    # NÃO deve ter criado registro 'na_fila' em FilaPsf!
+    fila_p1 = db_session.exec(select(FilaPsf).where(FilaPsf.paciente_id == p1.id)).all()
+    assert len(fila_p1) == 0  # Zero itens de fila de espera!
+
+    # DEVE constar em SolicitacaoMestre como realizado / aprovado
+    solic_p1 = db_session.exec(
+        select(SolicitacaoMestre).where(SolicitacaoMestre.paciente_id == p1.id)
+    ).first()
+    assert solic_p1 is not None
+    assert solic_p1.status == "realizado"
+    assert solic_p1.status_auditoria == "aprovado"
+    assert solic_p1.data_agendada == date(2024, 2, 26)
+
+    # DEVE ter ItemSolic criado através do fallback de tipo_servico
+    itens_p1 = db_session.exec(
+        select(ItemSolic).where(ItemSolic.solicitacao_id == solic_p1.id)
+    ).all()
+    assert len(itens_p1) == 1
+    assert itens_p1[0].status_auditoria == "aprovado"
+
+    # 2. Verifica Paciente 2 (Fila Futura Agendada)
+    p2 = db_session.exec(select(Paciente).where(Paciente.cpf == "22222222222")).first()
+    assert p2 is not None
+
+    fila_p2 = db_session.exec(select(FilaPsf).where(FilaPsf.paciente_id == p2.id)).first()
+    assert fila_p2 is not None
+    assert fila_p2.status == "agendado"
+    assert fila_p2.data_agendada == date(2029, 12, 20)
+
+    solic_p2 = db_session.exec(
+        select(SolicitacaoMestre).where(SolicitacaoMestre.paciente_id == p2.id)
+    ).first()
+    assert solic_p2 is not None
+    assert solic_p2.status == "agendado"
+
+    # 3. Verifica Paciente 3 (Fila Pendente Aguardando)
+    p3 = db_session.exec(select(Paciente).where(Paciente.cpf == "33333333333")).first()
+    assert p3 is not None
+
+    fila_p3 = db_session.exec(select(FilaPsf).where(FilaPsf.paciente_id == p3.id)).first()
+    assert fila_p3 is not None
+    assert fila_p3.status == "na_fila"
+
+    # Não deve ter SolicitacaoMestre ainda (pois está apenas aguardando convocação/agendamento)
+    solic_p3 = db_session.exec(
+        select(SolicitacaoMestre).where(SolicitacaoMestre.paciente_id == p3.id)
+    ).first()
+    assert solic_p3 is None
+
+    # 4. Verifica Paciente 4 (Cancelado)
+    p4 = db_session.exec(select(Paciente).where(Paciente.cpf == "44444444444")).first()
+    assert p4 is not None
+
+    fila_p4 = db_session.exec(select(FilaPsf).where(FilaPsf.paciente_id == p4.id)).all()
+    assert len(fila_p4) == 0
+
+    hist_p4 = db_session.exec(
+        select(PacienteHistorico).where(PacienteHistorico.paciente_id == p4.id)
+    ).all()
+    assert len(hist_p4) >= 1
+    assert any("CANCELADO" in h.tipo_evento for h in hist_p4)
+
+
+def test_reimportacao_atualiza_fila_legada_para_realizado(db_session: Session):
+    """Se um exame de 2024 já foi importado anteriormente como 'na_fila',
+    ao reimportar o XML, o sistema deve automaticamente atualizar o status do FilaPsf para 'realizado',
+    retirando-o da fila de espera e garantindo SolicitacaoMestre no prontuário.
+    """
+    p = Paciente(nome="Paciente Reimportado 2024", cpf="55555555555")
+    db_session.add(p)
+    db_session.flush()
+
+    fila_antiga = FilaPsf(
+        paciente_id=p.id,
+        especialidade="EXAME_LABORATORIAL",
+        tipo_fila="EXAME_LABORATORIAL",
+        unidade_psf="PSF Central",
+        data_solicitacao=date(2024, 3, 10),
+        data_agendada=date(2024, 3, 10),
+        status="na_fila",  # Estava indevidamente na fila de espera
+    )
+    db_session.add(fila_antiga)
+    db_session.commit()
+
+    xml_reimport = b"""<?xml version="1.0" encoding="UTF-8"?>
+    <exames_laboratorio>
+      <exame>
+        <codigo>99999</codigo>
+        <paciente>Paciente Reimportado 2024</paciente>
+        <cpf>555.555.555-55</cpf>
+        <data_agendamento>10/03/2024</data_agendamento>
+        <status>desconhecido</status>
+        <tipo_servico>EXAME_LABORATORIAL</tipo_servico>
+        <exames_realizados>0202020380 - HEMOGRAMA COMPLETO</exames_realizados>
+      </exame>
+    </exames_laboratorio>
+    """
+    linhas = ler_xml(xml_reimport)
+    processar_linhas(linhas, db=db_session, simular=False, criar_pacientes_novos=False)
+
+    db_session.refresh(fila_antiga)
+    # Deve ter saido de 'na_fila' para 'realizado'
+    assert fila_antiga.status == "realizado"
+
+    # E SolicitacaoMestre deve estar criada como realizado
+    sm = db_session.exec(
+        select(SolicitacaoMestre).where(SolicitacaoMestre.paciente_id == p.id)
+    ).first()
+    assert sm is not None
+    assert sm.status == "realizado"
+    assert sm.status_auditoria == "aprovado"
+
+
+def test_sanear_historico_fila_legada_funcao(db_session: Session):
+    """Testa diretamente a função sanear_historico_fila_legada."""
+    p = Paciente(nome="Paciente Sanear Legado", cpf="66666666666")
+    db_session.add(p)
+    db_session.flush()
+
+    f_legada = FilaPsf(
+        paciente_id=p.id,
+        especialidade="EXAME_LABORATORIAL",
+        tipo_fila="EXAME_LABORATORIAL",
+        unidade_psf="PSF Central",
+        data_solicitacao=date(2024, 1, 15),
+        data_agendada=date(2024, 1, 15),
+        status="na_fila",
+    )
+    db_session.add(f_legada)
+    db_session.commit()
+
+    res = sanear_historico_fila_legada(db_session)
+    assert res["filas_saneadas"] >= 1
+
+    db_session.refresh(f_legada)
+    assert f_legada.status == "realizado"
