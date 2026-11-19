@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime
+from sqlalchemy import Column, DateTime, Text
 from sqlmodel import Field, SQLModel
 
 
@@ -12,8 +12,8 @@ class User(SQLModel, table=True):
     password_hash: str = Field(max_length=255)
     nome: str = Field(default="", max_length=120)
     area: str = Field(default="painel", max_length=20)  # painel | ferramentas
-    telas: str = Field(default="", max_length=500)  # csv: dashboard,tfd,aps
-    acoes: str = Field(default="{}", max_length=2000)  # json {tela:[ver,criar,editar,excluir]}; ausente = tudo
+    telas: str = Field(default="", sa_column=Column(Text, nullable=False, default=""))  # csv: dashboard,tfd,aps
+    acoes: str = Field(default="{}", sa_column=Column(Text, nullable=False, default="{}"))  # json {tela:[ver,criar,editar,excluir]}; ausente = tudo
     medico_id: int | None = Field(default=None, index=True)  # vínculo conta <-> cadastro de médico (perfil Médico)
     unidade_saude_id: int | None = Field(default=None, index=True)  # vínculo conta <-> unidade de saúde / PSF
     laboratorio_id: int | None = Field(default=None, index=True)  # vínculo conta <-> laboratório conveniado

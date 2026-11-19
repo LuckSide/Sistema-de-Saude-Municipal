@@ -193,6 +193,9 @@ def criar(
         if isinstance(e, IntegrityError) or "duplicate" in msg.lower() or "unique" in msg.lower():
             msg = "username já existe"
         raise HTTPException(status_code=400, detail=msg)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Erro ao salvar usuário: {e}")
     if not temporaria:
         raise HTTPException(status_code=400, detail="Falha ao gerar temporária")
     return ResetSenhaOut(
@@ -226,6 +229,9 @@ def atualizar(
         if isinstance(e, IntegrityError) or "duplicate" in msg.lower() or "unique" in msg.lower():
             msg = "username já existe"
         raise HTTPException(status_code=400, detail=msg)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Erro ao atualizar usuário: {e}")
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

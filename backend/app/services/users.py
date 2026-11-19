@@ -250,6 +250,9 @@ def create_user(db: Session, data: UserCreate) -> tuple[User, str | None]:
     except IntegrityError:
         db.rollback()
         raise ValueError("username já existe")
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(user)
     try:
         from app.services.dashboard_default import criar_dashboard_padrao_se_ausente
@@ -291,6 +294,9 @@ def update_user(db: Session, user: User, data: UserUpdate) -> User:
     except IntegrityError:
         db.rollback()
         raise ValueError("username já existe")
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(user)
     return user
 

@@ -226,6 +226,15 @@ def _init_db_impl() -> None:
                 "WHERE must_change_password IS NULL"
             )
         )
+        if conn.dialect.name == "postgresql":
+            try:
+                conn.execute(text("ALTER TABLE usuarios ALTER COLUMN telas TYPE TEXT"))
+            except Exception:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE usuarios ALTER COLUMN acoes TYPE TEXT"))
+            except Exception:
+                pass
     # Migração simples sem apagar dados: garante coluna quantidade
     from sqlalchemy import inspect, text
 
@@ -850,6 +859,15 @@ def _init_db_impl() -> None:
             conn.execute(text("UPDATE usuarios SET acoes = '{}' WHERE acoes IS NULL OR acoes = ''"))
         except Exception:
             pass
+        if conn.dialect.name == "postgresql":
+            try:
+                conn.execute(text("ALTER TABLE usuarios ALTER COLUMN telas TYPE TEXT"))
+            except Exception:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE usuarios ALTER COLUMN acoes TYPE TEXT"))
+            except Exception:
+                pass
         # Preferências do quadro semanal por operador (filtros persistidos)
         try:
             cols_q = [c["name"] for c in inspect(conn).get_columns("user_dashboard_preferences")]

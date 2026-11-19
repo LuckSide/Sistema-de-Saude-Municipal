@@ -164,3 +164,27 @@ def test_matriz_permissoes_cobre_novas_telas_e_heranca():
     assert tem_tela(user_granular, "cfg_whatsapp")
     assert tem_tela(user_granular, "cfg_medicos")
     assert not tem_tela(user_granular, "cfg_backup")
+
+
+def test_criar_usuario_com_todas_as_telas_mais_de_500_chars(session: Session):
+    from app.schemas import UserCreate
+    from app.services.permissoes import TODAS_TELAS
+    from app.services.users import create_user
+
+    todas = sorted(list(TODAS_TELAS))
+    str_telas = ",".join(todas)
+    assert len(str_telas) > 500
+
+    data = UserCreate(
+        username="super_todas_telas",
+        password="password123",
+        gerar_temporaria=False,
+        nome="Usuario Com Muitas Telas",
+        area="painel",
+        telas=todas,
+        is_superuser=True,
+    )
+    user, _ = create_user(session, data)
+    assert user.id is not None
+    assert len(user.telas) > 500
+    assert user.telas == str_telas
