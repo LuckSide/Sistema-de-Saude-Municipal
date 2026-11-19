@@ -1267,6 +1267,12 @@ def _init_db_impl() -> None:
             except Exception:
                 pass
 
+        # Tipos SQL conforme o dialeto do banco
+        is_pg = conn.dialect.name == "postgresql"
+        pk_type = "SERIAL PRIMARY KEY" if is_pg else "INTEGER PRIMARY KEY AUTOINCREMENT"
+        bytea_type = "BYTEA" if is_pg else "BLOB"
+        float_type = "DOUBLE PRECISION" if is_pg else "REAL"
+
         try:
             cols_solic_itens = [c["name"] for c in inspect(conn).get_columns("lab_solic_itens")]
         except Exception:
@@ -1284,10 +1290,6 @@ def _init_db_impl() -> None:
                     pass
 
         # Garante criação idempotente das tabelas do motor de liberação em lote
-        is_pg = conn.dialect.name == "postgresql"
-        pk_type = "SERIAL PRIMARY KEY" if is_pg else "INTEGER PRIMARY KEY AUTOINCREMENT"
-        bytea_type = "BYTEA" if is_pg else "BLOB"
-        float_type = "DOUBLE PRECISION" if is_pg else "REAL"
 
         ddls_tabelas_lote = [
             f"""CREATE TABLE IF NOT EXISTS lab_orcamentos_mensais (

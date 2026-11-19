@@ -655,6 +655,7 @@ def processar_linhas(
     from app.models.tfd import PacienteHistorico
 
     pec_engine = None
+    pec_conn = None
     try:
         from app.models.integracoes import IntegrationSettings
         from app.services.pec_tunnel import garantir_tunel_db
@@ -663,16 +664,38 @@ def processar_linhas(
         if cfg_pec:
             conectado, dsn = garantir_tunel_db(cfg_pec)
             if conectado and dsn:
-                pec_engine = create_engine(dsn, pool_pre_ping=True, pool_size=5, max_overflow=5, connect_args={"connect_timeout": 5})
+                pec_engine = create_engine(
+                    dsn,
+                    pool_pre_ping=True,
+                    pool_size=3,
+                    max_overflow=2,
+                    connect_args={"connect_timeout": 3, "options": "-c statement_timeout=3000"},
+                )
+                try:
+                    pec_conn = pec_engine.connect()
+                except Exception as err_conn:
+                    logger.warning("Falha ao abrir conexão direta com e-SUS PEC: %s", err_conn)
+                    pec_conn = None
     except Exception as err:
         logger.warning("Falha ao inicializar conexão com e-SUS PEC para importação de filas: %s", err)
         pec_engine = None
+        pec_conn = None
 
     pec_cidadao_cols: set[str] | None = None
     pec_cache_cpf: dict[str, dict | None] = {}
     pec_cache_cns: dict[str, dict | None] = {}
     pec_cache_nome_nasc: dict[tuple[str, str], dict | None] = {}
     pec_cache_nome: dict[str, dict | None] = {}
+
+    def _fechar_pec() -> None:
+        nonlocal pec_conn, pec_engine
+        if pec_conn is not None:
+            try:
+                pec_conn.close()
+            except Exception:
+                pass
+            pec_conn = None
+        pec_engine = None
 
     def _garantir_cols_pec(conn) -> set[str]:
         nonlocal pec_cidadao_cols
@@ -692,8 +715,8 @@ def processar_linhas(
         return pec_cidadao_cols
 
     def _buscar_pec_cidadao(cpf_val: str, cns_val: str, nome_val: str, nasc_val: date | None) -> dict | None:
-        nonlocal pec_engine
-        if not pec_engine:
+        nonlocal pec_engine, pec_conn
+        if not pec_engine or pec_conn is None:
             return None
 
         # 1. Consulta prévia nos caches em memória para evitar queries repetidas pela rede/túnel
@@ -710,64 +733,80 @@ def processar_linhas(
             if nome_u in pec_cache_nome:
                 return pec_cache_nome[nome_u]
 
+        # Em cargas volumosas (> 100 linhas), se o paciente NÃO tem CPF nem CNS no arquivo,
+        # NÃO faz Full Table Scan no e-SUS PEC por nome (pois causa timeout do Gunicorn e sobrecarga no PEC).
+        # Os pacientes que já vieram do PEC já estão no banco local e foram verificados na cascata.
+        if not cpf_val and not cns_val and len(linhas) > 100:
+            pec_cache_nome[nome_u] = None
+            return None
+
         from sqlalchemy import text
         try:
-            with pec_engine.connect() as conn:
-                cols = _garantir_cols_pec(conn)
-                col_faleceu = "st_faleceu" if "st_faleceu" in cols else "NULL AS st_faleceu"
-                if "st_mudanca" in cols:
-                    col_mudou = "st_mudanca AS st_mudou_se"
-                elif "st_mudou_se" in cols:
-                    col_mudou = "st_mudou_se"
-                else:
-                    col_mudou = "NULL AS st_mudou_se"
-                sel_cols = (
-                    f"co_seq_cidadao, no_cidadao, nu_cpf, nu_cns, dt_nascimento, no_mae, "
-                    f"nu_telefone_celular, {col_faleceu}, {col_mudou}"
-                )
-                if cpf_val:
-                    row = conn.execute(
-                        text(f"SELECT {sel_cols} FROM tb_cidadao WHERE nu_cpf = :cpf LIMIT 1"),
-                        {"cpf": cpf_val}
-                    ).mappings().first()
-                    res = dict(row) if row else None
-                    pec_cache_cpf[cpf_val] = res
-                    if res:
-                        return res
+            cols = _garantir_cols_pec(pec_conn)
+            col_faleceu = "st_faleceu" if "st_faleceu" in cols else "NULL AS st_faleceu"
+            if "st_mudanca" in cols:
+                col_mudou = "st_mudanca AS st_mudou_se"
+            elif "st_mudou_se" in cols:
+                col_mudou = "st_mudou_se"
+            else:
+                col_mudou = "NULL AS st_mudou_se"
+            sel_cols = (
+                f"co_seq_cidadao, no_cidadao, nu_cpf, nu_cns, dt_nascimento, no_mae, "
+                f"nu_telefone_celular, {col_faleceu}, {col_mudou}"
+            )
+            if cpf_val:
+                row = pec_conn.execute(
+                    text(f"SELECT {sel_cols} FROM tb_cidadao WHERE nu_cpf = :cpf LIMIT 1"),
+                    {"cpf": cpf_val}
+                ).mappings().first()
+                res = dict(row) if row else None
+                pec_cache_cpf[cpf_val] = res
+                if res:
+                    return res
 
-                if cns_val:
-                    row = conn.execute(
-                        text(f"SELECT {sel_cols} FROM tb_cidadao WHERE nu_cns = :cns LIMIT 1"),
-                        {"cns": cns_val}
-                    ).mappings().first()
-                    res = dict(row) if row else None
-                    pec_cache_cns[cns_val] = res
-                    if res:
-                        return res
+            if cns_val:
+                row = pec_conn.execute(
+                    text(f"SELECT {sel_cols} FROM tb_cidadao WHERE nu_cns = :cns LIMIT 1"),
+                    {"cns": cns_val}
+                ).mappings().first()
+                res = dict(row) if row else None
+                pec_cache_cns[cns_val] = res
+                if res:
+                    return res
 
-                if nome_u and nasc_val:
-                    row = conn.execute(
-                        text(f"SELECT {sel_cols} FROM tb_cidadao WHERE UPPER(TRIM(no_cidadao)) = :nome AND dt_nascimento = :nasc LIMIT 1"),
-                        {"nome": nome_u, "nasc": nasc_val}
-                    ).mappings().first()
-                    res = dict(row) if row else None
-                    pec_cache_nome_nasc[(nome_u, str(nasc_val))] = res
-                    if res:
-                        return res
+            if nome_u and nasc_val:
+                row = pec_conn.execute(
+                    text(f"SELECT {sel_cols} FROM tb_cidadao WHERE UPPER(TRIM(no_cidadao)) = :nome AND dt_nascimento = :nasc LIMIT 1"),
+                    {"nome": nome_u, "nasc": nasc_val}
+                ).mappings().first()
+                res = dict(row) if row else None
+                pec_cache_nome_nasc[(nome_u, str(nasc_val))] = res
+                if res:
+                    return res
 
-                if nome_u and not nasc_val:
-                    filtro_ativo = " AND COALESCE(st_ativo::text, '1') IN ('1', 'true', 't', 'TRUE')" if "st_ativo" in cols else ""
-                    rows = conn.execute(
-                        text(f"SELECT {sel_cols} FROM tb_cidadao WHERE UPPER(TRIM(no_cidadao)) = :nome{filtro_ativo} LIMIT 2"),
-                        {"nome": nome_u}
-                    ).mappings().all()
-                    res = dict(rows[0]) if len(rows) == 1 else None
+            if nome_u and not nasc_val:
+                filtro_ativo = " AND COALESCE(st_ativo::text, '1') IN ('1', 'true', 't', 'TRUE')" if "st_ativo" in cols else ""
+                # Tenta primeiro busca exata por igualdade simples para aproveitar índice B-tree em no_cidadao
+                row = pec_conn.execute(
+                    text(f"SELECT {sel_cols} FROM tb_cidadao WHERE no_cidadao = :nome{filtro_ativo} LIMIT 1"),
+                    {"nome": (nome_val or "").strip()}
+                ).mappings().first()
+                if row:
+                    res = dict(row)
                     pec_cache_nome[nome_u] = res
-                    if res:
-                        return res
+                    return res
+
+                rows = pec_conn.execute(
+                    text(f"SELECT {sel_cols} FROM tb_cidadao WHERE UPPER(TRIM(no_cidadao)) = :nome{filtro_ativo} LIMIT 2"),
+                    {"nome": nome_u}
+                ).mappings().all()
+                res = dict(rows[0]) if len(rows) == 1 else None
+                pec_cache_nome[nome_u] = res
+                if res:
+                    return res
         except Exception as err:
             logger.warning("Erro/timeout ao consultar e-SUS PEC na importação de filas: %s. Desativando busca PEC para este lote.", err)
-            pec_engine = None
+            _fechar_pec()
 
         return None
 
@@ -1503,6 +1542,8 @@ def processar_linhas(
             f"Atenção: {pacientes_nao_encontrados_ignorados} linha(s) foram ignoradas porque os pacientes "
             f"não existem no banco local/e-SUS PEC e a criação automática de novos pacientes está desativada."
         )
+
+    _fechar_pec()
 
     return {
         "lidas": lidas,
