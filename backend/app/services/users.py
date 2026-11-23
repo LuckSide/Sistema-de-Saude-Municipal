@@ -325,10 +325,15 @@ def trocar_senha(db: Session, user: User, senha_atual: str, nova_senha: str) -> 
 
 
 def primeira_troca(db: Session, user: User, senha_atual: str, nova: str, confirmar: str) -> None:
-    """Troca do primeiro acesso: exige atual (temporária) + nova pessoal."""
-    if not verify_password(senha_atual, user.password_hash):
+    """Troca do primeiro acesso: usuário autenticado define sua nova senha pessoal."""
+    if senha_atual and not verify_password(senha_atual, user.password_hash):
         raise ValueError("Senha atual (temporária) incorreta")
-    _validar_nova(senha_atual, nova, confirmar)
+    if len(nova) < SENHA_MIN:
+        raise ValueError(f"Nova senha deve ter ao menos {SENHA_MIN} caracteres")
+    if confirmar is not None and nova != confirmar:
+        raise ValueError("Nova senha e confirmação não conferem")
+    if verify_password(nova, user.password_hash):
+        raise ValueError("Nova senha deve ser diferente da senha temporária")
     user.password_hash = hash_password(nova)
     user.must_change_password = False
     db.add(user)

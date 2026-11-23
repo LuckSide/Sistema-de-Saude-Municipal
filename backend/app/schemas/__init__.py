@@ -115,6 +115,6 @@ class TrocarSenhaIn(BaseModel):
 
 
 class PrimeiraTrocaIn(BaseModel):
-    senha_atual: str = Field(min_length=1, max_length=100)
+    senha_atual: str = Field(default="", max_length=100)
     nova_senha: str = Field(min_length=6, max_length=100)
     confirmar_senha: str = Field(min_length=6, max_length=100)

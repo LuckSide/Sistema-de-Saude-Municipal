@@ -26,6 +26,7 @@ import {
   labVisualizarLaudoPdfUrl,
   labsListar,
   pagData,
+  pagMeta,
   type SolicMestre,
   type LabConferenciaResultado,
   type Laboratorio,
@@ -44,6 +45,7 @@ export default function RecepcaoLab() {
   const { confirmar } = useConfirm();
   const { user } = useAuth();
   const [lista, setLista] = useState<SolicMestre[]>([]);
+  const [total, setTotal] = useState(0);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
@@ -125,6 +127,8 @@ export default function RecepcaoLab() {
       });
       const arr = pagData<any>(res);
       setLista(arr.map(mapMestre));
+      const m = pagMeta(res);
+      setTotal(m.total);
     } catch {
       setErro("Falha ao carregar lista de atendimentos do laboratório.");
     } finally {
@@ -291,13 +295,16 @@ export default function RecepcaoLab() {
       {/* Topo do Módulo do Laboratório Conveniado */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2.5">
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-teal/15 text-teal">
               <FlaskConical className="h-5 w-5" />
             </span>
             <h2 className="font-display text-xl font-bold text-sus-950">
               Laboratório · Recepção, Coleta e Validação de Laudos
             </h2>
+            <span className="rounded-full bg-teal/10 px-3 py-0.5 text-xs font-bold text-teal border border-teal/20">
+              {carregando ? "Carregando..." : `${total} ${total === 1 ? "pedido filtrado" : "pedidos filtrados"}`}
+            </span>
           </div>
           <p className="mt-1 text-xs text-ink/65">
             Módulo de conferência de pedidos, coleta e upload de laudos PDF com conferência automatizada via OCR/NLP.
@@ -427,6 +434,63 @@ export default function RecepcaoLab() {
           </div>
         </div>
       </Card>
+
+      {/* Resumo de Pedidos Filtrados */}
+      <div className="flex flex-wrap items-center justify-between text-xs text-ink/70 px-1 py-0.5 gap-2">
+        <div className="flex items-center gap-2">
+          <span>
+            Total de pedidos filtrados: <strong className="text-sus-950 font-bold">{total}</strong>
+          </span>
+          {lista.length > 0 && lista.length < total && (
+            <span className="text-ink/50 text-[11px]">
+              (exibindo {lista.length} de {total})
+            </span>
+          )}
+          {carregando && (
+            <span className="text-teal font-semibold animate-pulse flex items-center gap-1 text-[11px]">
+              <span className="inline-block h-2 w-2 rounded-full bg-teal animate-ping" />
+              Atualizando lista…
+            </span>
+          )}
+        </div>
+        {(termoBusca.trim() || filtroStatus !== "todos" || dataFiltro || filtroLab !== "todos") && (
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+            <span className="text-ink/50">Filtros ativos:</span>
+            {termoBusca.trim() && (
+              <span className="rounded bg-teal/10 px-1.5 py-0.5 text-teal font-semibold">
+                Busca: "{termoBusca.trim()}"
+              </span>
+            )}
+            {filtroStatus !== "todos" && (
+              <span className="rounded bg-teal/10 px-1.5 py-0.5 text-teal font-semibold">
+                Status: {filtroStatus}
+              </span>
+            )}
+            {dataFiltro && (
+              <span className="rounded bg-teal/10 px-1.5 py-0.5 text-teal font-semibold">
+                Data: {dataFiltro}
+              </span>
+            )}
+            {filtroLab !== "todos" && (
+              <span className="rounded bg-teal/10 px-1.5 py-0.5 text-teal font-semibold">
+                Lab: {laboratorios.find((l) => String(l.id) === filtroLab)?.nome || filtroLab}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setTermoBusca("");
+                setFiltroStatus("todos");
+                setDataFiltro("");
+                setFiltroLab("todos");
+              }}
+              className="text-red-600 hover:underline font-semibold ml-1 cursor-pointer"
+            >
+              Limpar filtros
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Relação de Atendimentos */}
       {carregando ? (

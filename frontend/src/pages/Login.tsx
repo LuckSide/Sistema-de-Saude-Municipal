@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Ambulance, Cross, ShieldCheck } from "lucide-react";
+import { Ambulance, Cross, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { fetchMe } from "../services/api";
 import { useCidadeDinamica, nomeCidade } from "../hooks/useCidade";
@@ -13,6 +13,7 @@ export default function Login() {
   const nav = useNavigate();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [mostrarSenha, setMostrarSenha] = useState(false);
   const [erro, setErro] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -114,15 +115,26 @@ export default function Login() {
             </div>
             <div>
               <Label>Senha</Label>
-              <Input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-                placeholder="Digite sua senha"
-                required
-                className="border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-teal focus:ring-2 focus:ring-teal/30"
-              />
+              <div className="relative">
+                <Input
+                  type={mostrarSenha ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  placeholder="Digite sua senha"
+                  required
+                  className="pr-10 border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-teal focus:ring-2 focus:ring-teal/30"
+                />
+                <button
+                  type="button"
+                  onClick={() => setMostrarSenha((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition"
+                  tabIndex={-1}
+                  aria-label={mostrarSenha ? "Ocultar senha" : "Ver senha"}
+                >
+                  {mostrarSenha ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
             {erro && (
               <p className="rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700">

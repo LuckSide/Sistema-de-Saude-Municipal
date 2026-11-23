@@ -212,7 +212,7 @@ export const trocarMinhaSenha = (senha_atual: string, nova_senha: string) =>
   api
     .put("/api/usuarios/me/senha", { senha_atual, nova_senha })
     .then((r) => r.data);
-export const primeiraTrocaSenha = (senha_atual: string, nova_senha: string, confirmar_senha: string) =>
+export const primeiraTrocaSenha = (nova_senha: string, confirmar_senha: string, senha_atual: string = "") =>
   api
     .put("/api/usuarios/me/primeira-troca", { senha_atual, nova_senha, confirmar_senha })
     .then((r) => r.data);

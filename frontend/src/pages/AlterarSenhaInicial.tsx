@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { KeyRound, ShieldCheck } from "lucide-react";
+import { Eye, EyeOff, KeyRound, ShieldCheck } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { primeiraTrocaSenha } from "../services/api";
 import { Button, Input, Label } from "../components/ui/primitives";
@@ -8,9 +8,10 @@ import { Button, Input, Label } from "../components/ui/primitives";
 export default function AlterarSenhaInicial() {
   const { user, refreshMe, logout } = useAuth();
   const nav = useNavigate();
-  const [atual, setAtual] = useState("");
   const [nova, setNova] = useState("");
   const [confirma, setConfirma] = useState("");
+  const [mostrarNova, setMostrarNova] = useState(false);
+  const [mostrarConfirma, setMostrarConfirma] = useState(false);
   const [erro, setErro] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -25,13 +26,9 @@ export default function AlterarSenhaInicial() {
       setErro("Nova senha precisa de ao menos 6 caracteres.");
       return;
     }
-    if (nova === atual) {
-      setErro("Nova senha deve ser diferente da temporária.");
-      return;
-    }
     setBusy(true);
     try {
-      await primeiraTrocaSenha(atual, nova, confirma);
+      await primeiraTrocaSenha(nova, confirma);
       const me = await refreshMe();
       if (me.must_change_password) {
         setErro("Troca registrada, mas flag segue ativa. Tente de novo.");
@@ -56,27 +53,61 @@ export default function AlterarSenhaInicial() {
             <KeyRound className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="font-display text-xl font-bold text-sus-950">Defina sua senha</h2>
+            <h2 className="font-display text-xl font-bold text-sus-950">Defina sua nova senha</h2>
             <p className="text-xs text-ink/55">
               {user ? `Conta ${user.username} · primeiro acesso` : "Primeiro acesso"}
             </p>
           </div>
         </div>
         <p className="mb-4 flex items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
-          <ShieldCheck className="h-4 w-4" /> Troca obrigatória: acesso liberado após salvar.
+          <ShieldCheck className="h-4 w-4 shrink-0" /> Crie sua senha pessoal definitiva para liberar o acesso ao sistema.
         </p>
         <div className="space-y-3">
           <div>
-            <Label>Senha temporária recebida</Label>
-            <Input type="password" value={atual} onChange={(e) => setAtual(e.target.value)} autoComplete="current-password" required />
-          </div>
-          <div>
             <Label>Nova senha pessoal (mín. 6)</Label>
-            <Input type="password" value={nova} onChange={(e) => setNova(e.target.value)} autoComplete="new-password" required />
+            <div className="relative mt-1">
+              <Input
+                type={mostrarNova ? "text" : "password"}
+                value={nova}
+                onChange={(e) => setNova(e.target.value)}
+                autoComplete="new-password"
+                placeholder="Digite a nova senha"
+                required
+                className="pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setMostrarNova((v) => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition"
+                tabIndex={-1}
+                aria-label={mostrarNova ? "Ocultar senha" : "Ver senha"}
+              >
+                {mostrarNova ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
           <div>
             <Label>Confirmar nova senha</Label>
-            <Input type="password" value={confirma} onChange={(e) => setConfirma(e.target.value)} autoComplete="new-password" required />
+            <div className="relative mt-1">
+              <Input
+                type={mostrarConfirma ? "text" : "password"}
+                value={confirma}
+                onChange={(e) => setConfirma(e.target.value)}
+                autoComplete="new-password"
+                placeholder="Repita a nova senha"
+                required
+                className="pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setMostrarConfirma((v) => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition"
+                tabIndex={-1}
+                aria-label={mostrarConfirma ? "Ocultar senha" : "Ver senha"}
+              >
+                {mostrarConfirma ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
           {erro && (
             <p className="rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{erro}</p>

@@ -624,8 +624,8 @@ export default function FilaPsf() {
           <h2 className="font-display text-xl font-bold text-sus-950">
             Fila de exames
           </h2>
-          <span className="rounded-full bg-teal/10 px-3 py-0.5 text-xs font-semibold text-teal">
-            {total > 0 ? total : lista.length} aguardando
+          <span className="rounded-full bg-teal/10 px-3 py-0.5 text-xs font-bold text-teal border border-teal/20">
+            {total} {total === 1 ? "pedido filtrado" : "pedidos filtrados"}
           </span>
         </div>
 
@@ -902,7 +902,7 @@ export default function FilaPsf() {
         <div className="flex flex-wrap items-center justify-between text-[11px] text-ink/60 pt-2 border-t border-sus-900/5 gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <span>
-              Exibindo <strong>{lista.length}</strong> de <strong>{total}</strong> pedido(s) na fila
+              Total filtrado: <strong>{total}</strong> pedido(s) · Exibindo <strong>{lista.length}</strong> nesta página
             </span>
             {carregando && (
               <span className="text-teal font-semibold animate-pulse flex items-center gap-1">
