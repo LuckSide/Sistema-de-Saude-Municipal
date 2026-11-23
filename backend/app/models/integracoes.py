@@ -54,6 +54,16 @@ class IntegrationSettings(SQLModel, table=True):
     sigtap_sync_ultima_competencia: str = Field(default="", max_length=10)
     sigtap_sync_ultimo_erro: str = Field(default="", max_length=500)
 
+    # --- Atualização Automática Tabela SIA (DATASUS FTP Oficial) ---
+    sia_sync_automatica: bool = Field(default=True)
+    sia_sync_ultima_execucao: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=False)),
+    )
+    sia_sync_ultimo_status: str = Field(default="", max_length=30)  # SUCESSO | SEM_NOVIDADE | ERRO | INDISPONIVEL
+    sia_sync_ultima_competencia: str = Field(default="", max_length=10)
+    sia_sync_ultimo_erro: str = Field(default="", max_length=500)
+
     # --- RNDS ---
     rnds_ambiente: str = Field(default="homologacao", max_length=20)  # homologacao|producao
     rnds_client_id: str = Field(default="", max_length=120)

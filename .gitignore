@@ -95,6 +95,10 @@ id_*
 *.xls
 *.XLS
 *.csv.bak
+*.DBF
+*.dbf
+*.exe
+*.EXE
 backend/app/data/referencias/
 backend/app/data/oxigenio/
 referencias/

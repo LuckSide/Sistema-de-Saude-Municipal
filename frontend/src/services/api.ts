@@ -1669,6 +1669,15 @@ export type SigtapAutoSyncStatus = {
   em_execucao: boolean;
 };
 
+export type SiaAutoSyncStatus = {
+  sia_sync_automatica: boolean;
+  sia_sync_ultima_execucao: string | null;
+  sia_sync_ultimo_status: string;
+  sia_sync_ultima_competencia: string;
+  sia_sync_ultimo_erro: string;
+  em_execucao: boolean;
+};
+
 export type SigtapVersao = {
   id: number;
   competencia: string;
@@ -1708,8 +1717,14 @@ export const sigtapAutoSyncStatus = () =>
   api.get<SigtapAutoSyncStatus>("/api/lab/sigtap/auto-sync").then((r) => r.data);
 export const sigtapAutoSyncConfig = (p: { sigtap_sync_automatica?: boolean; sigtap_sync_intervalo_horas?: number }) =>
   api.put<{ ok: boolean; sigtap_sync_automatica: boolean; sigtap_sync_intervalo_horas: number }>("/api/lab/sigtap/auto-sync", p).then((r) => r.data);
-export const sigtapAutoSyncExecutar = (competencia?: string, forcar?: boolean) =>
-  api.post<Record<string, unknown>>("/api/lab/sigtap/auto-sync/executar", null, { params: { competencia, forcar } }).then((r) => r.data);
+export const sigtapAutoSyncExecutar = (competencia?: string, forcar?: boolean, sincronizar_sia: boolean = true) =>
+  api.post<Record<string, unknown>>("/api/lab/sigtap/auto-sync/executar", null, { params: { competencia, forcar, sincronizar_sia } }).then((r) => r.data);
+export const siaAutoSyncStatus = () =>
+  api.get<SiaAutoSyncStatus>("/api/lab/sia/auto-sync").then((r) => r.data);
+export const siaAutoSyncConfig = (p: { sia_sync_automatica?: boolean }) =>
+  api.put<{ ok: boolean; sia_sync_automatica: boolean }>("/api/lab/sia/auto-sync", p).then((r) => r.data);
+export const siaAutoSyncExecutar = (competencia?: string, forcar?: boolean) =>
+  api.post<Record<string, unknown>>("/api/lab/sia/auto-sync/executar", null, { params: { competencia, forcar } }).then((r) => r.data);
 export const sigtapImportar = (arquivo: File, competencia: string, simular: boolean) => {
   const form = new FormData();
   form.append("file", arquivo);

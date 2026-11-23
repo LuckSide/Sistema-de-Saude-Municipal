@@ -16,7 +16,7 @@ FROM python:3.13-alpine AS runtime
 WORKDIR /code
 
 RUN apk update && apk upgrade --no-cache \
-    && apk add --no-cache libpq libffi openssh-client \
+    && apk add --no-cache libpq libffi openssh-client p7zip \
     && rm -rf /var/cache/apk/* \
     && addgroup -S appgroup && adduser -S appuser -G appgroup
 

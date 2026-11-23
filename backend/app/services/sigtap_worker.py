@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 from app.db.session import engine
 from app.models.integracoes import IntegrationSettings
 from app.models.lab_exames import SigtapVersao
+from app.services.sia_sync import executar_sync_automatica_sia, is_sia_sync_running
 from app.services.sigtap_sync import executar_sync_automatica_sigtap, is_sigtap_sync_running
 
 logger = logging.getLogger("sigtap_worker")
@@ -108,6 +109,50 @@ def _sigtap_sync_loop():
                                             f"Entrando em retry persistente em {intervalo_retry_falha // 60} minutos."
                                         )
                                         proximo_wait = intervalo_retry_falha
+
+                            # --- Sincronização mensal da Tabela SIA (DATASUS FTP) ---
+                            if cfg and getattr(cfg, "sia_sync_automatica", True):
+                                sia_ultima_exec = getattr(cfg, "sia_sync_ultima_execucao", None)
+                                sia_ultimo_status = getattr(cfg, "sia_sync_ultimo_status", "")
+                                sia_ultima_comp = (getattr(cfg, "sia_sync_ultima_competencia", "") or "").replace("-", "")
+
+                                ja_sincronizado_sia = (
+                                    sia_ultimo_status in ("SUCESSO", "SEM_NOVIDADE")
+                                    and (
+                                        (sia_ultima_exec is not None and sia_ultima_exec.year == agora.year and sia_ultima_exec.month == agora.month)
+                                        or (sia_ultima_comp == comp_mes_atual)
+                                    )
+                                )
+                                if not ja_sincronizado_sia:
+                                    versao_sia = db.exec(
+                                        select(SigtapVersao).where(
+                                            (SigtapVersao.competencia == comp_mes_atual)
+                                            | (SigtapVersao.competencia == agora.strftime("%Y-%m")),
+                                            SigtapVersao.origem == "sia_ftp",
+                                            SigtapVersao.total_proc > 0,
+                                        )
+                                    ).first()
+                                    if versao_sia:
+                                        ja_sincronizado_sia = True
+                                        cfg.sia_sync_ultimo_status = "SEM_NOVIDADE"
+                                        cfg.sia_sync_ultima_competencia = versao_sia.competencia
+                                        db.add(cfg)
+                                        db.commit()
+
+                                if not ja_sincronizado_sia and not is_sia_sync_running():
+                                    logger.info(
+                                        f"Iniciando sincronização mensal da Tabela SIA (FTP DATASUS) para competência {comp_mes_atual}..."
+                                    )
+                                    res_sia = executar_sync_automatica_sia(db)
+                                    st_sia = res_sia.get("status")
+                                    if st_sia in ("SUCESSO", "SEM_NOVIDADE"):
+                                        logger.info(
+                                            f"Sincronização mensal Tabela SIA concluída com sucesso ({st_sia}) para {comp_mes_atual}."
+                                        )
+                                    else:
+                                        logger.warning(
+                                            f"FTP DATASUS SIA indisponível para {comp_mes_atual}: {res_sia.get('mensagem')}"
+                                        )
                     finally:
                         try:
                             db.execute(text(f"SELECT pg_advisory_unlock({SIGTAP_LEADER_LOCK})"))

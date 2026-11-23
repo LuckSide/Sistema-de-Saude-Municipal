@@ -18,6 +18,9 @@ import {
   msgErro,
   pagData,
   pagMeta,
+  siaAutoSyncConfig,
+  siaAutoSyncExecutar,
+  siaAutoSyncStatus,
   sigtapArvore,
   sigtapAutoSyncConfig,
   sigtapAutoSyncExecutar,
@@ -25,6 +28,7 @@ import {
   sigtapCriarManual,
   sigtapImportar,
   sigtapVersoes,
+  type SiaAutoSyncStatus,
   type SigtapArvore,
   type SigtapAutoSyncStatus,
   type SigtapImportOut,
@@ -70,6 +74,9 @@ export default function LabSigtap() {
   const [autoSync, setAutoSync] = useState<SigtapAutoSyncStatus | null>(null);
   const [salvandoAutoSync, setSalvandoAutoSync] = useState(false);
   const [executandoAutoSync, setExecutandoAutoSync] = useState(false);
+  const [siaAutoSync, setSiaAutoSync] = useState<SiaAutoSyncStatus | null>(null);
+  const [salvandoSiaAutoSync, setSalvandoSiaAutoSync] = useState(false);
+  const [executandoSiaSync, setExecutandoSiaSync] = useState(false);
   const [ok, setOk] = useState("");
 
   // Cadastro Manual de Procedimento SIGTAP
@@ -148,6 +155,7 @@ export default function LabSigtap() {
 
   function carregarAutoSync() {
     sigtapAutoSyncStatus().then(setAutoSync).catch(() => {});
+    siaAutoSyncStatus().then(setSiaAutoSync).catch(() => {});
   }
 
   useEffect(() => {
@@ -216,6 +224,62 @@ export default function LabSigtap() {
     }
   }
 
+  async function atualizarConfigSiaAutoSync(patch: { sia_sync_automatica?: boolean }) {
+    setSalvandoSiaAutoSync(true);
+    setErro("");
+    try {
+      const novo = await siaAutoSyncConfig(patch);
+      setSiaAutoSync((prev) =>
+        prev
+          ? { ...prev, ...novo }
+          : {
+              sia_sync_automatica: novo.sia_sync_automatica,
+              sia_sync_ultima_execucao: null,
+              sia_sync_ultimo_status: "",
+              sia_sync_ultima_competencia: "",
+              sia_sync_ultimo_erro: "",
+              em_execucao: false,
+            },
+      );
+      setOk("Configuração de sincronização da Tabela SIA (FTP DATASUS) atualizada.");
+    } catch (e: unknown) {
+      setErro(msgErro(e, "Falha ao atualizar configuração automática do SIA."));
+    } finally {
+      setSalvandoSiaAutoSync(false);
+    }
+  }
+
+  async function sincronizarSiaAgora() {
+    setExecutandoSiaSync(true);
+    setErro("");
+    setOk("");
+    try {
+      const res = await siaAutoSyncExecutar(competencia || undefined, false);
+      carregarAutoSync();
+      const st = String(res.status || "").toUpperCase();
+      if (st === "SUCESSO" && res.ok) {
+        setOk(
+          `Tabela SIA sincronizada com sucesso via FTP oficial (${String(res.competencia || competencia)}): ${Number(res.inseridos || 0)} inseridos, ${Number(res.atualizados || 0)} atualizados.`,
+        );
+        carregarVersoes();
+        buscar(1);
+      } else if (st === "SEM_NOVIDADE") {
+        setOk(
+          String(
+            res.mensagem ||
+              `A Tabela SIA (${String(res.competencia || competencia)}) já está atualizada com a versão oficial do DATASUS.`,
+          ),
+        );
+      } else {
+        setErro(String(res.mensagem || "Falha na sincronização da Tabela SIA via FTP DATASUS."));
+      }
+    } catch (e: unknown) {
+      setErro(msgErro(e, "Falha na sincronização da Tabela SIA."));
+    } finally {
+      setExecutandoSiaSync(false);
+    }
+  }
+
   async function sincronizarAgora() {
     setExecutandoAutoSync(true);
     setErro("");
@@ -230,6 +294,10 @@ export default function LabSigtap() {
         setOk(
           `Sincronização concluída com sucesso (${String(res.competencia || competencia)}): ${Number(res.inseridos || 0)} inseridos, ${Number(res.atualizados || 0)} atualizados.`,
         );
+        carregarVersoes();
+        buscar(1);
+      } else if (st === "SUCESSO_PARCIAL") {
+        setOk(String(res.mensagem || "Tabela SIA sincronizada com sucesso via FTP oficial do DATASUS."));
         carregarVersoes();
         buscar(1);
       } else if (st === "SEM_NOVIDADE") {
@@ -467,31 +535,47 @@ export default function LabSigtap() {
           </p>
         </div>
 
-        {/* Sincronização Automática com DATASUS (Rotina Diária + Disparo Imediato) */}
+        {/* Sincronização Automática com DATASUS (SIGTAP Portal + Tabela SIA FTP) */}
         <div className="rounded-2xl border border-teal/25 bg-teal/5 p-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <p className="font-bold text-sm text-sus-950 flex items-center gap-1.5">
-                <Sparkles className="h-4 w-4 text-teal" /> Sincronização Automática Diária (SIGTAP / DATASUS)
+                <Sparkles className="h-4 w-4 text-teal" /> Sincronização Automática (SIGTAP + Tabela SIA / DATASUS)
               </p>
               <p className="text-xs text-ink/65 mt-0.5">
-                Verifica automaticamente <b>1 vez ao dia</b> no portal oficial do DATASUS se há nova versão da Tabela Unificada e atualiza os procedimentos.
+                Atualiza os procedimentos, valores e regras oficiais integrando o Portal SIGTAP e o FTP oficial do SIA (<code>ftp://ftp.datasus.gov.br/siasus/SIA/</code>).
               </p>
             </div>
-            {autoSync && (
-              <span
-                className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
-                  ["sucesso", "sem_novidade"].includes((autoSync.sigtap_sync_ultimo_status || "").toLowerCase())
-                    ? "bg-emerald-100 text-emerald-800"
-                    : ["erro", "indisponivel"].includes((autoSync.sigtap_sync_ultimo_status || "").toLowerCase())
-                      ? "bg-amber-100 text-amber-900 border border-amber-300"
-                      : "bg-sus-900/10 text-sus-900"
-                }`}
-              >
-                Status: {autoSync.sigtap_sync_ultimo_status || "Aguardando verificação"}
-                {autoSync.sigtap_sync_ultima_competencia ? ` (${autoSync.sigtap_sync_ultima_competencia})` : ""}
-              </span>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {autoSync && (
+                <span
+                  className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+                    ["sucesso", "sem_novidade"].includes((autoSync.sigtap_sync_ultimo_status || "").toLowerCase())
+                      ? "bg-emerald-100 text-emerald-800"
+                      : ["erro", "indisponivel"].includes((autoSync.sigtap_sync_ultimo_status || "").toLowerCase())
+                        ? "bg-amber-100 text-amber-900 border border-amber-300"
+                        : "bg-sus-900/10 text-sus-900"
+                  }`}
+                >
+                  SIGTAP: {autoSync.sigtap_sync_ultimo_status || "Aguardando"}
+                  {autoSync.sigtap_sync_ultima_competencia ? ` (${autoSync.sigtap_sync_ultima_competencia})` : ""}
+                </span>
+              )}
+              {siaAutoSync && (
+                <span
+                  className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+                    ["sucesso", "sem_novidade"].includes((siaAutoSync.sia_sync_ultimo_status || "").toLowerCase())
+                      ? "bg-teal/15 text-teal-800 border border-teal/30"
+                      : ["erro", "indisponivel"].includes((siaAutoSync.sia_sync_ultimo_status || "").toLowerCase())
+                        ? "bg-amber-100 text-amber-900 border border-amber-300"
+                        : "bg-sus-900/10 text-sus-900"
+                  }`}
+                >
+                  SIA (FTP): {siaAutoSync.sia_sync_ultimo_status || "Aguardando"}
+                  {siaAutoSync.sia_sync_ultima_competencia ? ` (${siaAutoSync.sia_sync_ultima_competencia})` : ""}
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="flex flex-wrap items-end gap-3 pt-1">
@@ -503,7 +587,18 @@ export default function LabSigtap() {
                 onChange={(e) => atualizarConfigAutoSync({ sigtap_sync_automatica: e.target.checked })}
                 className="h-4 w-4 rounded border-sus-900/30 text-teal"
               />
-              Sincronização diária automática ativa (1x ao dia)
+              Auto-sync SIGTAP (1x ao mês)
+            </label>
+
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-sus-900/15 bg-white px-3 py-2 text-xs font-semibold text-sus-950">
+              <input
+                type="checkbox"
+                checked={Boolean(siaAutoSync?.sia_sync_automatica ?? true)}
+                disabled={salvandoSiaAutoSync}
+                onChange={(e) => atualizarConfigSiaAutoSync({ sia_sync_automatica: e.target.checked })}
+                className="h-4 w-4 rounded border-sus-900/30 text-teal"
+              />
+              Auto-sync Tabela SIA / FTP
             </label>
 
             <div>
@@ -516,15 +611,24 @@ export default function LabSigtap() {
               />
             </div>
 
-            {/* Único botão para fazer agora */}
             <Button
               type="button"
               onClick={sincronizarAgora}
-              disabled={executandoAutoSync || importando}
+              disabled={executandoAutoSync || executandoSiaSync || importando}
               className="!bg-teal !text-sus-950 font-bold flex items-center gap-1.5 !w-auto"
             >
               <RefreshCw className={`h-4 w-4 ${executandoAutoSync ? "animate-spin" : ""}`} />
-              {executandoAutoSync ? "Sincronizando com DATASUS…" : "Sincronizar Tabela Agora"}
+              {executandoAutoSync ? "Sincronizando SIGTAP + SIA…" : "Sincronizar SIGTAP + SIA"}
+            </Button>
+
+            <Button
+              type="button"
+              onClick={sincronizarSiaAgora}
+              disabled={executandoAutoSync || executandoSiaSync || importando}
+              className="border border-sus-900/20 bg-white hover:bg-sus-900/5 text-sus-950 font-semibold flex items-center gap-1.5 !w-auto"
+            >
+              <Download className={`h-4 w-4 ${executandoSiaSync ? "animate-spin" : ""}`} />
+              {executandoSiaSync ? "Baixando do FTP DATASUS…" : "Sincronizar Apenas SIA (FTP)"}
             </Button>
           </div>
 

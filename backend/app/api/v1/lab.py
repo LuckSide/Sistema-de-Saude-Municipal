@@ -796,14 +796,103 @@ def atualizar_config_auto_sync_sigtap(
 def executar_auto_sync_sigtap_agora(
     competencia: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
     forcar: bool = Query(default=False),
+    sincronizar_sia: bool = Query(default=True),
     db: Session = Depends(get_db),
     ator=Depends(need_any_perm("lab_sigtap", "tfd_catalogo", "usuarios", "cfg_geral", "tfd")),
 ):
-    """Dispara verificação/importação imediata do portal DATASUS/SIGTAP."""
+    """Dispara verificação/importação imediata do portal DATASUS/SIGTAP e Tabela SIA."""
     from app.services.sigtap_sync import executar_sync_automatica_sigtap
 
     nome_op = getattr(ator, "nome", "") or getattr(ator, "username", "") or "Operador"
-    return executar_sync_automatica_sigtap(db, competencia=competencia, usuario=nome_op, forcar=forcar)
+    res_sigtap = executar_sync_automatica_sigtap(db, competencia=competencia, usuario=nome_op, forcar=forcar)
+
+    if sincronizar_sia:
+        from app.services.sia_sync import executar_sync_automatica_sia
+        res_sia = executar_sync_automatica_sia(db, competencia=competencia, usuario=nome_op, forcar=forcar)
+        res_sigtap["sia_resultado"] = res_sia
+        if res_sigtap.get("ok") and res_sia.get("ok"):
+            res_sigtap["mensagem"] = (
+                f"{res_sigtap.get('mensagem', 'SIGTAP atualizado.')} "
+                f"Tabela SIA (FTP DATASUS): {res_sia.get('mensagem', res_sia.get('status', 'OK'))}"
+            )
+        elif not res_sigtap.get("ok") and res_sia.get("ok"):
+            res_sigtap["ok"] = True
+            res_sigtap["status"] = "SUCESSO_PARCIAL"
+            res_sigtap["mensagem"] = (
+                f"Tabela SIA importada com sucesso via FTP oficial do DATASUS ({res_sia.get('competencia')}). "
+                f"Aviso SIGTAP: {res_sigtap.get('mensagem')}"
+            )
+            res_sigtap["inseridos"] = res_sia.get("inseridos", 0)
+            res_sigtap["atualizados"] = res_sia.get("atualizados", 0)
+
+    return res_sigtap
+
+
+class SiaAutoSyncConfigIn(BaseModel):
+    sia_sync_automatica: bool | None = None
+
+
+@router.get("/sia/auto-sync")
+def status_auto_sync_sia(
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_sigtap", "tfd_catalogo", "usuarios", "cfg_geral", "tfd")),
+):
+    """Status e agendamento da rotina periódica da Tabela SIA (DATASUS FTP)."""
+    from app.models.integracoes import IntegrationSettings
+    from app.services.sia_sync import is_sia_sync_running
+
+    cfg = db.exec(select(IntegrationSettings).where(IntegrationSettings.id == 1)).first()
+    if not cfg:
+        cfg = IntegrationSettings(id=1)
+        db.add(cfg)
+        db.commit()
+        db.refresh(cfg)
+    return {
+        "sia_sync_automatica": bool(getattr(cfg, "sia_sync_automatica", True)),
+        "sia_sync_ultima_execucao": (
+            cfg.sia_sync_ultima_execucao.isoformat()
+            if getattr(cfg, "sia_sync_ultima_execucao", None)
+            else None
+        ),
+        "sia_sync_ultimo_status": getattr(cfg, "sia_sync_ultimo_status", "") or "",
+        "sia_sync_ultima_competencia": getattr(cfg, "sia_sync_ultima_competencia", "") or "",
+        "sia_sync_ultimo_erro": getattr(cfg, "sia_sync_ultimo_erro", "") or "",
+        "em_execucao": is_sia_sync_running(),
+    }
+
+
+@router.put("/sia/auto-sync")
+def atualizar_config_auto_sync_sia(
+    data: SiaAutoSyncConfigIn,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_sigtap", "tfd_catalogo", "usuarios", "cfg_geral", "tfd", acoes=("editar",))),
+):
+    """Atualiza ativação da rotina periódica da Tabela SIA (DATASUS FTP)."""
+    from app.models.integracoes import IntegrationSettings
+
+    cfg = db.exec(select(IntegrationSettings).where(IntegrationSettings.id == 1)).first()
+    if not cfg:
+        cfg = IntegrationSettings(id=1)
+    if data.sia_sync_automatica is not None:
+        cfg.sia_sync_automatica = data.sia_sync_automatica
+    db.add(cfg)
+    db.commit()
+    db.refresh(cfg)
+    return {"ok": True, "sia_sync_automatica": cfg.sia_sync_automatica}
+
+
+@router.post("/sia/auto-sync/executar")
+def executar_auto_sync_sia_agora(
+    competencia: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+    forcar: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    ator=Depends(need_any_perm("lab_sigtap", "tfd_catalogo", "usuarios", "cfg_geral", "tfd")),
+):
+    """Dispara verificação e importação imediata da Tabela SIA (FTP DATASUS: ftp://ftp.datasus.gov.br/siasus/SIA/)."""
+    from app.services.sia_sync import executar_sync_automatica_sia
+
+    nome_op = getattr(ator, "nome", "") or getattr(ator, "username", "") or "Operador"
+    return executar_sync_automatica_sia(db, competencia=competencia, usuario=nome_op, forcar=forcar)
 
 
 # ==============================================================================
