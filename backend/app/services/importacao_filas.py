@@ -694,6 +694,8 @@ def processar_linhas(
                     (Laboratorio.nome.ilike("%PRO%ANALISE%"))
                     | (Laboratorio.nome.ilike("%PRÓ%ANÁLISE%"))
                     | (Laboratorio.nome.ilike("%PRO%ANÁLISE%"))
+                    | (Laboratorio.nome.ilike("%PRÓ%ANALISE%"))
+                    | (Laboratorio.nome.ilike("%PRO%AN%LISE%"))
                 )
             ).first()
         elif chave_l == "labcon":
@@ -1750,7 +1752,7 @@ def processar_linhas(
                 if solic_obj is None:
                     criou_solic = True
                     cod_ped = (r.get("codigo_pedido") or "").strip()
-                    obs_lab = f"Agendamento Vivver #{cod_ped}" if cod_ped else "Importação XML"
+                    obs_lab = f"Agendamento Vivver #{cod_ped} | Lab: {lab_efetivo.nome}" if cod_ped else f"Importação XML | Lab: {lab_efetivo.nome}"
                     cod_solic_lab = (getattr(ja_lab, "codigo_solicitacao", "") or "").strip() if ja_lab else ""
                     if not cod_solic_lab:
                         cod_solic_lab = gerar_protocolo_lab_aleatorio(dt_solic_mestre, db=None, usados=codigos_solic_usados)
