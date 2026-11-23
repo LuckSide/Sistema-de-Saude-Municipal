@@ -82,3 +82,23 @@ github.pub
 *.pub
 id_*
 !*.pub.example
+
+# ==============================================================================
+# DADOS DE REFERÊNCIA, AMOSTRAS E ARQUIVOS ENVIADOS PELO USUÁRIO (NUNCA NO GITHUB)
+# ==============================================================================
+*.OUT
+*.out
+*.xml
+*.XML
+*.xlsx
+*.XLSX
+*.xls
+*.XLS
+*.csv.bak
+backend/app/data/referencias/
+backend/app/data/oxigenio/
+referencias/
+dados_referencia/
+uploads/
+*.user_uploaded*
+

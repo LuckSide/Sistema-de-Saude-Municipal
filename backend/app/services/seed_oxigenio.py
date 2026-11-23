@@ -1,7 +1,6 @@
 import os
 import re
 from datetime import date, datetime
-import openpyxl
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import text
 from sqlmodel import Session, select
@@ -255,12 +254,12 @@ def seed_oxigenio_dados_reais(db: Session, caminho_xlsx: str | None = None, forc
         caminho_xlsx = os.path.join(base_dir, "data", "oxigenio", "Oxigenio_Oficial.xlsx")
 
     if not os.path.exists(caminho_xlsx):
-        # Tenta caminho alternativo
-        alt_path = "/Users/mateusluck/.gemini/antigravity/brain/1eb23bc9-e3db-486b-9ecb-39cd7002539a/.user_uploaded/media_1793987397258_cfa370c3.xlsx"
-        if os.path.exists(alt_path):
-            caminho_xlsx = alt_path
-        else:
-            return {"ok": False, "erro": f"Planilha oficial não encontrada em {caminho_xlsx}"}
+        return {"ok": False, "erro": f"Planilha de referência não encontrada no servidor: {caminho_xlsx}"}
+
+    try:
+        import openpyxl
+    except ImportError:
+        return {"ok": False, "erro": "Biblioteca openpyxl não instalada neste ambiente"}
 
     wb = openpyxl.load_workbook(caminho_xlsx, data_only=True)
 
