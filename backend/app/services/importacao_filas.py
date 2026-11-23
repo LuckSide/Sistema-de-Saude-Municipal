@@ -1622,7 +1622,7 @@ def processar_linhas(
                         PacienteHistorico(
                             paciente_id=pac.id,
                             tipo_evento="EXAME_LAB_CANCELADO",
-                            motivo=obs_canc[:255] or "Cancelado/Desistência no Vivver",
+                            motivo=(obs_canc or "Cancelado/Desistência no Vivver")[:120],
                             descricao=f"Solicitação Vivver #{cod_ped} ({tipo_lab_label}) cancelada/desistência: {nomes_desc_lab or exame_nome_ef}."[:500],
                             origem="importacao_filas",
                             exames_baixados_qtd=0,

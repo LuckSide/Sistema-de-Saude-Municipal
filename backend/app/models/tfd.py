@@ -328,10 +328,10 @@ class PacienteHistorico(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     paciente_id: int = Field(foreign_key="tfd_pacientes.id", index=True)
-    tipo_evento: str = Field(max_length=40, index=True)  # OBITO_PEC | MUDANCA_MUNICIPIO_PEC | BAIXA_FILA
-    motivo: str = Field(default="", max_length=120)
-    descricao: str = Field(default="", max_length=500)
-    origem: str = Field(default="e-SUS PEC", max_length=50)
+    tipo_evento: str = Field(max_length=60, index=True)  # OBITO_PEC | MUDANCA_MUNICIPIO_PEC | BAIXA_FILA
+    motivo: str = Field(default="", max_length=500)
+    descricao: str = Field(default="", max_length=1000)
+    origem: str = Field(default="e-SUS PEC", max_length=100)
     exames_baixados_qtd: int = Field(default=0)
     exames_baixados_ids: str = Field(default="", max_length=500)
     registrado_por: str = Field(default="Sincronização Automática e-SUS PEC", max_length=120)

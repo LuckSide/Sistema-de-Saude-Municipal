@@ -676,9 +676,9 @@ def test_separacao_automatica_historico_vs_fila_real_mesmo_xml(db_session: Sessi
        - Vão para FilaPsf (status='na_fila') e NÃO criam SolicitacaoMestre.
     4. Pedidos cancelados são arquivados em PacienteHistorico sem entrar na fila ativa.
     """
-    xml_conteudo = b"""<?xml version="1.0" encoding="UTF-8"?>
+    xml_conteudo = """<?xml version="1.0" encoding="UTF-8"?>
     <exames_laboratorio>
-      <!-- 1. Exame Hist\xc3\xb3rico (2024, Vivver com status desconhecido) -->
+      <!-- 1. Exame Histórico (2024, Vivver com status desconhecido) -->
       <exame>
         <codigo>10001</codigo>
         <prontuario>147001</prontuario>
@@ -719,7 +719,7 @@ def test_separacao_automatica_historico_vs_fila_real_mesmo_xml(db_session: Sessi
         <exames_realizados>0202010473 - DOSAGEM DE GLICOSE</exames_realizados>
       </exame>
 
-      <!-- 4. Exame Cancelado / Desistencia -->
+      <!-- 4. Exame Cancelado / Desistencia com observacao longa do Vivver -->
       <exame>
         <codigo>10004</codigo>
         <prontuario>147004</prontuario>
@@ -728,10 +728,10 @@ def test_separacao_automatica_historico_vs_fila_real_mesmo_xml(db_session: Sessi
         <data_agendamento>15/01/2024</data_agendamento>
         <status>cancelado</status>
         <tipo_servico>EXAME_LABORATORIAL</tipo_servico>
-        <observacao>Paciente mudou de cidade e desistiu</observacao>
+        <observacao>................................................................................................. | Motivo: Erro digitação</observacao>
       </exame>
     </exames_laboratorio>
-    """
+    """.encode("utf-8")
 
     linhas = ler_xml(xml_conteudo)
     res = processar_linhas(linhas, db=db_session, simular=False, criar_pacientes_novos=True)

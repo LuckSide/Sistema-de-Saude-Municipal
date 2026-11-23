@@ -1755,6 +1755,17 @@ def _init_db_impl() -> None:
                     conn.execute(text("CREATE EXTENSION IF NOT EXISTS unaccent"))
             except Exception:
                 pass
+            for col_hist_sql in [
+                "ALTER TABLE tfd_pacientes_historico ALTER COLUMN motivo TYPE VARCHAR(500)",
+                "ALTER TABLE tfd_pacientes_historico ALTER COLUMN descricao TYPE VARCHAR(1000)",
+                "ALTER TABLE tfd_pacientes_historico ALTER COLUMN tipo_evento TYPE VARCHAR(60)",
+                "ALTER TABLE tfd_pacientes_historico ALTER COLUMN origem TYPE VARCHAR(100)",
+            ]:
+                try:
+                    with conn.begin_nested():
+                        conn.execute(text(col_hist_sql))
+                except Exception:
+                    pass
         for idx_sql in [
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_tfd_viagem_paciente ON tfd_viagem_pacientes (viagem_id, paciente_id)",
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_tfd_faturamento_viagem_pac_cod ON tfd_faturamento (viagem_id, paciente_id, codigo_sigtap) WHERE viagem_id IS NOT NULL",
