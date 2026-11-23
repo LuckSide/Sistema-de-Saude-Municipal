@@ -124,39 +124,39 @@ export default function FaturamentoBpa() {
   }, [resumo, abaAtiva, termoBusca]);
 
   return (
-    <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">
+    <div className="space-y-5">
       {/* Cabeçalho */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-200 dark:border-gray-800 pb-4">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-sus-900/10 pb-4">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100 flex items-center gap-2">
-              <FileCheck className="h-7 w-7 text-emerald-600 dark:text-emerald-400" />
+            <h1 className="font-display text-xl font-bold text-sus-950 flex items-center gap-2">
+              <FileCheck className="h-6 w-6 text-teal" />
               Faturamento BPA Oficial (SIA/SUS)
             </h1>
-            <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300">
+            <span className="rounded-full bg-teal/10 px-2.5 py-0.5 text-xs font-bold text-teal border border-teal/20">
               Layout DATASUS 100%
-            </Badge>
+            </span>
           </div>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+          <p className="text-xs text-ink/65 mt-1">
             Geração oficial do Boletim de Produção Ambulatorial (.OUT) unificando Exames Laboratoriais e Viagens/Transporte TFD (Grupo 08).
           </p>
         </div>
 
         {/* Seletor de Competência */}
-        <div className="flex items-center gap-2 bg-white dark:bg-gray-800 p-1.5 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
-          <Button variant="ghost" size="sm" onClick={() => mudarMes(-1)} title="Mês anterior">
+        <div className="flex items-center gap-2 bg-white p-1 rounded-xl border border-sus-900/15 shadow-xs">
+          <Button variant="ghost" size="sm" onClick={() => mudarMes(-1)} title="Mês anterior" className="!h-8 !px-2.5 text-xs">
             ◀
           </Button>
-          <div className="flex items-center gap-2 px-2">
-            <Calendar className="h-4 w-4 text-gray-500" />
+          <div className="flex items-center gap-1.5 px-2">
+            <Calendar className="h-4 w-4 text-ink/50" />
             <input
               type="month"
               value={competencia}
               onChange={(e) => e.target.value && setCompetencia(e.target.value)}
-              className="text-sm font-semibold bg-transparent border-0 focus:ring-0 text-gray-800 dark:text-gray-200 cursor-pointer"
+              className="text-xs font-semibold bg-transparent border-0 focus:ring-0 text-sus-950 cursor-pointer"
             />
           </div>
-          <Button variant="ghost" size="sm" onClick={() => mudarMes(1)} title="Próximo mês">
+          <Button variant="ghost" size="sm" onClick={() => mudarMes(1)} title="Próximo mês" className="!h-8 !px-2.5 text-xs">
             ▶
           </Button>
           <Button
@@ -164,65 +164,65 @@ export default function FaturamentoBpa() {
             size="sm"
             onClick={() => carregarDados()}
             disabled={loading}
-            className="ml-1"
+            className="ml-1 !h-8 !px-2.5 text-xs border-sus-900/15"
             title="Atualizar dados"
           >
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
           </Button>
         </div>
       </div>
 
       {/* Alertas */}
       {sucesso && (
-        <div className="p-3 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 rounded-lg flex items-center gap-2 text-sm shadow-sm animate-fadeIn">
-          <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
+        <div className="p-3 bg-teal/10 border border-teal/25 text-teal rounded-xl flex items-center gap-2 text-xs font-medium shadow-xs">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-teal" />
           <span>{sucesso}</span>
         </div>
       )}
 
       {erro && (
-        <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-300 dark:border-red-800 text-red-800 dark:text-red-200 rounded-lg flex items-center gap-2 text-sm shadow-sm">
-          <AlertCircle className="h-5 w-5 text-red-600 shrink-0" />
+        <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl flex items-center gap-2 text-xs font-medium shadow-xs">
+          <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
           <span>{erro}</span>
         </div>
       )}
 
       {/* Bloco de Ações de Exportação em Destaque */}
-      <Card className="p-5 bg-gradient-to-r from-emerald-50/70 via-teal-50/50 to-blue-50/70 dark:from-emerald-950/20 dark:via-gray-900 dark:to-blue-950/20 border-emerald-200 dark:border-emerald-900 shadow-sm">
+      <Card className="p-5 bg-white border border-teal/25 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="space-y-1">
-            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-              <ShieldCheck className="h-5 w-5 text-emerald-600" />
+            <h3 className="font-display text-sm font-bold text-sus-950 flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-teal" />
               Arquivo de Remessa Oficial SIA-SUS (Guapé - MG)
             </h3>
-            <p className="text-xs text-gray-600 dark:text-gray-400">
-              CNES SMS: <span className="font-mono font-bold text-gray-800 dark:text-gray-200">2146479</span> | IBGE:{" "}
-              <span className="font-mono font-bold text-gray-800 dark:text-gray-200">312810</span> | CNPJ:{" "}
-              <span className="font-mono font-bold text-gray-800 dark:text-gray-200">18.239.616/0001-85</span> | Código Controle:{" "}
-              <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400">
+            <p className="text-xs text-ink/65">
+              CNES SMS: <span className="font-mono font-bold text-sus-950">2146479</span> · IBGE:{" "}
+              <span className="font-mono font-bold text-sus-950">312810</span> · CNPJ:{" "}
+              <span className="font-mono font-bold text-sus-950">18.239.616/0001-85</span> · Código Controle:{" "}
+              <span className="font-mono font-bold text-teal">
                 {resumo?.controle_verificador ?? "----"}
               </span>
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
             <Button
               onClick={handleDownloadOut}
               disabled={baixandoOut || loading || (resumo?.total_geral_itens ?? 0) === 0}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-md flex items-center gap-2 px-5 py-2.5"
+              className="bg-teal hover:brightness-110 text-sus-950 font-bold shadow-xs flex items-center gap-2 px-4 py-2 text-xs"
             >
               <Download className={`h-4 w-4 ${baixandoOut ? "animate-bounce" : ""}`} />
-              {baixandoOut ? "Gerando .OUT..." : "📥 Baixar Arquivo BPA Oficial (.OUT)"}
+              {baixandoOut ? "Gerando .OUT..." : "Baixar Arquivo Oficial (.OUT)"}
             </Button>
 
             <Button
               variant="outline"
               onClick={handleDownloadCsv}
               disabled={baixandoCsv || loading || (resumo?.total_geral_itens ?? 0) === 0}
-              className="bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750 flex items-center gap-2"
+              className="border border-sus-900/15 bg-white hover:bg-sand text-ink text-xs font-semibold flex items-center gap-2 px-3.5 py-2"
             >
-              <FileSpreadsheet className={`h-4 w-4 text-emerald-600 ${baixandoCsv ? "animate-pulse" : ""}`} />
-              {baixandoCsv ? "Exportando..." : "📊 Planilha de Conferência (.CSV)"}
+              <FileSpreadsheet className={`h-4 w-4 text-teal ${baixandoCsv ? "animate-pulse" : ""}`} />
+              {baixandoCsv ? "Exportando..." : "Planilha Conferência (.CSV)"}
             </Button>
           </div>
         </div>
@@ -231,207 +231,223 @@ export default function FaturamentoBpa() {
       {/* Cards de Métricas Principais */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Card 1: Exames Laboratoriais */}
-        <Card className="p-4 border-l-4 border-l-cyan-500 bg-white dark:bg-gray-800 shadow-sm">
+        <Card className="p-4 border-l-4 border-l-teal bg-white shadow-xs">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+              <p className="text-[11px] font-semibold text-ink/55 uppercase tracking-wider">
                 Exames Laboratoriais
               </p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">
+              <p className="font-display text-2xl font-bold text-sus-950 mt-1">
                 {loading ? "..." : (resumo?.total_exames ?? 0).toLocaleString("pt-BR")}
               </p>
             </div>
-            <div className="p-2.5 bg-cyan-50 dark:bg-cyan-950/60 rounded-lg text-cyan-600 dark:text-cyan-400">
-              <FlaskConical className="h-6 w-6" />
+            <div className="p-2.5 bg-teal/10 rounded-xl text-teal">
+              <FlaskConical className="h-5 w-5" />
             </div>
           </div>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-            Rotinas de sangue, urina e sorologias realizadas
+          <p className="text-[11px] text-ink/50 mt-2">
+            Rotinas de sangue, urina e sorologias
           </p>
         </Card>
 
         {/* Card 2: Viagens TFD */}
-        <Card className="p-4 border-l-4 border-l-amber-500 bg-white dark:bg-gray-800 shadow-sm">
+        <Card className="p-4 border-l-4 border-l-amber-500 bg-white shadow-xs">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+              <p className="text-[11px] font-semibold text-ink/55 uppercase tracking-wider">
                 Viagens & Carro (TFD)
               </p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">
+              <p className="font-display text-2xl font-bold text-sus-950 mt-1">
                 {loading ? "..." : (resumo?.total_viagens_tfd ?? 0).toLocaleString("pt-BR")}
               </p>
             </div>
-            <div className="p-2.5 bg-amber-50 dark:bg-amber-950/60 rounded-lg text-amber-600 dark:text-amber-400">
-              <Ambulance className="h-6 w-6" />
+            <div className="p-2.5 bg-amber-500/10 rounded-xl text-amber-600">
+              <Ambulance className="h-5 w-5" />
             </div>
           </div>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-            Deslocamentos de pacientes e acompanhantes (Grupo 08)
+          <p className="text-[11px] text-ink/50 mt-2">
+            Deslocamentos de pacientes e acompanhantes
           </p>
         </Card>
 
         {/* Card 3: Linhas e Folhas */}
-        <Card className="p-4 border-l-4 border-l-indigo-500 bg-white dark:bg-gray-800 shadow-sm">
+        <Card className="p-4 border-l-4 border-l-indigo-500 bg-white shadow-xs">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+              <p className="text-[11px] font-semibold text-ink/55 uppercase tracking-wider">
                 Produção BPA Gravada
               </p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">
+              <p className="font-display text-2xl font-bold text-sus-950 mt-1">
                 {loading ? "..." : `${resumo?.total_linhas ?? 0} lin`}
               </p>
             </div>
-            <div className="p-2.5 bg-indigo-50 dark:bg-indigo-950/60 rounded-lg text-indigo-600 dark:text-indigo-400">
-              <Layers className="h-6 w-6" />
+            <div className="p-2.5 bg-indigo-500/10 rounded-xl text-indigo-600">
+              <Layers className="h-5 w-5" />
             </div>
           </div>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-            {resumo?.total_folhas ?? 0} folhas | {resumo?.total_procedimentos_bpa_c ?? 0} BPA-C + {resumo?.total_procedimentos_bpa_i ?? 0} BPA-I
+          <p className="text-[11px] text-ink/50 mt-2">
+            {resumo?.total_folhas ?? 0} folhas · {resumo?.total_procedimentos_bpa_c ?? 0} BPA-C + {resumo?.total_procedimentos_bpa_i ?? 0} BPA-I
           </p>
         </Card>
 
         {/* Card 4: Valor Total SUS */}
-        <Card className="p-4 border-l-4 border-l-emerald-500 bg-white dark:bg-gray-800 shadow-sm">
+        <Card className="p-4 border-l-4 border-l-emerald-600 bg-white shadow-xs">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                Valor Total Estimado SUS
+              <p className="text-[11px] font-semibold text-ink/55 uppercase tracking-wider">
+                Valor Estimado SUS
               </p>
-              <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
+              <p className="font-display text-2xl font-bold text-emerald-700 mt-1">
                 {loading ? "..." : (resumo?.valor_total_estimado ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
               </p>
             </div>
-            <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/60 rounded-lg text-emerald-600 dark:text-emerald-400">
-              <Coins className="h-6 w-6" />
+            <div className="p-2.5 bg-emerald-600/10 rounded-xl text-emerald-600">
+              <Coins className="h-5 w-5" />
             </div>
           </div>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-            Tabela SIGTAP ambulatorial e deslocamentos
+          <p className="text-[11px] text-ink/50 mt-2">
+            Tabela SIGTAP e deslocamentos
           </p>
         </Card>
       </div>
 
       {/* Seção de Conferência e Auditoria dos Registros */}
-      <Card className="p-4 md:p-6 bg-white dark:bg-gray-800 shadow-sm">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-200 dark:border-gray-700 pb-4">
-          <div className="flex items-center gap-2">
-            <Button
-              variant={abaAtiva === "todos" ? "default" : "outline"}
-              size="sm"
+      <Card className="overflow-hidden border-sus-900/10 shadow-xs">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-4 border-b border-sus-900/10 bg-sand/30">
+          <div className="flex items-center gap-1.5 rounded-xl bg-sand p-1">
+            <button
+              type="button"
               onClick={() => setAbaAtiva("todos")}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                abaAtiva === "todos"
+                  ? "bg-white text-sus-950 shadow-xs"
+                  : "text-ink/65 hover:text-sus-950"
+              }`}
             >
-              Todos os Itens ({resumo?.total_geral_itens ?? 0})
-            </Button>
-            <Button
-              variant={abaAtiva === "bpac" ? "default" : "outline"}
-              size="sm"
+              Todos ({resumo?.total_geral_itens ?? 0})
+            </button>
+            <button
+              type="button"
               onClick={() => setAbaAtiva("bpac")}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                abaAtiva === "bpac"
+                  ? "bg-white text-sus-950 shadow-xs"
+                  : "text-ink/65 hover:text-sus-950"
+              }`}
             >
               BPA-C Consolidado ({resumo?.total_procedimentos_bpa_c ?? 0})
-            </Button>
-            <Button
-              variant={abaAtiva === "bpai" ? "default" : "outline"}
-              size="sm"
+            </button>
+            <button
+              type="button"
               onClick={() => setAbaAtiva("bpai")}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                abaAtiva === "bpai"
+                  ? "bg-white text-sus-950 shadow-xs"
+                  : "text-ink/65 hover:text-sus-950"
+              }`}
             >
               BPA-I Individualizado ({resumo?.total_procedimentos_bpa_i ?? 0})
-            </Button>
+            </button>
           </div>
 
-          <div className="relative w-full md:w-72">
-            <Search className="h-4 w-4 absolute left-3 top-2.5 text-gray-400" />
+          <div className="relative w-full md:w-80">
+            <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink/40 pointer-events-none" />
             <Input
               type="text"
               placeholder="Buscar por código, exame, paciente..."
               value={termoBusca}
               onChange={(e) => setTermoBusca(e.target.value)}
-              className="pl-9 text-sm"
+              className="!pl-9 !h-9 text-xs"
             />
           </div>
         </div>
 
         {/* Tabela de Itens */}
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
             <thead>
-              <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">
-                <th className="py-2.5 px-3 font-semibold">Tipo</th>
-                <th className="py-2.5 px-2 font-semibold">Flh / Lin</th>
-                <th className="py-2.5 px-3 font-semibold">Código SIGTAP</th>
-                <th className="py-2.5 px-3 font-semibold">Descrição do Procedimento</th>
-                <th className="py-2.5 px-3 font-semibold">Origem</th>
-                <th className="py-2.5 px-3 font-semibold">Paciente / Identificação</th>
-                <th className="py-2.5 px-2 font-semibold text-right">Qtd</th>
-                <th className="py-2.5 px-3 font-semibold text-right">Unitário</th>
-                <th className="py-2.5 px-3 font-semibold text-right">Total SUS</th>
+              <tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60 font-semibold">
+                <th className="py-3 px-3">Tipo</th>
+                <th className="py-3 px-2">Flh / Lin</th>
+                <th className="py-3 px-3">Código SIGTAP</th>
+                <th className="py-3 px-3">Descrição do Procedimento</th>
+                <th className="py-3 px-3">Origem</th>
+                <th className="py-3 px-3">Paciente / Identificação</th>
+                <th className="py-3 px-2 text-right">Qtd</th>
+                <th className="py-3 px-3 text-right">Unitário</th>
+                <th className="py-3 px-3 text-right">Total SUS</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+            <tbody className="divide-y divide-sus-900/5">
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="py-8 text-center text-gray-500">
-                    <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2 text-emerald-600" />
-                    Carregando produção do BPA...
+                  <td colSpan={9} className="py-12 text-center text-ink/50">
+                    <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-teal border-t-transparent mb-2" />
+                    <p className="text-xs">Carregando produção do BPA...</p>
                   </td>
                 </tr>
               ) : itensFiltrados.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-8 text-center text-gray-500">
-                    Nenhum procedimento encontrado para a competência selecionada.
+                  <td colSpan={9} className="py-12 text-center text-ink/45">
+                    <FileText className="mx-auto h-8 w-8 text-ink/30 mb-2" />
+                    <p className="font-semibold text-sus-950">Nenhum procedimento encontrado</p>
+                    <p className="text-xs text-ink/50 mt-1">
+                      Não há registros ambulatoriais para a competência e filtro selecionados.
+                    </p>
                   </td>
                 </tr>
               ) : (
                 itensFiltrados.map((it, idx) => (
                   <tr
                     key={idx}
-                    className="hover:bg-gray-50 dark:hover:bg-gray-750/50 transition-colors"
+                    className="hover:bg-sand/30 transition-colors"
                   >
                     <td className="py-2.5 px-3">
                       <span
                         className={`inline-block px-1.5 py-0.5 rounded font-mono text-[10px] font-bold ${
                           it.tipo === "BPA-C"
-                            ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300"
-                            : "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300"
+                            ? "bg-teal/15 text-teal"
+                            : "bg-purple-100 text-purple-800"
                         }`}
                       >
                         {it.tipo}
                       </span>
                     </td>
-                    <td className="py-2.5 px-2 font-mono text-gray-500">
+                    <td className="py-2.5 px-2 font-mono text-ink/50">
                       {String(it.folha).padStart(3, "0")}/{String(it.linha).padStart(2, "0")}
                     </td>
-                    <td className="py-2.5 px-3 font-mono font-semibold text-gray-800 dark:text-gray-200">
+                    <td className="py-2.5 px-3 font-mono font-semibold text-sus-950">
                       {it.procedimento}
                     </td>
-                    <td className="py-2.5 px-3 text-gray-800 dark:text-gray-200 font-medium max-w-xs truncate" title={it.descricao}>
+                    <td className="py-2.5 px-3 text-ink font-medium max-w-xs truncate" title={it.descricao}>
                       {it.descricao}
                     </td>
                     <td className="py-2.5 px-3">
-                      <span className="text-gray-600 dark:text-gray-400 text-[11px]">
+                      <span className="text-ink/65 text-[11px]">
                         {it.origem}
                       </span>
                     </td>
-                    <td className="py-2.5 px-3 text-gray-700 dark:text-gray-300 max-w-xs truncate">
+                    <td className="py-2.5 px-3 text-ink/80 max-w-xs truncate">
                       {it.paciente_nome ? (
                         <div>
-                          <div className="font-semibold text-gray-900 dark:text-gray-100 truncate" title={it.paciente_nome}>
+                          <div className="font-semibold text-sus-950 truncate" title={it.paciente_nome}>
                             {it.paciente_nome}
                           </div>
-                          <div className="text-[10px] text-gray-400 font-mono">
+                          <div className="text-[10px] text-ink/45 font-mono">
                             {it.paciente_cpf ? `CPF: ${it.paciente_cpf}` : it.paciente_cns ? `CNS: ${it.paciente_cns}` : ""}
                           </div>
                         </div>
                       ) : (
-                        <span className="text-gray-400 italic">Consolidado Geral</span>
+                        <span className="text-ink/40 italic">Consolidado Geral</span>
                       )}
                     </td>
-                    <td className="py-2.5 px-2 font-mono font-bold text-right text-gray-900 dark:text-gray-100">
+                    <td className="py-2.5 px-2 font-mono font-bold text-right text-sus-950">
                       {it.quantidade}
                     </td>
-                    <td className="py-2.5 px-3 font-mono text-right text-gray-600 dark:text-gray-400">
+                    <td className="py-2.5 px-3 font-mono text-right text-ink/65">
                       {it.valor_unitario.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                     </td>
-                    <td className="py-2.5 px-3 font-mono font-bold text-right text-emerald-700 dark:text-emerald-400">
+                    <td className="py-2.5 px-3 font-mono font-bold text-right text-emerald-700">
                       {it.valor_total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                     </td>
                   </tr>
