@@ -1742,12 +1742,20 @@ def _init_db_impl() -> None:
             """,
             """
             UPDATE lab_fila_psf
-            SET status = 'realizado'
+            SET status = 'cancelado', observacoes = COALESCE(observacoes, '') || ' [Cancelado: Fila PSF inexistente no município]'
             WHERE status = 'na_fila'
               AND (
                   especialidade ILIKE '%SECRETARIA%'
                   OR tipo_fila ILIKE '%SECRETARIA%'
                   OR unidade_psf ILIKE '%SECRETARIA%'
+                  OR especialidade ILIKE '%PEDIATRIA%'
+                  OR tipo_fila ILIKE '%PEDIATRIA%'
+                  OR especialidade ILIKE '%PRÉ-NATAL%'
+                  OR tipo_fila ILIKE '%PRÉ-NATAL%'
+                  OR especialidade ILIKE '%PRE-NATAL%'
+                  OR tipo_fila ILIKE '%PRE-NATAL%'
+                  OR especialidade ILIKE '%CAPS%'
+                  OR tipo_fila ILIKE '%CAPS%'
               )
             """,
         ]:

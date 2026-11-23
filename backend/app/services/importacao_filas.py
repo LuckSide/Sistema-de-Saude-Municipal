@@ -1370,12 +1370,12 @@ def processar_linhas(
                 status = "realizado"
                 status_lab = "realizado"
                 status_solic = "realizado"
-            elif eh_lab and ("SECRETARIA" in (tipo_lab_label or "").upper() or "SECRETARIA" in (unidade_nome or "").upper() or "SECRETARIA" in (dest_raw or "").upper()):
-                # A Secretaria de Saúde não opera fila de espera PSF. Pedidos sem agendamento futuro
-                # são autorizações administrativas/histórico de prontuário, não devendo poluir a Fila PSF.
-                status = "realizado"
-                status_lab = "realizado"
-                status_solic = "realizado"
+            elif eh_lab and any(k in f"{tipo_lab_label or ''} {unidade_nome or ''} {dest_raw or ''}".upper() for k in ("SECRETARIA", "PEDIATRIA", "PRÉ-NATAL", "PRE-NATAL", "CAPS")):
+                # Setores que não operam fila de espera PSF (Secretaria, Pediatria, Pré-Natal, CAPS).
+                # Pedidos sem agendamento futuro são cancelados na importação para não poluir a Fila PSF.
+                status = "cancelado"
+                status_lab = "cancelado"
+                status_solic = None
             else:
                 # Fila de espera ativa real (aguardando agendamento)
                 status = "aguardando"
