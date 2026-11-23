@@ -37,6 +37,21 @@ body.modal-aberto {
 .rise-2 { animation-delay: 0.12s; }
 .rise-3 { animation-delay: 0.2s; }
 
+/* Transição suave de páginas para eliminar troca brusca e piscar de tela */
+@keyframes pageEnter {
+  from {
+    opacity: 0.72;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-page-enter {
+  animation: pageEnter 0.16s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 /* Gaveta mobile: desliza da esquerda */
 @keyframes drawer-in {
   from { transform: translateX(-100%); }

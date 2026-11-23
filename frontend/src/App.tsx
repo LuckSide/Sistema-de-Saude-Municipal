@@ -1,21 +1,66 @@
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import type { ReactElement } from "react";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { UndoToastProvider } from "./components/UndoToast";
 import { ConfirmDialogProvider } from "./components/ConfirmDialog";
 import { useCidadeDinamica } from "./hooks/useCidade";
 import { Protected, Shell } from "./components/Layout";
+import TopRouteProgressBar from "./components/TopRouteProgressBar";
 
-// Loading Fallback para transição suave de módulos
+// Loading Fallback para transição suave de módulos (nível root)
 function PageLoader() {
   return (
     <div className="flex min-h-[40vh] items-center justify-center p-8">
       <div className="flex flex-col items-center gap-3 text-sus-900/60">
         <div className="h-8 w-8 animate-spin rounded-full border-3 border-teal border-t-transparent" />
-        <span className="text-xs font-medium">Carregando módulo…</span>
+        <span className="text-xs font-medium">Carregando…</span>
       </div>
     </div>
+  );
+}
+
+// Loading Fallback no miolo da aplicação (não desmonta Shell nem Sidebar)
+function PageContentLoader() {
+  return (
+    <div className="space-y-4 p-2 animate-pulse" aria-busy="true">
+      <div className="flex items-center justify-between pb-3 border-b border-sus-900/10">
+        <div className="space-y-2">
+          <div className="h-6 w-44 rounded-xl bg-sus-900/10" />
+          <div className="h-3.5 w-64 rounded-lg bg-sus-900/5" />
+        </div>
+        <div className="h-9 w-24 rounded-xl bg-sus-900/10" />
+      </div>
+
+      <div className="flex min-h-[35vh] flex-col items-center justify-center gap-3 py-10">
+        <div className="relative h-9 w-9">
+          <div className="absolute inset-0 rounded-full border-2 border-teal/20" />
+          <div className="absolute inset-0 animate-spin rounded-full border-2 border-teal border-t-transparent" />
+        </div>
+        <span className="text-xs font-semibold text-sus-950/60 tracking-wide">
+          Carregando módulo…
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// Layout Persistente da Aplicação
+// O Shell e a Sidebar nunca são desmontados ao navegar entre rotas internas.
+function AppShellLayout() {
+  const loc = useLocation();
+
+  return (
+    <Protected>
+      <Shell>
+        <TopRouteProgressBar />
+        <Suspense fallback={<PageContentLoader />}>
+          <div key={loc.pathname} className="animate-page-enter">
+            <Outlet />
+          </div>
+        </Suspense>
+      </Shell>
+    </Protected>
   );
 }
 
@@ -127,25 +172,17 @@ function LabGuard({ tela, telas, children }: { tela: string; telas?: string[]; c
 
 function TfdRoutes() {
   return (
-    <Protected>
-      <GuardQualquer telas={["tfd", "tfd_resumo", "tfd_viagens", "tfd_pacientes", "tfd_exames", "tfd_fila_lancamento", "tfd_agenda", "tfd_relatorio_agendados", "tfd_catalogo", "tfd_destinos", "tfd_frota", "tfd_motoristas", "tfd_frota_gestao", "tfd_faturamento"]}>
-        <Shell>
-          <TfdLayout />
-        </Shell>
-      </GuardQualquer>
-    </Protected>
+    <GuardQualquer telas={["tfd", "tfd_resumo", "tfd_viagens", "tfd_pacientes", "tfd_exames", "tfd_fila_lancamento", "tfd_agenda", "tfd_relatorio_agendados", "tfd_catalogo", "tfd_destinos", "tfd_frota", "tfd_motoristas", "tfd_frota_gestao", "tfd_faturamento"]}>
+      <TfdLayout />
+    </GuardQualquer>
   );
 }
 
 function LabRoutes() {
   return (
-    <Protected>
-      <LabGuard tela="lab">
-        <Shell>
-          <LabLayout />
-        </Shell>
-      </LabGuard>
-    </Protected>
+    <LabGuard tela="lab">
+      <LabLayout />
+    </LabGuard>
   );
 }
 
@@ -158,335 +195,83 @@ export default function App() {
           <BrowserRouter>
             <Suspense fallback={<PageLoader />}>
               <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/alterar-senha-inicial" element={<AlterarSenhaInicial />} />
-          <Route path="/acompanhar/:token" element={<AcompanharExame />} />
-          <Route path="/confirmar-presenca/:token" element={<ConfirmarPresencaViagem />} />
-          <Route path="/farmacia/publico/:token" element={<FarmaciaPainelPublico />} />
-          <Route path="/farmacia/painel-tv/:token" element={<FarmaciaPainelPublico />} />
-          <Route path="/fila-exames" element={
-            <Protected>
-              <GuardQualquer telas={["tfd_exames", "tfd_fila_lancamento", "tfd_medico", "tfd"]}>
-                <Shell>
-                  <FilaExames />
-                </Shell>
-              </GuardQualquer>
-            </Protected>
-          } />
-          <Route path="/solicitacoes/nova" element={<Navigate to="/tfd/solicitacoes/nova" replace />} />
-          <Route path="/solicitacoes" element={<Navigate to="/fila-exames" replace />} />
-          <Route path="/painel-medico" element={
-            <Protected>
-              <Guard tela="tfd_medico">
-                <Shell>
-                  <PainelMedico />
-                </Shell>
-              </Guard>
-            </Protected>
-          } />
-          <Route
-            path="/"
-            element={
-              <Protected>
-                <Shell>
-                  <Dashboard />
-                </Shell>
-              </Protected>
-            }
-          />
-          <Route
-            path="/indicadores"
-            element={
-              <Protected>
-                <Guard tela="dash_indicadores">
-                  <Shell>
-                    <Indicadores />
-                  </Shell>
-                </Guard>
-              </Protected>
-            }
-          />
-          <Route
-            path="/usuarios"
-            element={
-              <Protected>
-                <Guard tela="usuarios">
-                  <Shell>
-                    <Usuarios />
-                  </Shell>
-                </Guard>
-              </Protected>
-            }
-          />
-          <Route path="/tfd" element={<TfdRoutes />}>
-            <Route index element={<Guard tela="tfd_resumo"><TfdResumo /></Guard>} />
-            <Route path="solicitacoes/nova" element={<GuardQualquer telas={["tfd_exames", "tfd_fila_lancamento", "tfd"]}><NovaSolicitacao /></GuardQualquer>} />
-            <Route path="relatorio-agendados" element={<GuardQualquer telas={["tfd_agenda", "tfd_relatorio_agendados", "tfd_exames", "tfd", "usuarios"]}><RelatorioAgendados /></GuardQualquer>} />
-            <Route path="viagens" element={<Guard tela="tfd_viagens"><TfdViagens /></Guard>} />
-            <Route path="quadro" element={<GuardQualquer telas={["tfd_viagens", "tfd_frota_gestao"]}><QuadroViagens /></GuardQualquer>} />
-            <Route path="pacientes" element={<Guard tela="tfd_pacientes"><TfdPacientes /></Guard>} />
-            <Route path="agenda" element={<Guard tela="tfd_agenda"><AgendaTfd /></Guard>} />
-            <Route path="agendamentos" element={<Guard tela="tfd_agenda"><Agendamentos /></Guard>} />
-            <Route path="exames" element={<Navigate to="/fila-exames" replace />} />
-            <Route path="catalogo" element={<Guard tela="tfd_catalogo"><CatalogoExames /></Guard>} />
-            <Route path="destinos" element={<Guard tela="tfd_destinos"><TfdDestinos /></Guard>} />
-            <Route path="frota" element={<GuardQualquer telas={["tfd_frota", "tfd_frota_gestao", "tfd"]}><TfdFrota /></GuardQualquer>} />
-            <Route path="motoristas" element={<GuardQualquer telas={["tfd_frota", "tfd_motoristas", "tfd_frota_gestao", "tfd"]}><TfdMotoristas /></GuardQualquer>} />
-            <Route path="faturamento" element={<Guard tela="tfd_faturamento"><TfdFaturamento /></Guard>} />
-          </Route>
-          <Route path="/lab" element={<LabRoutes />}>
-            <Route index element={<LabGuard tela="lab_recepcao" telas={["lab_recepcao", "lab_marcacao", "lab"]}><RecepcaoLab /></LabGuard>} />
-            <Route path="recepcao" element={<LabGuard tela="lab_recepcao" telas={["lab_recepcao", "lab"]}><RecepcaoLab /></LabGuard>} />
-            <Route path="marcacao" element={<LabGuard tela="lab_marcacao"><LabMarcacao /></LabGuard>} />
-            <Route path="fila" element={<LabGuard tela="lab_fila"><FilaPsf /></LabGuard>} />
-            <Route path="agenda" element={<LabGuard tela="lab_agenda" telas={["lab_agenda", "lab_vagas"]}><VagasAgenda /></LabGuard>} />
-            <Route path="vagas" element={<LabGuard tela="lab_vagas"><VagasAgenda /></LabGuard>} />
-            <Route path="auditoria" element={<LabGuard tela="lab_audit"><AuditLab /></LabGuard>} />
-            <Route path="auditoria-laudos" element={<LabGuard tela="lab_audit" telas={["lab_audit", "lab_orcamento", "lab_faturamento", "lab", "usuarios"]}><AuditoriaLaudos /></LabGuard>} />
-            <Route path="orcamento" element={<LabGuard tela="lab_orcamento" telas={["lab_orcamento", "lab_marcacao", "lab"]}><LabOrcamentoLotes /></LabGuard>} />
-            <Route path="lotes" element={<LabGuard tela="lab_orcamento" telas={["lab_orcamento", "lab_marcacao", "lab"]}><LabOrcamentoLotes /></LabGuard>} />
-            <Route path="faturamento" element={<LabGuard tela="lab_faturamento"><LabFaturamento /></LabGuard>} />
-            <Route path="portal-producao" element={<LabGuard tela="lab_recepcao" telas={["lab_recepcao", "lab_portal", "lab_faturamento", "lab", "usuarios"]}><PortalLaboratorio /></LabGuard>} />
-            <Route path="sigtap" element={<LabGuard tela="lab_sigtap"><LabSigtap /></LabGuard>} />
-          </Route>
-          <Route
-            path="/prestadores"
-            element={
-              <Protected>
-                <GuardQualquer telas={["cfg_unidades", "cfg_laboratorios", "usuarios", "tfd", "lab", "cfg_geral"]}>
-                  <Shell>
-                    <Prestadores />
-                  </Shell>
-                </GuardQualquer>
-              </Protected>
-            }
-          />
-          <Route
-            path="/sigtap"
-            element={
-              <Protected>
-                <GuardQualquer telas={["lab_sigtap", "tfd_catalogo", "tfd", "lab", "usuarios", "cfg_geral"]}>
-                  <Shell>
-                    <LabSigtap />
-                  </Shell>
-                </GuardQualquer>
-              </Protected>
-            }
-          />
-          <Route
-            path="/aps"
-            element={
-              <Protected>
-                <Guard tela="aps">
-                  <Shell>
-                    <ApsPainel />
-                  </Shell>
-                </Guard>
-              </Protected>
-            }
-          />
-          <Route
-            path="/apac/solicitacoes"
-            element={
-              <Protected>
-                <Guard tela="apac_solicitacao">
-                  <Shell>
-                    <ApacSolicitacao />
-                  </Shell>
-                </Guard>
-              </Protected>
-            }
-          />
-          <Route
-            path="/apac/regulacao"
-            element={
-              <Protected>
-                <Guard tela="apac_regulacao">
-                  <Shell>
-                    <ApacRegulacao />
-                  </Shell>
-                </Guard>
-              </Protected>
-            }
-          />
-          <Route
-            path="/apac/faturamento"
-            element={
-              <Protected>
-                <Guard tela="apac_faturamento">
-                  <Shell>
-                    <ApacFaturamento />
-                  </Shell>
-                </Guard>
-              </Protected>
-            }
-          />
-          <Route
-            path="/faturamento/bpa"
-            element={
-              <Protected>
-                <GuardQualquer telas={["faturamento_bpa", "tfd", "lab", "usuarios", "tfd_faturamento", "lab_faturamento", "apac_faturamento"]}>
-                  <Shell>
-                    <FaturamentoBpa />
-                  </Shell>
-                </GuardQualquer>
-              </Protected>
-            }
-          />
-          <Route
-            path="/regulacao/bpa"
-            element={<Navigate to="/faturamento/bpa" replace />}
-          />
-          <Route
-            path="/oxigenio"
-            element={
-              <Protected>
-                <GuardQualquer telas={["oxigenio_estoque", "oxigenio", "usuarios"]}>
-                  <Shell>
-                    <OxigenioPainelEstoque />
-                  </Shell>
-                </GuardQualquer>
-              </Protected>
-            }
-          />
-          <Route
-            path="/oxigenio/equipamentos"
-            element={
-              <Protected>
-                <GuardQualquer telas={["oxigenio_equipamentos", "oxigenio", "usuarios"]}>
-                  <Shell>
-                    <OxigenioEquipamentos />
-                  </Shell>
-                </GuardQualquer>
-              </Protected>
-            }
-          />
-          <Route
-            path="/oxigenio/emprestimos"
-            element={
-              <Protected>
-                <GuardQualquer telas={["oxigenio_emprestimos", "oxigenio", "usuarios"]}>
-                  <Shell>
-                    <OxigenioEmprestimos />
-                  </Shell>
-                </GuardQualquer>
-              </Protected>
-            }
-          />
-          <Route
-            path="/oxigenio/empresas"
-            element={
-              <Protected>
-                <GuardQualquer telas={["oxigenio_empresas", "oxigenio", "usuarios"]}>
-                  <Shell>
-                    <OxigenioEmpresas />
-                  </Shell>
-                </GuardQualquer>
-              </Protected>
-            }
-          />
-          <Route
-            path="/oxigenio/relatorios"
-            element={
-              <Protected>
-                <GuardQualquer telas={["oxigenio_relatorios", "oxigenio", "usuarios"]}>
-                  <Shell>
-                    <OxigenioRequisicaoAF />
-                  </Shell>
-                </GuardQualquer>
-              </Protected>
-            }
-          />
-          <Route
-            path="/farmacia"
-            element={
-              <Protected>
-                <GuardQualquer telas={["farmacia_estoque", "farmacia", "usuarios"]}>
-                  <Shell>
-                    <FarmaciaEstoque />
-                  </Shell>
-                </GuardQualquer>
-              </Protected>
-            }
-          />
-          <Route
-            path="/farmacia/validade"
-            element={
-              <Protected>
-                <GuardQualquer telas={["farmacia_validade", "farmacia", "usuarios"]}>
-                  <Shell>
-                    <FarmaciaValidade />
-                  </Shell>
-                </GuardQualquer>
-              </Protected>
-            }
-          />
-          <Route
-            path="/farmacia/links"
-            element={
-              <Protected>
-                <GuardQualquer telas={["farmacia_links", "farmacia", "usuarios"]}>
-                  <Shell>
-                    <FarmaciaLinks />
-                  </Shell>
-                </GuardQualquer>
-              </Protected>
-            }
-          />
-          <Route
-            path="/farmacia/insumos"
-            element={
-              <Protected>
-                <GuardQualquer telas={["farmacia_insumos", "farmacia", "usuarios"]}>
-                  <Shell>
-                    <FarmaciaInsumos />
-                  </Shell>
-                </GuardQualquer>
-              </Protected>
-            }
-          />
-          <Route path="/integracoes" element={<Navigate to="/configuracoes" replace />} />
-          <Route
-            path="/auditoria"
-            element={
-              <Protected>
-                <GuardQualquer telas={["auditoria", "usuarios"]}>
-                  <Shell>
-                    <Auditoria />
-                  </Shell>
-                </GuardQualquer>
-              </Protected>
-            }
-          />
-          <Route
-            path="/admin/tickets"
-            element={
-              <Protected>
-                <GuardQualquer telas={["usuarios", "auditoria"]}>
-                  <Shell>
-                    <GestaoTickets />
-                  </Shell>
-                </GuardQualquer>
-              </Protected>
-            }
-          />
-          <Route path="/suporte/tickets" element={<Navigate to="/admin/tickets" replace />} />
-          <Route
-            path="/configuracoes"
-            element={
-              <Protected>
-                <ConfigGuard>
-                  <Shell>
-                    <Configuracoes />
-                  </Shell>
-                </ConfigGuard>
-              </Protected>
-            }
-          />
-              {/* Rotas legadas: redirecionam p/ as abas em Configurações. */}
-              <Route path="/admin/medicos" element={<Navigate to="/configuracoes?aba=medicos" replace />} />
-              <Route path="/admin/psfs" element={<Navigate to="/configuracoes?aba=unidades" replace />} />
-            </Routes>
+                {/* Rotas Públicas (Sem Shell/Sidebar) */}
+                <Route path="/login" element={<Login />} />
+                <Route path="/alterar-senha-inicial" element={<AlterarSenhaInicial />} />
+                <Route path="/acompanhar/:token" element={<AcompanharExame />} />
+                <Route path="/confirmar-presenca/:token" element={<ConfirmarPresencaViagem />} />
+                <Route path="/farmacia/publico/:token" element={<FarmaciaPainelPublico />} />
+                <Route path="/farmacia/painel-tv/:token" element={<FarmaciaPainelPublico />} />
+
+                {/* Rotas Autenticadas com Shell e Sidebar Persistentes */}
+                <Route element={<AppShellLayout />}>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/fila-exames" element={<GuardQualquer telas={["tfd_exames", "tfd_fila_lancamento", "tfd_medico", "tfd"]}><FilaExames /></GuardQualquer>} />
+                  <Route path="/solicitacoes/nova" element={<Navigate to="/tfd/solicitacoes/nova" replace />} />
+                  <Route path="/solicitacoes" element={<Navigate to="/fila-exames" replace />} />
+                  <Route path="/painel-medico" element={<Guard tela="tfd_medico"><PainelMedico /></Guard>} />
+                  <Route path="/indicadores" element={<Guard tela="dash_indicadores"><Indicadores /></Guard>} />
+                  <Route path="/usuarios" element={<Guard tela="usuarios"><Usuarios /></Guard>} />
+
+                  <Route path="/tfd" element={<TfdRoutes />}>
+                    <Route index element={<Guard tela="tfd_resumo"><TfdResumo /></Guard>} />
+                    <Route path="solicitacoes/nova" element={<GuardQualquer telas={["tfd_exames", "tfd_fila_lancamento", "tfd"]}><NovaSolicitacao /></GuardQualquer>} />
+                    <Route path="relatorio-agendados" element={<GuardQualquer telas={["tfd_agenda", "tfd_relatorio_agendados", "tfd_exames", "tfd", "usuarios"]}><RelatorioAgendados /></GuardQualquer>} />
+                    <Route path="viagens" element={<Guard tela="tfd_viagens"><TfdViagens /></Guard>} />
+                    <Route path="quadro" element={<GuardQualquer telas={["tfd_viagens", "tfd_frota_gestao"]}><QuadroViagens /></GuardQualquer>} />
+                    <Route path="pacientes" element={<Guard tela="tfd_pacientes"><TfdPacientes /></Guard>} />
+                    <Route path="agenda" element={<Guard tela="tfd_agenda"><AgendaTfd /></Guard>} />
+                    <Route path="agendamentos" element={<Guard tela="tfd_agenda"><Agendamentos /></Guard>} />
+                    <Route path="exames" element={<Navigate to="/fila-exames" replace />} />
+                    <Route path="catalogo" element={<Guard tela="tfd_catalogo"><CatalogoExames /></Guard>} />
+                    <Route path="destinos" element={<Guard tela="tfd_destinos"><TfdDestinos /></Guard>} />
+                    <Route path="frota" element={<GuardQualquer telas={["tfd_frota", "tfd_frota_gestao", "tfd"]}><TfdFrota /></GuardQualquer>} />
+                    <Route path="motoristas" element={<GuardQualquer telas={["tfd_frota", "tfd_motoristas", "tfd_frota_gestao", "tfd"]}><TfdMotoristas /></GuardQualquer>} />
+                    <Route path="faturamento" element={<Guard tela="tfd_faturamento"><TfdFaturamento /></Guard>} />
+                  </Route>
+
+                  <Route path="/lab" element={<LabRoutes />}>
+                    <Route index element={<LabGuard tela="lab_recepcao" telas={["lab_recepcao", "lab_marcacao", "lab"]}><RecepcaoLab /></LabGuard>} />
+                    <Route path="recepcao" element={<LabGuard tela="lab_recepcao" telas={["lab_recepcao", "lab"]}><RecepcaoLab /></LabGuard>} />
+                    <Route path="marcacao" element={<LabGuard tela="lab_marcacao"><LabMarcacao /></LabGuard>} />
+                    <Route path="fila" element={<LabGuard tela="lab_fila"><FilaPsf /></LabGuard>} />
+                    <Route path="agenda" element={<LabGuard tela="lab_agenda" telas={["lab_agenda", "lab_vagas"]}><VagasAgenda /></LabGuard>} />
+                    <Route path="vagas" element={<LabGuard tela="lab_vagas"><VagasAgenda /></LabGuard>} />
+                    <Route path="auditoria" element={<LabGuard tela="lab_audit"><AuditLab /></LabGuard>} />
+                    <Route path="auditoria-laudos" element={<LabGuard tela="lab_audit" telas={["lab_audit", "lab_orcamento", "lab_faturamento", "lab", "usuarios"]}><AuditoriaLaudos /></LabGuard>} />
+                    <Route path="orcamento" element={<LabGuard tela="lab_orcamento" telas={["lab_orcamento", "lab_marcacao", "lab"]}><LabOrcamentoLotes /></LabGuard>} />
+                    <Route path="lotes" element={<LabGuard tela="lab_orcamento" telas={["lab_orcamento", "lab_marcacao", "lab"]}><LabOrcamentoLotes /></LabGuard>} />
+                    <Route path="faturamento" element={<LabGuard tela="lab_faturamento"><LabFaturamento /></LabGuard>} />
+                    <Route path="portal-producao" element={<LabGuard tela="lab_recepcao" telas={["lab_recepcao", "lab_portal", "lab_faturamento", "lab", "usuarios"]}><PortalLaboratorio /></LabGuard>} />
+                    <Route path="sigtap" element={<LabGuard tela="lab_sigtap"><LabSigtap /></LabGuard>} />
+                  </Route>
+
+                  <Route path="/prestadores" element={<GuardQualquer telas={["cfg_unidades", "cfg_laboratorios", "usuarios", "tfd", "lab", "cfg_geral"]}><Prestadores /></GuardQualquer>} />
+                  <Route path="/sigtap" element={<GuardQualquer telas={["lab_sigtap", "tfd_catalogo", "tfd", "lab", "usuarios", "cfg_geral"]}><LabSigtap /></GuardQualquer>} />
+                  <Route path="/aps" element={<Guard tela="aps"><ApsPainel /></Guard>} />
+                  <Route path="/apac/solicitacoes" element={<Guard tela="apac_solicitacao"><ApacSolicitacao /></Guard>} />
+                  <Route path="/apac/regulacao" element={<Guard tela="apac_regulacao"><ApacRegulacao /></Guard>} />
+                  <Route path="/apac/faturamento" element={<Guard tela="apac_faturamento"><ApacFaturamento /></Guard>} />
+                  <Route path="/faturamento/bpa" element={<GuardQualquer telas={["faturamento_bpa", "tfd", "lab", "usuarios", "tfd_faturamento", "lab_faturamento", "apac_faturamento"]}><FaturamentoBpa /></GuardQualquer>} />
+                  <Route path="/regulacao/bpa" element={<Navigate to="/faturamento/bpa" replace />} />
+                  <Route path="/oxigenio" element={<GuardQualquer telas={["oxigenio_estoque", "oxigenio", "usuarios"]}><OxigenioPainelEstoque /></GuardQualquer>} />
+                  <Route path="/oxigenio/equipamentos" element={<GuardQualquer telas={["oxigenio_equipamentos", "oxigenio", "usuarios"]}><OxigenioEquipamentos /></GuardQualquer>} />
+                  <Route path="/oxigenio/emprestimos" element={<GuardQualquer telas={["oxigenio_emprestimos", "oxigenio", "usuarios"]}><OxigenioEmprestimos /></GuardQualquer>} />
+                  <Route path="/oxigenio/empresas" element={<GuardQualquer telas={["oxigenio_empresas", "oxigenio", "usuarios"]}><OxigenioEmpresas /></GuardQualquer>} />
+                  <Route path="/oxigenio/relatorios" element={<GuardQualquer telas={["oxigenio_relatorios", "oxigenio", "usuarios"]}><OxigenioRequisicaoAF /></GuardQualquer>} />
+                  <Route path="/farmacia" element={<GuardQualquer telas={["farmacia_estoque", "farmacia", "usuarios"]}><FarmaciaEstoque /></GuardQualquer>} />
+                  <Route path="/farmacia/validade" element={<GuardQualquer telas={["farmacia_validade", "farmacia", "usuarios"]}><FarmaciaValidade /></GuardQualquer>} />
+                  <Route path="/farmacia/links" element={<GuardQualquer telas={["farmacia_links", "farmacia", "usuarios"]}><FarmaciaLinks /></GuardQualquer>} />
+                  <Route path="/farmacia/insumos" element={<GuardQualquer telas={["farmacia_insumos", "farmacia", "usuarios"]}><FarmaciaInsumos /></GuardQualquer>} />
+                  <Route path="/integracoes" element={<Navigate to="/configuracoes" replace />} />
+                  <Route path="/auditoria" element={<GuardQualquer telas={["auditoria", "usuarios"]}><Auditoria /></GuardQualquer>} />
+                  <Route path="/admin/tickets" element={<GuardQualquer telas={["usuarios", "auditoria"]}><GestaoTickets /></GuardQualquer>} />
+                  <Route path="/suporte/tickets" element={<Navigate to="/admin/tickets" replace />} />
+                  <Route path="/configuracoes" element={<ConfigGuard><Configuracoes /></ConfigGuard>} />
+                  <Route path="/admin/medicos" element={<Navigate to="/configuracoes?aba=medicos" replace />} />
+                  <Route path="/admin/psfs" element={<Navigate to="/configuracoes?aba=unidades" replace />} />
+                </Route>
+              </Routes>
           </Suspense>
         </BrowserRouter>
         </ConfirmDialogProvider>

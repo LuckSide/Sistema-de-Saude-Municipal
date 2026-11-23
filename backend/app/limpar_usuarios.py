@@ -15,9 +15,15 @@ Uso no servidor de produção:
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 import re
 import sys
 import unicodedata
+
+# Garante que o diretório raiz esteja no sys.path para execução direta via `python app/limpar_usuarios.py`
+BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from sqlalchemy import text
 from sqlmodel import Session, delete, select

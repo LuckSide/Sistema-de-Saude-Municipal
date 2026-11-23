@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Navigate, useLocation } from "react-router-dom";
+import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { Cross, Menu, X } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import Sidebar, { SidebarConteudo } from "./Sidebar";
@@ -18,7 +18,7 @@ export function Protected({ children }: { children: ReactNode }) {
   return children;
 }
 
-export function Shell({ children, estreito }: { children: ReactNode; estreito?: boolean }) {
+export function Shell({ children, estreito }: { children?: ReactNode; estreito?: boolean }) {
   const [aberto, setAberto] = useState(false);
   const loc = useLocation();
 
@@ -91,7 +91,7 @@ export function Shell({ children, estreito }: { children: ReactNode; estreito?: 
                 : "w-full max-w-full px-4 py-6 md:px-6 md:py-8 print:max-w-none print:p-0"
             }
           >
-            {children}
+            {children ?? <Outlet />}
           </div>
         </main>
       </div>
