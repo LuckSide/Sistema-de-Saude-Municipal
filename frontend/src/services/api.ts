@@ -1416,19 +1416,42 @@ export type ExamePermitidoItem = {
   codigo: string;
   descricao: string;
   instrumento: string;
+  valor_sa?: number;
+  valor_sp?: number;
+  valor_sh?: number;
+  valor_sigtap?: number;
+  valor_combinado?: number;
+  tipos_fila_permitidos?: string;
 };
 
 export type ExamesPermitidosData = {
   codigos_habilitados: string[];
   total_habilitados: number;
   procedimentos_sigtap: ExamePermitidoItem[];
+  tipos_fila?: { id: string; nome: string; codigo?: string }[];
+  exames_por_tipo_fila?: Record<string, string[]>;
+  valores_combinados?: Record<string, number>;
 };
 
 export const fetchExamesPermitidos = () =>
   api.get<ExamesPermitidosData>("/api/settings/exames-permitidos").then((r) => r.data);
 
-export const salvarExamesPermitidos = (codigos: string[]) =>
-  api.put<{ ok: boolean; total_habilitados: number; codigos_habilitados: string[] }>("/api/settings/exames-permitidos", { codigos }).then((r) => r.data);
+export const salvarExamesPermitidos = (dados: string[] | {
+  codigos: string[];
+  exames_por_tipo_fila?: Record<string, string[]>;
+  valores_combinados?: Record<string, number>;
+}) => {
+  const payload = Array.isArray(dados) ? { codigos: dados } : dados;
+  return api
+    .put<{
+      ok: boolean;
+      total_habilitados: number;
+      codigos_habilitados: string[];
+      exames_por_tipo_fila?: Record<string, string[]>;
+      valores_combinados?: Record<string, number>;
+    }>("/api/settings/exames-permitidos", payload)
+    .then((r) => r.data);
+};
 export const tfdRegenerarTokenExame = (id: number) =>
   api.post<Exame>(`/api/tfd/exames/${id}/regenerar-token`).then((r) => r.data);
 export const tfdRecepcionarExame = (id: number, cid_codigo?: string, cid_descricao?: string) =>
@@ -1602,6 +1625,8 @@ export type SigtapProc = {
   valor_sa?: number;
   valor_sp?: number;
   valor_sh?: number;
+  valor_combinado?: number;
+  tipos_fila_permitidos?: string;
   competencia?: string;
   grupo_codigo?: string;
   grupo_nome?: string;
@@ -1723,10 +1748,11 @@ export const labSigtap = (
   grupo_codigo?: string,
   subgrupo_codigo?: string,
   cbo?: string,
+  tipo_fila?: string,
 ) =>
   api
     .get<Pagina<SigtapProc> | SigtapProc[]>("/api/lab/sigtap", {
-      params: { q, instrumento, page, limit, apenas_laboratoriais, grupo_codigo, subgrupo_codigo, cbo },
+      params: { q, instrumento, page, limit, apenas_laboratoriais, grupo_codigo, subgrupo_codigo, cbo, tipo_fila },
     })
     .then((r) => r.data);
 

@@ -12,6 +12,8 @@ class SigtapIn(BaseModel):
     valor_sa: float = Field(default=0.0, ge=0)
     valor_sp: float = Field(default=0.0, ge=0)
     valor_sh: float = Field(default=0.0, ge=0)
+    valor_combinado: float = Field(default=0.0, ge=0)
+    tipos_fila_permitidos: str = Field(default="")
     sexo: str = Field(default="")
 
 

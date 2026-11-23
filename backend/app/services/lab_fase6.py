@@ -607,7 +607,7 @@ def consolidar_bpa_laboratorial(db: Session, competencia: str) -> dict:
                     "descricao": proc.descricao,
                     "instrumento": getattr(proc, "instrumento", "BPA-C") or "BPA-C",
                     "quantidade": 0,
-                    "valor_unitario": float(getattr(proc, "valor_sa", 0.0) or getattr(proc, "vl_sa", 0.0) or getattr(proc, "valor_ambulatorial", 0.0) or 0.0),
+                    "valor_unitario": float(getattr(proc, "valor_combinado", 0.0) or getattr(proc, "valor_sa", 0.0) or getattr(proc, "vl_sa", 0.0) or getattr(proc, "valor_ambulatorial", 0.0) or 0.0),
                     "pacientes": set(),
                 }
             itens_agrupados[it.sigtap_id]["quantidade"] += (it.quantidade or 1)

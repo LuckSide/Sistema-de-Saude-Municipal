@@ -21,6 +21,8 @@ class SigtapProcedimento(SQLModel, table=True):
     valor_sa: float = Field(default=0)
     valor_sp: float = Field(default=0)
     valor_sh: float = Field(default=0)
+    valor_combinado: float = Field(default=0.0)
+    tipos_fila_permitidos: str = Field(default="", max_length=500)
     competencia: str = Field(default="", max_length=7, index=True)  # AAAA-MM da carga
     # Hierarquia completa Tabela Unificada SIGTAP (Área/Grupo -> Subgrupo -> Forma de Organização)
     grupo_codigo: str = Field(default="", max_length=2, index=True)

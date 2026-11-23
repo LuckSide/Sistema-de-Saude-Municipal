@@ -11,3 +11,5 @@ class SystemSettings(SQLModel, table=True):
     brasao_url: str = Field(default="", max_length=500)
     icone_url: str = Field(default="", max_length=500)
     exames_habilitados_sigtap: str = Field(default="")
+    exames_por_tipo_fila_json: str = Field(default="{}")
+    valores_combinados_sigtap_json: str = Field(default="{}")

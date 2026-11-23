@@ -1,1 +1,200 @@
-[{"codigo":"0202010260","complexidade":"MC","descricao":"DOSAGEM DE COLESTEROL LDL","instrumento":"BPA-C"},{"codigo":"0202010279","complexidade":"MC","descricao":"DOSAGEM DE COLESTEROL HDL","instrumento":"BPA-C"},{"codigo":"0202010295","complexidade":"MC","descricao":"DOSAGEM DE COLESTEROL TOTAL","instrumento":"BPA-C"},{"codigo":"0202010317","complexidade":"MC","descricao":"DOSAGEM DE CREATININA","instrumento":"BPA-C"},{"codigo":"0202010422","complexidade":"MC","descricao":"DOSAGEM DE FOSFATASE ALCALINA","instrumento":"BPA-C"},{"codigo":"0202010473","complexidade":"MC","descricao":"DOSAGEM DE GLICOSE","instrumento":"BPA-C"},{"codigo":"0202010503","complexidade":"MC","descricao":"DOSAGEM DE HEMOGLOBINA GLICOSILADA","instrumento":"BPA-C"},{"codigo":"0202010600","complexidade":"MC","descricao":"DOSAGEM DE POTASSIO","instrumento":"BPA-C"},{"codigo":"0202010635","complexidade":"MC","descricao":"DOSAGEM DE SODIO","instrumento":"BPA-C"},{"codigo":"0202010643","complexidade":"MC","descricao":"DOSAGEM DE TRANSAMINASE GLUTAMICO-OXALACETICA (TGO)","instrumento":"BPA-C"},{"codigo":"0202010651","complexidade":"MC","descricao":"DOSAGEM DE TRANSAMINASE GLUTAMICO-PIRUVICA (TGP)","instrumento":"BPA-C"},{"codigo":"0202010678","complexidade":"MC","descricao":"DOSAGEM DE TRIGLICERIDEOS","instrumento":"BPA-C"},{"codigo":"0202010694","complexidade":"MC","descricao":"DOSAGEM DE UREIA","instrumento":"BPA-C"},{"codigo":"0202020142","complexidade":"MC","descricao":"DETERMINACAO DE VELOCIDADE DE HEMOSSEDIMENTACAO (VHS)","instrumento":"BPA-C"},{"codigo":"0202020380","complexidade":"MC","descricao":"HEMOGRAMA COMPLETO","instrumento":"BPA-C"},{"codigo":"0202030075","complexidade":"MC","descricao":"DETERMINACAO DE FATOR REUMATOIDE","instrumento":"BPA-I"},{"codigo":"0202030083","complexidade":"MC","descricao":"DETERMINACAO QUANTITATIVA DE PROTEINA C REATIVA","instrumento":"BPA-I"},{"codigo":"0202030300","complexidade":"MC","descricao":"PESQUISA DE ANTICORPOS ANTI-HIV-1 + HIV-2 (ELISA)","instrumento":"BPA-I"},{"codigo":"0202040143","complexidade":"MC","descricao":"PESQUISA DE SANGUE OCULTO NAS FEZES","instrumento":"BPA-C"},{"codigo":"0202050017","complexidade":"MC","descricao":"ANALISE DE CARACTERES FISICOS, ELEMENTOS E SEDIMENTO DA URINA","instrumento":"BPA-C"},{"codigo":"0202060217","complexidade":"MC","descricao":"DOSAGEM DE GONADOTROFINA CORIONICA HUMANA (HCG, BETA HCG)","instrumento":"BPA-I"},{"codigo":"0202060250","complexidade":"MC","descricao":"DOSAGEM DE HORMONIO TIREOESTIMULANTE (TSH)","instrumento":"BPA-I"}]
+[
+  {
+    "codigo": "0202010260",
+    "complexidade": "MC",
+    "descricao": "DOSAGEM DE COLESTEROL LDL",
+    "instrumento": "BPA-C",
+    "valor_sa": 3.51,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202010279",
+    "complexidade": "MC",
+    "descricao": "DOSAGEM DE COLESTEROL HDL",
+    "instrumento": "BPA-C",
+    "valor_sa": 3.51,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202010295",
+    "complexidade": "MC",
+    "descricao": "DOSAGEM DE COLESTEROL TOTAL",
+    "instrumento": "BPA-C",
+    "valor_sa": 1.85,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202010317",
+    "complexidade": "MC",
+    "descricao": "DOSAGEM DE CREATININA",
+    "instrumento": "BPA-C",
+    "valor_sa": 1.85,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202010422",
+    "complexidade": "MC",
+    "descricao": "DOSAGEM DE FOSFATASE ALCALINA",
+    "instrumento": "BPA-C",
+    "valor_sa": 2.01,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202010473",
+    "complexidade": "MC",
+    "descricao": "DOSAGEM DE GLICOSE",
+    "instrumento": "BPA-C",
+    "valor_sa": 1.85,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202010503",
+    "complexidade": "MC",
+    "descricao": "DOSAGEM DE HEMOGLOBINA GLICOSILADA",
+    "instrumento": "BPA-C",
+    "valor_sa": 7.86,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202010600",
+    "complexidade": "MC",
+    "descricao": "DOSAGEM DE POTASSIO",
+    "instrumento": "BPA-C",
+    "valor_sa": 1.85,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202010635",
+    "complexidade": "MC",
+    "descricao": "DOSAGEM DE SODIO",
+    "instrumento": "BPA-C",
+    "valor_sa": 1.85,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202010643",
+    "complexidade": "MC",
+    "descricao": "DOSAGEM DE TRANSAMINASE GLUTAMICO-OXALACETICA (TGO)",
+    "instrumento": "BPA-C",
+    "valor_sa": 2.01,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202010651",
+    "complexidade": "MC",
+    "descricao": "DOSAGEM DE TRANSAMINASE GLUTAMICO-PIRUVICA (TGP)",
+    "instrumento": "BPA-C",
+    "valor_sa": 2.01,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202010678",
+    "complexidade": "MC",
+    "descricao": "DOSAGEM DE TRIGLICERIDEOS",
+    "instrumento": "BPA-C",
+    "valor_sa": 3.51,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202010694",
+    "complexidade": "MC",
+    "descricao": "DOSAGEM DE UREIA",
+    "instrumento": "BPA-C",
+    "valor_sa": 1.85,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202020142",
+    "complexidade": "MC",
+    "descricao": "DETERMINACAO DE VELOCIDADE DE HEMOSSEDIMENTACAO (VHS)",
+    "instrumento": "BPA-C",
+    "valor_sa": 1.85,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202020380",
+    "complexidade": "MC",
+    "descricao": "HEMOGRAMA COMPLETO",
+    "instrumento": "BPA-C",
+    "valor_sa": 4.11,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202030075",
+    "complexidade": "MC",
+    "descricao": "DETERMINACAO DE FATOR REUMATOIDE",
+    "instrumento": "BPA-I",
+    "valor_sa": 2.83,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202030083",
+    "complexidade": "MC",
+    "descricao": "DETERMINACAO QUANTITATIVA DE PROTEINA C REATIVA",
+    "instrumento": "BPA-I",
+    "valor_sa": 8.16,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202030300",
+    "complexidade": "MC",
+    "descricao": "PESQUISA DE ANTICORPOS ANTI-HIV-1 + HIV-2 (ELISA)",
+    "instrumento": "BPA-I",
+    "valor_sa": 10.00,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202040143",
+    "complexidade": "MC",
+    "descricao": "PESQUISA DE SANGUE OCULTO NAS FEZES",
+    "instrumento": "BPA-C",
+    "valor_sa": 1.65,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202050017",
+    "complexidade": "MC",
+    "descricao": "ANALISE DE CARACTERES FISICOS, ELEMENTOS E SEDIMENTO DA URINA",
+    "instrumento": "BPA-C",
+    "valor_sa": 3.70,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202060217",
+    "complexidade": "MC",
+    "descricao": "DOSAGEM DE GONADOTROFINA CORIONICA HUMANA (HCG, BETA HCG)",
+    "instrumento": "BPA-I",
+    "valor_sa": 7.85,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  },
+  {
+    "codigo": "0202060250",
+    "complexidade": "MC",
+    "descricao": "DOSAGEM DE HORMONIO TIREOESTIMULANTE (TSH)",
+    "instrumento": "BPA-I",
+    "valor_sa": 8.96,
+    "valor_sp": 0.0,
+    "valor_sh": 0.0
+  }
+]

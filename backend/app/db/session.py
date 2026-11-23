@@ -660,6 +660,8 @@ def _init_db_impl() -> None:
             "subgrupo_nome": "VARCHAR(180) DEFAULT '' NOT NULL",
             "forma_organizacao_codigo": "VARCHAR(6) DEFAULT '' NOT NULL",
             "forma_organizacao_nome": "VARCHAR(180) DEFAULT '' NOT NULL",
+            "valor_combinado": "FLOAT DEFAULT 0.0 NOT NULL",
+            "tipos_fila_permitidos": "VARCHAR(500) DEFAULT '' NOT NULL",
         }.items():
             if col not in cols_sg:
                 try:
@@ -804,10 +806,10 @@ def _init_db_impl() -> None:
             cols_st = [c["name"] for c in inspect(conn).get_columns("system_settings")]
         except Exception:
             cols_st = []
-        for col in ("brasao_url", "icone_url", "exames_habilitados_sigtap"):
+        for col in ("brasao_url", "icone_url", "exames_habilitados_sigtap", "exames_por_tipo_fila_json", "valores_combinados_sigtap_json"):
             if col not in cols_st:
                 try:
-                    tipo_ddl = "TEXT DEFAULT '' NOT NULL" if col == "exames_habilitados_sigtap" else "VARCHAR(500) DEFAULT '' NOT NULL"
+                    tipo_ddl = "TEXT DEFAULT '{}' NOT NULL" if "json" in col else ("TEXT DEFAULT '' NOT NULL" if col == "exames_habilitados_sigtap" else "VARCHAR(500) DEFAULT '' NOT NULL")
                     conn.execute(text(f"ALTER TABLE system_settings ADD COLUMN {col} {tipo_ddl}"))
                 except Exception:
                     pass

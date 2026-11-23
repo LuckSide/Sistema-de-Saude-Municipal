@@ -8,17 +8,22 @@ from app.models.lab_exames import LabSolicitacao, SigtapProcedimento
 
 
 def seed_sigtap(db: Session) -> int:
-    # SIGTAP oficial já carregado: não acrescenta subconjunto estático.
-    if db.exec(select(SigtapProcedimento)).first():
-        return 0
     seed_path = Path(__file__).parent.parent / "data" / "sigtap_lab_seed.json"
     if not seed_path.exists():
         return 0
     rows = json.loads(seed_path.read_text(encoding="utf-8"))
     novos = 0
-    existentes = {r.codigo for r in db.exec(select(SigtapProcedimento)).all()}
+    existentes = {r.codigo: r for r in db.exec(select(SigtapProcedimento)).all()}
     for row in rows:
-        if row.get("codigo") in existentes:
+        cod = row.get("codigo")
+        if cod in existentes:
+            ex = existentes[cod]
+            if (float(ex.valor_sa or 0.0) == 0.0 and float(ex.valor_sp or 0.0) == 0.0) and (row.get("valor_sa", 0.0) > 0 or row.get("valor_sp", 0.0) > 0):
+                ex.valor_sa = float(row.get("valor_sa", 0.0))
+                ex.valor_sp = float(row.get("valor_sp", 0.0))
+                ex.valor_sh = float(row.get("valor_sh", 0.0))
+                db.add(ex)
+                novos += 1
             continue
         db.add(SigtapProcedimento(**row))
         novos += 1

@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 
 from app.db.session import engine
 from app.models.integracoes import IntegrationSettings
+from app.models.lab_exames import SigtapVersao
 from app.services.sigtap_sync import executar_sync_automatica_sigtap, is_sigtap_sync_running
 
 logger = logging.getLogger("sigtap_worker")
@@ -53,13 +54,33 @@ def _sigtap_sync_loop():
                             ultima_exec = getattr(cfg, "sigtap_sync_ultima_execucao", None)
                             ultimo_status = getattr(cfg, "sigtap_sync_ultimo_status", "")
                             ultima_comp = getattr(cfg, "sigtap_sync_ultima_competencia", "")
+                            ultima_comp_norm = (ultima_comp or "").replace("-", "")
 
                             # Já sincronizou com sucesso a competência do mês corrente?
                             ja_sincronizado_mes = (
                                 ultimo_status in ("SUCESSO", "SEM_NOVIDADE")
-                                and ultima_exec is not None
-                                and (ultima_exec.year == agora.year and ultima_exec.month == agora.month)
-                            ) or (ultima_comp == comp_mes_atual and ultimo_status in ("SUCESSO", "SEM_NOVIDADE"))
+                                and (
+                                    (ultima_exec is not None and ultima_exec.year == agora.year and ultima_exec.month == agora.month)
+                                    or (ultima_comp_norm == comp_mes_atual)
+                                )
+                            )
+
+                            if not ja_sincronizado_mes:
+                                # Verifica se a versão desta competência já foi importada no banco
+                                versao_mes = db.exec(
+                                    select(SigtapVersao).where(
+                                        (SigtapVersao.competencia == comp_mes_atual)
+                                        | (SigtapVersao.competencia == agora.strftime("%Y-%m")),
+                                        SigtapVersao.total_proc > 0,
+                                    )
+                                ).first()
+                                if versao_mes:
+                                    ja_sincronizado_mes = True
+                                    if cfg:
+                                        cfg.sigtap_sync_ultimo_status = "SEM_NOVIDADE"
+                                        cfg.sigtap_sync_ultima_competencia = versao_mes.competencia
+                                        db.add(cfg)
+                                        db.commit()
 
                             if ja_sincronizado_mes:
                                 logger.debug(

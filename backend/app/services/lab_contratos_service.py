@@ -81,12 +81,14 @@ def resolver_preco_procedimento(
         if preco_custom and preco_custom.valor_customizado > 0:
             return round(float(preco_custom.valor_customizado), 2), "contrato_custom", contrato.id
 
-    # 3. Fallback: SIGTAP Federal
-    val_sigtap = 0.0
+    # 3. Fallback: Valor Combinado Localmente ou Tabela SIGTAP Federal
     if proc_padrao:
+        if getattr(proc_padrao, "valor_combinado", 0.0) > 0:
+            return round(float(proc_padrao.valor_combinado), 2), "combinado_local", (contrato.id if contrato else None)
         val_sigtap = float(proc_padrao.valor_sa or proc_padrao.valor_sp or 0.0)
+        return round(val_sigtap, 2), "sigtap_padrao", (contrato.id if contrato else None)
 
-    return round(val_sigtap, 2), "sigtap_padrao", (contrato.id if contrato else None)
+    return 0.0, "sigtap_padrao", (contrato.id if contrato else None)
 
 
 # ==============================================================================

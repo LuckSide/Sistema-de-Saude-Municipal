@@ -5,6 +5,7 @@ import {
   Archive,
   Building2,
   CheckCircle2,
+  Coins,
   Database,
   Download,
   Eye,
@@ -14,6 +15,7 @@ import {
   GitBranch,
   History,
   ImagePlus,
+  Layers,
   ListOrdered,
   Loader2,
   Lock,
@@ -26,6 +28,7 @@ import {
   Server,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   Terminal,
   Trash2,
   UploadCloud,
@@ -2289,11 +2292,36 @@ function AbaWhatsApp() {
 }
 
 // ---------- Aba: Procedimentos / Exames Permitidos (SIGTAP) ----------
+const EXAMES_ROTINA_PADRAO = [
+  "0202020380", // HEMOGRAMA COMPLETO
+  "0202010473", // DOSAGEM DE GLICOSE
+  "0202010295", // DOSAGEM DE COLESTEROL TOTAL
+  "0202010279", // DOSAGEM DE COLESTEROL HDL
+  "0202010260", // DOSAGEM DE COLESTEROL LDL
+  "0202010678", // DOSAGEM DE TRIGLICERIDEOS
+  "0202010694", // DOSAGEM DE UREIA
+  "0202010317", // DOSAGEM DE CREATININA
+  "0202010643", // DOSAGEM DE TGO
+  "0202010651", // DOSAGEM DE TGP
+  "0202010422", // DOSAGEM DE FOSFATASE ALCALINA
+  "0202050017", // ANALISE DE CARACTERES FISICOS, ELEMENTOS E SEDIMENTO DA URINA (EAS)
+  "0202040143", // PESQUISA DE SANGUE OCULTO NAS FEZES
+  "0202020142", // DETERMINACAO DE VHS
+  "0202010503", // DOSAGEM DE HEMOGLOBINA GLICOSILADA
+  "0202060250", // DOSAGEM DE TSH
+  "0202010600", // DOSAGEM DE POTASSIO
+  "0202010635", // DOSAGEM DE SODIO
+];
+
 function AbaExamesPermitidos() {
   const [loading, setLoading] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [procedimentos, setProcedimentos] = useState<ExamePermitidoItem[]>([]);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [tiposFila, setTiposFila] = useState<{ id: string; nome: string; codigo?: string }[]>([]);
+  const [tipoFilaAtiva, setTipoFilaAtiva] = useState<string>("");
+  const [examesPorFila, setExamesPorFila] = useState<Record<string, Set<string>>>({});
+  const [valoresCombinados, setValoresCombinados] = useState<Record<string, string>>({});
   const [busca, setBusca] = useState("");
   const [filtro, setFiltro] = useState<"todos" | "habilitados" | "desmarcados">("todos");
   const [erro, setErro] = useState("");
@@ -2362,7 +2390,27 @@ function AbaExamesPermitidos() {
     try {
       const data = await fetchExamesPermitidos();
       setProcedimentos(data.procedimentos_sigtap || []);
+      setTiposFila(data.tipos_fila || []);
       setSelecionados(new Set(data.codigos_habilitados || []));
+
+      const mapaPorFila: Record<string, Set<string>> = {};
+      for (const [tf, cods] of Object.entries(data.exames_por_tipo_fila || {})) {
+        mapaPorFila[tf] = new Set(cods);
+      }
+      setExamesPorFila(mapaPorFila);
+
+      const mapaValores: Record<string, string> = {};
+      for (const p of data.procedimentos_sigtap || []) {
+        if (p.valor_combinado && p.valor_combinado > 0) {
+          mapaValores[p.codigo] = p.valor_combinado.toFixed(2).replace(".", ",");
+        }
+      }
+      for (const [cod, val] of Object.entries(data.valores_combinados || {})) {
+        if (val > 0) {
+          mapaValores[cod] = val.toFixed(2).replace(".", ",");
+        }
+      }
+      setValoresCombinados(mapaValores);
       setAlterado(false);
     } catch {
       setErro("Falha ao carregar lista de exames permitidos.");
@@ -2371,48 +2419,109 @@ function AbaExamesPermitidos() {
     }
   }
 
+  const setAtual = useMemo(() => {
+    if (!tipoFilaAtiva) return selecionados;
+    return examesPorFila[tipoFilaAtiva] || new Set<string>();
+  }, [tipoFilaAtiva, selecionados, examesPorFila]);
+
   function toggleCodigo(codigo: string) {
-    setSelecionados((prev) => {
-      const proximo = new Set(prev);
-      if (proximo.has(codigo)) {
-        proximo.delete(codigo);
-      } else {
-        proximo.add(codigo);
-      }
-      return proximo;
-    });
+    if (!tipoFilaAtiva) {
+      setSelecionados((prev) => {
+        const next = new Set(prev);
+        if (next.has(codigo)) next.delete(codigo);
+        else next.add(codigo);
+        return next;
+      });
+    } else {
+      setExamesPorFila((prev) => {
+        const currentSet = new Set(prev[tipoFilaAtiva] || (tipoFilaAtiva === "EX. LAB. PSF ROTINA" ? [] : selecionados));
+        if (currentSet.has(codigo)) currentSet.delete(codigo);
+        else currentSet.add(codigo);
+        return {
+          ...prev,
+          [tipoFilaAtiva]: currentSet,
+        };
+      });
+    }
     setAlterado(true);
   }
 
   function marcarTodosFiltrados() {
-    setSelecionados((prev) => {
-      const proximo = new Set(prev);
-      for (const p of filtrados) {
-        proximo.add(p.codigo);
-      }
-      return proximo;
-    });
+    if (!tipoFilaAtiva) {
+      setSelecionados((prev) => {
+        const next = new Set(prev);
+        for (const p of filtrados) next.add(p.codigo);
+        return next;
+      });
+    } else {
+      setExamesPorFila((prev) => {
+        const currentSet = new Set(prev[tipoFilaAtiva] || []);
+        for (const p of filtrados) currentSet.add(p.codigo);
+        return { ...prev, [tipoFilaAtiva]: currentSet };
+      });
+    }
     setAlterado(true);
   }
 
   function desmarcarTodosFiltrados() {
-    setSelecionados((prev) => {
-      const proximo = new Set(prev);
-      for (const p of filtrados) {
-        proximo.delete(p.codigo);
-      }
-      return proximo;
-    });
+    if (!tipoFilaAtiva) {
+      setSelecionados((prev) => {
+        const next = new Set(prev);
+        for (const p of filtrados) next.delete(p.codigo);
+        return next;
+      });
+    } else {
+      setExamesPorFila((prev) => {
+        const currentSet = new Set(prev[tipoFilaAtiva] || []);
+        for (const p of filtrados) next.delete(p.codigo);
+        return { ...prev, [tipoFilaAtiva]: currentSet };
+      });
+    }
     setAlterado(true);
   }
 
   function marcarTodosGeral() {
-    setSelecionados(new Set(procedimentos.map((p) => p.codigo)));
+    if (!tipoFilaAtiva) {
+      setSelecionados(new Set(procedimentos.map((p) => p.codigo)));
+    } else {
+      setExamesPorFila((prev) => ({
+        ...prev,
+        [tipoFilaAtiva]: new Set(procedimentos.map((p) => p.codigo)),
+      }));
+    }
     setAlterado(true);
   }
 
   function limparTodosGeral() {
-    setSelecionados(new Set());
+    if (!tipoFilaAtiva) {
+      setSelecionados(new Set());
+    } else {
+      setExamesPorFila((prev) => ({
+        ...prev,
+        [tipoFilaAtiva]: new Set(),
+      }));
+    }
+    setAlterado(true);
+  }
+
+  function carregarPacoteRotina() {
+    const codsRotina = new Set(
+      procedimentos.filter((p) => EXAMES_ROTINA_PADRAO.includes(p.codigo)).map((p) => p.codigo)
+    );
+    const alvo = tipoFilaAtiva || "EX. LAB. PSF ROTINA";
+    setExamesPorFila((prev) => ({
+      ...prev,
+      [alvo]: codsRotina,
+    }));
+    setAlterado(true);
+    setOk(`Lista básica de exames de rotina (${codsRotina.size} exames) selecionada com sucesso para ${alvo}!`);
+  }
+
+  function alterarValorCombinado(codigo: string, valorStr: string) {
+    setValoresCombinados((prev) => ({
+      ...prev,
+      [codigo]: valorStr,
+    }));
     setAlterado(true);
   }
 
@@ -2422,15 +2531,34 @@ function AbaExamesPermitidos() {
     setOk("");
     try {
       const codigos = Array.from(selecionados);
-      const res = await salvarExamesPermitidos(codigos);
+      const exames_por_tipo_fila: Record<string, string[]> = {};
+      for (const [tf, setCods] of Object.entries(examesPorFila)) {
+        if (setCods.size > 0) {
+          exames_por_tipo_fila[tf] = Array.from(setCods);
+        }
+      }
+      const valores_combinados: Record<string, number> = {};
+      for (const [cod, valStr] of Object.entries(valoresCombinados)) {
+        if (!valStr) continue;
+        const num = parseFloat(valStr.replace(/\./g, "").replace(",", "."));
+        if (!isNaN(num) && num > 0) {
+          valores_combinados[cod] = Math.round(num * 100) / 100;
+        }
+      }
+
+      const res = await salvarExamesPermitidos({
+        codigos,
+        exames_por_tipo_fila,
+        valores_combinados,
+      });
+
       setOk(
-        codigos.length > 0
-          ? `Configuração salva com sucesso! ${res.total_habilitados} procedimentos habilitados para os PSFs.`
-          : "Configuração salva: lista restritiva zerada (todos os exames laboratoriais SIGTAP liberados por padrão)."
+        `Configurações salvas com sucesso! ${res.total_habilitados} procedimentos gerais habilitados, regras de serviços/filas e valores combinados locais atualizados.`
       );
       setAlterado(false);
+      await carregar();
     } catch (e: unknown) {
-      setErro(msgErro(e, "Falha ao salvar exames permitidos."));
+      setErro(msgErro(e, "Falha ao salvar configurações de exames."));
     } finally {
       setSalvando(false);
     }
@@ -2448,12 +2576,12 @@ function AbaExamesPermitidos() {
       );
     }
     if (filtro === "habilitados") {
-      lista = lista.filter((p) => selecionados.has(p.codigo));
+      lista = lista.filter((p) => setAtual.has(p.codigo));
     } else if (filtro === "desmarcados") {
-      lista = lista.filter((p) => !selecionados.has(p.codigo));
+      lista = lista.filter((p) => !setAtual.has(p.codigo));
     }
     return lista;
-  }, [procedimentos, busca, filtro, selecionados]);
+  }, [procedimentos, busca, filtro, setAtual]);
 
   if (loading) {
     return (
@@ -2464,8 +2592,8 @@ function AbaExamesPermitidos() {
     );
   }
 
-  const totalHabilitados = selecionados.size;
-  const padraoTodosLiberados = totalHabilitados === 0;
+  const totalAtuais = setAtual.size;
+  const padraoTodosLiberados = !tipoFilaAtiva && totalAtuais === 0;
 
   return (
     <div className="space-y-4">
@@ -2480,7 +2608,7 @@ function AbaExamesPermitidos() {
                 Procedimentos e Exames Permitidos (SIGTAP)
               </h2>
               <p className="mt-0.5 text-xs text-ink/65">
-                Defina quais exames de sangue e laboratoriais da tabela SIGTAP ficam habilitados para seleção nas unidades PSF.
+                Defina os exames liberados por tipo de fila/serviço (ex: Rotina PSF) e configure valores combinados localmente com laboratórios credenciados.
               </p>
             </div>
           </div>
@@ -2518,14 +2646,18 @@ function AbaExamesPermitidos() {
 
         <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-sus-900/10 pt-4 text-xs">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-sus-950">Status atual da regra:</span>
-            {padraoTodosLiberados ? (
+            <span className="font-bold text-sus-950">Contexto selecionado:</span>
+            {tipoFilaAtiva ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2.5 py-0.5 font-bold text-purple-800">
+                {tipoFilaAtiva} ({totalAtuais} liberados)
+              </span>
+            ) : padraoTodosLiberados ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-0.5 font-bold text-blue-700">
-                <CheckCircle2 className="h-3.5 w-3.5" /> Todos liberados (padrão)
+                <CheckCircle2 className="h-3.5 w-3.5" /> Todos liberados (regra geral)
               </span>
             ) : (
               <span className="inline-flex items-center gap-1 rounded-full bg-teal/15 px-2.5 py-0.5 font-bold text-teal">
-                <CheckCircle2 className="h-3.5 w-3.5" /> {totalHabilitados} de {procedimentos.length} selecionados
+                <CheckCircle2 className="h-3.5 w-3.5" /> {totalAtuais} de {procedimentos.length} selecionados
               </span>
             )}
           </div>
@@ -2537,8 +2669,44 @@ function AbaExamesPermitidos() {
         </div>
       </Card>
 
-      {/* Controles de busca e ações em lote */}
+      {/* Seletor de Tipo de Fila / Serviço e Ações Específicas */}
       <Card className="p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sus-900/10 pb-3 mb-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-bold text-sus-950 flex items-center gap-1">
+              <Layers className="h-4 w-4 text-teal" /> Tipo de Fila / Serviço:
+            </span>
+            <select
+              value={tipoFilaAtiva}
+              onChange={(e) => setTipoFilaAtiva(e.target.value)}
+              className="rounded-lg border border-sus-900/20 bg-white px-3 py-1.5 text-xs font-semibold text-sus-900 focus:border-teal focus:outline-none"
+            >
+              <option value="">🌐 Regra Geral / Todas as Unidades PSF</option>
+              {tiposFila.map((tf) => (
+                <option key={tf.id} value={tf.id}>
+                  🩸 {tf.nome}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {(tipoFilaAtiva === "EX. LAB. PSF ROTINA" || !tipoFilaAtiva) && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={carregarPacoteRotina}
+                className="gap-1.5 text-xs !h-8 border-teal/40 text-teal hover:bg-teal/10"
+                title="Aplica lista restrita e enxuta de exames laboratoriais básicos para a rotina dos PSFs (Hemograma, Glicose, Lipídios, etc.)"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Carregar Pacote Básico de Rotina (18 exames)
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Controles de busca e ações em lote */}
         <div className="grid gap-3 md:grid-cols-12 md:items-center">
           <div className="md:col-span-5">
             <Input
@@ -2565,7 +2733,7 @@ function AbaExamesPermitidos() {
                 filtro === "habilitados" ? "bg-teal text-white" : "bg-sand text-sus-900 hover:bg-sand/80"
               }`}
             >
-              Habilitados ({totalHabilitados})
+              Habilitados ({totalAtuais})
             </button>
             <button
               type="button"
@@ -2574,7 +2742,7 @@ function AbaExamesPermitidos() {
                 filtro === "desmarcados" ? "bg-sus-900 text-white" : "bg-sand text-sus-900 hover:bg-sand/80"
               }`}
             >
-              Desmarcados ({procedimentos.length - totalHabilitados})
+              Desmarcados ({procedimentos.length - totalAtuais})
             </button>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-1.5 md:col-span-3">
@@ -2596,29 +2764,37 @@ function AbaExamesPermitidos() {
         </div>
       </Card>
 
-      {/* Lista de exames com checkboxes */}
+      {/* Lista de exames com checkboxes, valores e status */}
       <Card className="overflow-hidden">
         <div className="max-h-[600px] overflow-y-auto">
           <table className="w-full text-left text-xs">
             <thead className="sticky top-0 z-10 border-b border-sus-900/10 bg-sand uppercase tracking-wide text-sus-900/60">
               <tr>
-                <th className="w-12 px-4 py-3 text-center">
+                <th className="w-10 px-3 py-3 text-center">
                   <input
                     type="checkbox"
-                    checked={filtrados.length > 0 && filtrados.every((p) => selecionados.has(p.codigo))}
+                    checked={filtrados.length > 0 && filtrados.every((p) => setAtual.has(p.codigo))}
                     onChange={(e) => (e.target.checked ? marcarTodosFiltrados() : desmarcarTodosFiltrados())}
                     className="h-4 w-4 accent-teal cursor-pointer"
                   />
                 </th>
-                <th className="w-32 px-4 py-3">Código SIGTAP</th>
-                <th className="px-4 py-3">Descrição do Procedimento</th>
-                <th className="w-28 px-4 py-3">Instrumento</th>
-                <th className="w-36 px-4 py-3 text-right">Disponibilidade PSF</th>
+                <th className="w-28 px-3 py-3">Código SIGTAP</th>
+                <th className="px-3 py-3">Descrição do Procedimento</th>
+                <th className="w-20 px-3 py-3 text-center">Inst.</th>
+                <th className="w-28 px-3 py-3 text-right">Valor SIGTAP</th>
+                <th className="w-40 px-3 py-3 text-center">Valor Combinado Local</th>
+                <th className="w-32 px-3 py-3 text-right">Disponibilidade</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-sus-900/5">
               {filtrados.map((p) => {
-                const ativo = selecionados.has(p.codigo);
+                const ativo = setAtual.has(p.codigo);
+                const valSig = (p.valor_sigtap ?? (p.valor_sa || 0) + (p.valor_sp || 0)).toFixed(2);
+                const valCombInput = valoresCombinados[p.codigo] ?? "";
+                const temValorComb =
+                  (valCombInput && parseFloat(valCombInput.replace(",", ".")) > 0) ||
+                  (!valCombInput && p.valor_combinado && p.valor_combinado > 0);
+
                 return (
                   <tr
                     key={p.codigo}
@@ -2627,7 +2803,7 @@ function AbaExamesPermitidos() {
                       ativo ? "bg-teal/5" : ""
                     }`}
                   >
-                    <td className="px-4 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-3 py-2 text-center" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
                         checked={ativo}
@@ -2635,21 +2811,45 @@ function AbaExamesPermitidos() {
                         className="h-4 w-4 accent-teal cursor-pointer"
                       />
                     </td>
-                    <td className="px-4 py-2.5 font-mono font-semibold text-sus-950">
+                    <td className="px-3 py-2 font-mono font-semibold text-sus-950">
                       {p.codigo}
                     </td>
-                    <td className="px-4 py-2.5 font-medium text-ink/80">
+                    <td className="px-3 py-2 font-medium text-ink/80">
                       {p.descricao}
                     </td>
-                    <td className="px-4 py-2.5 text-ink/55">
-                      <span className="rounded bg-sand px-1.5 py-0.5 font-mono text-[11px]">
+                    <td className="px-3 py-2 text-center text-ink/55">
+                      <span className="rounded bg-sand px-1.5 py-0.5 font-mono text-[10px]">
                         {p.instrumento || "BPA-C"}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 text-right">
+                    <td className="px-3 py-2 text-right font-mono font-medium text-ink/75">
+                      R$ {valSig}
+                    </td>
+                    <td className="px-3 py-2 text-center" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span className="text-[11px] font-medium text-ink/40">R$</span>
+                        <input
+                          type="text"
+                          value={valCombInput}
+                          onChange={(e) => alterarValorCombinado(p.codigo, e.target.value)}
+                          placeholder="0,00"
+                          title="Valor combinado local com laboratório (prevalece sobre a Tabela SIGTAP)"
+                          className="w-20 rounded border border-sus-900/20 bg-white px-2 py-1 text-right font-mono text-xs font-semibold text-sus-950 focus:border-teal focus:outline-none"
+                        />
+                        {temValorComb && (
+                          <span
+                            className="rounded bg-emerald-100 px-1 py-0.5 text-[9px] font-bold text-emerald-800"
+                            title="Valor combinado local ativo! Será utilizado no faturamento ao invés do SIGTAP."
+                          >
+                            Local
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-right">
                       {ativo ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-teal/15 px-2 py-0.5 text-[11px] font-bold text-teal">
-                          Habilitado
+                          {tipoFilaAtiva ? "Liberado" : "Habilitado"}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 rounded-full bg-sus-900/10 px-2 py-0.5 text-[11px] font-medium text-ink/45">
@@ -2662,7 +2862,7 @@ function AbaExamesPermitidos() {
               })}
               {filtrados.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-sm text-ink/45">
+                  <td colSpan={7} className="py-8 text-center text-sm text-ink/45">
                     Nenhum procedimento encontrado com os filtros atuais.
                   </td>
                 </tr>
@@ -2671,6 +2871,136 @@ function AbaExamesPermitidos() {
           </table>
         </div>
       </Card>
+
+      {modalNovo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
+          <Card className="w-full max-w-xl overflow-hidden bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-sus-900/10 px-6 py-4 bg-sand/30">
+              <h2 className="text-base font-bold text-sus-950 flex items-center gap-2">
+                <FlaskConical className="h-5 w-5 text-teal" />
+                Cadastrar Procedimento Manual (Tabela SIGTAP)
+              </h2>
+              <button
+                onClick={() => setModalNovo(false)}
+                className="rounded-lg p-1 text-ink/40 hover:bg-sand hover:text-sus-950"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+              {erroNovo && (
+                <div className="rounded-xl bg-red-50 p-3 text-xs font-semibold text-red-700">
+                  {erroNovo}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">Código SIGTAP (10 dígitos) *</Label>
+                  <Input
+                    value={novoCodigo}
+                    onChange={(e) => setNovoCodigo(e.target.value)}
+                    placeholder="Ex: 0202010120"
+                    maxLength={10}
+                    className="mt-1 text-xs font-mono font-bold"
+                  />
+                  <p className="text-[10px] text-ink/50 mt-0.5">Padrão oficial DATASUS (somente números)</p>
+                </div>
+
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">Complexidade</Label>
+                  <select
+                    value={novoComplexidade}
+                    onChange={(e) => setNovoComplexidade(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-xs font-medium text-sus-950"
+                  >
+                    <option value="MC">Média Complexidade (MC)</option>
+                    <option value="AB">Atenção Básica (AB)</option>
+                    <option value="AC">Alta Complexidade (AC)</option>
+                    <option value="NA">Não se Aplica (NA)</option>
+                  </select>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <Label className="text-xs font-bold text-sus-950">Descrição Oficial do Exame / Procedimento *</Label>
+                  <Input
+                    value={novoDescricao}
+                    onChange={(e) => setNovoDescricao(e.target.value)}
+                    placeholder="Ex: DOSAGEM DE HEMOGLOBINA GLICADA A1C"
+                    className="mt-1 text-xs uppercase"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">Instrumento de Registro</Label>
+                  <select
+                    value={novoInstrumento}
+                    onChange={(e) => setNovoInstrumento(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-xs font-medium text-sus-950"
+                  >
+                    <option value="BPA-C">BPA Consolidado (BPA-C)</option>
+                    <option value="BPA-I">BPA Individualizado (BPA-I)</option>
+                    <option value="APAC">Laudo APAC (APAC)</option>
+                    <option value="AIH">Hospitalar (AIH)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">Valor Ambulatorial (SA - R$)</Label>
+                  <Input
+                    value={novoValorSa}
+                    onChange={(e) => setNovoValorSa(e.target.value)}
+                    placeholder="0,00"
+                    className="mt-1 text-xs font-mono"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">Valor Hospitalar (SH - R$)</Label>
+                  <Input
+                    value={novoValorSh}
+                    onChange={(e) => setNovoValorSh(e.target.value)}
+                    placeholder="0,00"
+                    className="mt-1 text-xs font-mono"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">Valor Profissional (SP - R$)</Label>
+                  <Input
+                    value={novoValorSp}
+                    onChange={(e) => setNovoValorSp(e.target.value)}
+                    placeholder="0,00"
+                    className="mt-1 text-xs font-mono"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-sus-900/10 bg-sand/30 px-6 py-4">
+              <Button
+                variant="outline"
+                onClick={() => setModalNovo(false)}
+                disabled={salvandoNovo}
+                className="text-xs"
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={criarProcedimentoManual}
+                disabled={salvandoNovo}
+                className="bg-teal text-white hover:bg-teal/90 text-xs"
+              >
+                {salvandoNovo ? "Salvando..." : "Cadastrar no SIGTAP"}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
 
       {modalNovo && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">

@@ -139,6 +139,7 @@ def listar_sigtap(
     q: str = "",
     instrumento: str | None = Query(default=None, pattern="^(BPA-C|BPA-I|BPA-F|AIH|APAC|RAAS)?$"),
     apenas_laboratoriais: bool = Query(default=False),
+    tipo_fila: str = Query(default=""),
     grupo_codigo: str = Query(default="", max_length=2),
     subgrupo_codigo: str = Query(default="", max_length=4),
     cbo: str = Query(default="", max_length=10),
@@ -153,6 +154,7 @@ def listar_sigtap(
     p_q = q if isinstance(q, str) else ""
     p_inst = instrumento if isinstance(instrumento, str) and instrumento else None
     p_apenas_lab = apenas_laboratoriais if isinstance(apenas_laboratoriais, bool) else False
+    p_tipo_fila = (tipo_fila if isinstance(tipo_fila, str) else "").strip()
     p_page = page if isinstance(page, int) and page > 0 else 1
     p_limit = limit if isinstance(limit, int) and limit > 0 else 100
 
@@ -184,14 +186,37 @@ def listar_sigtap(
             return {"data": [], "total": 0, "page": 1, "pages": 1}
         base = base.where(SigtapProcedimento.codigo.in_(cods_cbo))
 
-    if p_apenas_lab:
+    if p_tipo_fila or p_apenas_lab:
         cfg = db.get(SystemSettings, 1)
-        raw_habilitados = getattr(cfg, "exames_habilitados_sigtap", "") or ""
-        codigos_permitidos = [c.strip() for c in raw_habilitados.split(",") if c.strip()]
-        if codigos_permitidos:
-            base = base.where(SigtapProcedimento.codigo.in_(codigos_permitidos))
-        else:
-            base = base.where(SigtapProcedimento.codigo.like("0202%"))
+        codigos_filtrados = None
+
+        if p_tipo_fila and cfg:
+            import json
+            raw_por_fila = getattr(cfg, "exames_por_tipo_fila_json", "{}") or "{}"
+            try:
+                mapa_filas = json.loads(raw_por_fila)
+                if isinstance(mapa_filas, dict):
+                    tf_upper = p_tipo_fila.upper()
+                    for k, cods in mapa_filas.items():
+                        if k.upper() == tf_upper or tf_upper in k.upper() or k.upper() in tf_upper:
+                            if cods and isinstance(cods, list):
+                                codigos_filtrados = [c.strip() for c in cods if c.strip()]
+                                break
+            except Exception:
+                pass
+
+        if codigos_filtrados is not None:
+            if codigos_filtrados:
+                base = base.where(SigtapProcedimento.codigo.in_(codigos_filtrados))
+            else:
+                base = base.where(SigtapProcedimento.codigo.like("0202%"))
+        elif p_apenas_lab:
+            raw_habilitados = getattr(cfg, "exames_habilitados_sigtap", "") or ""
+            codigos_permitidos = [c.strip() for c in raw_habilitados.split(",") if c.strip()]
+            if codigos_permitidos:
+                base = base.where(SigtapProcedimento.codigo.in_(codigos_permitidos))
+            else:
+                base = base.where(SigtapProcedimento.codigo.like("0202%"))
 
     rows = list(db.exec(base).all())
     if p_q.strip():

@@ -2458,6 +2458,7 @@ def listar_exames(
     p_just = justificativa if isinstance(justificativa, str) else ""
     p_dest = destino if isinstance(destino, str) else ""
     p_uid = unidade_id if isinstance(unidade_id, int) else None
+    p_fid = fila_id if isinstance(fila_id, int) else None
     p_unome = unidade if isinstance(unidade, str) else ""
     p_de = data_de if isinstance(data_de, str) else None
     p_ate = data_ate if isinstance(data_ate, str) else None
@@ -2478,7 +2479,7 @@ def listar_exames(
         idade_max=p_idade_max,
         excluir_laboratorio=excluir_laboratorio,
         apenas_laboratorio=apenas_laboratorio,
-        fila_id=fila_id,
+        fila_id=p_fid,
     )
     total = len(itens)
     meta = paginar(total, p_page, p_limit)

@@ -13,9 +13,12 @@ Valida:
 
 import json
 import os
-from datetime import date
+from datetime import date, timedelta
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+
+FUTURO_DATE = date.today() + timedelta(days=7)
+FUTURO_STR = FUTURO_DATE.strftime("%d/%m/%Y")
 
 import pytest
 from sqlalchemy.pool import StaticPool
@@ -59,7 +62,7 @@ def db_session():
 
         vaga = VagaLab(
             laboratorio_id=lab.id,
-            data=date(2026, 11, 20),
+            data=FUTURO_DATE,
             vagas_totais=30,
             vagas_ocupadas=0,
         )
@@ -106,7 +109,7 @@ def db_session():
 
 
 def test_formato_a_aninhado_popula_fila_mestre_itens_e_vagas(db_session: Session):
-    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
     <exames>
       <exame>
         <codigo_pedido>12345</codigo_pedido>
@@ -115,7 +118,7 @@ def test_formato_a_aninhado_popula_fila_mestre_itens_e_vagas(db_session: Session
         <data_nascimento>15/05/1980</data_nascimento>
         <tipo_fila>ROTINA</tipo_fila>
         <data_pedido>10/11/2026</data_pedido>
-        <data_agendada>20/11/2026</data_agendada>
+        <data_agendada>{FUTURO_STR}</data_agendada>
         <hora_agendada>07:30</hora_agendada>
         <status>agendado</status>
         <medico>DR JOAO</medico>
@@ -202,14 +205,14 @@ def test_formato_a_aninhado_popula_fila_mestre_itens_e_vagas(db_session: Session
 
 
 def test_formato_b_achatado_acumula_na_mesma_fila_e_solicitacao(db_session: Session):
-    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
     <exames>
       <exame>
         <nome>JOSE PEREIRA</nome>
         <cpf>98765432100</cpf>
         <tipo_fila>HIPERDIA</tipo_fila>
         <data_pedido>12/11/2026</data_pedido>
-        <data_agendada>20/11/2026</data_agendada>
+        <data_agendada>{FUTURO_STR}</data_agendada>
         <status>agendado</status>
         <codigo_procedimento>0202020380</codigo_procedimento>
         <nome_procedimento>HEMOGRAMA COMPLETO</nome_procedimento>
@@ -219,7 +222,7 @@ def test_formato_b_achatado_acumula_na_mesma_fila_e_solicitacao(db_session: Sess
         <cpf>98765432100</cpf>
         <tipo_fila>HIPERDIA</tipo_fila>
         <data_pedido>12/11/2026</data_pedido>
-        <data_agendada>20/11/2026</data_agendada>
+        <data_agendada>{FUTURO_STR}</data_agendada>
         <status>realizado</status>
         <codigo_procedimento>0202010473</codigo_procedimento>
         <nome_procedimento>DOSAGEM DE GLICOSE</nome_procedimento>
@@ -229,7 +232,7 @@ def test_formato_b_achatado_acumula_na_mesma_fila_e_solicitacao(db_session: Sess
         <cpf>98765432100</cpf>
         <tipo_fila>HIPERDIA</tipo_fila>
         <data_pedido>12/11/2026</data_pedido>
-        <data_agendada>20/11/2026</data_agendada>
+        <data_agendada>{FUTURO_STR}</data_agendada>
         <status>agendado</status>
         <codigo_procedimento>0202010473</codigo_procedimento>
         <nome_procedimento>DOSAGEM DE GLICOSE</nome_procedimento>
@@ -354,13 +357,13 @@ def test_vinculo_pec_prioritario_sem_duplicar_e_aviso_novos_pacientes(db_session
     # - Linha 1: Maria com prontuário 147465 (que no banco pertence ao João!) e nome abreviado -> DEVE vincular à Maria do PEC, NÃO ao João e NÃO criar novo!
     # - Linha 2: João exato sem nascimento -> DEVE vincular ao João do PEC!
     # - Linha 3: Paciente inexistente -> DEVE gerar aviso!
-    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
     <exames>
       <exame>
         <prontuario>147465</prontuario>
         <paciente>MARIA APARECIDA SILVA</paciente>
         <tipo_servico>ROTINA</tipo_servico>
-        <data_agendamento>20/11/2026</data_agendamento>
+        <data_agendamento>{FUTURO_STR}</data_agendamento>
         <status>agendado</status>
         <codigo_procedimento>0202020380</codigo_procedimento>
       </exame>
@@ -368,7 +371,7 @@ def test_vinculo_pec_prioritario_sem_duplicar_e_aviso_novos_pacientes(db_session
         <prontuario>88888</prontuario>
         <paciente>JOAO CARLOS OLIVEIRA</paciente>
         <tipo_servico>ROTINA</tipo_servico>
-        <data_agendamento>20/11/2026</data_agendamento>
+        <data_agendamento>{FUTURO_STR}</data_agendamento>
         <status>agendado</status>
         <codigo_procedimento>0202010473</codigo_procedimento>
       </exame>
@@ -376,7 +379,7 @@ def test_vinculo_pec_prioritario_sem_duplicar_e_aviso_novos_pacientes(db_session
         <prontuario>77777</prontuario>
         <paciente>FULANO INEXISTENTE NO PEC</paciente>
         <tipo_servico>ROTINA</tipo_servico>
-        <data_agendamento>20/11/2026</data_agendamento>
+        <data_agendamento>{FUTURO_STR}</data_agendamento>
         <status>agendado</status>
         <codigo_procedimento>0202020380</codigo_procedimento>
       </exame>

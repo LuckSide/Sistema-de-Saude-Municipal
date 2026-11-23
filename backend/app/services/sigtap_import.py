@@ -198,7 +198,7 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                 for line in zfiles["tb_procedimento.txt"].decode("latin-1", "ignore").splitlines():
                     if not line.strip():
                         continue
-                    if len(line) < 318:
+                    if len(line) < 312:
                         continue
                     if stats["processados"] >= MAX_LINHAS:
                         break
@@ -217,9 +217,13 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                     pontos = int((line[270:274] or "0").strip() or "0")
                     idade_min = int((line[274:278] or "0").strip() or "0")
                     idade_max = int((line[278:282] or "0").strip() or "0")
-                    valor_sh = int((line[282:294] or "0").strip() or "0") / 100.0
-                    valor_sa = int((line[294:306] or "0").strip() or "0") / 100.0
-                    valor_sp = int((line[306:318] or "0").strip() or "0") / 100.0
+                    # Layout DATASUS (tb_procedimento.txt):
+                    # 282..292 (10 posições): VL_SH (Serviços Hospitalares)
+                    # 292..302 (10 posições): VL_SA (Serviços Ambulatoriais)
+                    # 302..312 (10 posições): VL_SP (Serviços Profissionais)
+                    valor_sh = int((line[282:292] or "0").strip() or "0") / 100.0
+                    valor_sa = int((line[292:302] or "0").strip() or "0") / 100.0
+                    valor_sp = int((line[302:312] or "0").strip() or "0") / 100.0
                     hier = decompor_codigo_sigtap(cod)
                     g_cod = hier["grupo_codigo"]
                     sg_cod = hier["subgrupo_codigo"]
@@ -416,8 +420,14 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
         for cod, dados in pend_proc.items():
             obj = existentes.get(cod)
             if obj:
+                v_comb = getattr(obj, "valor_combinado", 0.0)
+                tp_perm = getattr(obj, "tipos_fila_permitidos", "")
                 for k, v in dados.items():
                     setattr(obj, k, v)
+                if v_comb and v_comb > 0:
+                    obj.valor_combinado = v_comb
+                if tp_perm:
+                    obj.tipos_fila_permitidos = tp_perm
                 db.add(obj)
                 stats["atualizados"] += 1
             else:

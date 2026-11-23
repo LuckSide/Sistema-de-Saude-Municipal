@@ -1316,6 +1316,7 @@ def processar_linhas(
         unidade_saude_id = uni_obj.id if uni_obj else None
         unidade_nome = uni_obj.nome if uni_obj else (dest_raw[:150] or "")
         unidade_cnes = getattr(uni_obj, "cnes", "") or ""
+        tipo_lab_label = tipo[:80] or "EXAME_LABORATORIAL"
 
         # Mapeamento do status e data agendada (Classificação Automática: Fila Real vs Histórico Prontuário)
         hoje = date.today()
@@ -1560,6 +1561,7 @@ def processar_linhas(
                         filas_psf_cache[chave_fila_agend] = ja_lab
 
             criou_lab = False
+            criou_solic = False
             houve_alt_lab = False
 
             if ja_lab:
@@ -1677,6 +1679,7 @@ def processar_linhas(
                         solic_cache[chave_solic] = solic_obj
 
                 if solic_obj is None:
+                    criou_solic = True
                     cod_ped = (r.get("codigo_pedido") or "").strip()
                     obs_lab = f"Agendamento Vivver #{cod_ped}" if cod_ped else "Importação XML"
                     cod_solic_lab = (getattr(ja_lab, "codigo_solicitacao", "") or "").strip() if ja_lab else ""
@@ -1730,13 +1733,18 @@ def processar_linhas(
                 itens_set = itens_solic_cache.setdefault(solic_obj.id, set())
                 for sp_item, qtd_item in procs_resolvidos:
                     if sp_item.id and sp_item.id not in itens_set:
-                        valor_unit = round(float(sp_item.valor_sa or 0.0) + float(sp_item.valor_sp or 0.0), 2)
+                        if getattr(sp_item, "valor_combinado", 0.0) > 0:
+                            valor_unit = round(float(sp_item.valor_combinado), 2)
+                            origem_p = "combinado_local"
+                        else:
+                            valor_unit = round(float(sp_item.valor_sa or 0.0) + float(sp_item.valor_sp or 0.0), 2)
+                            origem_p = "sigtap_padrao"
                         db.add(ItemSolic(
                             solicitacao_id=solic_obj.id,
                             sigtap_id=sp_item.id,
                             quantidade=qtd_item,
                             valor_unitario_aplicado=valor_unit,
-                            origem_preco="sigtap_padrao",
+                            origem_preco=origem_p,
                             status_auditoria="aprovado" if solic_obj.status == "realizado" else "pendente_conferencia",
                         ))
                         itens_set.add(sp_item.id)
@@ -1750,7 +1758,7 @@ def processar_linhas(
             else:
                 pedidos_fila_ativa += 1
 
-            if criou_lab:
+            if criou_lab or (criou_solic and not ja_lab):
                 exames_novos += 1
             elif houve_alt_lab:
                 atualizados += 1
