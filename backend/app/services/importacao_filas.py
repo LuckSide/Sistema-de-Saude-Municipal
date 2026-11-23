@@ -1618,11 +1618,21 @@ def processar_linhas(
                 elif status_lab == "cancelado":
                     cod_ped = (r.get("codigo_pedido") or "").strip()
                     obs_canc = (r.get("observacao") or "").strip()
+                    # Limpeza defensiva de ruído e extração inteligente do motivo real de cancelamento
+                    motivo_limpo = "Cancelado/Desistência no Vivver"
+                    if obs_canc:
+                        obs_sem_pontos = re.sub(r'[.\-_]{2,}', ' ', obs_canc).strip(" .-|")
+                        m_mot = re.search(r'Motivo:\s*([^|]+)', obs_sem_pontos, re.IGNORECASE)
+                        if m_mot:
+                            motivo_limpo = m_mot.group(1).strip()
+                        elif obs_sem_pontos:
+                            partes = [p.strip() for p in obs_sem_pontos.split("|") if p.strip()]
+                            motivo_limpo = partes[0] if partes else "Cancelado/Desistência no Vivver"
                     db.add(
                         PacienteHistorico(
                             paciente_id=pac.id,
                             tipo_evento="EXAME_LAB_CANCELADO",
-                            motivo=(obs_canc or "Cancelado/Desistência no Vivver")[:120],
+                            motivo=motivo_limpo[:100],
                             descricao=f"Solicitação Vivver #{cod_ped} ({tipo_lab_label}) cancelada/desistência: {nomes_desc_lab or exame_nome_ef}."[:500],
                             origem="importacao_filas",
                             exames_baixados_qtd=0,
