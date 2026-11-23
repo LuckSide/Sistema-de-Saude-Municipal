@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   Copy,
@@ -186,6 +187,15 @@ export default function Usuarios() {
   const [usernameEditadoManual, setUsernameEditadoManual] = useState(false);
   const [modal, setModal] = useState(false);
   const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    if (modal) {
+      document.body.style.overflow = "hidden";
+      return () => {
+        document.body.style.overflow = "";
+      };
+    }
+  }, [modal]);
 
   const [erro, setErro] = useState("");
   const [erroModal, setErroModal] = useState("");
@@ -845,17 +855,20 @@ export default function Usuarios() {
       </Card>
 
       {/* Modal amplo em 2 colunas aproveitando espaço horizontal */}
-      {modal && (
-        <div
-          className="fixed inset-0 z-50 grid place-items-center bg-sus-950/55 p-3 md:p-6"
-          onClick={fecharModal}
-        >
+      {modal &&
+        createPortal(
           <div
-            className="rise flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-card"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 md:p-6 bg-sus-950/60 backdrop-blur-xs overflow-y-auto"
+            onClick={fecharModal}
+            role="dialog"
+            aria-modal="true"
           >
-            {/* Cabeçalho fixo do modal */}
-            <div className="flex items-center justify-between gap-3 border-b border-sus-900/10 bg-sand/40 px-6 py-4">
+            <div
+              className="relative my-auto flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl border border-sus-900/10 animate-in zoom-in-95 duration-150"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Cabeçalho fixo do modal */}
+              <div className="flex items-center justify-between gap-3 border-b border-sus-900/10 bg-sand/40 px-6 py-4 shrink-0">
               <div className="flex items-center gap-3">
                 <div className="rounded-xl bg-teal/15 p-2 text-teal">
                   <UserCog className="h-5 w-5" />
@@ -1106,7 +1119,7 @@ export default function Usuarios() {
             </div>
 
             {/* Rodapé fixo do modal */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-sus-900/10 bg-sand/30 px-6 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-sus-900/10 bg-sand/30 px-6 py-4 shrink-0">
               <div className="min-w-0 flex-1">
                 {erroModal && (
                   <p className="rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
@@ -1125,7 +1138,8 @@ export default function Usuarios() {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
