@@ -2473,7 +2473,7 @@ function AbaExamesPermitidos() {
     } else {
       setExamesPorFila((prev) => {
         const currentSet = new Set(prev[tipoFilaAtiva] || []);
-        for (const p of filtrados) next.delete(p.codigo);
+        for (const p of filtrados) currentSet.delete(p.codigo);
         return { ...prev, [tipoFilaAtiva]: currentSet };
       });
     }

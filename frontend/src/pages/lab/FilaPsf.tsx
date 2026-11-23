@@ -100,6 +100,7 @@ export default function FilaPsf() {
   const [form, setForm] = useState({
     paciente_id: "",
     fila_id: "",
+    tipo_fila: "",
     especialidade: "",
     unidade_psf: "",
     medico: MEDICO_GENERICO,
@@ -329,6 +330,7 @@ export default function FilaPsf() {
     setForm({
       paciente_id: "",
       fila_id: filtroFilaId || (filasLab[0] ? String(filasLab[0].id) : ""),
+      tipo_fila: "",
       especialidade: "",
       unidade_psf: unidPadraoUsuario || (unidades[0]?.nome ?? ""),
       medico: MEDICO_GENERICO,
@@ -366,6 +368,7 @@ export default function FilaPsf() {
     setForm({
       paciente_id: String(item.paciente_id),
       fila_id: item.fila_id ? String(item.fila_id) : "",
+      tipo_fila: item.tipo_fila || "",
       especialidade: item.especialidade || "",
       unidade_psf: item.unidade_psf || "",
       medico: item.medico || MEDICO_GENERICO,
@@ -1211,6 +1214,7 @@ export default function FilaPsf() {
                         setForm((prev) => ({
                           ...prev,
                           fila_id: val,
+                          tipo_fila: fObj ? fObj.nome : prev.tipo_fila,
                           especialidade: prev.especialidade || (fObj ? fObj.nome : ""),
                         }));
                       }}
