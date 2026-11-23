@@ -1740,6 +1740,16 @@ def _init_db_impl() -> None:
                 SELECT id FROM lab_solic_mestre WHERE status = 'realizado'
             ) AND status_auditoria = 'pendente_conferencia'
             """,
+            """
+            UPDATE lab_fila_psf
+            SET status = 'realizado'
+            WHERE status = 'na_fila'
+              AND (
+                  especialidade ILIKE '%SECRETARIA%'
+                  OR tipo_fila ILIKE '%SECRETARIA%'
+                  OR unidade_psf ILIKE '%SECRETARIA%'
+              )
+            """,
         ]:
             try:
                 with conn.begin_nested():
