@@ -1,13 +1,18 @@
 import { useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   CheckCircle2,
   AlertTriangle,
   FileSearch,
+  FileCheck,
   Send,
   X,
   Check,
   Ban,
   MessageSquare,
+  ShieldAlert,
+  Search,
+  Clock,
 } from "lucide-react";
 import {
   auditListar,
@@ -21,13 +26,20 @@ import {
   type AuditItem,
   type PedidoAjuste,
 } from "../../services/api";
-import { Button, Card, Label, Select } from "../../components/ui/primitives";
+import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
 
 const STATUS = ["pendente_conferencia", "aprovado", "divergente", "aguardando_autorizacao_sec"];
 
 export default function AuditLab() {
-  const [aba, setAba] = useState<"auditoria" | "ajustes">("auditoria");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const abaInicial = searchParams.get("aba") === "ajustes" ? "ajustes" : "auditoria";
+  const [aba, setAbaState] = useState<"auditoria" | "ajustes">(abaInicial);
+
+  const setAba = (novaAba: "auditoria" | "ajustes") => {
+    setAbaState(novaAba);
+    setSearchParams(novaAba === "ajustes" ? { aba: "ajustes" } : {}, { replace: true });
+  };
 
   // Estado da Auditoria
   const [status, setStatus] = useState("");
@@ -42,6 +54,7 @@ export default function AuditLab() {
   const [pedidosAjuste, setPedidosAjuste] = useState<PedidoAjuste[]>([]);
   const [carregandoAjustes, setCarregandoAjustes] = useState(false);
   const [filtroStatusAjuste, setFiltroStatusAjuste] = useState<string>("pendente");
+  const [buscaAjuste, setBuscaAjuste] = useState("");
   const [pedidoModal, setPedidoModal] = useState<PedidoAjuste | null>(null);
   const [respostaAnalise, setRespostaAnalise] = useState("");
   const [analisando, setAnalisando] = useState(false);
@@ -160,6 +173,18 @@ export default function AuditLab() {
 
   const pendentesCount = pedidosAjuste.filter((x) => x.status === "pendente").length;
 
+  const pedidosAjusteFiltrados = pedidosAjuste.filter((p) => {
+    if (!buscaAjuste.trim()) return true;
+    const q = buscaAjuste.toLowerCase();
+    return (
+      (p.paciente_nome && p.paciente_nome.toLowerCase().includes(q)) ||
+      (p.laboratorio_nome && p.laboratorio_nome.toLowerCase().includes(q)) ||
+      String(p.solicitacao_id).includes(q) ||
+      (p.justificativa && p.justificativa.toLowerCase().includes(q)) ||
+      (p.tipo_ajuste && p.tipo_ajuste.toLowerCase().includes(q))
+    );
+  });
+
   return (
     <div className="space-y-4">
       {/* Cabeçalho e Abas de Navegação */}
@@ -173,35 +198,46 @@ export default function AuditLab() {
           </p>
         </div>
 
-        {/* Abas */}
-        <div className="flex items-center gap-1.5 rounded-2xl bg-sand/60 p-1">
-          <button
-            type="button"
-            onClick={() => setAba("auditoria")}
-            className={`rounded-xl px-3.5 py-1.5 text-xs font-semibold transition ${
-              aba === "auditoria"
-                ? "bg-white text-sus-950 shadow-xs"
-                : "text-ink/65 hover:text-sus-950"
-            }`}
+        {/* Abas e Navegação */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5 rounded-2xl bg-sand/60 p-1">
+            <button
+              type="button"
+              onClick={() => setAba("ajustes")}
+              className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition ${
+                aba === "ajustes"
+                  ? "bg-white text-sus-950 shadow-xs"
+                  : "text-ink/65 hover:text-sus-950"
+              }`}
+            >
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+              <span>Contestações e Ajustes</span>
+              {pendentesCount > 0 && (
+                <span className="rounded-full bg-amber-500 px-1.5 py-0.2 text-[10px] font-bold text-white">
+                  {pendentesCount}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAba("auditoria")}
+              className={`rounded-xl px-3.5 py-1.5 text-xs font-semibold transition ${
+                aba === "auditoria"
+                  ? "bg-white text-sus-950 shadow-xs"
+                  : "text-ink/65 hover:text-sus-950"
+              }`}
+            >
+              Conferência de Exames
+            </button>
+          </div>
+
+          <Link
+            to="/lab/auditoria-laudos"
+            className="flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3 py-1.5 text-xs font-semibold transition"
           >
-            Conferência de Exames
-          </button>
-          <button
-            type="button"
-            onClick={() => setAba("ajustes")}
-            className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition ${
-              aba === "ajustes"
-                ? "bg-white text-sus-950 shadow-xs"
-                : "text-ink/65 hover:text-sus-950"
-            }`}
-          >
-            <span>Ajustes Solicitados</span>
-            {pendentesCount > 0 && (
-              <span className="rounded-full bg-amber-500 px-1.5 py-0.2 text-[10px] font-bold text-white">
-                {pendentesCount}
-              </span>
-            )}
-          </button>
+            <FileCheck className="h-3.5 w-3.5" />
+            Laudos com Inconsistência
+          </Link>
         </div>
       </div>
 
@@ -306,20 +342,32 @@ export default function AuditLab() {
       {/* ABA 2: PEDIDOS DE AJUSTE DO LABORATÓRIO */}
       {aba === "ajustes" && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-semibold text-ink/65">
-              Filtrar pedidos de ajuste:
-            </span>
-            <Select
-              value={filtroStatusAjuste}
-              onChange={(e) => setFiltroStatusAjuste(e.target.value)}
-              className="w-auto min-w-[200px] !h-9 text-xs"
-            >
-              <option value="todos">Todos</option>
-              <option value="pendente">Apenas Pendentes de Análise</option>
-              <option value="aprovado">Aprovados</option>
-              <option value="rejeitado">Rejeitados</option>
-            </Select>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="relative flex-1 min-w-[240px] max-w-md">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40 pointer-events-none" />
+              <Input
+                value={buscaAjuste}
+                onChange={(e) => setBuscaAjuste(e.target.value)}
+                placeholder="Buscar paciente, laboratório, pedido, justificativa..."
+                className="!pl-9 !h-9 text-xs"
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-ink/65">
+                Filtrar status:
+              </span>
+              <Select
+                value={filtroStatusAjuste}
+                onChange={(e) => setFiltroStatusAjuste(e.target.value)}
+                className="w-auto min-w-[180px] !h-9 text-xs"
+              >
+                <option value="todos">Todos os status</option>
+                <option value="pendente">Apenas Pendentes de Análise</option>
+                <option value="aprovado">Aprovados</option>
+                <option value="rejeitado">Rejeitados</option>
+              </Select>
+            </div>
           </div>
 
           <Card className="overflow-hidden border-sus-900/10 shadow-xs">
@@ -333,7 +381,15 @@ export default function AuditLab() {
                 <CheckCircle2 className="mx-auto h-8 w-8 text-teal/40 mb-2" />
                 <p className="font-semibold text-sus-950">Nenhum pedido de ajuste encontrado</p>
                 <p className="text-xs text-ink/50 mt-1">
-                  Não existem divergências ou pedidos de modificação pendentes para o filtro atual.
+                  Não existem contestações ou pedidos de modificação para o filtro de status atual.
+                </p>
+              </div>
+            ) : pedidosAjusteFiltrados.length === 0 ? (
+              <div className="p-10 text-center text-ink/45">
+                <FileSearch className="mx-auto h-8 w-8 text-ink/30 mb-2" />
+                <p className="font-semibold text-sus-950">Nenhum registro encontrado</p>
+                <p className="text-xs text-ink/50 mt-1">
+                  Nenhum pedido de ajuste corresponde ao termo pesquisado: "{buscaAjuste}".
                 </p>
               </div>
             ) : (
@@ -342,7 +398,7 @@ export default function AuditLab() {
                   <thead>
                     <tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
                       <th className="px-4 py-3 font-semibold">Paciente / Pedido</th>
-                      <th className="px-4 py-3 font-semibold">Laboratório</th>
+                      <th className="px-4 py-3 font-semibold">Laboratório / Data</th>
                       <th className="px-4 py-3 font-semibold">Tipo de Ajuste</th>
                       <th className="px-4 py-3 font-semibold">Justificativa</th>
                       <th className="px-4 py-3 font-semibold">Status</th>
@@ -350,14 +406,21 @@ export default function AuditLab() {
                     </tr>
                   </thead>
                   <tbody>
-                    {pedidosAjuste.map((p) => (
+                    {pedidosAjusteFiltrados.map((p) => (
                       <tr key={p.id} className="border-b border-sus-900/5 last:border-0 hover:bg-sand/30">
                         <td className="px-4 py-3">
                           <p className="font-semibold text-sus-950">{p.paciente_nome}</p>
                           <span className="font-mono text-xs text-ink/50">Pedido #{p.solicitacao_id}</span>
                         </td>
-                        <td className="px-4 py-3 text-xs text-ink/75 font-medium">
-                          {p.laboratorio_nome}
+                        <td className="px-4 py-3 text-xs">
+                          <p className="font-medium text-ink/80">{p.laboratorio_nome}</p>
+                          <span className="text-ink/50 text-[11px] flex items-center gap-1 mt-0.5">
+                            <Clock className="h-3 w-3" />
+                            {p.created_at ? new Date(p.created_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "—"}
+                          </span>
+                          {p.solicitado_por && (
+                            <span className="text-[10px] text-ink/40 block">Por: {p.solicitado_por}</span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-xs">
                           <span className="rounded bg-sand px-2 py-0.5 font-medium text-sus-950">
@@ -365,9 +428,14 @@ export default function AuditLab() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-xs text-ink/75 max-w-sm">
-                          <p className="truncate" title={p.justificativa}>
+                          <p className="truncate font-medium text-sus-900" title={p.justificativa}>
                             {p.justificativa}
                           </p>
+                          {p.itens_propostos && Array.isArray(p.itens_propostos) && p.itens_propostos.length > 0 && (
+                            <span className="mt-0.5 inline-block text-[10px] text-teal font-semibold">
+                              + {p.itens_propostos.length} item(ns) proposto(s)
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-xs">
                           <span
@@ -386,7 +454,7 @@ export default function AuditLab() {
                           <Button
                             onClick={() => {
                               setPedidoModal(p);
-                              setRespostaAnalise(p.resposta || "");
+                              setRespostaAnalise(p.resposta || p.resposta_secretaria || "");
                             }}
                             className="!h-8 px-3 text-xs"
                           >
@@ -439,7 +507,27 @@ export default function AuditLab() {
                 <p className="font-semibold text-sus-950">{pedidoModal.tipo_ajuste.replace(/_/g, " ")}</p>
                 <p className="text-[10px] text-ink/50 uppercase font-bold mt-2">Justificativa do Laboratório</p>
                 <p className="text-ink/85">{pedidoModal.justificativa}</p>
+                {pedidoModal.solicitado_por && (
+                  <p className="text-[10px] text-ink/50 pt-1">
+                    Enviado por: <strong>{pedidoModal.solicitado_por}</strong> em{" "}
+                    {pedidoModal.created_at ? new Date(pedidoModal.created_at).toLocaleString("pt-BR") : "—"}
+                  </p>
+                )}
               </div>
+
+              {pedidoModal.itens_propostos && Array.isArray(pedidoModal.itens_propostos) && pedidoModal.itens_propostos.length > 0 && (
+                <div className="rounded-xl border border-sus-900/10 p-3">
+                  <p className="text-[10px] text-ink/50 uppercase font-bold mb-2">Itens / Procedimentos Propostos</p>
+                  <div className="space-y-1.5">
+                    {pedidoModal.itens_propostos.map((it: any, idx: number) => (
+                      <div key={idx} className="flex items-center justify-between rounded-lg bg-sand/40 px-2.5 py-1.5 text-xs">
+                        <span className="font-medium text-sus-950">{it.codigo || it.sigtap_id || "Exame"} - {it.descricao || it.nome || "Item"}</span>
+                        {it.quantidade && <span className="font-semibold text-ink/60">Qtd: {it.quantidade}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div>
                 <Label>Despacho / Resposta da Secretaria de Saúde</Label>
@@ -448,7 +536,7 @@ export default function AuditLab() {
                   value={respostaAnalise}
                   onChange={(e) => setRespostaAnalise(e.target.value)}
                   placeholder="Insira o parecer de aprovação ou motivo da rejeição..."
-                  className="w-full rounded-xl border border-sus-900/15 bg-white p-3 text-sm text-ink outline-none focus:border-teal"
+                  className="w-full rounded-xl border border-sus-900/15 bg-white p-3 text-sm text-ink outline-none focus:border-teal disabled:bg-sand/30 disabled:text-ink/70"
                   disabled={pedidoModal.status !== "pendente"}
                 />
               </div>
@@ -473,9 +561,9 @@ export default function AuditLab() {
                   </Button>
                 </div>
               ) : (
-                <div className="pt-2 text-center text-xs text-ink/50">
-                  Pedido já analisado por {pedidoModal.analisado_por || "auditor"} em{" "}
-                  {pedidoModal.analisado_em ? new Date(pedidoModal.analisado_em).toLocaleDateString("pt-BR") : "—"}.
+                <div className="pt-2 text-center text-xs text-ink/50 border-t border-sus-900/10">
+                  Pedido já analisado por <strong>{pedidoModal.analisado_por || "auditor"}</strong> em{" "}
+                  {pedidoModal.analisado_em ? new Date(pedidoModal.analisado_em).toLocaleString("pt-BR") : "—"}.
                 </div>
               )}
             </div>

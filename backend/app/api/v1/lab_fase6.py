@@ -735,6 +735,11 @@ def listar_fila(
         data_ate = getattr(data_ate, "default", None)
     if not isinstance(q, str):
         q = getattr(q, "default", "") or ""
+    if not isinstance(fila_id, int):
+        raw_fid = getattr(fila_id, "default", None)
+        fila_id = raw_fid if isinstance(raw_fid, int) else None
+    if not isinstance(tipo_fila, str):
+        tipo_fila = getattr(tipo_fila, "default", "") or ""
 
     filtros = []
     if fila_id is not None:

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   AlertCircle,
   AlertTriangle,
@@ -134,13 +135,22 @@ export default function AuditoriaLaudos() {
           </p>
         </div>
 
-        <Button
-          type="button"
-          onClick={() => carregar()}
-          className="border border-sus-900/15 bg-white text-ink hover:bg-sand text-xs flex items-center gap-1.5 !h-9"
-        >
-          <RefreshCw className="h-3.5 w-3.5" /> Atualizar Fila
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            to="/lab/auditoria?aba=ajustes"
+            className="border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-semibold flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition !h-9"
+          >
+            <ShieldAlert className="h-3.5 w-3.5 text-amber-600" />
+            Contestações e Ajustes de Exames
+          </Link>
+          <Button
+            type="button"
+            onClick={() => carregar()}
+            className="border border-sus-900/15 bg-white text-ink hover:bg-sand text-xs flex items-center gap-1.5 !h-9"
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Atualizar Fila
+          </Button>
+        </div>
       </div>
 
       {erro && (
