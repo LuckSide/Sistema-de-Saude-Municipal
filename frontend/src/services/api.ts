@@ -1098,6 +1098,68 @@ export const tfdConsultarViagemPublica = (token: string) =>
 export const tfdConfirmarPresencaPublica = (token: string, acao: "confirmar" | "desistir" | "cancelar", motivo?: string) =>
   api.post<ViagemConfirmacaoPublica>(`/api/tfd/public/viagens/confirmar/${token}`, { acao, motivo }).then((r) => r.data);
 
+export interface PassageiroImportWord {
+  nome: string;
+  prontuario: string;
+  nascimento: string;
+  tratamento: string;
+  unidade: string;
+  hora_consulta: string;
+  cidade: string;
+  is_acompanhante: boolean;
+  paciente_id?: number | null;
+  cadastrado?: boolean;
+}
+
+export interface ViagemImportWord {
+  destino: string;
+  veiculo: string;
+  placa: string;
+  veiculo_id?: number | null;
+  motorista: string;
+  motorista_id?: number | null;
+  departamento: string;
+  data_viagem: string;
+  hora_saida: string;
+  data_retorno?: string | null;
+  hora_retorno?: string;
+  km_inicial: number;
+  km_final: number;
+  adiantamento: number;
+  observacoes?: string;
+  passageiros: PassageiroImportWord[];
+  avisos?: string[];
+  viagem_existente_id?: number | null;
+}
+
+export interface ImportarWordPreviewOut {
+  nome_arquivo: string;
+  total_viagens: number;
+  total_passageiros: number;
+  viagens: ViagemImportWord[];
+}
+
+export interface ImportarWordConfirmOut {
+  sucesso: boolean;
+  mensagem: string;
+  viagens_criadas: number;
+  passageiros_vinculados: number;
+  pacientes_cadastrados: number;
+  detalhes: any[];
+}
+
+export const tfdPreviewImportarWord = (file: File) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  return api.post<ImportarWordPreviewOut>("/api/tfd/viagens/importar-word/preview", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  }).then((r) => r.data);
+};
+
+export const tfdConfirmarImportarWord = (viagens: ViagemImportWord[]) =>
+  api.post<ImportarWordConfirmOut>("/api/tfd/viagens/importar-word/confirmar", { viagens }).then((r) => r.data);
+
+
 export type Pagina<T> = {
   data: T[];
   total: number;

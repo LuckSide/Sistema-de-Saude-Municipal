@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, and_, case, desc, func, not_, or_, select
@@ -76,6 +76,9 @@ from app.schemas.tfd import (
     ViagemConfirmacaoPublicaOut,
     ViagemConfirmarIn,
     ViagemStatusConfirmacaoIn,
+    ImportarViagensWordPreviewOut,
+    ImportarViagensWordConfirmIn,
+    ImportarViagensWordConfirmOut,
 )
 from app.services.tfd import coluna_sem_acento, hoje_str, remover_acentos, resumo_tfd
 from app.services.geradores import (
@@ -1537,6 +1540,70 @@ def criar_viagem(
         placa = veh.placa if veh else ""
         modelo = veh.modelo if veh else ""
     return ViagemOut(**obj.model_dump(), passageiros=0, veiculo_placa=placa, veiculo_modelo=modelo)
+
+
+@router.post("/viagens/importar-word/preview", response_model=ImportarViagensWordPreviewOut)
+async def preview_importar_word(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_perm("tfd_viagens", "criar")),
+):
+    """Lê um arquivo do Word (.docx) contendo Ordens de Circulação de Veículos e retorna o preview das viagens e passageiros."""
+    if not file.filename or not file.filename.lower().endswith(".docx"):
+        raise HTTPException(
+            status_code=400,
+            detail="Por favor, envie um arquivo Word no formato .docx. Arquivos no formato antigo (.doc) devem ser salvos como .docx no Word antes de importar.",
+        )
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Arquivo vazio enviado.")
+
+    from app.services.importador_word_viagens import (
+        parse_word_ordem_viagens,
+        enriquecer_preview_com_banco,
+    )
+
+    try:
+        viagens_parsed = parse_word_ordem_viagens(content, file.filename)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Erro ao processar o arquivo Word: {e}")
+
+    viagens_enriquecidas = enriquecer_preview_com_banco(db, viagens_parsed)
+    total_pax = sum(len(v.get("passageiros", [])) for v in viagens_enriquecidas)
+
+    return ImportarViagensWordPreviewOut(
+        nome_arquivo=file.filename,
+        total_viagens=len(viagens_enriquecidas),
+        total_passageiros=total_pax,
+        viagens=viagens_enriquecidas,
+    )
+
+
+@router.post("/viagens/importar-word/confirmar", response_model=ImportarViagensWordConfirmOut)
+def confirmar_importar_word(
+    data: ImportarViagensWordConfirmIn,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_perm("tfd_viagens", "criar")),
+):
+    """Confirma a importação das viagens e passageiros do Word previamente validados."""
+    if not data.viagens:
+        raise HTTPException(status_code=400, detail="Nenhuma viagem informada para importação.")
+
+    from app.services.importador_word_viagens import executar_importacao_viagens
+
+    try:
+        resultado = executar_importacao_viagens(
+            db, [v.model_dump() for v in data.viagens], ator
+        )
+        return ImportarViagensWordConfirmOut(**resultado)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao salvar importação: {e}")
+
 
 
 @router.put("/viagens/{vid}", response_model=ViagemOut)

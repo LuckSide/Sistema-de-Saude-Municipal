@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { AlertTriangle, Check, Clock, Copy, MessageCircle, Pencil, Plus, Search, Sparkles, Trash2, UserPlus, X, XCircle } from "lucide-react";
+import { AlertTriangle, Check, Clock, Copy, FileText, MessageCircle, Pencil, Plus, Search, Sparkles, Trash2, UserPlus, X, XCircle } from "lucide-react";
 import {
   tfdAddPassageiro,
   tfdAtualizarViagem,
@@ -30,6 +30,7 @@ import { Button, Card, Input, Label, Badge, Select } from "../../components/ui/p
 import { useConfirm } from "../../components/ConfirmDialog";
 import Paginacao from "../../components/Paginacao";
 import ExportarExcel from "../../components/ExportarExcel";
+import ImportarViagensWordModal from "../../components/ImportarViagensWordModal";
 import { copiarTextoClipboard } from "../../utils/clipboard";
 
 const STATUS = ["agendada", "andamento", "concluida", "cancelada"];
@@ -64,6 +65,7 @@ export default function TfdViagens() {
   const [mesFiltro, setMesFiltro] = useState("");
   const [anoFiltro, setAnoFiltro] = useState("");
   const [modal, setModal] = useState(false);
+  const [modalImportarWord, setModalImportarWord] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState(vazio);
   const [veiculos, setVeiculos] = useState<Veiculo[]>([]);
@@ -311,6 +313,14 @@ export default function TfdViagens() {
               ))}
             </Select>
           </div>
+          <Button
+            variant="outline"
+            onClick={() => setModalImportarWord(true)}
+            className="border-teal/30 bg-teal/5 text-teal hover:bg-teal hover:text-white transition-colors gap-1.5"
+            title="Importar Ordens de Circulação de Veículos e Viagens a partir de documento Word (.docx)"
+          >
+            <FileText className="h-4 w-4" /> Importar do Word
+          </Button>
           <ExportarExcel url="/api/tfd/viagens/exportar" arquivo="viagens_tfd" params={{ status: statusFiltro || undefined, mes: mesFiltro || undefined, ano: anoFiltro || undefined }} />
           <Button onClick={() => abrirModal()}><Plus className="h-4 w-4" /> Nova viagem</Button>
         </div>
@@ -809,6 +819,15 @@ export default function TfdViagens() {
           </div>
         </div>
       )}
+
+      <ImportarViagensWordModal
+        aberto={modalImportarWord}
+        onFechar={() => setModalImportarWord(false)}
+        onSucesso={() => {
+          carregar(1);
+          setOk("Viagens e passageiros importados com sucesso a partir do arquivo Word.");
+        }}
+      />
     </div>
   );
 }

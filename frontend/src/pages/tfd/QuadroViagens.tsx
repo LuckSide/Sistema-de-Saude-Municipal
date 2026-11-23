@@ -13,6 +13,7 @@ import {
   Clock,
   Copy,
   FileDown,
+  FileText,
   MessageCircle,
   Pencil,
   Plus,
@@ -70,6 +71,7 @@ import { useConfirm } from "../../components/ConfirmDialog";
 import { rotuloPrioridade } from "../../utils/rotulos";
 import { retornoAutomatico, useDisponibilidade } from "../../hooks/useDisponibilidade";
 import BuscaPacienteAutocomplete from "../../components/BuscaPacienteAutocomplete";
+import ImportarViagensWordModal from "../../components/ImportarViagensWordModal";
 import { copiarTextoClipboard } from "../../utils/clipboard";
 
 function hojeISO(): string {
@@ -201,6 +203,7 @@ export default function QuadroViagens() {
   const [pacientes, setPacientes] = useState<Paciente[]>([]);
   const [buscaPac, setBuscaPac] = useState("");
   const [modalFila, setModalFila] = useState(false);
+  const [modalImportarWord, setModalImportarWord] = useState(false);
   const [editFila, setEditFila] = useState<number | null>(null);
   const [formFila, setFormFila] = useState(vazioFila);
   const [buscaAcomp, setBuscaAcomp] = useState("");
@@ -1325,6 +1328,14 @@ export default function QuadroViagens() {
           <button onClick={() => setDia(somaDias(dia, (ehMobile ? 1 : qtdDias)))} aria-label="Próximo período" className="grid min-h-[44px] min-w-[44px] place-items-center rounded-xl bg-sus-900/10 text-sus-900 hover:bg-sus-900/15" title="Próximo período"><ChevronsRight className="h-4 w-4" /></button>
           <button onClick={() => setDia(hojeISO())} className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-teal px-3 py-2 text-xs font-bold text-white hover:brightness-110">
             <CalendarDays className="h-4 w-4" /> Hoje
+          </button>
+          <button
+            type="button"
+            onClick={() => setModalImportarWord(true)}
+            className="ml-auto inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-teal/30 bg-teal/5 px-3 py-2 text-xs font-bold text-teal hover:bg-teal hover:text-white transition"
+            title="Importar Ordens de Circulação de Veículos e Viagens a partir de documento Word (.docx)"
+          >
+            <FileText className="h-4 w-4" /> Importar do Word
           </button>
         </div>
       </Card>
@@ -2805,6 +2816,15 @@ export default function QuadroViagens() {
         </div>,
         document.body
       )}
+
+      <ImportarViagensWordModal
+        aberto={modalImportarWord}
+        onFechar={() => setModalImportarWord(false)}
+        onSucesso={() => {
+          carregarSemana();
+          setOk("Viagens e passageiros importados com sucesso a partir do arquivo Word.");
+        }}
+      />
     </div>
   );
 }

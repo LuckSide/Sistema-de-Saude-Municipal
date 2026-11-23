@@ -723,3 +723,59 @@ class VerificarDuplicidadeTfdOut(BaseModel):
     pedido: PedidoDuplicadoTfdOut | None = None
 
 
+# ---------- Importação de Viagens do Word (.docx) ----------
+class PassageiroImportWord(BaseModel):
+    nome: str
+    prontuario: str = ""
+    nascimento: str = ""
+    tratamento: str = ""
+    unidade: str = ""
+    hora_consulta: str = ""
+    cidade: str = ""
+    is_acompanhante: bool = False
+    paciente_id: int | None = None
+    cadastrado: bool = False
+
+
+class ViagemImportWord(BaseModel):
+    destino: str = ""
+    veiculo: str = ""
+    placa: str = ""
+    veiculo_id: int | None = None
+    motorista: str = ""
+    motorista_id: int | None = None
+    departamento: str = ""
+    data_viagem: str = ""
+    hora_saida: str = ""
+    data_retorno: str | None = None
+    hora_retorno: str = ""
+    km_inicial: int = 0
+    km_final: int = 0
+    adiantamento: float = 0.0
+    observacoes: str = ""
+    passageiros: list[PassageiroImportWord] = []
+    avisos: list[str] = []
+    viagem_existente_id: int | None = None
+
+
+class ImportarViagensWordPreviewOut(BaseModel):
+    nome_arquivo: str
+    total_viagens: int
+    total_passageiros: int
+    viagens: list[ViagemImportWord]
+
+
+class ImportarViagensWordConfirmIn(BaseModel):
+    viagens: list[ViagemImportWord]
+
+
+class ImportarViagensWordConfirmOut(BaseModel):
+    sucesso: bool
+    mensagem: str
+    viagens_criadas: int
+    passageiros_vinculados: int
+    pacientes_cadastrados: int
+    detalhes: list[dict] = []
+
+
+
