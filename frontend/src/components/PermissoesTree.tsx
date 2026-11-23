@@ -1,5 +1,16 @@
 import { useState } from "react";
-import { CheckSquare, ChevronDown, Search, Square, X } from "lucide-react";
+import {
+  CheckSquare,
+  ChevronDown,
+  Eye,
+  Pencil,
+  PlusCircle,
+  Search,
+  Square,
+  Trash2,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import {
   ACOES,
   EXCLUSIVAS,
@@ -13,6 +24,50 @@ import {
 import { cn } from "./ui/primitives";
 
 const TODAS: Acao[] = ["ver", "criar", "editar", "excluir"];
+
+interface AcaoConfig {
+  id: Acao;
+  rotulo: string;
+  descricao: string;
+  icone: LucideIcon;
+  corAtiva: string;
+  corParcial: string;
+}
+
+const ACOES_CONFIG: AcaoConfig[] = [
+  {
+    id: "ver",
+    rotulo: "Ver",
+    descricao: "Visualizar dados e relatórios",
+    icone: Eye,
+    corAtiva: "bg-teal text-white border-teal-700 shadow-xs",
+    corParcial: "bg-teal-50 text-teal-800 border-teal-300",
+  },
+  {
+    id: "criar",
+    rotulo: "Criar",
+    descricao: "Cadastrar novos registros",
+    icone: PlusCircle,
+    corAtiva: "bg-emerald-600 text-white border-emerald-700 shadow-xs",
+    corParcial: "bg-emerald-50 text-emerald-800 border-emerald-300",
+  },
+  {
+    id: "editar",
+    rotulo: "Editar",
+    descricao: "Alterar e atualizar registros",
+    icone: Pencil,
+    corAtiva: "bg-blue-600 text-white border-blue-700 shadow-xs",
+    corParcial: "bg-blue-50 text-blue-800 border-blue-300",
+  },
+  {
+    id: "excluir",
+    rotulo: "Excluir",
+    descricao: "Excluir ou cancelar registros",
+    icone: Trash2,
+    corAtiva: "bg-rose-600 text-white border-rose-700 shadow-xs",
+    corParcial: "bg-rose-50 text-rose-800 border-rose-300",
+  },
+];
 
 function semDesvio(acoes: Record<string, Acao[]>, codigo: string): Record<string, Acao[]> {
   if (!(codigo in acoes)) return acoes;
@@ -61,27 +116,34 @@ export default function PermissoesTree({
 
   function Pills({ codigos }: { codigos: string[] }) {
     return (
-      <span className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
-        {ACOES.map((a) => {
+      <span className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+        {ACOES_CONFIG.map((a) => {
           const efetivas = codigos.map((c) => new Set(acoesEfetivas(acoes, c)));
           const todos = efetivas.every((s) => s.has(a.id));
           const algum = efetivas.some((s) => s.has(a.id));
+          const Icone = a.icone;
+
           return (
             <button
               key={a.id}
               type="button"
-              title={`${todos ? "Remover" : "Permitir"}: ${a.rotulo}`}
+              title={`${todos ? "Desmarcar" : "Permitir"} ${a.rotulo}: ${a.descricao}`}
               onClick={() => definirAcao(codigos, a.id, !todos)}
               className={cn(
-                "rounded-md px-1.5 py-0.5 font-mono text-[11px] font-bold transition",
+                "group relative grid h-6 w-6 place-items-center rounded-md border transition",
                 todos
-                  ? "bg-teal text-white"
+                  ? a.corAtiva
                   : algum
-                    ? "bg-amber-200 text-amber-900"
-                    : "bg-sus-900/10 text-sus-900/50 hover:bg-sus-900/20"
+                    ? a.corParcial
+                    : "border-sus-900/15 bg-sand/60 text-sus-900/35 hover:border-sus-900/30 hover:bg-sus-900/10 hover:text-sus-900/70"
               )}
+              aria-label={`${a.rotulo}: ${todos ? "ativado" : "desativado"}`}
             >
-              {a.rotulo[0]}
+              <Icone
+                className="h-3.5 w-3.5 transition-transform group-hover:scale-110"
+                fill={todos ? "currentColor" : "none"}
+                strokeWidth={todos ? 2.2 : 1.7}
+              />
             </button>
           );
         })}
@@ -205,6 +267,26 @@ export default function PermissoesTree({
         </div>
       </div>
 
+      {/* Legenda explicativa com os 4 ícones */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sus-900/10 bg-sand/40 px-3 py-1.5 text-xs">
+        <span className="font-semibold text-sus-950 text-[11px] uppercase tracking-wider">
+          Ações por tela:
+        </span>
+        <div className="flex flex-wrap items-center gap-3">
+          {ACOES_CONFIG.map((a) => {
+            const Icone = a.icone;
+            return (
+              <div key={a.id} className="flex items-center gap-1.5" title={a.descricao}>
+                <span className={cn("grid h-5 w-5 place-items-center rounded border", a.corAtiva)}>
+                  <Icone className="h-3 w-3" fill="currentColor" strokeWidth={2.2} />
+                </span>
+                <span className="text-[11px] font-medium text-sus-950">{a.rotulo}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="space-y-2">
         {modulosFiltrados.map((m) => {
           const desc = descendentes(m);
@@ -233,7 +315,7 @@ export default function PermissoesTree({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-display text-sm font-bold text-sus-950">{m.rotulo}</span>
                   <span className="block text-[11px] text-ink/50">
-                    {n}/{desc.length} marcadas · V ver · C criar · E editar · X excluir
+                    {n}/{desc.length} tela(s) selecionada(s)
                   </span>
                 </span>
                 <Pills codigos={desc} />
