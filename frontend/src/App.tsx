@@ -252,7 +252,7 @@ export default function App() {
                   <Route path="/apac/solicitacoes" element={<Guard tela="apac_solicitacao"><ApacSolicitacao /></Guard>} />
                   <Route path="/apac/regulacao" element={<Guard tela="apac_regulacao"><ApacRegulacao /></Guard>} />
                   <Route path="/apac/faturamento" element={<Guard tela="apac_faturamento"><ApacFaturamento /></Guard>} />
-                  <Route path="/faturamento/bpa" element={<GuardQualquer telas={["faturamento_bpa", "tfd", "lab", "usuarios", "tfd_faturamento", "lab_faturamento", "apac_faturamento"]}><FaturamentoBpa /></GuardQualquer>} />
+                  <Route path="/faturamento/bpa" element={<GuardQualquer telas={["faturamento_bpa", "tfd", "lab", "usuarios", "tfd_faturamento", "lab_faturamento", "apac_faturamento", "apac"]}><FaturamentoBpa /></GuardQualquer>} />
                   <Route path="/regulacao/bpa" element={<Navigate to="/faturamento/bpa" replace />} />
                   <Route path="/oxigenio" element={<GuardQualquer telas={["oxigenio_estoque", "oxigenio", "usuarios"]}><OxigenioPainelEstoque /></GuardQualquer>} />
                   <Route path="/oxigenio/equipamentos" element={<GuardQualquer telas={["oxigenio_equipamentos", "oxigenio", "usuarios"]}><OxigenioEquipamentos /></GuardQualquer>} />

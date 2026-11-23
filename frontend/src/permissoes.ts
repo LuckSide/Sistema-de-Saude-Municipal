@@ -87,7 +87,6 @@ export const MODULOS: NoPermissao[] = [
       { codigo: "tfd_motoristas", rotulo: "Motoristas", icone: UserCheck, rota: "/tfd/motoristas" },
       { codigo: "tfd_frota_gestao", rotulo: "Gestão de frota (só veículos/motoristas)", icone: Bus, rota: "/tfd/quadro" },
       { codigo: "tfd_faturamento", rotulo: "Faturamento", icone: ReceiptText, rota: "/tfd/faturamento" },
-      { codigo: "faturamento_bpa", rotulo: "Faturamento BPA Oficial (SIA/SUS)", icone: FileCheck, rota: "/faturamento/bpa" },
     ],
   },
   {
@@ -116,6 +115,7 @@ export const MODULOS: NoPermissao[] = [
       { codigo: "apac_solicitacao", rotulo: "Laudos e Solicitações de APAC", icone: FileCheck, rota: "/apac/solicitacoes" },
       { codigo: "apac_regulacao", rotulo: "Regulação e Autorização de APAC", icone: Stethoscope, rota: "/apac/regulacao" },
       { codigo: "apac_faturamento", rotulo: "Faturamento APAC (SIA/SUS)", icone: ReceiptText, rota: "/apac/faturamento" },
+      { codigo: "faturamento_bpa", rotulo: "Faturamento BPA Oficial (SIA/SUS)", icone: FileCheck, rota: "/faturamento/bpa" },
     ],
   },
   {
