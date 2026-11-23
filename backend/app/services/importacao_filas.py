@@ -144,6 +144,12 @@ ALIASES = {
     "resultado": "resultado",
     "laudo": "resultado",
     "laudo_resultado": "resultado",
+    "laboratorio": "laboratorio",
+    "laboratorio_nome": "laboratorio",
+    "nome_laboratorio": "laboratorio",
+    "prestador": "laboratorio",
+    "prestador_nome": "laboratorio",
+    "lab": "laboratorio",
 }
 
 TERMOS_REALIZADO = {
@@ -650,6 +656,75 @@ def processar_linhas(
     from sqlmodel import func as sm_func, or_
 
     lab_padrao_cache: Laboratorio | None = None
+    labs_resolvidos_cache: dict[str, Laboratorio] = {}
+
+    def _resolver_laboratorio_linha(r_lin: dict) -> Laboratorio:
+        cand_lab = (r_lin.get("laboratorio") or "").strip()
+        obs_total = f"{cand_lab} {r_lin.get('observacao') or ''} {r_lin.get('justificativa') or ''}".upper()
+
+        if "MEDLABOR" in obs_total or "MED LABOR" in obs_total:
+            chave_l = "medlabor"
+            nome_can = "Medlabor Análises Clínicas"
+        elif any(k in obs_total for k in ("PRO ANALISE", "PRÓ ANÁLISE", "PRO ANÁLISES", "PRÓ-ANÁLISES", "PRO-ANALISE", "PRÓ-ANÁLISE")):
+            chave_l = "pro_analise"
+            nome_can = "Pró-Análises Laboratório"
+        elif "LABCON" in obs_total:
+            chave_l = "labcon"
+            nome_can = "Labcon Análises Clínicas"
+        elif cand_lab:
+            chave_l = re.sub(r"[^A-Z0-9]+", "_", cand_lab.upper()).strip("_")[:40]
+            nome_can = cand_lab[:120]
+        else:
+            chave_l = "padrao"
+            nome_can = ""
+
+        if chave_l in labs_resolvidos_cache:
+            return labs_resolvidos_cache[chave_l]
+
+        lab_obj: Laboratorio | None = None
+        if chave_l == "medlabor":
+            lab_obj = db.exec(
+                select(Laboratorio).where(
+                    (Laboratorio.nome.ilike("%MEDLABOR%")) | (Laboratorio.nome.ilike("%MED LABOR%"))
+                )
+            ).first()
+        elif chave_l == "pro_analise":
+            lab_obj = db.exec(
+                select(Laboratorio).where(
+                    (Laboratorio.nome.ilike("%PRO%ANALISE%"))
+                    | (Laboratorio.nome.ilike("%PRÓ%ANÁLISE%"))
+                    | (Laboratorio.nome.ilike("%PRO%ANÁLISE%"))
+                )
+            ).first()
+        elif chave_l == "labcon":
+            lab_obj = db.exec(
+                select(Laboratorio).where(Laboratorio.nome.ilike("%LABCON%"))
+            ).first()
+        elif chave_l != "padrao" and nome_can:
+            lab_obj = db.exec(
+                select(Laboratorio).where(Laboratorio.nome.ilike(f"%{nome_can}%"))
+            ).first()
+
+        if not lab_obj and nome_can:
+            lab_obj = Laboratorio(nome=nome_can, ativo=True)
+            db.add(lab_obj)
+            db.flush()
+
+        if not lab_obj:
+            if "padrao" in labs_resolvidos_cache:
+                lab_obj = labs_resolvidos_cache["padrao"]
+            else:
+                lab_obj = db.exec(
+                    select(Laboratorio).where(Laboratorio.ativo == True)  # noqa: E712
+                ).first()
+                if not lab_obj:
+                    lab_obj = Laboratorio(nome="Laboratório Municipal de Guapé", ativo=True)
+                    db.add(lab_obj)
+                    db.flush()
+                labs_resolvidos_cache["padrao"] = lab_obj
+
+        labs_resolvidos_cache[chave_l] = lab_obj
+        return lab_obj
 
     # Cache em memória da tabela SIGTAP (código exato, 10 dígitos, nome normalizado e nome curto sem prefixo)
     sigtap_por_codigo: dict[str, SigtapProcedimento] = {}
@@ -1657,13 +1732,7 @@ def processar_linhas(
                 if ja_lab and not ja_lab.id:
                     db.flush()
                 dt_solic_mestre = dt_agend_lin or data_ped
-                if not lab_padrao_cache:
-                    lab_p = db.exec(select(Laboratorio).where(Laboratorio.ativo == True)).first()  # noqa: E712
-                    if not lab_p:
-                        lab_p = Laboratorio(nome="Laboratório Municipal de Guapé", ativo=True)
-                        db.add(lab_p)
-                        db.flush()
-                    lab_padrao_cache = lab_p
+                lab_efetivo = _resolver_laboratorio_linha(r)
 
                 chave_solic = (pac.id, dt_solic_mestre)
                 solic_obj = solic_cache.get(chave_solic)
@@ -1690,7 +1759,7 @@ def processar_linhas(
                         paciente_id=pac.id,
                         data_agendada=dt_solic_mestre,
                         hora_agendada=hora_agend_lin or "07:00",
-                        laboratorio_id=lab_padrao_cache.id,
+                        laboratorio_id=lab_efetivo.id,
                         status=status_solic or "agendado",
                         agendado_por="Importação XML",
                         origem_fila_id=ja_lab.id if ja_lab else None,
@@ -1714,6 +1783,9 @@ def processar_linhas(
                         ).all()
                         itens_solic_cache[solic_obj.id] = {int(x) for x in existentes_ids if x is not None}
                     alt_solic = False
+                    if solic_obj.laboratorio_id != lab_efetivo.id:
+                        solic_obj.laboratorio_id = lab_efetivo.id
+                        alt_solic = True
                     if SOLIC_RANK.get(status_solic or "", 0) > SOLIC_RANK.get(solic_obj.status or "", 0):
                         solic_obj.status = status_solic or solic_obj.status
                         if solic_obj.status == "realizado":

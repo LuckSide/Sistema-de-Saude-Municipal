@@ -1692,8 +1692,18 @@ def _init_db_impl() -> None:
             """,
             """
             INSERT INTO lab_laboratorios (nome, cnes, ativo)
-            SELECT 'Laboratório Municipal de Guapé', '0000000', true
-            WHERE NOT EXISTS (SELECT 1 FROM lab_laboratorios WHERE ativo = true)
+            SELECT 'Labcon Análises Clínicas', '0000001', true
+            WHERE NOT EXISTS (SELECT 1 FROM lab_laboratorios WHERE nome ILIKE '%LABCON%')
+            """,
+            """
+            INSERT INTO lab_laboratorios (nome, cnes, ativo)
+            SELECT 'Medlabor Análises Clínicas', '0000002', true
+            WHERE NOT EXISTS (SELECT 1 FROM lab_laboratorios WHERE nome ILIKE '%MEDLABOR%' OR nome ILIKE '%MED LABOR%')
+            """,
+            """
+            INSERT INTO lab_laboratorios (nome, cnes, ativo)
+            SELECT 'Pró-Análises Laboratório', '0000003', true
+            WHERE NOT EXISTS (SELECT 1 FROM lab_laboratorios WHERE nome ILIKE '%PRO%ANALISE%' OR nome ILIKE '%PRÓ%ANÁLISE%')
             """,
             """
             INSERT INTO lab_solic_mestre (
@@ -1705,7 +1715,27 @@ def _init_db_impl() -> None:
                 lp.paciente_id,
                 COALESCE(lp.data_agendada, lp.data_solicitacao),
                 COALESCE(NULLIF(lp.hora_agendada, ''), '07:00'),
-                (SELECT id FROM lab_laboratorios WHERE ativo = true ORDER BY id ASC LIMIT 1),
+                COALESCE(
+                    (
+                        SELECT id FROM lab_laboratorios
+                        WHERE (nome ILIKE '%MEDLABOR%' OR nome ILIKE '%MED LABOR%') AND ativo = true
+                          AND (lp.observacoes ILIKE '%MEDLABOR%' OR lp.observacoes ILIKE '%MED LABOR%')
+                        ORDER BY id ASC LIMIT 1
+                    ),
+                    (
+                        SELECT id FROM lab_laboratorios
+                        WHERE (nome ILIKE '%PRO%ANALISE%' OR nome ILIKE '%PRÓ%ANÁLISE%') AND ativo = true
+                          AND (lp.observacoes ILIKE '%PRO%ANALISE%' OR lp.observacoes ILIKE '%PRÓ%ANÁLISE%')
+                        ORDER BY id ASC LIMIT 1
+                    ),
+                    (
+                        SELECT id FROM lab_laboratorios
+                        WHERE nome ILIKE '%LABCON%' AND ativo = true
+                          AND lp.observacoes ILIKE '%LABCON%'
+                        ORDER BY id ASC LIMIT 1
+                    ),
+                    (SELECT id FROM lab_laboratorios WHERE ativo = true ORDER BY id ASC LIMIT 1)
+                ),
                 CASE WHEN COALESCE(lp.data_agendada, lp.data_solicitacao) < CURRENT_DATE THEN 'realizado' ELSE 'agendado' END,
                 'Sincronização Automática Fila',
                 lp.id,
@@ -1721,6 +1751,55 @@ def _init_db_impl() -> None:
                     AND sm.data_agendada = COALESCE(lp.data_agendada, lp.data_solicitacao)
                     AND sm.status != 'cancelado'
               )
+            """,
+            """
+            UPDATE lab_solic_mestre
+            SET laboratorio_id = (
+                SELECT id FROM lab_laboratorios
+                WHERE (nome ILIKE '%MEDLABOR%' OR nome ILIKE '%MED LABOR%') AND ativo = true
+                ORDER BY id ASC LIMIT 1
+            )
+            WHERE (observacao_laboratorio ILIKE '%MEDLABOR%' OR observacao_laboratorio ILIKE '%MED LABOR%')
+              AND laboratorio_id != COALESCE((
+                SELECT id FROM lab_laboratorios
+                WHERE (nome ILIKE '%MEDLABOR%' OR nome ILIKE '%MED LABOR%') AND ativo = true
+                ORDER BY id ASC LIMIT 1
+              ), -1)
+            """,
+            """
+            UPDATE lab_solic_mestre
+            SET laboratorio_id = (
+                SELECT id FROM lab_laboratorios
+                WHERE (nome ILIKE '%PRO%ANALISE%' OR nome ILIKE '%PRÓ%ANÁLISE%') AND ativo = true
+                ORDER BY id ASC LIMIT 1
+            )
+            WHERE (
+                observacao_laboratorio ILIKE '%PRO ANALISE%'
+                OR observacao_laboratorio ILIKE '%PRÓ ANÁLISE%'
+                OR observacao_laboratorio ILIKE '%PRÓ-ANÁLISE%'
+                OR observacao_laboratorio ILIKE '%PRO-ANALISE%'
+                OR observacao_laboratorio ILIKE '%PRO ANALISES%'
+                OR observacao_laboratorio ILIKE '%PRÓ-ANÁLISES%'
+              )
+              AND laboratorio_id != COALESCE((
+                SELECT id FROM lab_laboratorios
+                WHERE (nome ILIKE '%PRO%ANALISE%' OR nome ILIKE '%PRÓ%ANÁLISE%') AND ativo = true
+                ORDER BY id ASC LIMIT 1
+              ), -1)
+            """,
+            """
+            UPDATE lab_solic_mestre
+            SET laboratorio_id = (
+                SELECT id FROM lab_laboratorios
+                WHERE nome ILIKE '%LABCON%' AND ativo = true
+                ORDER BY id ASC LIMIT 1
+            )
+            WHERE observacao_laboratorio ILIKE '%LABCON%'
+              AND laboratorio_id != COALESCE((
+                SELECT id FROM lab_laboratorios
+                WHERE nome ILIKE '%LABCON%' AND ativo = true
+                ORDER BY id ASC LIMIT 1
+              ), -1)
             """,
             """
             UPDATE lab_fila_psf
