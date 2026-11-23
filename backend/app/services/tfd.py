@@ -9,6 +9,7 @@ from sqlmodel import Session, func, select
 from app.models.tfd import (
     ExameFila,
     Faturamento,
+    Paciente,
     Veiculo,
     Viagem,
     ViagemPaciente,
@@ -65,15 +66,21 @@ def coluna_sem_acento(db: Session, coluna):
 
 
 def resumo_tfd(db: Session, competencia: str) -> dict:
+    try:
+        ano, mes = map(int, competencia.split("-"))
+        dt_ini = date(ano, mes, 1)
+        dt_fim = date(ano + 1, 1, 1) if mes == 12 else date(ano, mes + 1, 1)
+        filtro_viagem = [Viagem.data_viagem >= dt_ini, Viagem.data_viagem < dt_fim]
+    except Exception:
+        filtro_viagem = []
+
     viagens = db.exec(
-        select(func.count(Viagem.id)).where(
-            func.to_char(Viagem.data_viagem, "YYYY-MM") == competencia
-        )
+        select(func.count(Viagem.id)).where(*filtro_viagem)
     ).one()
     passageiros = db.exec(
         select(func.count(ViagemPaciente.id))
         .join(Viagem, Viagem.id == ViagemPaciente.viagem_id)
-        .where(func.to_char(Viagem.data_viagem, "YYYY-MM") == competencia)
+        .where(*filtro_viagem)
     ).one()
     exames_ag = db.exec(
         select(func.count(ExameFila.id)).where(ExameFila.status == "aguardando")
@@ -85,8 +92,11 @@ def resumo_tfd(db: Session, competencia: str) -> dict:
     ).one()
     valor = (
         db.exec(
-            select(func.coalesce(func.sum(Faturamento.valor * Faturamento.quantidade), 0)).where(
-                Faturamento.competencia == competencia
+            select(func.coalesce(func.sum(Faturamento.valor * Faturamento.quantidade), 0))
+            .join(Paciente, Faturamento.paciente_id == Paciente.id)
+            .where(
+                Faturamento.competencia == competencia,
+                (Paciente.eh_teste == False) | (Paciente.eh_teste.is_(None)),
             )
         ).one()
         or 0
@@ -95,7 +105,7 @@ def resumo_tfd(db: Session, competencia: str) -> dict:
         db.exec(
             select(func.coalesce(func.sum(Veiculo.capacidade), 0))
             .join(Viagem, Viagem.veiculo_id == Veiculo.id)
-            .where(func.to_char(Viagem.data_viagem, "YYYY-MM") == competencia)
+            .where(*filtro_viagem)
         ).one()
         or 0
     )

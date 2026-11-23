@@ -21,6 +21,7 @@ from app.models.lab_fase6 import (
     Laboratorio,
     SolicitacaoMestre,
 )
+from app.models.tfd import Paciente
 from app.schemas.lab_fase6 import (
     LabAprovarFaturamentoIn,
     LabFaturamentoItemRelatorioOut,
@@ -73,13 +74,16 @@ def apurar_faturamento_competencia(
         )
     ).first()
 
-    # Busca todas as solicitações válidas da competência
+    # Busca todas as solicitações válidas da competência (exclui paciente padrão de testes)
     solics = db.exec(
-        select(SolicitacaoMestre).where(
+        select(SolicitacaoMestre)
+        .join(Paciente, SolicitacaoMestre.paciente_id == Paciente.id)
+        .where(
             SolicitacaoMestre.laboratorio_id == laboratorio_id,
             SolicitacaoMestre.data_agendada >= data_inicio,
             SolicitacaoMestre.data_agendada < data_fim,
             SolicitacaoMestre.status != "cancelado",
+            (Paciente.eh_teste == False) | (Paciente.eh_teste.is_(None)),
         )
     ).all()
 
@@ -188,11 +192,14 @@ def obter_relatorio_prestador(
     data_fim = date(ano + 1, 1, 1) if mes == 12 else date(ano, mes + 1, 1)
 
     solics = db.exec(
-        select(SolicitacaoMestre.id).where(
+        select(SolicitacaoMestre.id)
+        .join(Paciente, SolicitacaoMestre.paciente_id == Paciente.id)
+        .where(
             SolicitacaoMestre.laboratorio_id == laboratorio_id,
             SolicitacaoMestre.data_agendada >= data_inicio,
             SolicitacaoMestre.data_agendada < data_fim,
             SolicitacaoMestre.status != "cancelado",
+            (Paciente.eh_teste == False) | (Paciente.eh_teste.is_(None)),
         )
     ).all()
     solic_ids = [s for s in solics if s is not None]

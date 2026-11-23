@@ -131,6 +131,11 @@ export default function BuscaPacienteAutocomplete({
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="font-bold text-sus-950 text-sm truncate">{pacienteAtivo.nome}</span>
+                {(pacienteAtivo.eh_teste || pacienteAtivo.nome?.trim().toLowerCase() === "testes") && (
+                  <span className="rounded-md bg-amber-100 border border-amber-300 px-2 py-0.5 text-[10px] font-bold text-amber-800 uppercase tracking-wider shrink-0">
+                    Ambiente de Teste
+                  </span>
+                )}
                 {pacienteAtivo.nascimento && (
                   <span className="text-xs text-ink/60 shrink-0">
                     · Nasc. {pacienteAtivo.nascimento.slice(0, 10).split("-").reverse().join("/")}
@@ -202,6 +207,11 @@ export default function BuscaPacienteAutocomplete({
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-sm text-sus-950">{p.nome}</span>
+                        {(p.eh_teste || p.nome?.trim().toLowerCase() === "testes") && (
+                          <span className="rounded-md bg-amber-100 border border-amber-300 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 uppercase tracking-wider shrink-0">
+                            Ambiente de Teste
+                          </span>
+                        )}
                         <span className="font-mono text-[11px] font-bold text-teal bg-teal/10 px-1.5 py-0.5 rounded">
                           Pront. {prontLimpo}
                         </span>

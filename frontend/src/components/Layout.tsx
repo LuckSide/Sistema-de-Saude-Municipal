@@ -3,6 +3,7 @@ import { Navigate, useLocation } from "react-router-dom";
 import { Cross, Menu, X } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import Sidebar, { SidebarConteudo } from "./Sidebar";
+import BotaoAjudaFlutuante from "./BotaoAjudaFlutuante";
 
 export function Protected({ children }: { children: ReactNode }) {
   const { user, loading, precisaTrocarSenha } = useAuth();
@@ -94,6 +95,7 @@ export function Shell({ children, estreito }: { children: ReactNode; estreito?: 
           </div>
         </main>
       </div>
+      <BotaoAjudaFlutuante />
     </div>
   );
 }

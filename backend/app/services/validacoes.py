@@ -34,6 +34,8 @@ def so_digitos(s: str | None) -> str:
 def valida_cpf(cpf: str | None) -> tuple[bool, str]:
     """CPF: 11 dígitos, sem sequência repetida, DV módulo 11."""
     d = so_digitos(cpf)
+    if d == "00000000000":
+        return True, ""
     if len(d) != 11:
         return False, "CPF deve ter 11 dígitos."
     if d == d[0] * 11:
@@ -164,7 +166,7 @@ def valida_cns(cns: str | None) -> tuple[bool, str]:
     Valida comprimento e dígitos verificadores segundo a especificação do Ministério da Saúde.
     """
     d = so_digitos(cns)
-    if not d:
+    if not d or d in ("999999999999999", "000000000000000"):
         return True, ""
     if len(d) != 15:
         return False, "CNS deve ter exatamente 15 dígitos numéricos."

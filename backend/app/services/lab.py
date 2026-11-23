@@ -5,6 +5,7 @@ from pathlib import Path
 from sqlmodel import Session, func, select
 
 from app.models.lab_exames import LabSolicitacao, SigtapProcedimento
+from app.models.tfd import Paciente
 
 
 def seed_sigtap(db: Session) -> int:
@@ -65,9 +66,14 @@ def resumo_lab(db: Session, competencia: str) -> dict:
 
 
 def prontos_faturar(db: Session, competencia: str | None = None) -> list[LabSolicitacao]:
-    stmt = select(LabSolicitacao).where(
-        LabSolicitacao.status == "Realizado",
-        LabSolicitacao.faturado == False,  # noqa: E712
+    stmt = (
+        select(LabSolicitacao)
+        .join(Paciente, LabSolicitacao.paciente_id == Paciente.id)
+        .where(
+            LabSolicitacao.status == "Realizado",
+            LabSolicitacao.faturado == False,  # noqa: E712
+            (Paciente.eh_teste == False) | (Paciente.eh_teste.is_(None)),
+        )
     )
     if competencia:
         stmt = stmt.where(LabSolicitacao.competencia == competencia)
@@ -99,10 +105,12 @@ def lote_bpa(db: Session, competencia: str) -> list[dict]:
             func.count(LabSolicitacao.id).label("qtd"),
         )
         .join(SigtapProcedimento, SigtapProcedimento.id == LabSolicitacao.sigtap_id)
+        .join(Paciente, LabSolicitacao.paciente_id == Paciente.id)
         .where(
             LabSolicitacao.competencia == competencia,
             LabSolicitacao.status == "Realizado",
             SigtapProcedimento.instrumento == "BPA-C",
+            (Paciente.eh_teste == False) | (Paciente.eh_teste.is_(None)),
         )
         .group_by(
             SigtapProcedimento.codigo,

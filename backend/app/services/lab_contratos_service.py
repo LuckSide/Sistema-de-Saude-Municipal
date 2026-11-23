@@ -22,6 +22,7 @@ from app.models.lab_fase6 import (
     Laboratorio,
     SolicitacaoMestre,
 )
+from app.models.tfd import Paciente
 from app.schemas.lab_fase6 import (
     LabContratoIn,
     LabContratoOut,
@@ -101,7 +102,7 @@ def calcular_metricas_contrato(db: Session, contrato: LabContrato) -> LabContrat
     comp_atual = hoje.strftime("%Y-%m")
     inicio_mes = date(hoje.year, hoje.month, 1)
 
-    # Consumo no mês corrente: soma dos itens executados/agendados neste laboratório/contrato
+    # Consumo no mês corrente: soma dos itens executados/agendados neste laboratório/contrato (exclui paciente padrão de testes)
     gasto_mes = db.exec(
         select(
             func.coalesce(
@@ -110,15 +111,17 @@ def calcular_metricas_contrato(db: Session, contrato: LabContrato) -> LabContrat
             )
         )
         .join(SolicitacaoMestre, SolicitacaoMestre.id == ItemSolic.solicitacao_id)
+        .join(Paciente, SolicitacaoMestre.paciente_id == Paciente.id)
         .where(
             SolicitacaoMestre.laboratorio_id == contrato.laboratorio_id,
             SolicitacaoMestre.data_agendada >= inicio_mes,
             SolicitacaoMestre.status != "cancelado",
+            (Paciente.eh_teste == False) | (Paciente.eh_teste.is_(None)),
         )
     ).one()
     valor_gasto_mes = round(float(gasto_mes or 0.0), 2)
 
-    # Total histórico gasto pelo contrato
+    # Total histórico gasto pelo contrato (exclui paciente padrão de testes)
     total_gasto = db.exec(
         select(
             func.coalesce(
@@ -127,11 +130,13 @@ def calcular_metricas_contrato(db: Session, contrato: LabContrato) -> LabContrat
             )
         )
         .join(SolicitacaoMestre, SolicitacaoMestre.id == ItemSolic.solicitacao_id)
+        .join(Paciente, SolicitacaoMestre.paciente_id == Paciente.id)
         .where(
             SolicitacaoMestre.laboratorio_id == contrato.laboratorio_id,
             SolicitacaoMestre.data_agendada >= contrato.data_inicio,
             SolicitacaoMestre.data_agendada <= contrato.data_fim,
             SolicitacaoMestre.status != "cancelado",
+            (Paciente.eh_teste == False) | (Paciente.eh_teste.is_(None)),
         )
     ).one()
     valor_total_gasto = round(float(total_gasto or 0.0), 2)

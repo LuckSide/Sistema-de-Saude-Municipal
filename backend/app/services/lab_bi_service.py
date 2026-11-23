@@ -40,11 +40,15 @@ def obter_gastos_paciente(db: Session, paciente_id: int) -> PacienteGastosResumo
     for it, mestre, proc, lab in resultados:
         # Se o item já gravou o valor unitário aplicado na confirmação do lote/agendamento, usa-o;
         # caso contrário, busca o valor do SIGTAP ambulatorial (SA).
-        val_unit = it.valor_unitario_aplicado
-        if (val_unit is None or val_unit <= 0.0) and proc:
-            val_unit = float(proc.valor_sa or 0.0)
-        val_unit = round(float(val_unit or 0.0), 2)
-        total_gasto += val_unit
+        # Regra de Risco Zero e Contabilidade SUS: Paciente de testes tem custo real zerado
+        if pac.eh_teste:
+            val_unit = 0.0
+        else:
+            val_unit = it.valor_unitario_aplicado
+            if (val_unit is None or val_unit <= 0.0) and proc:
+                val_unit = float(proc.valor_sa or 0.0)
+            val_unit = round(float(val_unit or 0.0), 2)
+            total_gasto += val_unit
 
         itens_out.append(
             PacienteGastoItemOut(
@@ -94,7 +98,10 @@ def listar_ranking_gastos_pacientes(
         .join(SolicitacaoMestre, SolicitacaoMestre.paciente_id == Paciente.id)
         .join(ItemSolic, ItemSolic.solicitacao_id == SolicitacaoMestre.id)
         .join(SigtapProcedimento, ItemSolic.sigtap_id == SigtapProcedimento.id, isouter=True)
-        .where(SolicitacaoMestre.status != "cancelado")
+        .where(
+            SolicitacaoMestre.status != "cancelado",
+            (Paciente.eh_teste == False) | (Paciente.eh_teste.is_(None)),
+        )
         .group_by(Paciente.id, Paciente.nome, Paciente.cpf, Paciente.cns)
         .order_by(text("total_gasto DESC"))
     )

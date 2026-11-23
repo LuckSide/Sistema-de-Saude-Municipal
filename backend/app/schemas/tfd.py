@@ -14,6 +14,7 @@ from app.services.validacoes import (
 # ---------- Pacientes ----------
 class PacienteBase(BaseModel):
     codigo_prontuario: str = ""
+    eh_teste: bool = False
     nome: str = Field(default="", max_length=150)
     nome_social: str = Field(default="", max_length=150)
     cpf: str = Field(default="")

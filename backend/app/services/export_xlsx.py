@@ -8,22 +8,26 @@ CPF/códigos como texto p/ preservar zeros e pontuação).
 from datetime import date, datetime
 from io import BytesIO
 
-from openpyxl import Workbook
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
+try:
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
 
-MAX_LINHAS = 20000
-
-TITULO_FONT = Font(bold=True, size=14, color="0A3D62")
-META_FONT = Font(size=10, color="555555")
-HEADER_FILL = PatternFill("solid", fgColor="0A3D62")
-HEADER_FONT = Font(bold=True, size=10, color="FFFFFF")
-BORDER_THIN = Border(
-    left=Side(style="thin", color="D9D9D9"),
-    right=Side(style="thin", color="D9D9D9"),
-    top=Side(style="thin", color="D9D9D9"),
-    bottom=Side(style="thin", color="D9D9D9"),
-)
+    TITULO_FONT = Font(bold=True, size=14, color="0A3D62")
+    META_FONT = Font(size=10, color="555555")
+    HEADER_FILL = PatternFill("solid", fgColor="0A3D62")
+    HEADER_FONT = Font(bold=True, size=10, color="FFFFFF")
+    BORDER_THIN = Border(
+        left=Side(style="thin", color="D9D9D9"),
+        right=Side(style="thin", color="D9D9D9"),
+        top=Side(style="thin", color="D9D9D9"),
+        bottom=Side(style="thin", color="D9D9D9"),
+    )
+except ImportError:
+    Workbook = None
+    Alignment = Border = Font = PatternFill = Side = None
+    get_column_letter = None
+    TITULO_FONT = META_FONT = HEADER_FILL = HEADER_FONT = BORDER_THIN = None
 
 
 def fmt_data_br(valor) -> str:

@@ -33,6 +33,7 @@ class Paciente(SQLModel, table=True):
     observacoes: str = Field(default="", max_length=500)
     co_seq_cidadao_pec: int | None = Field(default=None, index=True)
     codigo_prontuario: str = Field(default="", max_length=20, index=True)
+    eh_teste: bool = Field(default=False, index=True)
     situacao_cadastral: str = Field(default="ativo", max_length=30, index=True)  # ativo | obito | mudanca_municipio
     data_obito: date | None = Field(default=None, sa_column=Column(Date))
     motivo_situacao: str = Field(default="", max_length=255)

@@ -23,6 +23,7 @@ import {
   History,
   KeyRound,
   LayoutDashboard,
+  LifeBuoy,
   ListOrdered,
   LogOut,
   MapPin,
@@ -83,6 +84,7 @@ const MODULOS_NAV: ModuloNav[] = [
       { to: "/tfd/quadro", label: "Viagens e Escalas", icon: CalendarDays, tela: "tfd_viagens", ou: ["tfd_frota_gestao", "tfd"] },
       { to: "/tfd/viagens", label: "Ordens de Viagem", icon: Ambulance, tela: "tfd_viagens", ou: ["tfd"] },
       { to: "/tfd", label: "Solicitações TFD", icon: ClipboardCheck, tela: "tfd_resumo", ou: ["tfd"] },
+      { to: "/faturamento/bpa", label: "BPA Oficial (SIA/SUS)", icon: FileCheck, tela: "faturamento_bpa", ou: ["tfd", "lab", "usuarios", "tfd_faturamento", "lab_faturamento"] },
       { to: "/tfd/faturamento", label: "Diárias e Custos", icon: Coins, tela: "tfd_faturamento", ou: ["tfd"] },
       { to: "/tfd/faturamento?aba=prestacao", label: "Prestação Contas", icon: ReceiptText, tela: "tfd_faturamento", ou: ["tfd"] },
       { to: "/indicadores", label: "Relatórios da Fila", icon: BarChart3, tela: "dash_indicadores", ou: ["dashboard", "tfd", "tfd_exames"] },
@@ -138,6 +140,7 @@ const MODULOS_NAV: ModuloNav[] = [
       { to: "/apac/solicitacoes", label: "Laudos e Solicitações", icon: FileCheck, tela: "apac_solicitacao", ou: ["tfd", "usuarios"] },
       { to: "/apac/regulacao", label: "Regulação e Autorização", icon: Stethoscope, tela: "apac_regulacao", ou: ["usuarios"] },
       { to: "/apac/faturamento", label: "Faturamento APAC-Mag", icon: ReceiptText, tela: "apac_faturamento", ou: ["tfd", "usuarios"] },
+      { to: "/faturamento/bpa", label: "Faturamento BPA (SIA/SUS)", icon: FileCheck, tela: "faturamento_bpa", ou: ["tfd", "lab", "usuarios", "tfd_faturamento", "lab_faturamento"] },
     ],
   },
   {
@@ -169,6 +172,7 @@ const MODULOS_NAV: ModuloNav[] = [
     icon: Settings,
     itens: [
       { to: "/usuarios", label: "Usuários e Acessos", icon: UserCog, tela: "usuarios" },
+      { to: "/admin/tickets", label: "Tickets de Suporte", icon: LifeBuoy, tela: "usuarios" },
       { to: "/configuracoes?aba=backup", label: "Backup do Sistema", icon: Database, tela: "cfg_backup", ou: ["usuarios", "cfg_geral"] },
       { to: "/configuracoes?aba=geral", label: "Configurações", icon: SlidersHorizontal, tela: "cfg_geral", ou: ["usuarios", "integracoes", "cfg_filas", "cfg_pec", "cfg_rnds", "cfg_whatsapp", "cfg_exames", "cfg_medicos", "cfg_unidades", "cfg_laboratorios"] },
       { to: "/auditoria", label: "Auditoria / Logs", icon: History, tela: "auditoria", ou: ["usuarios"] },

@@ -197,6 +197,7 @@ def _init_db_impl() -> None:
         MovimentacaoInsumo,
         FarmaciaLinkPublico,
     )
+    from app.models.suporte import TicketSuporte  # noqa: F401
 
     # create_all com checkfirst ainda tem janela de corrida entre workers
     # (2x uvicorn no lifespan) — ignora erro de "já existe" e segue.
@@ -204,6 +205,14 @@ def _init_db_impl() -> None:
         SQLModel.metadata.create_all(engine)
     except Exception:
         pass
+
+    with engine.begin() as conn:
+        try:
+            insp = inspect(conn)
+            if "tickets_suporte" not in insp.get_table_names():
+                TicketSuporte.__table__.create(conn, checkfirst=True)
+        except Exception:
+            pass
 
     # Garante flag de troca obrigatória de senha (novos fluxos)
     from sqlalchemy import inspect, text
@@ -431,6 +440,7 @@ def _init_db_impl() -> None:
             "equipe_ine": "VARCHAR(20) DEFAULT '' NOT NULL",
             "microarea": "VARCHAR(20) DEFAULT '' NOT NULL",
             "co_seq_cidadao_pec": "BIGINT",
+            "eh_teste": "BOOLEAN DEFAULT FALSE NOT NULL",
             "situacao_cadastral": "VARCHAR(30) DEFAULT 'ativo' NOT NULL",
             "data_obito": "DATE",
             "motivo_situacao": "VARCHAR(255) DEFAULT '' NOT NULL",
@@ -447,6 +457,7 @@ def _init_db_impl() -> None:
             ("ix_tfd_pacientes_co_seq_cidadao_pec", "co_seq_cidadao_pec"),
             ("ix_tfd_pacientes_unidade_cnes", "unidade_cnes"),
             ("ix_tfd_pacientes_equipe_ine", "equipe_ine"),
+            ("ix_tfd_pacientes_eh_teste", "eh_teste"),
         ):
             try:
                 conn.execute(text(f"CREATE INDEX IF NOT EXISTS {idx} ON tfd_pacientes ({col})"))
@@ -1004,6 +1015,42 @@ def _init_db_impl() -> None:
                 db.commit()
         except Exception:
             pass
+
+        # Seed Paciente Padrão "Testes" para testes em produção com isolamento contábil e de custos
+        try:
+            pac_teste = db.exec(
+                select(Paciente).where(
+                    (Paciente.eh_teste == True) | (Paciente.nome == "Testes")
+                )
+            ).first()
+            if not pac_teste:
+                pac_teste = Paciente(
+                    nome="Testes",
+                    cpf="00000000000",
+                    cns="999999999999999",
+                    codigo_prontuario="TESTE",
+                    eh_teste=True,
+                    situacao_cadastral="ativo",
+                    municipio="Guapé",
+                )
+                db.add(pac_teste)
+                db.commit()
+            else:
+                modificado = False
+                if not pac_teste.eh_teste:
+                    pac_teste.eh_teste = True
+                    modificado = True
+                if pac_teste.codigo_prontuario != "TESTE":
+                    pac_teste.codigo_prontuario = "TESTE"
+                    modificado = True
+                if modificado:
+                    db.add(pac_teste)
+                    db.commit()
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
 
         # Item 1: Registro canônico do Médico da Unidade / Responsável Técnico
         try:

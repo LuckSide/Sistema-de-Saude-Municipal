@@ -305,10 +305,14 @@ def calcular_previa_lote(db: Session, dados: LabLotePreviaIn) -> LabLotePreviaOu
     else:
         datas_alocacao_processo = datas_validas
 
-    # Busca fila pendente em ordem de prioridade clínica e cronológica (data_pedido como base)
+    # Busca fila pendente em ordem de prioridade clínica e cronológica (exclui paciente de testes de cálculos de faturamento e cota)
     stmt_fila = (
         select(FilaPsf)
-        .where(FilaPsf.status == "na_fila")
+        .join(Paciente, FilaPsf.paciente_id == Paciente.id)
+        .where(
+            FilaPsf.status == "na_fila",
+            (Paciente.eh_teste == False) | (Paciente.eh_teste.is_(None)),
+        )
         .order_by(
             text("CASE WHEN prioridade = 'urgente' THEN 1 WHEN prioridade = 'alta' THEN 2 ELSE 3 END"),
             func.coalesce(FilaPsf.data_pedido, FilaPsf.data_solicitacao).asc(),
@@ -693,7 +697,11 @@ def consolidar_lote_atomico(
         else:
             stmt_filas = (
                 select(FilaPsf)
-                .where(FilaPsf.status == "na_fila")
+                .join(Paciente, FilaPsf.paciente_id == Paciente.id)
+                .where(
+                    FilaPsf.status == "na_fila",
+                    (Paciente.eh_teste == False) | (Paciente.eh_teste.is_(None)),
+                )
                 .order_by(
                     text("CASE WHEN prioridade = 'urgente' THEN 1 WHEN prioridade = 'alta' THEN 2 ELSE 3 END"),
                     func.coalesce(FilaPsf.data_pedido, FilaPsf.data_solicitacao).asc(),
@@ -719,7 +727,12 @@ def consolidar_lote_atomico(
         valor_acumulado = 0.0
         total_exames = 0
 
+        pac_ids_cand = {f.paciente_id for f in filas_candidatas if f.paciente_id}
+        pacs_cand_map = {p.id: p for p in db.exec(select(Paciente).where(Paciente.id.in_(pac_ids_cand))).all()} if pac_ids_cand else {}
+
         for f in filas_candidatas:
+            pac_c = pacs_cand_map.get(f.paciente_id)
+            eh_pac_teste = bool(pac_c and pac_c.eh_teste)
             sids = extrair_sigtap_ids_fila(f)
             if not sids:
                 continue
@@ -733,10 +746,14 @@ def consolidar_lote_atomico(
             if not procs:
                 continue
 
+            # Regra de Risco Zero e Contabilidade SUS: Paciente de testes não consome cota orçamentária
+            if eh_pac_teste:
+                custo_pac = 0.0
+
             if not dados.fila_ids_confirmados and valor_acumulado > 0 and (valor_acumulado + custo_pac) > (dados.valor_solicitado + 0.01):
                 break
 
-            selecionados.append({"fila": f, "custo": custo_pac, "procs": procs})
+            selecionados.append({"fila": f, "custo": custo_pac, "procs": procs, "eh_teste": eh_pac_teste})
             valor_acumulado = round(valor_acumulado + custo_pac, 2)
             total_exames += len(procs)
 
@@ -885,7 +902,8 @@ def consolidar_lote_atomico(
             db.add(mestre)
             db.flush()
 
-            # Cria ItemSolic para cada SIGTAP com snapshot imutável de preço
+            # Cria ItemSolic para cada SIGTAP com snapshot imutável de preço (zerado se paciente de testes)
+            val_un_item = 0.0 if (pac and pac.eh_teste) else float(p_info.valor_unitario or 0.0)
             for p_info in procs:
                 db.add(
                     ItemSolic(
@@ -893,7 +911,7 @@ def consolidar_lote_atomico(
                         sigtap_id=p_info.sigtap_id,
                         contrato_id=contrato_ativo_id,
                         quantidade=1,
-                        valor_unitario_aplicado=float(p_info.valor_unitario or 0.0),
+                        valor_unitario_aplicado=val_un_item,
                         origem_preco="contrato_custom" if contrato_ativo_id else "sigtap_padrao",
                         status_auditoria="pendente_conferencia",
                     )

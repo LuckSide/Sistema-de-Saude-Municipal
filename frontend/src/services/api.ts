@@ -580,6 +580,7 @@ export const fetchTimeline = (pacienteId: number) =>
 export type Paciente = {
   id: number;
   codigo_prontuario?: string;
+  eh_teste?: boolean;
   nome: string;
   cpf: string;
   cns: string;
@@ -4700,6 +4701,135 @@ export const obterAuditoriaDados = (
       params: { limit, offset },
     })
     .then((r) => r.data);
+
+export interface TicketSuporte {
+  id: number;
+  usuario_id?: number | null;
+  usuario_nome: string;
+  tipo: "bug" | "info_incorreta" | "nova_funcionalidade" | "duvida" | "outro" | string;
+  descricao: string;
+  pagina_url: string;
+  status: "aberto" | "em_analise" | "resolvido" | string;
+  resposta_admin?: string | null;
+  resolvido_por?: string | null;
+  resolvido_em?: string | null;
+  criado_em: string;
+}
+
+export interface CriarTicketInput {
+  tipo: string;
+  descricao: string;
+  pagina_url: string;
+}
+
+export interface AtualizarStatusTicketInput {
+  status: string;
+  resposta_admin?: string;
+}
+
+export const criarTicketSuporte = (payload: CriarTicketInput): Promise<TicketSuporte> =>
+  api.post<TicketSuporte>("/api/suporte/tickets", payload).then((r) => r.data);
+
+export const listarTicketsSuporte = (params?: {
+  tipo?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<TicketSuporte[]> =>
+  api.get<TicketSuporte[]>("/api/suporte/tickets", { params }).then((r) => r.data);
+
+export const obterTicketSuporte = (ticketId: number): Promise<TicketSuporte> =>
+  api.get<TicketSuporte>(`/api/suporte/tickets/${ticketId}`).then((r) => r.data);
+
+export const atualizarStatusTicket = (
+  ticketId: number,
+  payload: AtualizarStatusTicketInput
+): Promise<TicketSuporte> =>
+  api.patch<TicketSuporte>(`/api/suporte/tickets/${ticketId}/status`, payload).then((r) => r.data);
+
+// ==================== FATURAMENTO BPA (SIA/SUS) UNIFICADO ====================
+
+export interface BpaItemResumo {
+  folha: number;
+  linha: number;
+  cnes: string;
+  cbo: string;
+  procedimento: string;
+  descricao: string;
+  quantidade: number;
+  valor_unitario: number;
+  valor_total: number;
+  origem: string;
+  data_atendimento?: string;
+  paciente_nome?: string;
+  paciente_cpf?: string;
+  paciente_cns?: string;
+}
+
+export interface BpaResumoCompleto {
+  competencia: string;
+  competencia_aaaamm: string;
+  total_linhas: number;
+  total_folhas: number;
+  controle_verificador: number;
+  total_procedimentos_bpa_c: number;
+  total_procedimentos_bpa_i: number;
+  total_exames: number;
+  total_viagens_tfd: number;
+  total_geral_itens: number;
+  valor_total_estimado: number;
+  itens_bpa_c: BpaItemResumo[];
+  itens_bpa_i: BpaItemResumo[];
+  arquivo_nome_out: string;
+  arquivo_nome_csv: string;
+}
+
+export async function fetchBpaResumo(competencia: string): Promise<BpaResumoCompleto> {
+  const { data } = await api.get<BpaResumoCompleto>("/api/faturamento-bpa/resumo", {
+    params: { competencia },
+  });
+  return data;
+}
+
+export async function downloadBpaOut(competencia: string): Promise<Blob> {
+  const r = await api.get("/api/faturamento-bpa/download-out", {
+    params: { competencia },
+    responseType: "blob",
+  });
+  const blob = new Blob([r.data as BlobPart], { type: "text/plain;charset=iso-8859-1" });
+  const disp: string = r.headers?.["content-disposition"] ?? "";
+  const m = disp.match(/filename="?([^";]+)"?/);
+  const nome = m ? m[1] : `PA312810.OUT`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nome;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  return blob;
+}
+
+export async function downloadBpaCsv(competencia: string): Promise<Blob> {
+  const r = await api.get("/api/faturamento-bpa/download-csv", {
+    params: { competencia },
+    responseType: "blob",
+  });
+  const blob = new Blob([r.data as BlobPart], { type: "text/csv;charset=utf-8" });
+  const disp: string = r.headers?.["content-disposition"] ?? "";
+  const m = disp.match(/filename="?([^";]+)"?/);
+  const nome = m ? m[1] : `bpa_conferencia_${competencia}.csv`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nome;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  return blob;
+}
 
 export default api;
 

@@ -61,6 +61,7 @@ const PainelMedico = lazy(() => import("./pages/PainelMedico"));
 const ApacSolicitacao = lazy(() => import("./pages/apac/ApacSolicitacao"));
 const ApacRegulacao = lazy(() => import("./pages/apac/ApacRegulacao"));
 const ApacFaturamento = lazy(() => import("./pages/apac/ApacFaturamento"));
+const FaturamentoBpa = lazy(() => import("./pages/FaturamentoBpa"));
 const OxigenioPainelEstoque = lazy(() => import("./pages/oxigenio/OxigenioPainelEstoque"));
 const OxigenioEquipamentos = lazy(() => import("./pages/oxigenio/OxigenioEquipamentos"));
 const OxigenioEmprestimos = lazy(() => import("./pages/oxigenio/OxigenioEmprestimos"));
@@ -71,6 +72,7 @@ const FarmaciaValidade = lazy(() => import("./pages/farmacia/FarmaciaValidade"))
 const FarmaciaLinks = lazy(() => import("./pages/farmacia/FarmaciaLinks"));
 const FarmaciaInsumos = lazy(() => import("./pages/farmacia/FarmaciaInsumos"));
 const FarmaciaPainelPublico = lazy(() => import("./pages/farmacia/FarmaciaPainelPublico"));
+const GestaoTickets = lazy(() => import("./pages/admin/GestaoTickets"));
 
 function Guard({ tela, children }: { tela: string; children: ReactElement }) {
   const { can, loading } = useAuth();
@@ -320,6 +322,22 @@ export default function App() {
             }
           />
           <Route
+            path="/faturamento/bpa"
+            element={
+              <Protected>
+                <GuardQualquer telas={["faturamento_bpa", "tfd", "lab", "usuarios", "tfd_faturamento", "lab_faturamento", "apac_faturamento"]}>
+                  <Shell>
+                    <FaturamentoBpa />
+                  </Shell>
+                </GuardQualquer>
+              </Protected>
+            }
+          />
+          <Route
+            path="/regulacao/bpa"
+            element={<Navigate to="/faturamento/bpa" replace />}
+          />
+          <Route
             path="/oxigenio"
             element={
               <Protected>
@@ -440,6 +458,19 @@ export default function App() {
               </Protected>
             }
           />
+          <Route
+            path="/admin/tickets"
+            element={
+              <Protected>
+                <GuardQualquer telas={["usuarios", "auditoria"]}>
+                  <Shell>
+                    <GestaoTickets />
+                  </Shell>
+                </GuardQualquer>
+              </Protected>
+            }
+          />
+          <Route path="/suporte/tickets" element={<Navigate to="/admin/tickets" replace />} />
           <Route
             path="/configuracoes"
             element={

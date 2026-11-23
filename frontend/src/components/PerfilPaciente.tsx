@@ -138,12 +138,22 @@ export default function PerfilPaciente({
                 <AlertTriangle className="h-3 w-3" /> {p.situacao_cadastral}
               </span>
             )}
+            {(p.eh_teste || p.nome?.trim().toLowerCase() === "testes") && (
+              <span className="rounded-full bg-amber-100 border border-amber-300 px-2.5 py-0.5 text-xs font-bold text-amber-800 uppercase tracking-wider">
+                Ambiente de Teste
+              </span>
+            )}
             <span className="rounded-md bg-sus-900/10 px-2.5 py-0.5 text-xs font-mono font-bold text-sus-900">
               Prontuário: {p.codigo_prontuario || `PR-${String(p.id).padStart(5, "0")}`}
             </span>
           </div>
         </div>
         <p className="mt-1 font-display text-lg font-bold text-sus-950">{p.nome}</p>
+        {(p.eh_teste || p.nome?.trim().toLowerCase() === "testes") && (
+          <div className="mt-2 rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-900">
+            <strong>Paciente Padrão para Testes Operacionais:</strong> Nenhum pedido, agendamento ou viagem associado a este paciente contará nos relatórios contábeis, faturamentos, limites contratuais ou BI financeiro do SUS municipal.
+          </div>
+        )}
         {isInativoCadastral && (
           <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
             <strong>Situação cadastral (e-SUS PEC):</strong>{" "}

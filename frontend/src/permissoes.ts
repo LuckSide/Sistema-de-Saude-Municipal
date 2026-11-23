@@ -87,6 +87,7 @@ export const MODULOS: NoPermissao[] = [
       { codigo: "tfd_motoristas", rotulo: "Motoristas", icone: UserCheck, rota: "/tfd/motoristas" },
       { codigo: "tfd_frota_gestao", rotulo: "Gestão de frota (só veículos/motoristas)", icone: Bus, rota: "/tfd/quadro" },
       { codigo: "tfd_faturamento", rotulo: "Faturamento", icone: ReceiptText, rota: "/tfd/faturamento" },
+      { codigo: "faturamento_bpa", rotulo: "Faturamento BPA Oficial (SIA/SUS)", icone: FileCheck, rota: "/faturamento/bpa" },
     ],
   },
   {

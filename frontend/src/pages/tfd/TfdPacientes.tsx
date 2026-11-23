@@ -310,6 +310,11 @@ export default function TfdPacientes() {
                     <td className="px-4 py-3 font-semibold">
                       <div className="flex flex-wrap items-center gap-2">
                         <span>{p.nome}</span>
+                        {(p.eh_teste || p.nome?.trim().toLowerCase() === "testes") && (
+                          <span className="rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5 text-[10px] font-bold text-amber-800 uppercase tracking-wider">
+                            Ambiente de Teste
+                          </span>
+                        )}
                         {ehExato && (
                           <span className="rounded-full bg-teal/15 px-2 py-0.5 text-[10px] font-bold text-teal">
                             Exato
@@ -391,28 +396,30 @@ export default function TfdPacientes() {
                         >
                           <Pencil className="h-4 w-4" />
                         </button>
-                        <button
-                          onClick={async () => {
-                            const ok = await confirmar({
-                              titulo: `Excluir paciente ${p.nome}`,
-                              descricao: `Tem certeza que deseja excluir o cadastro do paciente ${p.nome}?`,
-                              textoConfirmar: "Sim, Excluir",
-                              variante: "danger",
-                            });
-                            if (ok) {
-                              try {
-                                await tfdExcluirPaciente(p.id);
-                                await carregar(page);
-                              } catch {
-                                setErro("Falha ao excluir paciente.");
+                        {!(p.eh_teste || p.nome?.trim().toLowerCase() === "testes") && (
+                          <button
+                            onClick={async () => {
+                              const ok = await confirmar({
+                                titulo: `Excluir paciente ${p.nome}`,
+                                descricao: `Tem certeza que deseja excluir o cadastro do paciente ${p.nome}?`,
+                                textoConfirmar: "Sim, Excluir",
+                                variante: "danger",
+                              });
+                              if (ok) {
+                                try {
+                                  await tfdExcluirPaciente(p.id);
+                                  await carregar(page);
+                                } catch (err: any) {
+                                  setErro(err?.response?.data?.detail || "Falha ao excluir paciente.");
+                                }
                               }
-                            }
-                          }}
-                          className="rounded-lg p-2 text-red-600 hover:bg-red-50"
-                          title="Excluir paciente"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                            }}
+                            className="rounded-lg p-2 text-red-600 hover:bg-red-50"
+                            title="Excluir paciente"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

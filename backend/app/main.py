@@ -17,11 +17,13 @@ from app.api.v1.lab import router as lab_router
 from app.api.v1.lab_fase6 import router as lab_fase6_router
 from app.api.v1.oxigenio import router as oxigenio_router
 from app.api.v1.farmacia import router as farmacia_router
+from app.api.v1.faturamento_bpa import router as faturamento_bpa_router
 from app.api.v1.pec import router as pec_router
 from app.api.v1.settings import router as settings_router
 from app.api.v1.tfd import router as tfd_router
 from app.api.v1.update import router as update_router
 from app.api.v1.users import router as users_router
+from app.api.v1.suporte import router as suporte_router
 from app.api.v1.whatsapp import router as whatsapp_router
 from app.core.config import settings
 from app.core.audit import AuditMiddleware
@@ -192,9 +194,12 @@ app.include_router(pec_router, prefix="/api", tags=["pec"])
 app.include_router(settings_router, prefix="/api", tags=["settings"])
 app.include_router(update_router, prefix="/api/update", tags=["update"])
 app.include_router(backup_router, prefix="/api/backup", tags=["backup"])
+app.include_router(suporte_router, prefix="/api/suporte", tags=["suporte"])
 app.include_router(whatsapp_router, prefix="/api", tags=["whatsapp"])
 app.include_router(gerenciamento_dados_router, prefix="/api/v1/gerenciamento-dados", tags=["gerenciamento_dados"])
 app.include_router(gerenciamento_dados_router, prefix="/api/gerenciamento-dados", tags=["gerenciamento_dados"])
+app.include_router(faturamento_bpa_router, prefix="/api/v1/faturamento-bpa", tags=["faturamento_bpa"])
+app.include_router(faturamento_bpa_router, prefix="/api/faturamento-bpa", tags=["faturamento_bpa"])
 
 
 # Compatibilidade de rotas legadas/diretas p/ fila de procedimentos e pacientes

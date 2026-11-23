@@ -1181,6 +1181,8 @@ def excluir_paciente(pid: int, db: Session = Depends(get_db), _=Depends(need_per
     obj = db.get(Paciente, pid)
     if not obj:
         raise HTTPException(404, "Paciente não encontrado")
+    if obj.eh_teste or (obj.nome or "").strip().lower() == "testes":
+        raise HTTPException(400, "O paciente padrão de testes do sistema não pode ser excluído.")
     db.delete(obj)
     db.commit()
 
@@ -5997,11 +5999,14 @@ def listar_faturas(
     db: Session = Depends(get_db),
     _=Depends(need_perm("tfd_faturamento")),
 ):
-    base = select(Faturamento).order_by(Faturamento.id.desc())
+    base = (
+        select(Faturamento)
+        .join(Paciente, Faturamento.paciente_id == Paciente.id)
+        .where((Paciente.eh_teste == False) | (Paciente.eh_teste.is_(None)))
+        .order_by(Faturamento.id.desc())
+    )
     if competencia:
-        base = select(Faturamento).where(
-            Faturamento.competencia == competencia
-        ).order_by(Faturamento.id.desc())
+        base = base.where(Faturamento.competencia == competencia)
     total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
     meta = paginar(total, page, limit)
     out: list[FaturaOut] = []
@@ -6026,11 +6031,14 @@ def exportar_faturamento(
     """Faturamento TFD em XLSX respeitando a competência ativa."""
     from app.services.export_xlsx import resposta_xlsx
 
-    base = select(Faturamento).order_by(Faturamento.id.desc())
+    base = (
+        select(Faturamento)
+        .join(Paciente, Faturamento.paciente_id == Paciente.id)
+        .where((Paciente.eh_teste == False) | (Paciente.eh_teste.is_(None)))
+        .order_by(Faturamento.id.desc())
+    )
     if competencia:
-        base = select(Faturamento).where(
-            Faturamento.competencia == competencia
-        ).order_by(Faturamento.id.desc())
+        base = base.where(Faturamento.competencia == competencia)
     linhas = []
     for f in list(db.exec(base).all())[:20000]:
         pac = db.get(Paciente, f.paciente_id)
@@ -7072,6 +7080,10 @@ def faturar_deslocamento(
     criados = pula = 0
     passageiros = list(db.exec(select(ViagemPaciente).where(ViagemPaciente.viagem_id == vid)).all())
     for p in passageiros:
+        pac = db.get(Paciente, p.paciente_id)
+        if pac and pac.eh_teste:
+            pula += 1
+            continue
         itens = [(dest.codigo_desloc_pac, dest.qtd_desloc_pac or 0)]
         if (p.acompanhante or "").strip() and dest.codigo_desloc_acomp:
             itens.append((dest.codigo_desloc_acomp, dest.qtd_desloc_acomp or 0))
