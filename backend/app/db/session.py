@@ -171,7 +171,14 @@ def _init_db_impl() -> None:
     )
     from app.models.dashboard_prefs import UserDashboardPrefs  # noqa: F401
     from app.models.audit import AuditLog  # noqa: F401
-    from app.models.cadastros_saude import Medico, UnidadeSaude, Prestador  # noqa: F401
+    from app.models.cadastros_saude import (  # noqa: F401
+        Medico,
+        UnidadeSaude,
+        Prestador,
+        UnidadeServicoEspecializado,
+        EquipeSaude,
+        EquipeProfissional,
+    )
     from app.models.apac import (  # noqa: F401
         AnexoLaudoAPAC,
         FaixaNumeracaoAPAC,
@@ -198,6 +205,7 @@ def _init_db_impl() -> None:
         FarmaciaLinkPublico,
     )
     from app.models.suporte import TicketSuporte  # noqa: F401
+    from app.models.producao_ambulatorial import ProducaoAmbulatorial  # noqa: F401
 
     # create_all com checkfirst ainda tem janela de corrida entre workers
     # (2x uvicorn no lifespan) — ignora erro de "já existe" e segue.

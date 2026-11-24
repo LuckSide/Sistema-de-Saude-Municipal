@@ -94,6 +94,49 @@ export function validaCnes(cnes: string | null | undefined): string {
   return "";
 }
 
+/** CNS (Cartão Nacional de Saúde): exatamente 15 dígitos com módulo 11 do Ministério da Saúde. */
+export function validaCns(cns: string | null | undefined, obrigatorio = false): string {
+  const d = soDigitos(cns);
+  if (!d) return obrigatorio ? "CNS é obrigatório (15 dígitos)." : "";
+  if (d === "999999999999999" || d === "000000000000000") return "";
+  if (d.length !== 15) return "CNS deve ter exatamente 15 dígitos numéricos.";
+  if (!"12789".includes(d[0])) return "CNS inválido (deve iniciar com 1, 2, 7, 8 ou 9).";
+
+  if ("12".includes(d[0])) {
+    let soma = 0;
+    for (let i = 0; i < 11; i++) {
+      soma += parseInt(d[i], 10) * (15 - i);
+    }
+    const resto = soma % 11;
+    let dv = 11 - resto;
+    if (dv === 11) dv = 0;
+    let resultado = "";
+    if (dv === 10) {
+      soma += 2;
+      const resto2 = soma % 11;
+      let dv2 = 11 - resto2;
+      if (dv2 === 11) dv2 = 0;
+      resultado = d.slice(0, 11) + "001" + dv2;
+    } else {
+      resultado = d.slice(0, 11) + "000" + dv;
+    }
+    if (d !== resultado) return "CNS inválido (dígito verificador não confere).";
+  } else {
+    let soma = 0;
+    for (let i = 0; i < 15; i++) {
+      soma += parseInt(d[i], 10) * (15 - i);
+    }
+    if (soma % 11 !== 0) return "CNS inválido (soma verificadora não confere).";
+  }
+  return "";
+}
+
+export function formataCns(cns: string | null | undefined): string {
+  const d = soDigitos(cns);
+  if (d.length !== 15) return cns ?? "";
+  return `${d.slice(0, 3)} ${d.slice(3, 7)} ${d.slice(7, 11)} ${d.slice(11, 15)}`;
+}
+
 export function validaEmail(email: string | null | undefined): string {
   const txt = (email ?? "").trim();
   if (!txt) return "";

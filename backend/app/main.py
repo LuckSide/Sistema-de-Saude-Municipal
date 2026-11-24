@@ -18,6 +18,7 @@ from app.api.v1.lab_fase6 import router as lab_fase6_router
 from app.api.v1.oxigenio import router as oxigenio_router
 from app.api.v1.farmacia import router as farmacia_router
 from app.api.v1.faturamento_bpa import router as faturamento_bpa_router
+from app.api.v1.producao_ambulatorial import router as producao_ambulatorial_router
 from app.api.v1.pec import router as pec_router
 from app.api.v1.settings import router as settings_router
 from app.api.v1.tfd import router as tfd_router
@@ -200,6 +201,10 @@ app.include_router(gerenciamento_dados_router, prefix="/api/v1/gerenciamento-dad
 app.include_router(gerenciamento_dados_router, prefix="/api/gerenciamento-dados", tags=["gerenciamento_dados"])
 app.include_router(faturamento_bpa_router, prefix="/api/v1/faturamento-bpa", tags=["faturamento_bpa"])
 app.include_router(faturamento_bpa_router, prefix="/api/faturamento-bpa", tags=["faturamento_bpa"])
+app.include_router(faturamento_bpa_router, prefix="/api/v1/bpa", tags=["faturamento_bpa"])
+app.include_router(faturamento_bpa_router, prefix="/api/bpa", tags=["faturamento_bpa"])
+app.include_router(producao_ambulatorial_router, prefix="/api/v1/producoes-ambulatoriais", tags=["producao_ambulatorial"])
+app.include_router(producao_ambulatorial_router, prefix="/api/producoes-ambulatoriais", tags=["producao_ambulatorial"])
 
 
 # Compatibilidade de rotas legadas/diretas p/ fila de procedimentos e pacientes

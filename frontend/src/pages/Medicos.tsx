@@ -18,12 +18,15 @@ import {
 } from "../services/api";
 import {
   erros422,
+  formataCns,
   normalizaCrm,
   toastCampos,
+  validaCns,
   validaCpf,
   validaCrm,
   validaEmail,
   validaTelefone,
+  UFS,
 } from "../utils/validacoes";
 import { Button, Card, Input, Label } from "../components/ui/primitives";
 import { useUndo } from "../components/UndoToast";
@@ -31,14 +34,31 @@ import { useConfirm } from "../components/ConfirmDialog";
 import ExportarExcel from "../components/ExportarExcel";
 import { useBackdropClose } from "../hooks/useBackdropClose";
 
+const CONSELHOS = ["CRM", "COREN", "CRF", "CRO", "CREFITO", "CRP", "CRESS", "CRN", "CRFa", "OUTROS"];
+const VINCULOS = [
+  { valor: "ESTATUTARIO", rotulo: "Estatutário (Concursado/Efetivo)" },
+  { valor: "CLT", rotulo: "CLT (Emprego Público)" },
+  { valor: "TEMPORARIO", rotulo: "Contrato Temporário" },
+  { valor: "AUTONOMO_CREDENCIADO", rotulo: "Autônomo Credenciado / PJ" },
+  { valor: "COOPERADO", rotulo: "Cooperado" },
+];
+
 const vazio = {
   nome: "",
   cpf: "",
+  cns: "",
   crm: "",
+  conselho_tipo: "CRM",
+  conselho_uf: "MG",
   cbo_codigo: "",
   cbo_descricao: "",
   especialidade: "",
   especialidades: "",
+  vinculo: "ESTATUTARIO",
+  chs_total: 40,
+  chs_ambulatorial: 40,
+  chs_hospitalar: 0,
+  chs_outros: 0,
   telefone: "",
   email: "",
   ativo: true,
@@ -81,7 +101,7 @@ export default function Medicos() {
       const unis = (m.unidades_ids || [])
         .map((uid) => unidades.find((u) => u.id === uid)?.nome || "")
         .join(" ");
-      const texto = `${m.nome} ${m.crm || ""} ${m.cpf || ""} ${m.cbo_codigo || ""} ${m.cbo_descricao || ""} ${m.especialidade || ""} ${m.especialidades || ""} ${m.telefone || ""} ${m.email || ""} ${unis}`.toLowerCase();
+      const texto = `${m.nome} ${m.cns || ""} ${m.crm || ""} ${m.conselho_tipo || ""} ${m.conselho_uf || ""} ${m.vinculo || ""} ${m.cpf || ""} ${m.cbo_codigo || ""} ${m.cbo_descricao || ""} ${m.especialidade || ""} ${m.especialidades || ""} ${m.telefone || ""} ${m.email || ""} ${unis}`.toLowerCase();
       return texto.includes(termo);
     });
   }, [lista, buscaTabela, filtroStatus, unidades]);
@@ -90,7 +110,16 @@ export default function Medicos() {
   const backdrop = useBackdropClose({ onClose: fechar, aberto: modal, isDirty });
 
   const ROTULOS: Record<string, string> = {
-    nome: "Nome completo", cpf: "CPF", crm: "CRM", telefone: "Telefone", email: "E-mail",
+    nome: "Nome completo",
+    cpf: "CPF",
+    cns: "Cartão Nacional de Saúde (CNS)",
+    crm: "Registro do Conselho",
+    conselho_tipo: "Tipo de Conselho",
+    conselho_uf: "UF do Conselho",
+    vinculo: "Vínculo Empregatício",
+    chs_total: "Carga Horária Semanal (CHS)",
+    telefone: "Telefone",
+    email: "E-mail",
   };
   const borda = (c: string) => (erros[c] ? "!border-red-500 focus:!border-red-500" : "");
   const msg = (c: string) =>
@@ -100,12 +129,20 @@ export default function Medicos() {
     const e: Record<string, string> = {};
     const cpf = validaCpf(f.cpf);
     if (cpf) e.cpf = cpf;
-    const crm = validaCrm(f.crm);
+    if (f.cns) {
+      const cnsErr = validaCns(f.cns);
+      if (cnsErr) e.cns = cnsErr;
+    }
+    const crmTexto = f.crm.trim().includes("/") || /[A-Z]{2}/i.test(f.crm)
+      ? f.crm
+      : `${f.conselho_tipo || "CRM"}/${f.conselho_uf || "MG"} ${f.crm}`.trim();
+    const crm = validaCrm(crmTexto);
     if (crm) e.crm = crm;
     const tel = validaTelefone(f.telefone);
     if (tel) e.telefone = tel;
     const mail = validaEmail(f.email);
     if (mail) e.email = mail;
+    if (f.chs_total < 0 || f.chs_total > 168) e.chs_total = "CHS deve ser entre 0 e 168 horas semanais.";
     return e;
   }
 
@@ -187,11 +224,19 @@ export default function Medicos() {
       const val = {
         nome: m.nome,
         cpf: m.cpf,
+        cns: m.cns ?? "",
         crm: m.crm,
+        conselho_tipo: m.conselho_tipo ?? "CRM",
+        conselho_uf: m.conselho_uf ?? "MG",
         cbo_codigo: m.cbo_codigo ?? "",
         cbo_descricao: m.cbo_descricao ?? "",
         especialidade: m.especialidade ?? "",
         especialidades: m.especialidades,
+        vinculo: m.vinculo ?? "ESTATUTARIO",
+        chs_total: m.chs_total ?? 40,
+        chs_ambulatorial: m.chs_ambulatorial ?? 40,
+        chs_hospitalar: m.chs_hospitalar ?? 0,
+        chs_outros: m.chs_outros ?? 0,
         telefone: m.telefone,
         email: m.email,
         ativo: m.ativo,
@@ -255,11 +300,14 @@ export default function Medicos() {
       if (espPrincipal && !espsLista) {
         espsLista = espPrincipal;
       }
+      const crmTexto = form.crm.trim().includes("/") || /[A-Z]{2}/i.test(form.crm)
+        ? form.crm
+        : `${form.conselho_tipo || "CRM"}/${form.conselho_uf || "MG"} ${form.crm}`.trim();
       const payload = {
         ...form,
         especialidade: espPrincipal,
         especialidades: espsLista,
-        crm: normalizaCrm(form.crm),
+        crm: normalizaCrm(crmTexto),
         unidades_ids: form.unidades_ids,
       };
       if (editId) {
@@ -394,10 +442,11 @@ export default function Medicos() {
         <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead><tr className="border-b border-sus-900/10 bg-sand text-xs uppercase tracking-wide text-sus-900/60">
-            <th className="px-4 py-3">Nome</th>
-            <th className="px-4 py-3">CRM</th>
+            <th className="px-4 py-3">Profissional</th>
+            <th className="px-4 py-3">Conselho / CNS</th>
+            <th className="px-4 py-3">Vínculo & CHS</th>
             <th className="px-4 py-3">Unidades de Atuação (PSF)</th>
-            <th className="px-4 py-3">Especialidades</th>
+            <th className="px-4 py-3">Especialidades / CBO</th>
             <th className="px-4 py-3">Contato</th>
             <th className="px-4 py-3">Status</th>
             <th className="px-4 py-3 text-right">Ações</th>
@@ -405,8 +454,22 @@ export default function Medicos() {
           <tbody>
             {medicosFiltrados.map((m) => (
               <tr key={m.id} className="border-b border-sus-900/5 last:border-0 hover:bg-sand/30 transition">
-                <td className="px-4 py-3"><p className="font-semibold text-sus-950">{m.nome}</p><p className="text-xs text-ink/50">{m.cpf || "—"}</p></td>
-                <td className="px-4 py-3">{m.crm || "—"}<p className="text-xs text-ink/50">{m.cbo_codigo ? `CBO ${m.cbo_codigo}` : ""}{m.cbo_descricao ? ` · ${m.cbo_descricao}` : ""}</p></td>
+                <td className="px-4 py-3">
+                  <p className="font-semibold text-sus-950">{m.nome}</p>
+                  <p className="text-xs text-ink/50">CPF: {m.cpf || "—"}</p>
+                </td>
+                <td className="px-4 py-3 text-xs">
+                  <p className="font-semibold text-sus-950">{m.conselho_tipo || "CRM"}/{m.conselho_uf || "MG"} {m.crm || "—"}</p>
+                  <p className="text-ink/60 font-mono text-[11px]">{m.cns ? formataCns(m.cns) : "CNS não informado"}</p>
+                </td>
+                <td className="px-4 py-3 text-xs">
+                  <span className="inline-flex rounded bg-sus-900/5 px-1.5 py-0.5 text-[11px] font-semibold text-sus-900">
+                    {m.vinculo || "ESTATUTÁRIO"}
+                  </span>
+                  <p className="text-ink/60 text-[11px] mt-0.5">
+                    <b>{m.chs_total ?? 40}h</b> sem. (Amb: {m.chs_ambulatorial ?? 40}h{m.chs_hospitalar ? ` | Hosp: ${m.chs_hospitalar}h` : ""}{m.chs_outros ? ` | Outros: ${m.chs_outros}h` : ""})
+                  </p>
+                </td>
                 <td className="px-4 py-3">
                   {m.unidades_ids && m.unidades_ids.length > 0 ? (
                     <div className="flex flex-wrap gap-1 max-w-[240px]">
@@ -426,6 +489,7 @@ export default function Medicos() {
                 <td className="px-4 py-3 text-xs text-ink/60">
                   {m.especialidade && <p className="font-semibold text-sus-950">{m.especialidade}</p>}
                   <p className="text-[11px] text-ink/50">{m.especialidades || "—"}</p>
+                  <p className="text-[10px] text-ink/40 mt-0.5">{m.cbo_codigo ? `CBO ${m.cbo_codigo}` : ""}{m.cbo_descricao ? ` · ${m.cbo_descricao}` : ""}</p>
                 </td>
                 <td className="px-4 py-3 text-xs text-ink/60">{m.telefone || "—"} {m.email ? `· ${m.email}` : ""}</td>
                 <td className="px-4 py-3 text-xs">
@@ -441,7 +505,7 @@ export default function Medicos() {
             ))}
             {medicosFiltrados.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-ink/45">
+                <td colSpan={8} className="px-4 py-8 text-center text-ink/45">
                   {buscaTabela ? `Nenhum profissional encontrado para “${buscaTabela}”.` : "Nenhum médico cadastrado."}
                 </td>
               </tr>
@@ -460,8 +524,141 @@ export default function Medicos() {
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               <div className="md:col-span-2"><Label>Nome completo *</Label><Input value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} className={borda("nome")} />{msg("nome")}</div>
-              <div><Label>CPF *</Label><Input value={form.cpf} onChange={(e) => setForm({ ...form, cpf: e.target.value })} placeholder="Somente números" inputMode="numeric" className={borda("cpf")} />{msg("cpf")}</div>
-              <div><Label>CRM / registro *</Label><Input value={form.crm} onChange={(e) => setForm({ ...form, crm: e.target.value })} placeholder="Ex: CRM/MG 123456" className={borda("crm")} />{msg("crm")}</div>
+              <div>
+                <Label>CPF *</Label>
+                <Input
+                  value={form.cpf}
+                  onChange={(e) => setForm({ ...form, cpf: e.target.value })}
+                  placeholder="Somente números"
+                  inputMode="numeric"
+                  className={borda("cpf")}
+                />
+                {msg("cpf")}
+              </div>
+
+              <div>
+                <Label>Cartão Nacional de Saúde (CNS)</Label>
+                <Input
+                  value={form.cns}
+                  onChange={(e) => setForm({ ...form, cns: e.target.value.replace(/\D/g, "").slice(0, 15) })}
+                  placeholder="15 dígitos numéricos"
+                  inputMode="numeric"
+                  className={borda("cns")}
+                />
+                {msg("cns")}
+                {form.cns && !erros.cns && validaCns(form.cns) === "" && (
+                  <p className="mt-0.5 text-[10px] font-medium text-teal">✓ CNS válido ({formataCns(form.cns)})</p>
+                )}
+              </div>
+
+              {/* Registro no Conselho de Classe */}
+              <div className="md:col-span-2 rounded-xl border border-sus-900/10 bg-sand/20 p-3">
+                <Label className="!mb-2 font-bold text-sus-950">Registro no Conselho Profissional *</Label>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-ink/70">Conselho</label>
+                    <select
+                      value={form.conselho_tipo}
+                      onChange={(e) => setForm({ ...form, conselho_tipo: e.target.value })}
+                      className="w-full rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-sm outline-none focus:border-teal"
+                    >
+                      {CONSELHOS.map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-ink/70">UF</label>
+                    <select
+                      value={form.conselho_uf}
+                      onChange={(e) => setForm({ ...form, conselho_uf: e.target.value })}
+                      className="w-full rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-sm outline-none focus:border-teal"
+                    >
+                      {Array.from(UFS).sort().map((uf) => (
+                        <option key={uf} value={uf}>{uf}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-ink/70">Número do Registro *</label>
+                    <Input
+                      value={form.crm}
+                      onChange={(e) => setForm({ ...form, crm: e.target.value })}
+                      placeholder="Ex: 123456"
+                      className={borda("crm")}
+                    />
+                    {msg("crm")}
+                  </div>
+                </div>
+              </div>
+
+              {/* Vínculo e Carga Horária Semanal (CHS) */}
+              <div className="md:col-span-2 rounded-xl border border-sus-900/10 bg-sand/20 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <Label className="!mb-0 font-bold text-sus-950">Vínculo e Carga Horária Semanal (CHS)</Label>
+                  <span className="text-[11px] text-ink/50">Diretrizes oficiais do CNES</span>
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                  <div className="sm:col-span-2 lg:col-span-2">
+                    <label className="mb-1 block text-xs font-semibold text-ink/70">Vínculo</label>
+                    <select
+                      value={form.vinculo}
+                      onChange={(e) => setForm({ ...form, vinculo: e.target.value })}
+                      className="w-full rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-sm outline-none focus:border-teal"
+                    >
+                      {VINCULOS.map((v) => (
+                        <option key={v.valor} value={v.valor}>{v.rotulo}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-ink/70">CHS Total</label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={168}
+                      value={form.chs_total}
+                      onChange={(e) => setForm({ ...form, chs_total: parseInt(e.target.value, 10) || 0 })}
+                      className={borda("chs_total")}
+                    />
+                    {msg("chs_total")}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-ink/70">Ambulatorial</label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={168}
+                      value={form.chs_ambulatorial}
+                      onChange={(e) => {
+                        const amb = parseInt(e.target.value, 10) || 0;
+                        setForm({
+                          ...form,
+                          chs_ambulatorial: amb,
+                          chs_total: amb + form.chs_hospitalar + form.chs_outros,
+                        });
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-ink/70">Hospitalar</label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={168}
+                      value={form.chs_hospitalar}
+                      onChange={(e) => {
+                        const hosp = parseInt(e.target.value, 10) || 0;
+                        setForm({
+                          ...form,
+                          chs_hospitalar: hosp,
+                          chs_total: form.chs_ambulatorial + hosp + form.chs_outros,
+                        });
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
               <div><Label>CBO (código)</Label><Input value={form.cbo_codigo} onChange={(e) => { setForm({ ...form, cbo_codigo: e.target.value.replace(/\D/g, "").slice(0, 6) }); setBuscaCbo(e.target.value.replace(/\D/g, "").slice(0, 6)); }} placeholder="Ex: 225125" inputMode="numeric" /></div>
               <div className="md:col-span-2"><Label>CBO (descrição — SIGTAP)</Label><Input value={buscaCbo || form.cbo_descricao} onChange={(e) => { setBuscaCbo(e.target.value); setForm({ ...form, cbo_descricao: e.target.value }); }} placeholder="Buscar CBO na tabela SIGTAP…" list="cbo-sigtap-list" /></div>
               {cbos.length > 0 && (

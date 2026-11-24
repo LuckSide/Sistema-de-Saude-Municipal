@@ -135,13 +135,14 @@ const MODULOS_NAV: ModuloNav[] = [
   },
   {
     id: "apac",
-    label: "APAC · Alta Complexidade",
+    label: "Faturamento & APAC (SIA)",
     icon: ShieldCheck,
     itens: [
+      { to: "/producao-ambulatorial", label: "Produção Ambulatorial (BPA)", icon: Activity, tela: "producao_ambulatorial", ou: ["faturamento_bpa", "tfd_medico", "tfd", "lab", "usuarios", "tfd_faturamento"] },
+      { to: "/faturamento/bpa", label: "Faturamento BPA (SIA/SUS)", icon: FileCheck, tela: "faturamento_bpa", ou: ["tfd", "lab", "usuarios", "tfd_faturamento", "lab_faturamento", "apac", "apac_faturamento"] },
       { to: "/apac/solicitacoes", label: "Laudos e Solicitações", icon: FileCheck, tela: "apac_solicitacao", ou: ["tfd", "usuarios"] },
       { to: "/apac/regulacao", label: "Regulação e Autorização", icon: Stethoscope, tela: "apac_regulacao", ou: ["usuarios"] },
       { to: "/apac/faturamento", label: "Faturamento APAC-Mag", icon: ReceiptText, tela: "apac_faturamento", ou: ["tfd", "usuarios"] },
-      { to: "/faturamento/bpa", label: "Faturamento BPA (SIA/SUS)", icon: FileCheck, tela: "faturamento_bpa", ou: ["tfd", "lab", "usuarios", "tfd_faturamento", "lab_faturamento", "apac", "apac_faturamento"] },
     ],
   },
   {

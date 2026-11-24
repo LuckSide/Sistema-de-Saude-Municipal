@@ -107,6 +107,7 @@ const ApacSolicitacao = lazy(() => import("./pages/apac/ApacSolicitacao"));
 const ApacRegulacao = lazy(() => import("./pages/apac/ApacRegulacao"));
 const ApacFaturamento = lazy(() => import("./pages/apac/ApacFaturamento"));
 const FaturamentoBpa = lazy(() => import("./pages/FaturamentoBpa"));
+const ProducaoProfissional = lazy(() => import("./pages/ProducaoProfissional"));
 const OxigenioPainelEstoque = lazy(() => import("./pages/oxigenio/OxigenioPainelEstoque"));
 const OxigenioEquipamentos = lazy(() => import("./pages/oxigenio/OxigenioEquipamentos"));
 const OxigenioEmprestimos = lazy(() => import("./pages/oxigenio/OxigenioEmprestimos"));
@@ -254,6 +255,8 @@ export default function App() {
                   <Route path="/apac/faturamento" element={<Guard tela="apac_faturamento"><ApacFaturamento /></Guard>} />
                   <Route path="/faturamento/bpa" element={<GuardQualquer telas={["faturamento_bpa", "tfd", "lab", "usuarios", "tfd_faturamento", "lab_faturamento", "apac_faturamento", "apac"]}><FaturamentoBpa /></GuardQualquer>} />
                   <Route path="/regulacao/bpa" element={<Navigate to="/faturamento/bpa" replace />} />
+                  <Route path="/producao-ambulatorial" element={<GuardQualquer telas={["producao_ambulatorial", "faturamento_bpa", "tfd", "lab", "usuarios", "tfd_medico", "tfd_faturamento"]}><ProducaoProfissional /></GuardQualquer>} />
+                  <Route path="/producao-profissional" element={<Navigate to="/producao-ambulatorial" replace />} />
                   <Route path="/oxigenio" element={<GuardQualquer telas={["oxigenio_estoque", "oxigenio", "usuarios"]}><OxigenioPainelEstoque /></GuardQualquer>} />
                   <Route path="/oxigenio/equipamentos" element={<GuardQualquer telas={["oxigenio_equipamentos", "oxigenio", "usuarios"]}><OxigenioEquipamentos /></GuardQualquer>} />
                   <Route path="/oxigenio/emprestimos" element={<GuardQualquer telas={["oxigenio_emprestimos", "oxigenio", "usuarios"]}><OxigenioEmprestimos /></GuardQualquer>} />

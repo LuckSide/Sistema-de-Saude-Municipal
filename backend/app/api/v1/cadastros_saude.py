@@ -4,7 +4,14 @@ from sqlmodel import Session, select
 
 from app.core.deps import get_current_user, get_db as _get_db
 from app.core.security import hash_password
-from app.models.cadastros_saude import Medico, UnidadeSaude, Prestador
+from app.models.cadastros_saude import (
+    Medico,
+    UnidadeSaude,
+    Prestador,
+    UnidadeServicoEspecializado,
+    EquipeSaude,
+    EquipeProfissional,
+)
 from app.models.user import User
 from app.schemas.cadastros_saude import (
     MedicoIn,
@@ -13,6 +20,12 @@ from app.schemas.cadastros_saude import (
     UnidadeOut,
     PrestadorIn,
     PrestadorOut,
+    UnidadeServicoEspecializadoIn,
+    UnidadeServicoEspecializadoOut,
+    EquipeProfissionalIn,
+    EquipeProfissionalOut,
+    EquipeSaudeIn,
+    EquipeSaudeOut,
 )
 from app.services.permissoes import need_any_perm
 from app.services.users import gerar_temporaria
@@ -93,6 +106,9 @@ def listar_medicos(
             m for m in medicos
             if termo in (m.nome or "").lower()
             or termo in (m.crm or "").lower()
+            or termo in (getattr(m, "cns", "") or "").lower()
+            or termo in (getattr(m, "conselho_tipo", "") or "").lower()
+            or termo in (getattr(m, "vinculo", "") or "").lower()
             or termo in (m.cpf or "").lower()
             or termo in (m.cbo_codigo or "").lower()
             or termo in (m.cbo_descricao or "").lower()
@@ -340,6 +356,10 @@ def listar_unidades(
             u for u in unidades
             if termo in (u.nome or "").lower()
             or termo in (u.cnes or "").lower()
+            or termo in (getattr(u, "tipo_estabelecimento", "") or "").lower()
+            or termo in (getattr(u, "responsavel_tecnico_nome", "") or "").lower()
+            or termo in (getattr(u, "cnpj", "") or "").lower()
+            or termo in (getattr(u, "codigo_ibge", "") or "").lower()
             or termo in (u.bairro or "").lower()
             or termo in (u.municipio or "").lower()
             or termo in (u.endereco or "").lower()
@@ -403,17 +423,26 @@ def exportar_medicos(
     from app.services.export_xlsx import resposta_xlsx
 
     linhas = [{
-        "nome": m.nome, "cpf": m.cpf or "", "crm": m.crm or "",
+        "nome": m.nome,
+        "cpf": m.cpf or "",
+        "cns": getattr(m, "cns", "") or "",
+        "conselho": f"{getattr(m, 'conselho_tipo', 'CRM')}/{getattr(m, 'conselho_uf', 'MG')} {m.crm or ''}".strip(),
+        "vinculo": getattr(m, "vinculo", "") or "",
+        "chs": getattr(m, "chs_total", 40),
         "cbo": " ".join(x for x in [m.cbo_codigo or "", m.cbo_descricao or ""] if x),
-        "esps": m.especialidades or "", "contato": " ".join(x for x in [m.telefone or "", m.email or ""] if x),
+        "esps": m.especialidades or "",
+        "contato": " ".join(x for x in [m.telefone or "", m.email or ""] if x),
         "status": "ativo" if m.ativo else "inativo",
     } for m in db.exec(select(Medico).order_by(Medico.nome)).all()]
     return resposta_xlsx(
         "Médicos / profissionais", getattr(ator, "nome", "") or getattr(ator, "username", ""),
         [
             {"chave": "nome", "rotulo": "Nome completo", "largura": 34},
-            {"chave": "cpf", "rotulo": "CPF", "largura": 18},
-            {"chave": "crm", "rotulo": "CRM", "largura": 16},
+            {"chave": "cpf", "rotulo": "CPF", "largura": 16},
+            {"chave": "cns", "rotulo": "CNS", "largura": 18},
+            {"chave": "conselho", "rotulo": "Conselho", "largura": 18},
+            {"chave": "vinculo", "rotulo": "Vínculo", "largura": 18},
+            {"chave": "chs", "rotulo": "CHS", "largura": 10},
             {"chave": "cbo", "rotulo": "CBO", "largura": 30},
             {"chave": "esps", "rotulo": "Especialidades", "largura": 34},
             {"chave": "contato", "rotulo": "Contato", "largura": 34},
@@ -430,7 +459,12 @@ def exportar_unidades(
     from app.services.export_xlsx import resposta_xlsx
 
     linhas = [{
-        "nome": u.nome, "cnes": u.cnes or "",
+        "nome": u.nome,
+        "cnes": u.cnes or "",
+        "tipo": getattr(u, "tipo_estabelecimento", "") or "",
+        "cnpj": getattr(u, "cnpj", "") or "",
+        "ibge": getattr(u, "codigo_ibge", "") or "",
+        "rt": getattr(u, "responsavel_tecnico_nome", "") or "",
         "endereco": " ".join(x for x in [
             u.endereco or "", f"Nº {u.numero}" if getattr(u, "numero", "") else "",
             u.bairro or "", getattr(u, "municipio", "") or "",
@@ -438,18 +472,329 @@ def exportar_unidades(
         ] if x),
         "telefone": u.telefone or "",
         "status": "ativo" if u.ativo else "inativo",
-    } for u in db.exec(select(UnidadeSaude).order_by(UnidadeSaude.nome)).all()]
+    } for m, u in enumerate(db.exec(select(UnidadeSaude).order_by(UnidadeSaude.nome)).all())]
     return resposta_xlsx(
         "PSFs / Unidades de saúde", getattr(ator, "nome", "") or getattr(ator, "username", ""),
         [
             {"chave": "nome", "rotulo": "Nome", "largura": 34},
             {"chave": "cnes", "rotulo": "CNES", "largura": 14},
+            {"chave": "tipo", "rotulo": "Tipo Estabelecimento", "largura": 22},
+            {"chave": "cnpj", "rotulo": "CNPJ", "largura": 20},
+            {"chave": "ibge", "rotulo": "IBGE", "largura": 12},
+            {"chave": "rt", "rotulo": "Responsável Técnico", "largura": 28},
             {"chave": "endereco", "rotulo": "Endereço completo", "largura": 52},
             {"chave": "telefone", "rotulo": "Telefone", "largura": 16},
             {"chave": "status", "rotulo": "Status", "largura": 12},
         ],
         linhas, "unidades_saude",
     )
+
+
+# ---------- Serviços Especializados (CNES) ----------
+@router.get("/unidades-saude/{uid}/servicos", response_model=list[UnidadeServicoEspecializadoOut])
+def listar_servicos_unidade(
+    uid: int,
+    somente_ativos: bool | None = Query(default=None),
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(get_current_user),
+):
+    """Lista os serviços especializados cadastrados para a unidade de saúde."""
+    unidade = db.get(UnidadeSaude, uid)
+    if not unidade:
+        raise HTTPException(404, "Unidade não encontrada")
+    base = select(UnidadeServicoEspecializado).where(UnidadeServicoEspecializado.unidade_saude_id == uid)
+    if somente_ativos is True:
+        base = base.where(UnidadeServicoEspecializado.ativo != False)
+    elif somente_ativos is False:
+        base = base.where(UnidadeServicoEspecializado.ativo == False)
+    base = base.order_by(UnidadeServicoEspecializado.servico_codigo, UnidadeServicoEspecializado.classificacao_codigo)
+    itens = list(db.exec(base).all())
+    return [UnidadeServicoEspecializadoOut(**i.model_dump()) for i in itens]
+
+
+@router.post("/unidades-saude/{uid}/servicos", response_model=UnidadeServicoEspecializadoOut, status_code=201)
+def criar_servico_unidade(
+    uid: int,
+    data: UnidadeServicoEspecializadoIn,
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", acoes=("criar",))),
+):
+    """Cadastra um serviço especializado para a unidade de saúde."""
+    unidade = db.get(UnidadeSaude, uid)
+    if not unidade:
+        raise HTTPException(404, "Unidade não encontrada")
+    dados = data.model_dump()
+    dados["unidade_saude_id"] = uid
+    obj = UnidadeServicoEspecializado(**dados)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return UnidadeServicoEspecializadoOut(**obj.model_dump())
+
+
+@router.put("/unidades-saude/{uid}/servicos/{sid}", response_model=UnidadeServicoEspecializadoOut)
+def atualizar_servico_unidade(
+    uid: int,
+    sid: int,
+    data: UnidadeServicoEspecializadoIn,
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", acoes=("editar",))),
+):
+    """Atualiza um serviço especializado."""
+    obj = db.get(UnidadeServicoEspecializado, sid)
+    if not obj or obj.unidade_saude_id != uid:
+        raise HTTPException(404, "Serviço especializado não encontrado na unidade")
+    for k, v in data.model_dump().items():
+        if k != "unidade_saude_id":
+            setattr(obj, k, v)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return UnidadeServicoEspecializadoOut(**obj.model_dump())
+
+
+@router.delete("/unidades-saude/{uid}/servicos/{sid}", status_code=204)
+def remover_servico_unidade(
+    uid: int,
+    sid: int,
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", acoes=("excluir",))),
+):
+    """Remove um serviço especializado da unidade."""
+    obj = db.get(UnidadeServicoEspecializado, sid)
+    if not obj or obj.unidade_saude_id != uid:
+        raise HTTPException(404, "Serviço especializado não encontrado na unidade")
+    db.delete(obj)
+    db.commit()
+
+
+# ---------- Equipes de Saúde (INE) e Profissionais ----------
+def _equipe_to_out(eq: EquipeSaude, db: Session) -> EquipeSaudeOut:
+    unidade = db.get(UnidadeSaude, eq.unidade_saude_id)
+    profs_db = list(db.exec(
+        select(EquipeProfissional).where(EquipeProfissional.equipe_id == eq.id)
+    ).all())
+
+    profs_out: list[EquipeProfissionalOut] = []
+    for p in profs_db:
+        med = db.get(Medico, p.medico_id)
+        p_dict = p.model_dump()
+        if med:
+            p_dict["medico_nome"] = med.nome
+            p_dict["medico_cns"] = getattr(med, "cns", "") or ""
+            p_dict["medico_crm"] = med.crm or ""
+            p_dict["medico_cbo"] = f"{med.cbo_codigo} - {med.cbo_descricao}".strip(" -")
+        profs_out.append(EquipeProfissionalOut(**p_dict))
+
+    d = eq.model_dump()
+    d["unidade_nome"] = unidade.nome if unidade else None
+    d["profissionais"] = profs_out
+    return EquipeSaudeOut(**d)
+
+
+@router.get("/unidades-saude/{uid}/equipes", response_model=list[EquipeSaudeOut])
+def listar_equipes_unidade(
+    uid: int,
+    somente_ativas: bool | None = Query(default=None),
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(get_current_user),
+):
+    """Lista equipes de atenção básica vinculadas a uma unidade de saúde."""
+    base = select(EquipeSaude).where(EquipeSaude.unidade_saude_id == uid)
+    if somente_ativas is True:
+        base = base.where(EquipeSaude.ativo != False)
+    elif somente_ativas is False:
+        base = base.where(EquipeSaude.ativo == False)
+    base = base.order_by(EquipeSaude.nome_equipe)
+    equipes = list(db.exec(base).all())
+    return [_equipe_to_out(eq, db) for eq in equipes]
+
+
+@router.get("/equipes", response_model=list[EquipeSaudeOut])
+def listar_equipes(
+    q: str = Query(default="", max_length=80),
+    unidade_saude_id: int | None = Query(default=None),
+    somente_ativas: bool | None = Query(default=None),
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(get_current_user),
+):
+    """Lista equipes de atenção básica com busca por nome, INE, área ou tipo."""
+    base = select(EquipeSaude)
+    if unidade_saude_id:
+        base = base.where(EquipeSaude.unidade_saude_id == unidade_saude_id)
+    if somente_ativas is True:
+        base = base.where(EquipeSaude.ativo != False)
+    elif somente_ativas is False:
+        base = base.where(EquipeSaude.ativo == False)
+    base = base.order_by(EquipeSaude.nome_equipe)
+    equipes = list(db.exec(base).all())
+
+    termo = (q or "").strip().lower()
+    if termo:
+        equipes = [
+            e for e in equipes
+            if termo in (e.nome_equipe or "").lower()
+            or termo in (e.ine or "").lower()
+            or termo in (e.tipo_equipe or "").lower()
+            or termo in (e.area or "").lower()
+        ]
+    return [_equipe_to_out(eq, db) for eq in equipes]
+
+
+@router.get("/equipes/{eid}", response_model=EquipeSaudeOut)
+def obter_equipe(
+    eid: int,
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(get_current_user),
+):
+    eq = db.get(EquipeSaude, eid)
+    if not eq:
+        raise HTTPException(404, "Equipe não encontrada")
+    return _equipe_to_out(eq, db)
+
+
+@router.post("/equipes", response_model=EquipeSaudeOut, status_code=201)
+@router.post("/unidades-saude/{uid}/equipes", response_model=EquipeSaudeOut, status_code=201, include_in_schema=False)
+def criar_equipe(
+    data: EquipeSaudeIn,
+    uid: int | None = None,
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", acoes=("criar",))),
+):
+    target_uid = uid or data.unidade_saude_id
+    unidade = db.get(UnidadeSaude, target_uid)
+    if not unidade:
+        raise HTTPException(404, "Unidade não encontrada")
+
+    # Verifica se já existe INE igual
+    ine_existente = db.exec(select(EquipeSaude).where(EquipeSaude.ine == data.ine)).first()
+    if ine_existente:
+        raise HTTPException(400, f"Já existe uma equipe cadastrada com o INE {data.ine} ('{ine_existente.nome_equipe}').")
+
+    dados = data.model_dump()
+    profs_data = dados.pop("profissionais", [])
+    dados["unidade_saude_id"] = target_uid
+
+    eq = EquipeSaude(**dados)
+    db.add(eq)
+    db.commit()
+    db.refresh(eq)
+
+    for p in profs_data:
+        p_obj = EquipeProfissional(
+            equipe_id=eq.id,
+            medico_id=p["medico_id"],
+            funcao=p.get("funcao", "MÉDICO"),
+            chs=p.get("chs", 40),
+        )
+        db.add(p_obj)
+    if profs_data:
+        db.commit()
+
+    return _equipe_to_out(eq, db)
+
+
+@router.put("/equipes/{eid}", response_model=EquipeSaudeOut)
+def atualizar_equipe(
+    eid: int,
+    data: EquipeSaudeIn,
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", acoes=("editar",))),
+):
+    eq = db.get(EquipeSaude, eid)
+    if not eq:
+        raise HTTPException(404, "Equipe não encontrada")
+
+    # Valida INE único
+    if data.ine != eq.ine:
+        ine_existente = db.exec(select(EquipeSaude).where(EquipeSaude.ine == data.ine, EquipeSaude.id != eid)).first()
+        if ine_existente:
+            raise HTTPException(400, f"Já existe outra equipe cadastrada com o INE {data.ine}.")
+
+    dados = data.model_dump()
+    profs_data = dados.pop("profissionais", None)
+    for k, v in dados.items():
+        setattr(eq, k, v)
+    db.add(eq)
+
+    # Se profissionais foram passados no payload, sincroniza
+    if profs_data is not None:
+        atuais = list(db.exec(select(EquipeProfissional).where(EquipeProfissional.equipe_id == eid)).all())
+        for a in atuais:
+            db.delete(a)
+        db.flush()
+        for p in profs_data:
+            p_obj = EquipeProfissional(
+                equipe_id=eid,
+                medico_id=p["medico_id"],
+                funcao=p.get("funcao", "MÉDICO"),
+                chs=p.get("chs", 40),
+            )
+            db.add(p_obj)
+
+    db.commit()
+    db.refresh(eq)
+    return _equipe_to_out(eq, db)
+
+
+@router.delete("/equipes/{eid}", status_code=204)
+def inativar_equipe(
+    eid: int,
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", acoes=("excluir",))),
+):
+    eq = db.get(EquipeSaude, eid)
+    if not eq:
+        raise HTTPException(404, "Equipe não encontrada")
+    eq.ativo = False
+    db.add(eq)
+    db.commit()
+
+
+@router.post("/equipes/{eid}/profissionais", response_model=EquipeProfissionalOut, status_code=201)
+def adicionar_profissional_equipe(
+    eid: int,
+    data: EquipeProfissionalIn,
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", acoes=("editar", "criar"))),
+):
+    eq = db.get(EquipeSaude, eid)
+    if not eq:
+        raise HTTPException(404, "Equipe não encontrada")
+    med = db.get(Medico, data.medico_id)
+    if not med:
+        raise HTTPException(404, "Profissional de saúde não encontrado")
+
+    obj = EquipeProfissional(
+        equipe_id=eid,
+        medico_id=data.medico_id,
+        funcao=data.funcao,
+        chs=data.chs,
+    )
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+
+    d = obj.model_dump()
+    d["medico_nome"] = med.nome
+    d["medico_cns"] = getattr(med, "cns", "") or ""
+    d["medico_crm"] = med.crm or ""
+    d["medico_cbo"] = f"{med.cbo_codigo} - {med.cbo_descricao}".strip(" -")
+    return EquipeProfissionalOut(**d)
+
+
+@router.delete("/equipes/{eid}/profissionais/{pid}", status_code=204)
+def remover_profissional_equipe(
+    eid: int,
+    pid: int,
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", acoes=("editar", "excluir"))),
+):
+    obj = db.get(EquipeProfissional, pid)
+    if not obj or obj.equipe_id != eid:
+        raise HTTPException(404, "Vínculo profissional não encontrado na equipe")
+    db.delete(obj)
+    db.commit()
 
 
 # ---------- Prestadores de Serviços (Subagente 3) ----------

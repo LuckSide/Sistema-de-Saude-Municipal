@@ -120,11 +120,19 @@ export type Medico = {
   id: number;
   nome: string;
   cpf: string;
+  cns?: string;
   crm: string;
+  conselho_tipo?: string;
+  conselho_uf?: string;
   cbo_codigo: string;
   cbo_descricao: string;
   especialidade?: string;
   especialidades: string;
+  vinculo?: string;
+  chs_total?: number;
+  chs_ambulatorial?: number;
+  chs_hospitalar?: number;
+  chs_outros?: number;
   telefone: string;
   email: string;
   unidades_ids?: number[];
@@ -142,6 +150,12 @@ export type UnidadeSaude = {
   id: number;
   nome: string;
   cnes: string;
+  tipo_estabelecimento?: string;
+  codigo_ibge?: string;
+  cnpj?: string;
+  responsavel_tecnico_nome?: string;
+  responsavel_tecnico_cns?: string;
+  responsavel_tecnico_conselho?: string;
   endereco: string;
   numero: string;
   bairro: string;
@@ -156,6 +170,70 @@ export const fetchMe = () => api.get<Usuario>("/api/me").then((r) => r.data);
 export const createUnidadeSaude = (payload: Record<string, unknown>) => api.post<UnidadeSaude>("/api/unidades-saude", payload).then((r) => r.data);
 export const updateUnidadeSaude = (id: number, payload: Record<string, unknown>) => api.put<UnidadeSaude>(`/api/unidades-saude/${id}`, payload).then((r) => r.data);
 export const deleteUnidadeSaude = (id: number) => api.delete(`/api/unidades-saude/${id}`).then((r) => r.data);
+
+// ---------- Serviços Especializados (CNES) ----------
+export type UnidadeServicoEspecializado = {
+  id: number;
+  unidade_saude_id: number;
+  servico_codigo: string;
+  servico_descricao: string;
+  classificacao_codigo: string;
+  classificacao_descricao: string;
+  caracteristica: string;
+  cnes_terceiro: string;
+  ativo: boolean;
+};
+
+export const fetchServicosUnidade = (unidadeId: number, params?: { somente_ativos?: boolean }) =>
+  api.get<UnidadeServicoEspecializado[]>(`/api/unidades-saude/${unidadeId}/servicos`, { params }).then((r) => r.data);
+export const createServicoUnidade = (unidadeId: number, payload: Partial<UnidadeServicoEspecializado>) =>
+  api.post<UnidadeServicoEspecializado>(`/api/unidades-saude/${unidadeId}/servicos`, payload).then((r) => r.data);
+export const updateServicoUnidade = (unidadeId: number, servicoId: number, payload: Partial<UnidadeServicoEspecializado>) =>
+  api.put<UnidadeServicoEspecializado>(`/api/unidades-saude/${unidadeId}/servicos/${servicoId}`, payload).then((r) => r.data);
+export const deleteServicoUnidade = (unidadeId: number, servicoId: number) =>
+  api.delete(`/api/unidades-saude/${unidadeId}/servicos/${servicoId}`).then((r) => r.data);
+
+// ---------- Equipes de Saúde (INE) e Profissionais ----------
+export type EquipeProfissional = {
+  id: number;
+  equipe_id: number;
+  medico_id: number;
+  funcao: string;
+  chs: number;
+  medico_nome?: string | null;
+  medico_cns?: string | null;
+  medico_crm?: string | null;
+  medico_cbo?: string | null;
+};
+
+export type EquipeSaude = {
+  id: number;
+  unidade_saude_id: number;
+  ine: string;
+  nome_equipe: string;
+  tipo_equipe: string;
+  area: string;
+  ativo: boolean;
+  unidade_nome?: string | null;
+  profissionais?: EquipeProfissional[];
+};
+
+export const fetchEquipesUnidade = (unidadeId: number, params?: { somente_ativas?: boolean }) =>
+  api.get<EquipeSaude[]>(`/api/unidades-saude/${unidadeId}/equipes`, { params }).then((r) => r.data);
+export const fetchEquipes = (params?: { q?: string; unidade_saude_id?: number; somente_ativas?: boolean }) =>
+  api.get<EquipeSaude[]>("/api/equipes", { params }).then((r) => r.data);
+export const fetchEquipe = (id: number) =>
+  api.get<EquipeSaude>(`/api/equipes/${id}`).then((r) => r.data);
+export const createEquipe = (payload: Partial<EquipeSaude>) =>
+  api.post<EquipeSaude>("/api/equipes", payload).then((r) => r.data);
+export const updateEquipe = (id: number, payload: Partial<EquipeSaude>) =>
+  api.put<EquipeSaude>(`/api/equipes/${id}`, payload).then((r) => r.data);
+export const deleteEquipe = (id: number) =>
+  api.delete(`/api/equipes/${id}`).then((r) => r.data);
+export const addProfissionalEquipe = (equipeId: number, payload: { medico_id: number; funcao: string; chs: number }) =>
+  api.post<EquipeProfissional>(`/api/equipes/${equipeId}/profissionais`, payload).then((r) => r.data);
+export const removeProfissionalEquipe = (equipeId: number, profissionalId: number) =>
+  api.delete(`/api/equipes/${equipeId}/profissionais/${profissionalId}`).then((r) => r.data);
 
 export type Prestador = {
   id: number;
@@ -4986,6 +5064,8 @@ export interface BpaItemResumo {
 export interface BpaResumoCompleto {
   competencia: string;
   competencia_aaaamm: string;
+  unidade_saude_id?: number | null;
+  cnes_exportado?: string;
   total_linhas: number;
   total_folhas: number;
   controle_verificador: number;
@@ -4993,6 +5073,7 @@ export interface BpaResumoCompleto {
   total_procedimentos_bpa_i: number;
   total_exames: number;
   total_viagens_tfd: number;
+  total_ambulatorial?: number;
   total_geral_itens: number;
   valor_total_estimado: number;
   itens_bpa_c: BpaItemResumo[];
@@ -5001,16 +5082,121 @@ export interface BpaResumoCompleto {
   arquivo_nome_csv: string;
 }
 
-export async function fetchBpaResumo(competencia: string): Promise<BpaResumoCompleto> {
+export interface BpaCritica {
+  id: string;
+  tipo: "BLOQUEANTE" | "AVISO";
+  modulo: "PROFISSIONAL" | "UNIDADE" | "PROCEDIMENTO" | "PACIENTE";
+  mensagem: string;
+  registro_id?: number | null;
+  registro_identificador?: string;
+  sugestao_correcao?: string;
+  link_correcao?: string;
+}
+
+export interface BpaCriticasResultado {
+  competencia: string;
+  competencia_aaaamm: string;
+  unidade_saude_id?: number | null;
+  total_criticas: number;
+  total_bloqueantes: number;
+  total_avisos: number;
+  bloqueia_exportacao: boolean;
+  pode_exportar: boolean;
+  total_producoes_ambulatoriais: number;
+  total_solicitacoes_lab: number;
+  total_viagens_tfd: number;
+  criticas: BpaCritica[];
+}
+
+export interface BpaDemonstrativoItem {
+  cnes: string;
+  unidade_nome: string;
+  codigo: string;
+  descricao: string;
+  instrumento: string;
+  quantidade: number;
+  valor_ambulatorial: number;
+  valor_hospitalar: number;
+  valor_total: number;
+  origem: string;
+}
+
+export interface BpaDemonstrativoPorCnes {
+  cnes: string;
+  unidade_id?: number | null;
+  unidade_nome: string;
+  total_procedimentos: number;
+  quantidade_total: number;
+  valor_total: number;
+  procedimentos: BpaDemonstrativoItem[];
+}
+
+export interface BpaDemonstrativoResultado {
+  competencia: string;
+  competencia_aaaamm: string;
+  unidade_saude_id?: number | null;
+  unidade_nome: string;
+  cnes_filtro: string;
+  municipio: string;
+  uf: string;
+  ibge: string;
+  data_emissao: string;
+  total_procedimentos_distintos: number;
+  total_linhas_demonstrativo: number;
+  quantidade_total_geral: number;
+  valor_total_ambulatorial: number;
+  valor_total_hospitalar: number;
+  valor_total_geral: number;
+  itens: BpaDemonstrativoItem[];
+  por_cnes: BpaDemonstrativoPorCnes[];
+}
+
+export async function fetchBpaResumo(
+  competencia: string,
+  unidadeSaudeId?: number | null
+): Promise<BpaResumoCompleto> {
+  const params: Record<string, any> = { competencia };
+  if (unidadeSaudeId) params.unidade_saude_id = unidadeSaudeId;
   const { data } = await api.get<BpaResumoCompleto>("/api/faturamento-bpa/resumo", {
-    params: { competencia },
+    params,
   });
   return data;
 }
 
-export async function downloadBpaOut(competencia: string): Promise<Blob> {
+export async function fetchBpaCriticas(
+  competencia: string,
+  unidadeSaudeId?: number | null
+): Promise<BpaCriticasResultado> {
+  const params: Record<string, any> = { competencia };
+  if (unidadeSaudeId) params.unidade_saude_id = unidadeSaudeId;
+  const { data } = await api.get<BpaCriticasResultado>("/api/faturamento-bpa/criticas-preventivas", {
+    params,
+  });
+  return data;
+}
+
+export async function fetchBpaDemonstrativo(
+  competencia: string,
+  unidadeSaudeId?: number | null
+): Promise<BpaDemonstrativoResultado> {
+  const params: Record<string, any> = { competencia };
+  if (unidadeSaudeId) params.unidade_saude_id = unidadeSaudeId;
+  const { data } = await api.get<BpaDemonstrativoResultado>("/api/faturamento-bpa/demonstrativo-faturamento", {
+    params,
+  });
+  return data;
+}
+
+export async function downloadBpaOut(
+  competencia: string,
+  unidadeSaudeId?: number | null,
+  forcar = false
+): Promise<Blob> {
+  const params: Record<string, any> = { competencia };
+  if (unidadeSaudeId) params.unidade_saude_id = unidadeSaudeId;
+  if (forcar) params.forcar = true;
   const r = await api.get("/api/faturamento-bpa/download-out", {
-    params: { competencia },
+    params,
     responseType: "blob",
   });
   const blob = new Blob([r.data as BlobPart], { type: "text/plain;charset=iso-8859-1" });
@@ -5028,9 +5214,14 @@ export async function downloadBpaOut(competencia: string): Promise<Blob> {
   return blob;
 }
 
-export async function downloadBpaCsv(competencia: string): Promise<Blob> {
+export async function downloadBpaCsv(
+  competencia: string,
+  unidadeSaudeId?: number | null
+): Promise<Blob> {
+  const params: Record<string, any> = { competencia };
+  if (unidadeSaudeId) params.unidade_saude_id = unidadeSaudeId;
   const r = await api.get("/api/faturamento-bpa/download-csv", {
-    params: { competencia },
+    params,
     responseType: "blob",
   });
   const blob = new Blob([r.data as BlobPart], { type: "text/csv;charset=utf-8" });
@@ -5046,6 +5237,212 @@ export async function downloadBpaCsv(competencia: string): Promise<Blob> {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
   return blob;
+}
+
+
+// ==================== PRODUÇÃO AMBULATORIAL (SIGTAP / SIA / BPA) ====================
+
+export interface ProducaoAmbulatorial {
+  id: number;
+  unidade_saude_id: number;
+  unidade_saude_nome?: string;
+  medico_id: number;
+  medico_nome?: string;
+  equipe_id?: number | null;
+  equipe_nome?: string | null;
+  equipe_ine?: string | null;
+  procedimento_id: number;
+  procedimento_codigo: string;
+  procedimento_nome: string;
+  cbo_codigo: string;
+  competencia: string;
+  data_atendimento: string;
+  instrumento_registro: "BPA-C" | "BPA-I" | string;
+  quantidade: number;
+  valor_unitario: number;
+  valor_total: number;
+  paciente_id?: number | null;
+  paciente_nome?: string;
+  paciente_cns?: string;
+  paciente_sexo?: string;
+  paciente_data_nascimento?: string | null;
+  paciente_idade?: number | null;
+  paciente_municipio_ibge?: string;
+  cid10?: string;
+  numero_autorizacao?: string;
+  servico_codigo?: string;
+  classificacao_codigo?: string;
+  origem: string;
+  status: string;
+  usuario_id?: number | null;
+  criado_em: string;
+  atualizado_em: string;
+}
+
+export interface ProducaoAmbulatorialIn {
+  unidade_saude_id: number;
+  medico_id: number;
+  equipe_id?: number | null;
+  procedimento_id?: number | null;
+  procedimento_codigo: string;
+  procedimento_nome?: string;
+  cbo_codigo?: string;
+  competencia?: string;
+  data_atendimento: string;
+  instrumento_registro?: "BPA-C" | "BPA-I" | string;
+  quantidade?: number;
+  valor_unitario?: number;
+  valor_total?: number;
+  paciente_id?: number | null;
+  paciente_nome?: string;
+  paciente_cns?: string;
+  paciente_sexo?: string;
+  paciente_data_nascimento?: string | null;
+  paciente_municipio_ibge?: string;
+  cid10?: string;
+  numero_autorizacao?: string;
+  servico_codigo?: string;
+  classificacao_codigo?: string;
+  origem?: string;
+  status?: string;
+}
+
+export interface ResumoTopProcedimento {
+  procedimento_codigo: string;
+  procedimento_nome: string;
+  instrumento: string;
+  quantidade: number;
+  valor_total: number;
+}
+
+export interface ResumoCompetenciaProducao {
+  competencia: string;
+  total_procedimentos: number;
+  total_lancamentos: number;
+  valor_total: number;
+  total_bpac: number;
+  valor_bpac: number;
+  total_bpai: number;
+  valor_bpai: number;
+  total_profissionais: number;
+  total_unidades: number;
+  top_procedimentos: ResumoTopProcedimento[];
+}
+
+export interface ProcedimentoSigtapItem {
+  id: number;
+  codigo: string;
+  descricao: string;
+  complexidade: string;
+  instrumento: string;
+  sexo: string;
+  idade_min: number;
+  idade_max: number;
+  qtd_maxima: number;
+  pontos: number;
+  valor_sa: number;
+  valor_sp: number;
+  valor_total: number;
+}
+
+export interface EquipeSaude {
+  id: number;
+  unidade_saude_id: number;
+  ine: string;
+  nome_equipe: string;
+  tipo_equipe: string;
+  ativo: boolean;
+}
+
+export interface Cid10Item {
+  codigo: string;
+  descricao: string;
+}
+
+export async function listarProducoesAmbulatoriais(params?: {
+  competencia?: string;
+  medico_id?: number;
+  unidade_saude_id?: number;
+  data_inicio?: string;
+  data_fim?: string;
+  instrumento?: string;
+  termo?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{ total: number; offset: number; limit: number; itens: ProducaoAmbulatorial[] }> {
+  const { data } = await api.get<{ total: number; offset: number; limit: number; itens: ProducaoAmbulatorial[] }>(
+    "/api/v1/producoes-ambulatoriais",
+    { params }
+  );
+  return data;
+}
+
+export async function obterResumoProducaoAmbulatorial(
+  competencia: string,
+  medico_id?: number,
+  unidade_saude_id?: number
+): Promise<ResumoCompetenciaProducao> {
+  const { data } = await api.get<ResumoCompetenciaProducao>(
+    "/api/v1/producoes-ambulatoriais/resumo-competencia",
+    { params: { competencia, medico_id, unidade_saude_id } }
+  );
+  return data;
+}
+
+export async function criarProducaoAmbulatorial(
+  payload: ProducaoAmbulatorialIn
+): Promise<ProducaoAmbulatorial> {
+  const { data } = await api.post<ProducaoAmbulatorial>(
+    "/api/v1/producoes-ambulatoriais",
+    payload
+  );
+  return data;
+}
+
+export async function atualizarProducaoAmbulatorial(
+  id: number,
+  payload: Partial<ProducaoAmbulatorialIn>
+): Promise<ProducaoAmbulatorial> {
+  const { data } = await api.put<ProducaoAmbulatorial>(
+    `/api/v1/producoes-ambulatoriais/${id}`,
+    payload
+  );
+  return data;
+}
+
+export async function excluirProducaoAmbulatorial(id: number): Promise<void> {
+  await api.delete(`/api/v1/producoes-ambulatoriais/${id}`);
+}
+
+export async function buscarProcedimentosSigtapProducao(
+  termo: string,
+  cbo?: string
+): Promise<ProcedimentoSigtapItem[]> {
+  const { data } = await api.get<ProcedimentoSigtapItem[]>(
+    "/api/v1/producoes-ambulatoriais/procedimentos-sigtap",
+    { params: { termo, cbo, limit: 30 } }
+  );
+  return data;
+}
+
+export async function buscarCidsSigtapProducao(
+  termo: string
+): Promise<Cid10Item[]> {
+  const { data } = await api.get<Cid10Item[]>(
+    "/api/v1/producoes-ambulatoriais/cids",
+    { params: { termo, limit: 25 } }
+  );
+  return data;
+}
+
+export async function listarEquipesSaudeProducao(
+  unidade_saude_id?: number
+): Promise<EquipeSaude[]> {
+  const { data } = await api.get<EquipeSaude[]>(
+    "/api/v1/producoes-ambulatoriais/equipes-saude",
+    { params: { unidade_saude_id } }
+  );
+  return data;
 }
 
 export default api;
