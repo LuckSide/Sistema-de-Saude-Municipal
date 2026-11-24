@@ -642,3 +642,139 @@ def consolidar_bpa_laboratorial(db: Session, competencia: str) -> dict:
         "valor_total": round(total_valor, 2),
         "itens": lista_itens,
     }
+
+
+def remover_item_solicitacao(
+    db: Session,
+    solicitacao_id: int,
+    item_id: int,
+    justificativa: str,
+    usuario_nome: str = "Laboratório",
+) -> dict:
+    """Permite ao laboratório remover um exame específico do pedido com justificativa técnica.
+
+    Exemplo: Paciente não trouxe frasco/amostra, ou não conseguiu colher material.
+    O exame é removido do pedido para que não gere glosa/inconsistência no laudo e não seja faturado.
+    """
+    mestre = db.get(SolicitacaoMestre, solicitacao_id)
+    if not mestre:
+        raise HTTPException(404, "Solicitação de exames não encontrada.")
+    if mestre.status == "cancelado":
+        raise HTTPException(400, "Não é permitido alterar uma solicitação já cancelada.")
+    if mestre.status == "realizado":
+        raise HTTPException(400, "A solicitação já foi finalizada com laudo homologado.")
+
+    item = db.get(ItemSolic, item_id)
+    if not item or item.solicitacao_id != solicitacao_id:
+        raise HTTPException(404, "Procedimento/exame não encontrado nesta solicitação.")
+
+    proc = db.get(SigtapProcedimento, item.sigtap_id)
+    proc_desc = f"{proc.codigo} · {proc.descricao}" if proc else f"SIGTAP #{item.sigtap_id}"
+
+    # Registra no log de auditoria e observações do pedido
+    ts = datetime.now().strftime("%d/%m/%Y %H:%M")
+    obs_registro = (
+        f"[Exame {proc_desc} removido por {usuario_nome} em {ts}. "
+        f"Justificativa: {justificativa.strip()}]"
+    )
+    if mestre.observacao_laboratorio:
+        mestre.observacao_laboratorio = f"{mestre.observacao_laboratorio} | {obs_registro}"
+    else:
+        mestre.observacao_laboratorio = obs_registro
+
+    # Exclui o item para não ser faturado nem cobrado na leitura do laudo
+    db.delete(item)
+    db.add(mestre)
+    db.commit()
+    db.refresh(mestre)
+    return enriquecer_mestre(db, mestre)
+
+
+def editar_pedido_exames(
+    db: Session,
+    solicitacao_id: int,
+    itens_novos: dict[int, int],  # {sigtap_id: quantidade}
+    medico_id: int | None = None,
+    medico_nome: str = "",
+    unidade_id: int | None = None,
+    unidade_nome: str = "",
+    justificativa: str = "",
+    hora_agendada: str = "",
+    usuario_nome: str = "Operador",
+) -> dict:
+    """Permite à regulação/operador editar os exames e dados de um pedido agendado."""
+    mestre = db.get(SolicitacaoMestre, solicitacao_id)
+    if not mestre:
+        raise HTTPException(404, "Solicitação de exames não encontrada.")
+    if mestre.status in ("cancelado", "realizado"):
+        raise HTTPException(400, f"Não é possível editar uma solicitação com status '{mestre.status}'.")
+
+    if not itens_novos:
+        raise HTTPException(400, "O pedido deve conter ao menos 1 procedimento/exame.")
+
+    # Valida procedimentos informados
+    for sid, qtd in itens_novos.items():
+        if qtd < 1 or qtd > 99:
+            raise HTTPException(400, f"Quantidade inválida para o exame #{sid}: {qtd}")
+        if not db.get(SigtapProcedimento, sid):
+            raise HTTPException(404, f"Procedimento SIGTAP #{sid} não encontrado.")
+
+    # Atualiza dados cadastrais se informados
+    if medico_id is not None:
+        mestre.medico_id = medico_id
+    if medico_nome:
+        mestre.medico_solicitante = medico_nome
+    if unidade_id is not None:
+        mestre.unidade_saude_id = unidade_id
+    if unidade_nome:
+        mestre.unidade_psf = unidade_nome
+    if justificativa:
+        mestre.justificativa = justificativa
+    if hora_agendada:
+        mestre.hora_agendada = hora_agendada
+
+    # Itens existentes na base
+    itens_atuais = db.exec(
+        select(ItemSolic).where(ItemSolic.solicitacao_id == solicitacao_id)
+    ).all()
+    mapa_atuais = {it.sigtap_id: it for it in itens_atuais}
+
+    from app.services.lab_contratos_service import resolver_preco_procedimento
+
+    # Remove itens que saíram
+    for sid, it in mapa_atuais.items():
+        if sid not in itens_novos:
+            db.delete(it)
+
+    # Atualiza ou adiciona itens
+    for sid, qtd in itens_novos.items():
+        if sid in mapa_atuais:
+            it = mapa_atuais[sid]
+            it.quantidade = qtd
+            db.add(it)
+        else:
+            proc = db.get(SigtapProcedimento, sid)
+            v_un, origem, cid = resolver_preco_procedimento(
+                db, mestre.laboratorio_id, sid, mestre.data_agendada, proc_padrao=proc
+            )
+            novo_item = ItemSolic(
+                solicitacao_id=mestre.id,
+                sigtap_id=sid,
+                quantidade=qtd,
+                valor_unitario_aplicado=v_un,
+                origem_preco=origem,
+                contrato_id=cid,
+            )
+            db.add(novo_item)
+
+    ts = datetime.now().strftime("%d/%m/%Y %H:%M")
+    obs_registro = f"[Pedido editado por {usuario_nome} em {ts}: {len(itens_novos)} exames]"
+    if mestre.observacao_laboratorio:
+        mestre.observacao_laboratorio = f"{mestre.observacao_laboratorio} | {obs_registro}"
+    else:
+        mestre.observacao_laboratorio = obs_registro
+
+    db.add(mestre)
+    db.commit()
+    db.refresh(mestre)
+    return enriquecer_mestre(db, mestre)

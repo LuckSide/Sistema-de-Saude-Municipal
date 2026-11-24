@@ -13,8 +13,11 @@ import {
   QrCode,
   RefreshCw,
   Search,
+  Trash2,
   UploadCloud,
+  UserX,
   X,
+  XCircle,
 } from "lucide-react";
 import {
   solicitarListar,
@@ -24,6 +27,8 @@ import {
   labUploadLaudo,
   labJustificarInconsistencia,
   labVisualizarLaudoPdfUrl,
+  labAlterarStatusSolicitacao,
+  labRemoverItemExame,
   labsListar,
   pagData,
   pagMeta,
@@ -93,6 +98,21 @@ export default function RecepcaoLab() {
   const [justificativaInconsistencia, setJustificativaInconsistencia] = useState("");
   const [enviandoInconsistencia, setEnviandoInconsistencia] = useState(false);
 
+  // Modal de Cancelamento de Atendimento (Falta, Erro de Digitação, etc.)
+  const [modalCancelar, setModalCancelar] = useState(false);
+  const [itemCancelar, setItemCancelar] = useState<SolicMestre | null>(null);
+  const [motivoCancelar, setMotivoCancelar] = useState("paciente_faltou");
+  const [observacaoCancelar, setObservacaoCancelar] = useState("");
+  const [enviandoCancelar, setEnviandoCancelar] = useState(false);
+
+  // Modal de Remoção de Exame com Justificativa Técnica pelo Laboratório
+  const [modalRemoverExame, setModalRemoverExame] = useState(false);
+  const [itemRemoverMestre, setItemRemoverMestre] = useState<SolicMestre | null>(null);
+  const [exameParaRemover, setExameParaRemover] = useState<any | null>(null);
+  const [motivoRemocaoPredefinido, setMotivoRemocaoPredefinido] = useState("Paciente não trouxe material biológico (urina/fezes)");
+  const [detalhesRemocao, setDetalhesRemocao] = useState("");
+  const [enviandoRemocaoExame, setEnviandoRemocaoExame] = useState(false);
+
   // Fechamento Seguro e Proteção Dirty State dos Modais
   const backdropUpload = useBackdropClose({
     onClose: () => !processandoUpload && setModalUpload(false),
@@ -110,6 +130,18 @@ export default function RecepcaoLab() {
     onClose: () => !enviandoAjuste && setModalAjuste(false),
     modalAberto: modalAjuste,
     isDirty: justificativaAjuste.trim().length > 0,
+  });
+
+  const backdropCancelar = useBackdropClose({
+    onClose: () => !enviandoCancelar && setModalCancelar(false),
+    modalAberto: modalCancelar,
+    isDirty: observacaoCancelar.trim().length > 0,
+  });
+
+  const backdropRemoverExame = useBackdropClose({
+    onClose: () => !enviandoRemocaoExame && setModalRemoverExame(false),
+    modalAberto: modalRemoverExame,
+    isDirty: detalhesRemocao.trim().length > 0,
   });
 
   async function carregar() {
@@ -274,6 +306,80 @@ export default function RecepcaoLab() {
       setErro(e?.response?.data?.detail || "Erro ao registrar justificativa de inconsistência.");
     } finally {
       setEnviandoInconsistencia(false);
+    }
+  }
+
+  // Handlers para Cancelamento de Atendimento
+  function abrirModalCancelar(item: SolicMestre) {
+    setItemCancelar(item);
+    setMotivoCancelar("paciente_faltou");
+    setObservacaoCancelar("");
+    setModalCancelar(true);
+  }
+
+  async function submeterCancelar() {
+    if (!itemCancelar) return;
+    setEnviandoCancelar(true);
+    setErro("");
+    setOk("");
+    try {
+      await labAlterarStatusSolicitacao(itemCancelar.id, {
+        status: "cancelado",
+        motivo: motivoCancelar,
+        observacao: observacaoCancelar.trim(),
+      });
+      const rotuloMotivo =
+        motivoCancelar === "paciente_faltou"
+          ? "Paciente Faltou"
+          : motivoCancelar === "erro_digitacao"
+          ? "Erro de Digitação"
+          : motivoCancelar === "desistencia"
+          ? "Desistência do Paciente"
+          : "Cancelado pelo Laboratório";
+      setOk(`Pedido #${itemCancelar.id} cancelado com sucesso (${rotuloMotivo}).`);
+      setModalCancelar(false);
+      carregar();
+    } catch (e: any) {
+      setErro(e?.response?.data?.detail || "Erro ao cancelar atendimento.");
+    } finally {
+      setEnviandoCancelar(false);
+    }
+  }
+
+  // Handlers para Remoção de Exame com Justificativa Técnica pelo Laboratório
+  function abrirModalRemoverExame(mestre: SolicMestre, exame: any) {
+    setItemRemoverMestre(mestre);
+    setExameParaRemover(exame);
+    setMotivoRemocaoPredefinido("Paciente não trouxe material biológico (urina/fezes)");
+    setDetalhesRemocao("");
+    setModalRemoverExame(true);
+  }
+
+  async function submeterRemocaoExame() {
+    if (!itemRemoverMestre || !exameParaRemover) return;
+    const justificativaCompleta = detalhesRemocao.trim()
+      ? `${motivoRemocaoPredefinido}: ${detalhesRemocao.trim()}`
+      : motivoRemocaoPredefinido;
+
+    if (justificativaCompleta.length < 5) {
+      setErro("Informe uma justificativa técnica explicativa para remoção do exame.");
+      return;
+    }
+
+    setEnviandoRemocaoExame(true);
+    setErro("");
+    setOk("");
+    try {
+      await labRemoverItemExame(itemRemoverMestre.id, exameParaRemover.id, justificativaCompleta);
+      setOk(
+        `Exame "${exameParaRemover.descricao || exameParaRemover.procedimento_descricao || exameParaRemover.codigo}" removido do pedido com justificativa técnica. O item não constará no faturamento.`
+      );
+      setModalRemoverExame(false);
+      carregar();
+    } catch (e: any) {
+      setErro(e?.response?.data?.detail || "Erro ao remover exame do pedido.");
+    } finally {
+      setEnviandoRemocaoExame(false);
     }
   }
 
@@ -510,6 +616,7 @@ export default function RecepcaoLab() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {lista.map((item) => {
             const st = (item.status || "").toLowerCase();
+            const isCancelado = st === "cancelado";
             const isAgendado = st === "agendado" || st === "solicitado";
             const isColetado = st === "coletado" || st === "recepcionado";
             const isAguardandoConf = st === "aguardando_conferencia";
@@ -520,7 +627,9 @@ export default function RecepcaoLab() {
               <Card
                 key={item.id}
                 className={`p-3.5 sm:p-4 rounded-xl border-sus-900/10 shadow-xs flex flex-col justify-between transition ${
-                  isRealizado
+                  isCancelado
+                    ? "bg-red-50/30 border-red-200/70 opacity-85"
+                    : isRealizado
                     ? "bg-emerald-50/20 border-emerald-300/70"
                     : isEmRevisao
                     ? "bg-indigo-50/20 border-indigo-200"
@@ -559,7 +668,11 @@ export default function RecepcaoLab() {
                     <div className="text-right shrink-0">
                       <span className="font-mono text-xs font-bold text-ink/50">#{item.id}</span>
                       <div>
-                        {isRealizado ? (
+                        {isCancelado ? (
+                          <span className="mt-0.5 inline-block rounded px-1.5 py-0.5 text-[9px] font-bold uppercase bg-red-100 text-red-800 border border-red-300">
+                            ✕ Cancelado
+                          </span>
+                        ) : isRealizado ? (
                           <span className="mt-0.5 inline-block rounded px-1.5 py-0.5 text-[9px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-300">
                             ✓ Realizado
                           </span>
@@ -616,7 +729,7 @@ export default function RecepcaoLab() {
                     </div>
                   </div>
 
-                  {/* Procedimentos Solicitados (Compacto) */}
+                  {/* Procedimentos Solicitados com Opção de Remoção com Justificativa */}
                   <div className="mb-2.5">
                     <div className="flex items-center justify-between mb-1">
                       <p className="text-[10px] font-bold uppercase text-sus-900/70">
@@ -629,31 +742,45 @@ export default function RecepcaoLab() {
                       )}
                     </div>
                     <div className="space-y-1">
-                      {(item.itens || []).slice(0, 3).map((it: any, idx) => (
+                      {(item.itens || []).map((it: any, idx) => (
                         <div
-                          key={idx}
-                          className="text-xs text-ink/85 flex items-center justify-between border-b border-sus-900/5 pb-0.5"
+                          key={it.id || idx}
+                          className="text-xs text-ink/85 flex items-center justify-between border-b border-sus-900/5 pb-1 gap-1"
                         >
-                          <span className="truncate mr-2 text-[11px]">
+                          <span className="truncate mr-1 text-[11px] flex-1">
                             <span className="font-mono text-[9px] text-ink/50 mr-1">
                               {it.codigo || it.procedimento_codigo}
                             </span>
                             {it.descricao || it.procedimento_descricao}
                           </span>
-                          {it.quantidade > 1 && (
-                            <span className="text-[9px] font-bold text-teal bg-teal/10 px-1 rounded">
-                              ×{it.quantidade}
-                            </span>
-                          )}
+                          <div className="flex items-center gap-1 shrink-0">
+                            {it.quantidade > 1 && (
+                              <span className="text-[9px] font-bold text-teal bg-teal/10 px-1 rounded">
+                                ×{it.quantidade}
+                              </span>
+                            )}
+                            {!isRealizado && !isCancelado && (
+                              <button
+                                type="button"
+                                onClick={() => abrirModalRemoverExame(item, it)}
+                                className="p-1 text-ink/35 hover:text-red-600 hover:bg-red-50 rounded transition"
+                                title="Remover exame com justificativa (não colheu / não trouxe)"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
                         </div>
                       ))}
-                      {(item.itens || []).length > 3 && (
-                        <p className="text-[10px] font-semibold text-teal pt-0.5">
-                          + {(item.itens || []).length - 3} outro(s) procedimento(s)
-                        </p>
-                      )}
                     </div>
                   </div>
+
+                  {/* Informações de Cancelamento se houver */}
+                  {isCancelado && item.observacao && (
+                    <div className="rounded-lg bg-red-50 p-2 text-[11px] text-red-800 border border-red-200 mb-2">
+                      <span className="font-bold">Motivo do Cancelamento:</span> {item.observacao}
+                    </div>
+                  )}
 
                   {/* Informações de Coleta e Laudo */}
                   {item.coletado_em && (
@@ -712,6 +839,15 @@ export default function RecepcaoLab() {
                     <>
                       <Button
                         type="button"
+                        onClick={() => abrirModalCancelar(item)}
+                        className="border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 !h-9 text-xs"
+                        title="Cancelar atendimento (falta do paciente, erro de digitação, etc.)"
+                      >
+                        <UserX className="h-3.5 w-3.5 text-red-600" /> Cancelar
+                      </Button>
+
+                      <Button
+                        type="button"
                         onClick={() => abrirModalAjuste(item)}
                         className="border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 !h-9 text-xs"
                         title="Notificar divergência ou solicitar correção"
@@ -732,6 +868,15 @@ export default function RecepcaoLab() {
                   {/* Status 2: Coletado (Aguardando Laudo) */}
                   {isColetado && (
                     <>
+                      <Button
+                        type="button"
+                        onClick={() => abrirModalCancelar(item)}
+                        className="border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 !h-9 text-xs"
+                        title="Cancelar atendimento por erro de digitação ou desistência"
+                      >
+                        <UserX className="h-3.5 w-3.5 text-red-600" /> Cancelar
+                      </Button>
+
                       <Button
                         type="button"
                         onClick={() => abrirModalAjuste(item)}
@@ -1233,6 +1378,201 @@ export default function RecepcaoLab() {
                 </Button>
                 <Button onClick={submeterAjuste} disabled={enviandoAjuste}>
                   {enviandoAjuste ? "Enviando pedido..." : "Enviar para Aprovação da Secretaria"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 4: Cancelar Atendimento (Falta, Erro de Digitação, Desistência) */}
+      {modalCancelar && itemCancelar && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-sus-950/60 p-3 sm:p-5"
+          onMouseDown={backdropCancelar.onMouseDown}
+          onMouseUp={backdropCancelar.onMouseUp}
+          onClick={backdropCancelar.onClick}
+        >
+          <div
+            className="rise max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between border-b border-sus-900/10 pb-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-sus-950 flex items-center gap-2">
+                  <UserX className="h-5 w-5 text-red-600" />
+                  Cancelar Atendimento Laboratorial
+                </h3>
+                <p className="mt-0.5 text-xs text-ink/65">
+                  Paciente: <strong>{itemCancelar.paciente_nome}</strong> · Pedido #{itemCancelar.id}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={backdropCancelar.fecharProtegido}
+                className="rounded-xl p-2 text-ink/50 hover:bg-sand transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div>
+                <Label>Motivo do Cancelamento *</Label>
+                <Select
+                  value={motivoCancelar}
+                  onChange={(e) => setMotivoCancelar(e.target.value)}
+                >
+                  <option value="paciente_faltou">
+                    Paciente Faltou (Não compareceu para a coleta)
+                  </option>
+                  <option value="erro_digitacao">
+                    Erro de Digitação / Agendamento incorreto
+                  </option>
+                  <option value="desistencia">
+                    Desistência do Paciente
+                  </option>
+                  <option value="outro">
+                    Outro motivo administrativo ou clínico
+                  </option>
+                </Select>
+              </div>
+
+              <div>
+                <Label>Observações Adicionais (Opcional)</Label>
+                <textarea
+                  rows={3}
+                  value={observacaoCancelar}
+                  onChange={(e) => setObservacaoCancelar(e.target.value)}
+                  placeholder="Informe detalhes adicionais sobre o motivo do cancelamento se necessário..."
+                  className="w-full rounded-xl border border-sus-900/15 bg-white p-3 text-xs text-ink outline-none focus:border-red-500"
+                />
+              </div>
+
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-[11px] text-red-800">
+                ⚠️ O cancelamento remove o agendamento da fila de coleta e impede que este atendimento seja apurado no faturamento final do laboratório.
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-sus-900/10">
+                <Button
+                  type="button"
+                  disabled={enviandoCancelar}
+                  onClick={() => setModalCancelar(false)}
+                  className="border border-sus-900/15 bg-white text-ink hover:bg-sand"
+                >
+                  Voltar
+                </Button>
+                <Button
+                  onClick={submeterCancelar}
+                  disabled={enviandoCancelar}
+                  className="bg-red-600 hover:bg-red-700 text-white font-bold"
+                >
+                  {enviandoCancelar ? "Cancelando..." : "Confirmar Cancelamento"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 5: Remoção de Exame com Justificativa Técnica pelo Laboratório */}
+      {modalRemoverExame && itemRemoverMestre && exameParaRemover && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-sus-950/60 p-3 sm:p-5"
+          onMouseDown={backdropRemoverExame.onMouseDown}
+          onMouseUp={backdropRemoverExame.onMouseUp}
+          onClick={backdropRemoverExame.onClick}
+        >
+          <div
+            className="rise max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between border-b border-sus-900/10 pb-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-sus-950 flex items-center gap-2">
+                  <Trash2 className="h-5 w-5 text-red-600" />
+                  Remover Exame do Pedido
+                </h3>
+                <p className="mt-0.5 text-xs text-ink/65">
+                  Paciente: <strong>{itemRemoverMestre.paciente_nome}</strong> (Pedido #{itemRemoverMestre.id})
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={backdropRemoverExame.fecharProtegido}
+                className="rounded-xl p-2 text-ink/50 hover:bg-sand transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div className="p-3 bg-sand/40 border border-sus-900/10 rounded-xl">
+                <span className="text-[10px] uppercase font-bold text-sus-900/70 block">Exame a ser removido:</span>
+                <span className="font-mono text-xs font-bold text-teal mr-2">
+                  {exameParaRemover.codigo || exameParaRemover.procedimento_codigo}
+                </span>
+                <span className="font-semibold text-sus-950">
+                  {exameParaRemover.descricao || exameParaRemover.procedimento_descricao}
+                </span>
+              </div>
+
+              <div>
+                <Label>Motivo Técnico da Não Realização *</Label>
+                <Select
+                  value={motivoRemocaoPredefinido}
+                  onChange={(e) => setMotivoRemocaoPredefinido(e.target.value)}
+                >
+                  <option value="Paciente não trouxe material biológico (urina/fezes)">
+                    Paciente não trouxe material biológico (urina/fezes)
+                  </option>
+                  <option value="Amostra insuficiente ou inviável para coleta no momento">
+                    Amostra insuficiente ou inviável para coleta no momento
+                  </option>
+                  <option value="Paciente recusou realizar este procedimento específico">
+                    Paciente recusou realizar este procedimento específico
+                  </option>
+                  <option value="Contraindicação clínica momentânea / Jejum inadequado">
+                    Contraindicação clínica momentânea / Jejum inadequado
+                  </option>
+                  <option value="Exame já realizado recentemente em outro serviço">
+                    Exame já realizado recentemente em outro serviço
+                  </option>
+                  <option value="Outro motivo técnico">
+                    Outro motivo técnico ou laboratorial
+                  </option>
+                </Select>
+              </div>
+
+              <div>
+                <Label>Detalhamento da Justificativa Técnica (Opcional se motivo padrão for suficiente)</Label>
+                <textarea
+                  rows={3}
+                  value={detalhesRemocao}
+                  onChange={(e) => setDetalhesRemocao(e.target.value)}
+                  placeholder="Ex: Paciente informou que não conseguiu colher a urina da manhã em casa e optou por realizar apenas o exame de sangue..."
+                  className="w-full rounded-xl border border-sus-900/15 bg-white p-3 text-xs text-ink outline-none focus:border-red-500"
+                />
+                <p className="mt-1 text-[11px] text-ink/50">
+                  A remoção do exame é registrada em auditoria e impede que o leitor OCR aponte divergência de exame faltante e impede cobrança no faturamento.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-sus-900/10">
+                <Button
+                  type="button"
+                  disabled={enviandoRemocaoExame}
+                  onClick={() => setModalRemoverExame(false)}
+                  className="border border-sus-900/15 bg-white text-ink hover:bg-sand"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={submeterRemocaoExame}
+                  disabled={enviandoRemocaoExame}
+                  className="bg-red-600 hover:bg-red-700 text-white font-bold"
+                >
+                  {enviandoRemocaoExame ? "Removendo..." : "Confirmar Remoção do Exame"}
                 </Button>
               </div>
             </div>

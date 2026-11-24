@@ -238,6 +238,36 @@ class SolicMestreIn(BaseModel):
         return total
 
 
+class SolicMestreEditarIn(BaseModel):
+    itens: list[SolicItemIn]
+    medico_id: int | None = None
+    medico_solicitante: str = Field(default="", max_length=150)
+    unidade_saude_id: int | None = None
+    unidade_psf: str = Field(default="", max_length=150)
+    justificativa: str = Field(default="", max_length=500)
+    hora_agendada: str = Field(default="07:00", max_length=10)
+
+    def itens_normalizados(self) -> dict[int, int]:
+        total: dict[int, int] = {}
+        for it in self.itens or []:
+            total[it.sigtap_id] = total.get(it.sigtap_id, 0) + it.quantidade
+        if not total:
+            raise ValueError("Informe ao menos 1 procedimento/exame para o pedido.")
+        for sid, qtd in total.items():
+            if qtd < 1 or qtd > 99:
+                raise ValueError(f"Quantidade inválida p/ sigtap {sid}: {qtd} (1..99)")
+        return total
+
+
+class SolicItemRemoverIn(BaseModel):
+    justificativa: str = Field(min_length=5, max_length=500)
+
+
+class SolicMestreCancelarIn(BaseModel):
+    motivo: str = Field(min_length=3, max_length=255)
+    tipo_motivo: str = Field(default="falta", pattern="^(falta|erro_digitacao|desistencia|outro)$")
+
+
 class ItemOut(BaseModel):
     id: int
     solicitacao_id: int
@@ -641,6 +671,11 @@ class LabFaturamentoItemRelatorioOut(BaseModel):
     quantidade: int = 0
     valor_unitario: float
     valor_total: float
+    # Dois valores oficiais para conferência
+    valor_unitario_sigtap: float = 0.0
+    valor_total_sigtap: float = 0.0
+    valor_unitario_contrato: float = 0.0
+    valor_total_contrato: float = 0.0
     origem_preco: str  # sigtap_padrao | contrato_custom
 
 
@@ -653,6 +688,7 @@ class LabFaturamentoRelatorioPrestadorOut(BaseModel):
     contrato_id: int | None
     numero_contrato: str
     competencia: str
+    visao: str = "concluidos"  # "concluidos" | "projetado"
     qtd_solicitacoes: int
     qtd_exames_total: int
     total_solicitacoes: int = 0
@@ -663,6 +699,18 @@ class LabFaturamentoRelatorioPrestadorOut(BaseModel):
     valor_total: float = 0.0
     valor_glosado: float = 0.0
     valor_aprovado: float = 0.0
+    # Totais consolidados dos 2 valores (SUS e Contrato)
+    valor_total_contrato: float = 0.0
+    valor_total_sigtap: float = 0.0
+    # Comparativo: Concluído (Oficial com Laudo) vs Projetado (Total Agendado)
+    qtd_exames_concluidos: int = 0
+    valor_concluido_contrato: float = 0.0
+    valor_concluido_sigtap: float = 0.0
+    qtd_exames_projetados: int = 0
+    valor_projetado_contrato: float = 0.0
+    valor_projetado_sigtap: float = 0.0
+    qtd_exames_pendentes: int = 0
+    valor_pendente_contrato: float = 0.0
     status_fechamento: str  # em_apuracao | aguardando_aprovacao | aprovado_secretaria | fechado
     liberado_visualizacao_lab: bool
     aprovado_por: str

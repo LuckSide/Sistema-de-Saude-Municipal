@@ -599,6 +599,51 @@ class ComodatoMovimentacaoIn(BaseModel):
         return self
 
 
+class ComodatoMovimentacaoUpdate(BaseModel):
+    empresa_id: int | None = None
+    tipo_movimentacao: str | None = None
+    tipo_cilindro: str | None = None
+    quantidade: int | None = Field(default=None, ge=1)
+    data_movimento: date | None = None
+    data_movimentacao: date | None = None
+    numero_documento: str | None = None
+    numero_nota_remessa: str | None = None
+    responsavel: str | None = None
+    observacoes: str | None = None
+
+    @field_validator("tipo_movimentacao", mode="before")
+    @classmethod
+    def normalizar_tipo_movimentacao(cls, v: Any) -> str | None:
+        if v is None:
+            return None
+        s = str(v).strip().upper()
+        if "DEV" in s or "SAIDA" in s or "SAÍDA" in s or "EMPRESA" in s:
+            return "DEVOLUCAO_EMPRESA"
+        return "ENTRADA_COMODATO"
+
+    @field_validator("tipo_cilindro", mode="before")
+    @classmethod
+    def normalizar_tipo_cilindro(cls, v: Any) -> str | None:
+        if v is None:
+            return None
+        s = str(v).strip().lower().replace(" ", "").replace("³", "3")
+        if "10" in s:
+            return "10m3"
+        if "3" in s:
+            return "3m3"
+        if "1" in s:
+            return "1m3"
+        return s or "10m3"
+
+    @model_validator(mode="after")
+    def ajustar_aliases(self) -> "ComodatoMovimentacaoUpdate":
+        if self.data_movimento is None and self.data_movimentacao is not None:
+            self.data_movimento = self.data_movimentacao
+        if not self.numero_documento and self.numero_nota_remessa:
+            self.numero_documento = self.numero_nota_remessa
+        return self
+
+
 class ComodatoMovimentacaoOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

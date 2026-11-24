@@ -1240,6 +1240,15 @@ export type TipoFila = {
   nome: string;
   tipo_fila?: "REGULACAO_GERAL" | "EXAME_LABORATORIAL" | "ALTA_COMPLEXIDADE" | string;
   ativo: boolean;
+  cbos_permitidos?: string;
+  cbos_detalhes?: { cbo: string; descricao: string }[];
+  exigir_cbo_estrito?: boolean;
+  prefixos_sigtap?: string;
+  excluir_prefixos_sigtap?: string;
+  especialidade_padrao?: string;
+  cbo_padrao?: string;
+  sinonimos?: string;
+  descricao_regras?: string;
 };
 export type ProcedimentoCat = {
   id: number;
@@ -1262,6 +1271,13 @@ export const tfdCriarTipo = (p: Record<string, unknown>) =>
 export const tfdAtualizarTipo = (id: number, p: Record<string, unknown>) =>
   api.put<TipoFila>(`/api/tfd/tipos/${id}`, p).then((r) => r.data);
 export const tfdExcluirTipo = (id: number) => api.delete(`/api/tfd/tipos/${id}`);
+export const tfdRedefinirRegrasPadrao = (sobrescrever = false) =>
+  api
+    .post<{ ok: boolean; inseridos: number; atualizados: number; mensagem: string }>(
+      "/api/tfd/tipos/redefinir-padroes",
+      { sobrescrever }
+    )
+    .then((r) => r.data);
 
 export const tfdProcedimentos = (params?: { q?: string; tipo_fila?: string; ativos?: boolean; page?: number; limit?: number }) =>
   api.get<Pagina<ProcedimentoCat> | ProcedimentoCat[]>("/api/tfd/procedimentos", { params }).then((r) => r.data);
@@ -3882,6 +3898,32 @@ export const oxigenioCriarComodato = (data: {
     })
     .then((r) => r.data);
 
+export const oxigenioEditarComodato = (
+  id: number,
+  data: {
+    empresa_id?: number;
+    tipo_movimentacao?: string;
+    tipo_cilindro?: string;
+    quantidade?: number;
+    data_movimento?: string;
+    data_movimentacao?: string;
+    numero_documento?: string;
+    numero_nota_remessa?: string;
+    responsavel?: string;
+    observacoes?: string;
+  }
+) =>
+  api
+    .put<ComodatoMovimentacao>(`/api/oxigenio/comodato/${id}`, {
+      ...data,
+      data_movimento: data.data_movimento || data.data_movimentacao,
+      numero_documento: data.numero_documento || data.numero_nota_remessa,
+    })
+    .then((r) => r.data);
+
+export const oxigenioExcluirComodato = (id: number) =>
+  api.delete<{ ok: boolean; mensagem: string }>(`/api/oxigenio/comodato/${id}`).then((r) => r.data);
+
 export const oxigenioSaldosComodato = (params?: { empresa_id?: number }) =>
   api.get<ComodatoSaldo[]>("/api/oxigenio/comodato/saldos", { params }).then((r) => r.data);
 
@@ -4371,6 +4413,10 @@ export type LabFaturamentoItem = {
   quantidade: number;
   valor_unitario: number;
   valor_total: number;
+  valor_unitario_sigtap: number;
+  valor_total_sigtap: number;
+  valor_unitario_contrato: number;
+  valor_total_contrato: number;
   origem_preco: "sigtap_padrao" | "contrato_custom";
 };
 
@@ -4383,11 +4429,22 @@ export type LabFaturamentoRelatorio = {
   contrato_id?: number | null;
   numero_contrato: string;
   competencia: string;
+  visao?: "concluidos" | "projetado";
   total_solicitacoes: number;
   total_exames: number;
   valor_total: number;
   valor_glosado: number;
   valor_aprovado: number;
+  valor_total_contrato: number;
+  valor_total_sigtap: number;
+  qtd_exames_concluidos: number;
+  valor_concluido_contrato: number;
+  valor_concluido_sigtap: number;
+  qtd_exames_projetados: number;
+  valor_projetado_contrato: number;
+  valor_projetado_sigtap: number;
+  qtd_exames_pendentes: number;
+  valor_pendente_contrato: number;
   status_fechamento: string;
   liberado_visualizacao_lab: boolean;
   aprovado_por: string;
@@ -4447,39 +4504,95 @@ export const labContratoPrecoDefinir = (contratoId: number, p: Record<string, un
 export const labContratoPrecoRemover = (contratoId: number, precoId: number) =>
   api.delete(`/api/lab/contratos/${contratoId}/precos/${precoId}`).then(() => undefined);
 
-export const labFaturamentoRelatorio = (laboratorio_id: number, competencia: string) =>
-  api.get<LabFaturamentoRelatorio>("/api/lab/faturamento/relatorio-prestador", {
-    params: { laboratorio_id, competencia },
-  }).then((r) => {
-    const d = r.data as any;
-    const rawItens = Array.isArray(d?.itens)
-      ? d.itens
-      : Array.isArray(d?.itens_agrupados)
-      ? d.itens_agrupados
-      : [];
-    const itens = rawItens.map((it: any) => ({
-      sigtap_id: it.sigtap_id,
-      codigo_procedimento: it.codigo_procedimento,
-      descricao_procedimento: it.descricao_procedimento,
-      quantidade: it.quantidade ?? it.quantidade_executada ?? 0,
-      valor_unitario: Number(it.valor_unitario || 0),
-      valor_total: Number(it.valor_total || 0),
-      origem_preco: it.origem_preco || "sigtap_padrao",
-    }));
-    return {
-      ...d,
-      cnes_laboratorio: d.cnes_laboratorio || "",
-      responsavel_tecnico: d.responsavel_tecnico || "",
-      horario_funcionamento: d.horario_funcionamento || "",
-      total_solicitacoes: d.total_solicitacoes ?? d.qtd_solicitacoes ?? 0,
-      total_exames: d.total_exames ?? d.qtd_exames_total ?? 0,
-      valor_total: d.valor_total ?? d.valor_total_bruto ?? 0,
-      valor_glosado: d.valor_glosado ?? d.valor_glosas ?? 0,
-      valor_aprovado: d.valor_aprovado ?? d.valor_total_liquido ?? 0,
-      itens,
-      itens_agrupados: itens,
-    } as LabFaturamentoRelatorio;
-  });
+export const labFaturamentoRelatorio = (
+  laboratorio_id: number,
+  competencia: string,
+  visao: "concluidos" | "projetado" = "concluidos",
+) =>
+  api
+    .get<LabFaturamentoRelatorio>("/api/lab/faturamento/relatorio-prestador", {
+      params: { laboratorio_id, competencia, visao },
+    })
+    .then((r) => {
+      const d = r.data as any;
+      const rawItens = Array.isArray(d?.itens)
+        ? d.itens
+        : Array.isArray(d?.itens_agrupados)
+        ? d.itens_agrupados
+        : [];
+      const itens = rawItens.map((it: any) => ({
+        sigtap_id: it.sigtap_id,
+        codigo_procedimento: it.codigo_procedimento,
+        descricao_procedimento: it.descricao_procedimento,
+        quantidade: it.quantidade ?? it.quantidade_executada ?? 0,
+        valor_unitario: Number(it.valor_unitario || 0),
+        valor_total: Number(it.valor_total || 0),
+        valor_unitario_sigtap: Number(it.valor_unitario_sigtap || 0),
+        valor_total_sigtap: Number(it.valor_total_sigtap || 0),
+        valor_unitario_contrato: Number(it.valor_unitario_contrato || it.valor_unitario || 0),
+        valor_total_contrato: Number(it.valor_total_contrato || it.valor_total || 0),
+        origem_preco: it.origem_preco || "sigtap_padrao",
+      }));
+      return {
+        ...d,
+        visao: d.visao || visao,
+        cnes_laboratorio: d.cnes_laboratorio || "",
+        responsavel_tecnico: d.responsavel_tecnico || "",
+        horario_funcionamento: d.horario_funcionamento || "",
+        total_solicitacoes: d.total_solicitacoes ?? d.qtd_solicitacoes ?? 0,
+        total_exames: d.total_exames ?? d.qtd_exames_total ?? 0,
+        valor_total: d.valor_total ?? d.valor_total_bruto ?? 0,
+        valor_glosado: d.valor_glosado ?? d.valor_glosas ?? 0,
+        valor_aprovado: d.valor_aprovado ?? d.valor_total_liquido ?? 0,
+        valor_total_contrato: Number(d.valor_total_contrato || d.valor_total || 0),
+        valor_total_sigtap: Number(d.valor_total_sigtap || 0),
+        qtd_exames_concluidos: d.qtd_exames_concluidos ?? 0,
+        valor_concluido_contrato: Number(d.valor_concluido_contrato || 0),
+        valor_concluido_sigtap: Number(d.valor_concluido_sigtap || 0),
+        qtd_exames_projetados: d.qtd_exames_projetados ?? 0,
+        valor_projetado_contrato: Number(d.valor_projetado_contrato || 0),
+        valor_projetado_sigtap: Number(d.valor_projetado_sigtap || 0),
+        qtd_exames_pendentes: d.qtd_exames_pendentes ?? 0,
+        valor_pendente_contrato: Number(d.valor_pendente_contrato || 0),
+        itens,
+        itens_agrupados: itens,
+      } as LabFaturamentoRelatorio;
+    });
+
+export const labAlterarStatusSolicitacao = (
+  mid: number,
+  payload: { status: string; motivo?: string },
+) =>
+  api
+    .patch<SolicMestre>(`/api/lab/exames/solicitacoes/${mid}/status`, payload)
+    .then((r) => mapMestre(r.data));
+
+export const labEditarPedidoExames = (
+  mid: number,
+  payload: {
+    itens: { sigtap_id: number; quantidade: number }[];
+    medico_id?: number | null;
+    medico_solicitante?: string;
+    unidade_saude_id?: number | null;
+    unidade_psf?: string;
+    justificativa?: string;
+    hora_agendada?: string;
+  },
+) =>
+  api
+    .put<SolicMestre>(`/api/lab/exames/solicitacoes/${mid}/editar`, payload)
+    .then((r) => mapMestre(r.data));
+
+export const labRemoverItemExame = (
+  mid: number,
+  itemId: number,
+  justificativa: string,
+) =>
+  api
+    .post<SolicMestre>(`/api/lab/exames/solicitacoes/${mid}/itens/${itemId}/remover`, {
+      justificativa,
+    })
+    .then((r) => mapMestre(r.data));
 
 export const labFaturamentoAprovar = (p: {
   laboratorio_id: number;

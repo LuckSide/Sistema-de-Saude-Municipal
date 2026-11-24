@@ -1073,5 +1073,108 @@ def test_comodato_robustez_e_seed_real(client: TestClient, session: Session):
     assert fat["contratado_licitacao_10m3"] > 0
 
 
+def test_editar_e_excluir_comodato(client: TestClient, session: Session):
+    hoje = date.today()
+
+    emp = EmpresaOxigenio(
+        razao_social="Oxigênio Vale das Pedras Ltda",
+        nome_fantasia="Vale Oxigênio",
+        cnpj="11.222.333/0001-44",
+        ativo=True,
+    )
+    session.add(emp)
+    session.commit()
+    session.refresh(emp)
+
+    # 1. Registra entrada de 10 cilindros de 10m³
+    res_ent = client.post(
+        "/api/oxigenio/comodato",
+        json={
+            "empresa_id": emp.id,
+            "tipo_movimentacao": "ENTRADA_COMODATO",
+            "tipo_cilindro": "10m3",
+            "quantidade": 10,
+            "data_movimento": str(hoje),
+            "numero_documento": "NF-ORIG-01",
+            "observacoes": "Remessa inicial",
+        },
+    )
+    assert res_ent.status_code == 201, res_ent.text
+    id_entrada = res_ent.json()["id"]
+
+    # 2. Registra devolução de 4 cilindros
+    res_dev = client.post(
+        "/api/oxigenio/comodato",
+        json={
+            "empresa_id": emp.id,
+            "tipo_movimentacao": "DEVOLUCAO_EMPRESA",
+            "tipo_cilindro": "10m3",
+            "quantidade": 4,
+            "data_movimento": str(hoje),
+            "numero_documento": "DEV-01",
+        },
+    )
+    assert res_dev.status_code == 201
+    id_devolucao = res_dev.json()["id"]
+
+    # Saldo atual = 6
+    saldos = client.get(f"/api/oxigenio/comodato/saldos?empresa_id={emp.id}").json()
+    s10 = next(s for s in saldos if s["tipo_cilindro"] == "10m3")
+    assert s10["saldo_em_comodato"] == 6
+
+    # 3. Edita a entrada de 10 para 15 cilindros e atualiza documento
+    res_edit = client.put(
+        f"/api/oxigenio/comodato/{id_entrada}",
+        json={
+            "quantidade": 15,
+            "numero_nota_remessa": "NF-ORIG-01-RETIFICADA",
+            "observacoes": "Nota fiscal retificada pelo fornecedor",
+        },
+    )
+    assert res_edit.status_code == 200, res_edit.text
+    dados_edit = res_edit.json()
+    assert dados_edit["quantidade"] == 15
+    assert dados_edit["numero_documento"] == "NF-ORIG-01-RETIFICADA"
+    assert dados_edit["observacoes"] == "Nota fiscal retificada pelo fornecedor"
+
+    # Saldo deve agora ser 11 (15 - 4)
+    saldos_apos_edit = client.get(f"/api/oxigenio/comodato/saldos?empresa_id={emp.id}").json()
+    s10_edit = next(s for s in saldos_apos_edit if s["tipo_cilindro"] == "10m3")
+    assert s10_edit["saldo_em_comodato"] == 11
+
+    # 4. Tenta editar entrada para 2 cilindros (menor que os 4 devolvidos) -> Deve retornar 400
+    res_edit_invalido = client.put(
+        f"/api/oxigenio/comodato/{id_entrada}",
+        json={"quantidade": 2},
+    )
+    assert res_edit_invalido.status_code == 400
+    assert "saldo negativo" in res_edit_invalido.json()["detail"].lower()
+
+    # 5. Tenta excluir a entrada de 15 enquanto ainda existe a devolução de 4 -> Deve retornar 400
+    res_del_entrada_bloqueada = client.delete(f"/api/oxigenio/comodato/{id_entrada}")
+    assert res_del_entrada_bloqueada.status_code == 400
+    assert "não é possível excluir" in res_del_entrada_bloqueada.json()["detail"].lower()
+
+    # 6. Exclui a devolução de 4 com sucesso
+    res_del_dev = client.delete(f"/api/oxigenio/comodato/{id_devolucao}")
+    assert res_del_dev.status_code == 200
+    assert res_del_dev.json()["ok"] is True
+
+    # Saldo agora é 15 (15 - 0)
+    saldos_apos_del_dev = client.get(f"/api/oxigenio/comodato/saldos?empresa_id={emp.id}").json()
+    s10_del_dev = next(s for s in saldos_apos_del_dev if s["tipo_cilindro"] == "10m3")
+    assert s10_del_dev["saldo_em_comodato"] == 15
+
+    # 7. Agora exclui a entrada com sucesso
+    res_del_ent = client.delete(f"/api/oxigenio/comodato/{id_entrada}")
+    assert res_del_ent.status_code == 200
+    assert res_del_ent.json()["ok"] is True
+
+    # Saldo voltou para 0
+    saldos_final = client.get(f"/api/oxigenio/comodato/saldos?empresa_id={emp.id}").json()
+    s10_final = next(s for s in saldos_final if s["tipo_cilindro"] == "10m3")
+    assert s10_final["saldo_em_comodato"] == 0
+
+
 
 

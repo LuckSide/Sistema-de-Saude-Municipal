@@ -32,6 +32,7 @@ from app.schemas.oxigenio import (
     CilindroVazioIn,
     CilindroVazioOut,
     ComodatoMovimentacaoIn,
+    ComodatoMovimentacaoUpdate,
     ComodatoMovimentacaoOut,
     ComodatoSaldoOut,
     EmprestimoEditarIn,
@@ -2268,11 +2269,129 @@ def registrar_movimentacao_comodato(
         db.commit()
         db.refresh(mov)
         return ComodatoMovimentacaoOut.model_validate(mov)
+    except HTTPException:
+        raise
     except Exception as exc:
         db.rollback()
         raise HTTPException(
             status_code=500,
             detail=f"Erro ao registrar movimentação de comodato: {str(exc)}",
+        )
+
+
+@router.put("/comodato/{movimento_id}", response_model=ComodatoMovimentacaoOut)
+def editar_movimentacao_comodato(
+    movimento_id: int,
+    data: ComodatoMovimentacaoUpdate,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("oxigenio_estoque", "oxigenio", "usuarios")),
+):
+    mov = db.get(CilindroComodatoMovimentacao, movimento_id)
+    if not mov:
+        raise HTTPException(status_code=404, detail="Movimentação de comodato não encontrada.")
+
+    # Se alterar a empresa
+    if data.empresa_id is not None and data.empresa_id != mov.empresa_id:
+        emp = db.get(EmpresaOxigenio, data.empresa_id)
+        if not emp:
+            raise HTTPException(status_code=404, detail="Empresa fornecedora não encontrada.")
+        mov.empresa_id = emp.id
+        mov.empresa_nome = emp.nome_fantasia or emp.razao_social
+
+    nova_empresa_id = mov.empresa_id
+    novo_tipo_mov = data.tipo_movimentacao if data.tipo_movimentacao is not None else mov.tipo_movimentacao
+    novo_tipo_cil = data.tipo_cilindro if data.tipo_cilindro is not None else mov.tipo_cilindro
+    nova_qtd = data.quantidade if data.quantidade is not None else mov.quantidade
+
+    # Validação de consistência de saldo: busca todas as OUTRAS movimentações dessa empresa e cilindro
+    outras_movs = db.exec(
+        select(CilindroComodatoMovimentacao).where(
+            CilindroComodatoMovimentacao.empresa_id == nova_empresa_id,
+            CilindroComodatoMovimentacao.tipo_cilindro == novo_tipo_cil,
+            CilindroComodatoMovimentacao.id != mov.id,
+        )
+    ).all()
+
+    total_ent = sum(m.quantidade for m in outras_movs if m.tipo_movimentacao == "ENTRADA_COMODATO")
+    total_dev = sum(m.quantidade for m in outras_movs if m.tipo_movimentacao == "DEVOLUCAO_EMPRESA")
+
+    if novo_tipo_mov == "ENTRADA_COMODATO":
+        total_ent += nova_qtd
+    elif novo_tipo_mov == "DEVOLUCAO_EMPRESA":
+        total_dev += nova_qtd
+
+    if total_dev > total_ent and total_ent >= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A alteração resulta em saldo negativo ({total_ent - total_dev}) de cilindros {novo_tipo_cil} em comodato para esta empresa.",
+        )
+
+    # Aplica alterações
+    mov.tipo_movimentacao = novo_tipo_mov
+    mov.tipo_cilindro = novo_tipo_cil
+    mov.quantidade = nova_qtd
+    if data.data_movimento is not None:
+        mov.data_movimento = data.data_movimento
+    if data.numero_documento is not None:
+        mov.numero_documento = data.numero_documento.strip()
+    if data.responsavel is not None and data.responsavel.strip():
+        mov.responsavel = data.responsavel.strip()
+    if data.observacoes is not None:
+        mov.observacoes = data.observacoes.strip()
+
+    try:
+        db.add(mov)
+        db.commit()
+        db.refresh(mov)
+        return ComodatoMovimentacaoOut.model_validate(mov)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao atualizar movimentação de comodato: {str(exc)}",
+        )
+
+
+@router.delete("/comodato/{movimento_id}")
+def excluir_movimentacao_comodato(
+    movimento_id: int,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("oxigenio_estoque", "oxigenio", "usuarios")),
+):
+    mov = db.get(CilindroComodatoMovimentacao, movimento_id)
+    if not mov:
+        raise HTTPException(status_code=404, detail="Movimentação de comodato não encontrada.")
+
+    # Se for uma entrada, verifica se as devoluções restantes cabem nas entradas restantes
+    if mov.tipo_movimentacao == "ENTRADA_COMODATO":
+        outras = db.exec(
+            select(CilindroComodatoMovimentacao).where(
+                CilindroComodatoMovimentacao.empresa_id == mov.empresa_id,
+                CilindroComodatoMovimentacao.tipo_cilindro == mov.tipo_cilindro,
+                CilindroComodatoMovimentacao.id != mov.id,
+            )
+        ).all()
+        ent_restante = sum(m.quantidade for m in outras if m.tipo_movimentacao == "ENTRADA_COMODATO")
+        dev_total = sum(m.quantidade for m in outras if m.tipo_movimentacao == "DEVOLUCAO_EMPRESA")
+        if dev_total > ent_restante:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Não é possível excluir esta entrada de comodato ({mov.quantidade} unids). Existem {dev_total} devoluções registradas que excedem as {ent_restante} entradas restantes.",
+            )
+
+    try:
+        db.delete(mov)
+        db.commit()
+        return {"ok": True, "mensagem": f"Movimentação de comodato #{movimento_id} excluída com sucesso."}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao excluir movimentação de comodato: {str(exc)}",
         )
 
 

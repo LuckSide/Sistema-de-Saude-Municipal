@@ -274,6 +274,16 @@ class TipoFila(SQLModel, table=True):
     tipo_fila: str = Field(default="REGULACAO_GERAL", max_length=40, index=True)  # REGULACAO_GERAL, EXAME_LABORATORIAL, ALTA_COMPLEXIDADE
     ativo: bool = Field(default=True, index=True)
 
+    # Regras dinâmicas de vinculação e organização do serviço
+    cbos_permitidos: str = Field(default="", max_length=2000)  # JSON list ou CSV de CBOs autorizados
+    exigir_cbo_estrito: bool = Field(default=False)  # Restringe estritamente aos CBOs liberados
+    prefixos_sigtap: str = Field(default="", max_length=500)  # Prefixos SIGTAP associados (ex: "021102, 020501")
+    excluir_prefixos_sigtap: str = Field(default="", max_length=500)  # Prefixos SIGTAP a excluir (ex: "0202")
+    especialidade_padrao: str = Field(default="", max_length=120)  # Nome da especialidade médica sugerida
+    cbo_padrao: str = Field(default="", max_length=10)  # Código CBO sugerido
+    sinonimos: str = Field(default="", max_length=1000)  # Apelidos de busca e atalhos
+    descricao_regras: str = Field(default="", max_length=1000)  # Descrição/orientação das regras
+
 
 class ProcedimentoCatalogo(SQLModel, table=True):
     __tablename__ = "tfd_procedimentos"

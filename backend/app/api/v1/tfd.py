@@ -4027,6 +4027,15 @@ def catalogo_procedimentos(
     tipo_busca_norm = remover_acentos(tipo_busca).strip()
     regras = obter_filtro_sigtap_por_tipo(tipo_busca)
 
+    # Regras dinâmicas salvas nas configurações do sistema (tfd_tipos_fila)
+    from app.services.sigtap_hierarquia import obter_regras_tipo_fila
+    regras_banco = obter_regras_tipo_fila(db, tipo_busca)
+    if regras_banco.get("encontrado"):
+        if regras_banco.get("prefixos"):
+            regras["prefixos"] = regras_banco["prefixos"]
+        if regras_banco.get("excluir_prefixos"):
+            regras["excluir_prefixos"] = regras_banco["excluir_prefixos"]
+
     # Determina se a busca é estritamente laboratorial
     eh_laboratorial = (
         apenas_laboratoriais is True
@@ -5664,7 +5673,29 @@ def obter_hierarquia_sigtap_endpoint(
     return decompor_codigo_sigtap(codigo)
 
 
-# ---------- CRUD Tipos de Fila ----------
+# ---------- CRUD Tipos de Fila e Organização de Serviços ----------
+def _formatar_tipo_out(db: Session, obj: TipoFila) -> TipoFilaOut:
+    from app.services.sigtap_hierarquia import parse_cbos_lista, obter_detalhes_cbos
+    cbos = parse_cbos_lista(getattr(obj, "cbos_permitidos", "") or "")
+    detalhes = obter_detalhes_cbos(db, cbos)
+    return TipoFilaOut(
+        id=obj.id,
+        codigo=obj.codigo or "",
+        nome=obj.nome or "",
+        tipo_fila=obj.tipo_fila or "REGULACAO_GERAL",
+        ativo=bool(obj.ativo),
+        cbos_permitidos=getattr(obj, "cbos_permitidos", "") or "",
+        exigir_cbo_estrito=bool(getattr(obj, "exigir_cbo_estrito", False)),
+        prefixos_sigtap=getattr(obj, "prefixos_sigtap", "") or "",
+        excluir_prefixos_sigtap=getattr(obj, "excluir_prefixos_sigtap", "") or "",
+        especialidade_padrao=getattr(obj, "especialidade_padrao", "") or "",
+        cbo_padrao=getattr(obj, "cbo_padrao", "") or "",
+        sinonimos=getattr(obj, "sinonimos", "") or "",
+        descricao_regras=getattr(obj, "descricao_regras", "") or "",
+        cbos_detalhes=detalhes,
+    )
+
+
 @router.get("/tipos", response_model=Pagina[TipoFilaOut])
 def listar_tipos(
     q: str = Query(default="", max_length=80),
@@ -5675,20 +5706,49 @@ def listar_tipos(
     db: Session = Depends(get_db),
     _=Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
 ):
+    p_page = page if isinstance(page, int) and page > 0 else 1
+    p_limit = limit if isinstance(limit, int) and limit > 0 else 100
+    q_str = (q if isinstance(q, str) else "").strip()
+    tf_str = (tipo_fila if isinstance(tipo_fila, str) else "").strip()
+
     base = select(TipoFila).order_by(TipoFila.nome)
     filtros = []
-    if q:
-        filtros.append(TipoFila.nome.ilike(f"%{q}%"))
-    if tipo_fila and tipo_fila.strip() and tipo_fila.strip().upper() != "TODOS":
-        filtros.append(TipoFila.tipo_fila == tipo_fila.strip().upper())
-    if ativos is not None:
+    if q_str:
+        filtros.append(TipoFila.nome.ilike(f"%{q_str}%"))
+    if tf_str and tf_str.upper() != "TODOS":
+        filtros.append(TipoFila.tipo_fila == tf_str.upper())
+    if isinstance(ativos, bool):
         filtros.append(TipoFila.ativo == ativos)
     if filtros:
         base = select(TipoFila).where(*filtros).order_by(TipoFila.nome)
     total = db.exec(select(func.count()).select_from(base.subquery())).one() or 0
-    meta = paginar(total, page, limit)
-    rows = db.exec(base.offset(meta["offset"]).limit(limit)).all()
-    return {"data": rows, "total": total, "page": meta["page"], "pages": meta["pages"]}
+    meta = paginar(total, p_page, p_limit)
+    rows = db.exec(base.offset(meta["offset"]).limit(p_limit)).all()
+    data_out = [_formatar_tipo_out(db, r) for r in rows]
+    return {"data": data_out, "total": total, "page": meta["page"], "pages": meta["pages"]}
+
+
+class RedefinirRegrasPadraoIn(BaseModel):
+    sobrescrever: bool = False
+
+
+@router.post("/tipos/redefinir-padroes")
+def redefinir_regras_padrao_endpoint(
+    payload: RedefinirRegrasPadraoIn | None = None,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("tfd_catalogo", "usuarios", "cfg_filas", "integracoes", acoes=("criar", "editar"))),
+):
+    """Restaura as regras padrão do SUS/Vivver para os Tipos de Serviço."""
+    from app.services.sigtap_hierarquia import seed_regras_padrao_tipos_servico
+
+    sobr = payload.sobrescrever if payload else False
+    res = seed_regras_padrao_tipos_servico(db, sobrescrever=sobr)
+    return {
+        "ok": True,
+        "inseridos": res.get("inseridos", 0),
+        "atualizados": res.get("atualizados", 0),
+        "mensagem": f"Regras padrão inicializadas com sucesso ({res.get('inseridos', 0)} novos, {res.get('atualizados', 0)} atualizados).",
+    }
 
 
 @router.post("/tipos", response_model=TipoFilaOut, status_code=201)
@@ -5702,12 +5762,19 @@ def criar_tipo(data: TipoFilaIn, db: Session = Depends(get_db), _=Depends(need_a
         nome=nome,
         tipo_fila=tf_cat,
         ativo=data.ativo,
+        cbos_permitidos=data.cbos_permitidos or "",
+        exigir_cbo_estrito=bool(data.exigir_cbo_estrito),
+        prefixos_sigtap=data.prefixos_sigtap or "",
+        excluir_prefixos_sigtap=data.excluir_prefixos_sigtap or "",
+        especialidade_padrao=data.especialidade_padrao or "",
+        cbo_padrao=data.cbo_padrao or "",
+        sinonimos=data.sinonimos or "",
+        descricao_regras=data.descricao_regras or "",
     )
     db.add(obj)
     db.commit()
     db.refresh(obj)
-    return obj
-
+    return _formatar_tipo_out(db, obj)
 
 
 @router.put("/tipos/{tid}", response_model=TipoFilaOut)
@@ -5724,10 +5791,18 @@ def atualizar_tipo(tid: int, data: TipoFilaIn, db: Session = Depends(get_db), _=
     obj.nome = nome
     obj.tipo_fila = tf_cat
     obj.ativo = data.ativo
+    obj.cbos_permitidos = data.cbos_permitidos or ""
+    obj.exigir_cbo_estrito = bool(data.exigir_cbo_estrito)
+    obj.prefixos_sigtap = data.prefixos_sigtap or ""
+    obj.excluir_prefixos_sigtap = data.excluir_prefixos_sigtap or ""
+    obj.especialidade_padrao = data.especialidade_padrao or ""
+    obj.cbo_padrao = data.cbo_padrao or ""
+    obj.sinonimos = data.sinonimos or ""
+    obj.descricao_regras = data.descricao_regras or ""
     db.add(obj)
     db.commit()
     db.refresh(obj)
-    return obj
+    return _formatar_tipo_out(db, obj)
 
 
 

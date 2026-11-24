@@ -52,6 +52,8 @@ from app.schemas.lab_fase6 import (
     SolicMestreIn,
     SolicMestreOut,
     SolicMestreStatusIn,
+    SolicMestreEditarIn,
+    SolicItemRemoverIn,
     SolicMestreTransferirIn,
     VagaIn,
     VagaLoteMesIn,
@@ -67,11 +69,13 @@ from app.services.lab_fase6 import (
     auditar_mestre,
     consolidar_bpa_laboratorial,
     criar_solicitacao_mestre,
+    editar_pedido_exames,
     enriquecer_mestre,
     enriquecer_mestre_lote,
     gerar_comprovante_agendamento,
     pedir_ajuste_laboratorio,
     recepcionar_coleta,
+    remover_item_solicitacao,
 )
 
 router = APIRouter()
@@ -1558,12 +1562,16 @@ def alterar_status_agendamento(
     mid: int,
     data: SolicMestreStatusIn,
     db: Session = Depends(get_db),
-    ator=Depends(need_any_perm("lab_agenda", "lab_fila", "lab_orcamento", acoes=("editar",))),
+    ator=Depends(need_any_perm("lab_agenda", "lab_fila", "lab_orcamento", "lab_recepcao", "lab_marcacao", acoes=("editar",))),
 ):
-    """Permite desativar, reativar ou cancelar agendamento já realizado com estorno seguro de vagas."""
+    """Permite desativar, reativar ou cancelar agendamento (ex: falta do paciente, erro de digitação) com estorno seguro de vagas."""
     mestre = db.get(SolicitacaoMestre, mid)
     if not mestre:
         raise HTTPException(404, "Agendamento não encontrado.")
+
+    if getattr(ator, "laboratorio_id", None) and not ator.is_superuser:
+        if mestre.laboratorio_id != ator.laboratorio_id:
+            raise HTTPException(403, "Acesso não autorizado para solicitações de outro laboratório.")
 
     status_antigo = mestre.status
     if status_antigo == data.status:
@@ -1600,6 +1608,61 @@ def alterar_status_agendamento(
     db.commit()
     db.refresh(mestre)
     return enriquecer_mestre(db, mestre)
+
+
+@router.put("/exames/solicitacoes/{mid}/editar", response_model=SolicMestreOut)
+def api_editar_pedido_exames(
+    mid: int,
+    data: SolicMestreEditarIn,
+    db: Session = Depends(get_db),
+    ator=Depends(need_any_perm("lab_marcacao", "lab_agenda", "lab_fila", acoes=("editar", "criar"))),
+):
+    """Permite editar os procedimentos, exames e dados de um pedido já marcado."""
+    usuario_nome = getattr(ator, "nome", "") or getattr(ator, "username", "") or "Operador"
+    try:
+        novos_totais = data.itens_normalizados()
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    return editar_pedido_exames(
+        db,
+        solicitacao_id=mid,
+        itens_novos=novos_totais,
+        medico_id=data.medico_id,
+        medico_nome=data.medico_solicitante,
+        unidade_id=data.unidade_saude_id,
+        unidade_nome=data.unidade_psf,
+        justificativa=data.justificativa,
+        hora_agendada=data.hora_agendada,
+        usuario_nome=usuario_nome,
+    )
+
+
+@router.post("/exames/solicitacoes/{mid}/itens/{item_id}/remover", response_model=SolicMestreOut)
+def api_remover_item_solicitacao(
+    mid: int,
+    item_id: int,
+    data: SolicItemRemoverIn,
+    db: Session = Depends(get_db),
+    ator=Depends(need_any_perm("lab_recepcao", "lab_agenda", "lab_marcacao", acoes=("editar",))),
+):
+    """Permite ao laboratório remover exame do pedido com justificativa técnica (ex: amostra não trazida/colhida)."""
+    mestre = db.get(SolicitacaoMestre, mid)
+    if not mestre:
+        raise HTTPException(404, "Solicitação não encontrada.")
+
+    if getattr(ator, "laboratorio_id", None) and not ator.is_superuser:
+        if mestre.laboratorio_id != ator.laboratorio_id:
+            raise HTTPException(403, "Acesso não autorizado para solicitações de outro laboratório.")
+
+    usuario_nome = getattr(ator, "nome", "") or getattr(ator, "username", "") or "Laboratório"
+    return remover_item_solicitacao(
+        db,
+        solicitacao_id=mid,
+        item_id=item_id,
+        justificativa=data.justificativa,
+        usuario_nome=usuario_nome,
+    )
 
 
 @router.get("/exames/solicitacoes/{mid}/comprovante", response_model=ComprovanteExameOut)

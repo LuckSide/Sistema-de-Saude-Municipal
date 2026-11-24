@@ -44,7 +44,12 @@ def apurar_faturamento_competencia(
     competencia: str,  # "AAAA-MM"
     usuario_nome: str = "",
 ) -> LabFechamentoFaturamento:
-    """Calcula ou atualiza o fechamento da produção do laboratório na competência."""
+    """Calcula ou atualiza o fechamento da produção do laboratório na competência.
+
+    Regra de Faturamento Final:
+    Somente solicitações recepcionadas e com laudo PDF anexado e conferido
+    constam no faturamento oficial final para pagamento.
+    """
     lab = db.get(Laboratorio, laboratorio_id)
     if not lab:
         raise HTTPException(404, "Laboratório não encontrado.")
@@ -75,7 +80,7 @@ def apurar_faturamento_competencia(
     ).first()
 
     # Busca todas as solicitações válidas da competência (exclui paciente padrão de testes)
-    solics = db.exec(
+    solics_todas = db.exec(
         select(SolicitacaoMestre)
         .join(Paciente, SolicitacaoMestre.paciente_id == Paciente.id)
         .where(
@@ -87,18 +92,26 @@ def apurar_faturamento_competencia(
         )
     ).all()
 
-    solic_ids = [s.id for s in solics if s.id is not None]
+    # Faturamento Oficial Concluído: recepcionado E com laudo PDF anexado
+    solics_concluidas = [
+        s
+        for s in solics_todas
+        if s.status in ("realizado", "coletado") and (s.laudo_arquivo_id is not None or s.status == "realizado")
+    ]
+    solic_ids_concluidas = [s.id for s in solics_concluidas if s.id is not None]
 
     qtd_exames = 0
     total_bruto = 0.0
     total_glosado = 0.0
 
-    if solic_ids:
+    if solic_ids_concluidas:
         itens = db.exec(
-            select(ItemSolic).where(ItemSolic.solicitacao_id.in_(solic_ids))
+            select(ItemSolic).where(ItemSolic.solicitacao_id.in_(solic_ids_concluidas))
         ).all()
 
         for it in itens:
+            if it.status_auditoria == "removido_laboratorio":
+                continue
             qtd = it.quantidade or 1
             qtd_exames += qtd
             v_un = float(it.valor_unitario_aplicado or 0.0)
@@ -120,7 +133,7 @@ def apurar_faturamento_competencia(
             laboratorio_id=laboratorio_id,
             contrato_id=contrato.id if contrato else None,
             competencia=competencia,
-            qtd_solicitacoes=len(solics),
+            qtd_solicitacoes=len(solics_concluidas),
             qtd_exames=qtd_exames,
             valor_total_apurado=round(total_bruto, 2),
             valor_total_glosado=round(total_glosado, 2),
@@ -136,7 +149,7 @@ def apurar_faturamento_competencia(
         # Se ainda não estiver aprovado pela Secretaria, atualiza os valores apurados
         if fechamento.status in ("em_apuracao", "aguardando_aprovacao"):
             fechamento.contrato_id = contrato.id if contrato else fechamento.contrato_id
-            fechamento.qtd_solicitacoes = len(solics)
+            fechamento.qtd_solicitacoes = len(solics_concluidas)
             fechamento.qtd_exames = qtd_exames
             fechamento.valor_total_apurado = round(total_bruto, 2)
             fechamento.valor_total_glosado = round(total_glosado, 2)
@@ -154,14 +167,14 @@ def obter_relatorio_prestador(
     laboratorio_id: int,
     competencia: str,
     eh_perfil_laboratorio: bool = False,
+    visao: str = "concluidos",
 ) -> LabFaturamentoRelatorioPrestadorOut:
-    """Gera o relatório imprimível de faturamento para o prestador.
-    
-    Regra de Risco Zero e Segurança:
-    O prestador (laboratório credenciado) só tem acesso ao relatório final:
-    1. Se o mês já encerrou (data de hoje >= mês subsequente);
-    2. Mediante aprovação prévia da Secretaria de Saúde (liberado_visualizacao_lab = True).
-    Usuários da Secretaria/Admin podem visualizar o relatório a qualquer momento para auditoria.
+    """Gera o relatório imprimível de faturamento para o prestador com os 2 valores (SUS e Contrato).
+
+    Regras:
+    - visao='concluidos': exibe apenas os pedidos recepcionados com laudo PDF anexado (Faturamento Oficial).
+    - visao='projetado': exibe todo o agendamento da competência como potencial de faturamento.
+    - Mostra lado a lado o valor da Tabela SUS e o valor pactuado em Contrato.
     """
     lab = db.get(Laboratorio, laboratorio_id)
     if not lab:
@@ -191,8 +204,8 @@ def obter_relatorio_prestador(
     data_inicio = date(ano, mes, 1)
     data_fim = date(ano + 1, 1, 1) if mes == 12 else date(ano, mes + 1, 1)
 
-    solics = db.exec(
-        select(SolicitacaoMestre.id)
+    solics_todas = db.exec(
+        select(SolicitacaoMestre)
         .join(Paciente, SolicitacaoMestre.paciente_id == Paciente.id)
         .where(
             SolicitacaoMestre.laboratorio_id == laboratorio_id,
@@ -202,37 +215,81 @@ def obter_relatorio_prestador(
             (Paciente.eh_teste == False) | (Paciente.eh_teste.is_(None)),
         )
     ).all()
-    solic_ids = [s for s in solics if s is not None]
 
-    # Agrupa por procedimento para montar o espelho da fatura
+    # Separação: Concluídos (Oficial) vs Projetados (Total Agendado)
+    solics_concluidas = [
+        s
+        for s in solics_todas
+        if s.status in ("realizado", "coletado") and (s.laudo_arquivo_id is not None or s.status == "realizado")
+    ]
+    ids_concluidas = {s.id for s in solics_concluidas if s.id is not None}
+    ids_projetadas = {s.id for s in solics_todas if s.id is not None}
+
+    # Seleciona quais solicitações compõem a tabela detalhada conforme `visao`
+    ids_detalhe = ids_projetadas if visao == "projetado" else ids_concluidas
+
     itens_agrupados: dict[int, dict] = {}
 
-    if solic_ids:
-        itens = db.exec(
-            select(ItemSolic).where(ItemSolic.solicitacao_id.in_(solic_ids))
+    qtd_exames_concluidos = 0
+    valor_concluido_contrato = 0.0
+    valor_concluido_sigtap = 0.0
+
+    qtd_exames_projetados = 0
+    valor_projetado_contrato = 0.0
+    valor_projetado_sigtap = 0.0
+
+    if ids_projetadas:
+        itens_todos = db.exec(
+            select(ItemSolic).where(ItemSolic.solicitacao_id.in_(list(ids_projetadas)))
         ).all()
 
-        for it in itens:
+        for it in itens_todos:
+            if it.status_auditoria == "removido_laboratorio":
+                continue
             sid = it.sigtap_id
             if not sid:
                 continue
-            if sid not in itens_agrupados:
-                proc = db.get(SigtapProcedimento, sid)
-                v_un = float(it.valor_unitario_aplicado or 0.0)
-                origem = it.origem_preco or "sigtap_padrao"
-                if v_un == 0.0 and proc:
-                    v_un, origem, _ = resolver_preco_procedimento(
-                        db, laboratorio_id, sid, data_inicio, proc_padrao=proc
-                    )
-                itens_agrupados[sid] = {
-                    "sigtap_id": sid,
-                    "codigo": proc.codigo if proc else "",
-                    "descricao": proc.descricao if proc else "",
-                    "quantidade": 0,
-                    "valor_unitario": v_un,
-                    "origem_preco": origem,
-                }
-            itens_agrupados[sid]["quantidade"] += (it.quantidade or 1)
+
+            proc = db.get(SigtapProcedimento, sid)
+            v_sigtap = float(getattr(proc, "valor_sa", 0.0) or getattr(proc, "valor_sp", 0.0) or 0.0) if proc else 0.0
+            v_contrato = float(it.valor_unitario_aplicado or 0.0)
+            origem = it.origem_preco or "sigtap_padrao"
+            if v_contrato == 0.0 and proc:
+                v_contrato, origem, _ = resolver_preco_procedimento(
+                    db, laboratorio_id, sid, data_inicio, proc_padrao=proc
+                )
+
+            qtd = it.quantidade or 1
+            tot_contrato = round(v_contrato * qtd, 2)
+            tot_sigtap = round(v_sigtap * qtd, 2)
+
+            qtd_exames_projetados += qtd
+            valor_projetado_contrato += tot_contrato
+            valor_projetado_sigtap += tot_sigtap
+
+            if it.solicitacao_id in ids_concluidas:
+                if it.status_auditoria not in ("divergente", "rejeitado", "glosado"):
+                    qtd_exames_concluidos += qtd
+                    valor_concluido_contrato += tot_contrato
+                    valor_concluido_sigtap += tot_sigtap
+
+            if it.solicitacao_id in ids_detalhe:
+                if sid not in itens_agrupados:
+                    itens_agrupados[sid] = {
+                        "sigtap_id": sid,
+                        "codigo": proc.codigo if proc else "",
+                        "descricao": proc.descricao if proc else "",
+                        "quantidade": 0,
+                        "valor_unitario": v_contrato,
+                        "origem_preco": origem,
+                        "valor_unitario_sigtap": v_sigtap,
+                        "valor_unitario_contrato": v_contrato,
+                        "valor_total_sigtap": 0.0,
+                        "valor_total_contrato": 0.0,
+                    }
+                itens_agrupados[sid]["quantidade"] += qtd
+                itens_agrupados[sid]["valor_total_sigtap"] = round(itens_agrupados[sid]["valor_total_sigtap"] + tot_sigtap, 2)
+                itens_agrupados[sid]["valor_total_contrato"] = round(itens_agrupados[sid]["valor_total_contrato"] + tot_contrato, 2)
 
     lista_itens_out = [
         LabFaturamentoItemRelatorioOut(
@@ -242,7 +299,11 @@ def obter_relatorio_prestador(
             quantidade_executada=d["quantidade"],
             quantidade=d["quantidade"],
             valor_unitario=round(d["valor_unitario"], 2),
-            valor_total=round(d["quantidade"] * d["valor_unitario"], 2),
+            valor_total=round(d["valor_total_contrato"], 2),
+            valor_unitario_sigtap=round(d["valor_unitario_sigtap"], 2),
+            valor_total_sigtap=round(d["valor_total_sigtap"], 2),
+            valor_unitario_contrato=round(d["valor_unitario_contrato"], 2),
+            valor_total_contrato=round(d["valor_total_contrato"], 2),
             origem_preco=d["origem_preco"],
         )
         for d in sorted(itens_agrupados.values(), key=lambda x: x["codigo"])
@@ -250,6 +311,9 @@ def obter_relatorio_prestador(
 
     contrato = db.get(LabContrato, fechamento.contrato_id) if fechamento.contrato_id else None
     num_contrato = contrato.numero_contrato if contrato else "SEM CONTRATO VINCULADO"
+
+    tot_visao_contrato = sum(i.valor_total_contrato for i in lista_itens_out)
+    tot_visao_sigtap = sum(i.valor_total_sigtap for i in lista_itens_out)
 
     return LabFaturamentoRelatorioPrestadorOut(
         laboratorio_id=laboratorio_id,
@@ -260,16 +324,27 @@ def obter_relatorio_prestador(
         contrato_id=fechamento.contrato_id,
         numero_contrato=num_contrato,
         competencia=competencia,
-        qtd_solicitacoes=fechamento.qtd_solicitacoes,
-        qtd_exames_total=fechamento.qtd_exames,
-        total_solicitacoes=fechamento.qtd_solicitacoes,
-        total_exames=fechamento.qtd_exames,
-        valor_total_bruto=float(fechamento.valor_total_apurado),
+        visao=visao,
+        qtd_solicitacoes=len(ids_detalhe),
+        qtd_exames_total=sum(i.quantidade for i in lista_itens_out),
+        total_solicitacoes=len(ids_detalhe),
+        total_exames=sum(i.quantidade for i in lista_itens_out),
+        valor_total_bruto=round(tot_visao_contrato, 2),
         valor_glosas=float(fechamento.valor_total_glosado),
-        valor_total_liquido=float(fechamento.valor_total_aprovado),
-        valor_total=float(fechamento.valor_total_apurado),
+        valor_total_liquido=max(0.0, round(tot_visao_contrato - float(fechamento.valor_total_glosado), 2)),
+        valor_total=round(tot_visao_contrato, 2),
         valor_glosado=float(fechamento.valor_total_glosado),
-        valor_aprovado=float(fechamento.valor_total_aprovado),
+        valor_aprovado=max(0.0, round(tot_visao_contrato - float(fechamento.valor_total_glosado), 2)),
+        valor_total_contrato=round(tot_visao_contrato, 2),
+        valor_total_sigtap=round(tot_visao_sigtap, 2),
+        qtd_exames_concluidos=qtd_exames_concluidos,
+        valor_concluido_contrato=round(valor_concluido_contrato, 2),
+        valor_concluido_sigtap=round(valor_concluido_sigtap, 2),
+        qtd_exames_projetados=qtd_exames_projetados,
+        valor_projetado_contrato=round(valor_projetado_contrato, 2),
+        valor_projetado_sigtap=round(valor_projetado_sigtap, 2),
+        qtd_exames_pendentes=max(0, qtd_exames_projetados - qtd_exames_concluidos),
+        valor_pendente_contrato=max(0.0, round(valor_projetado_contrato - valor_concluido_contrato, 2)),
         status_fechamento=fechamento.status,
         liberado_visualizacao_lab=bool(fechamento.liberado_visualizacao_lab),
         aprovado_por=fechamento.aprovado_por or "",

@@ -16,6 +16,7 @@ import {
   User,
   X,
   XCircle,
+  Edit,
 } from "lucide-react";
 import {
   examesSolicitarLote,
@@ -30,6 +31,7 @@ import {
   mapMestre,
   labCancelarSolicitacao,
   labVerificarDuplicidade,
+  labEditarPedidoExames,
   type Laboratorio,
   type Medico,
   type Paciente,
@@ -83,6 +85,18 @@ export default function LabMarcacao() {
   const [buscando, setBuscando] = useState(false);
   const [pedidosEncontrados, setPedidosEncontrados] = useState<SolicMestre[]>([]);
   const [comprovanteModalId, setComprovanteModalId] = useState<number | null>(null);
+
+  // Modal e Estados de Edição do Pedido Marcado
+  const [modalEditar, setModalEditar] = useState(false);
+  const [pedidoEditando, setPedidoEditando] = useState<SolicMestre | null>(null);
+  const [itensEdicao, setItensEdicao] = useState<ItemLote[]>([]);
+  const [medicoIdEdicao, setMedicoIdEdicao] = useState("");
+  const [unidadeIdEdicao, setUnidadeIdEdicao] = useState("");
+  const [justificativaEdicao, setJustificativaEdicao] = useState("");
+  const [buscaSigEdicao, setBuscaSigEdicao] = useState("");
+  const [sigtapEdicao, setSigtapEdicao] = useState<SigtapProc[]>([]);
+  const [salvandoEdicao, setSalvandoEdicao] = useState(false);
+  const [erroEdicao, setErroEdicao] = useState("");
 
   // Verificação de Pedidos Duplicados em Tempo Real (Exames Laboratoriais)
   const [duplicidadeLab, setDuplicidadeLab] = useState<PedidoDuplicadoLab | null>(null);
@@ -188,6 +202,16 @@ export default function LabMarcacao() {
     }, 250);
     return () => clearTimeout(t);
   }, [buscaPac, buscaSig, modal]);
+
+  useEffect(() => {
+    if (!modalEditar) return;
+    const t = setTimeout(() => {
+      labSigtap(buscaSigEdicao.trim() || undefined)
+        .then((r) => setSigtapEdicao(pagData<SigtapProc>(r)))
+        .catch(() => setSigtapEdicao([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [buscaSigEdicao, modalEditar]);
 
   const mapa = useMemo(() => {
     const m = new Map<string, VagaDia>();
@@ -426,6 +450,104 @@ export default function LabMarcacao() {
     }
   }
 
+  // --- Handlers para Edição de Pedido de Exames ---
+  function abrirModalEditar(pedido: SolicMestre) {
+    setPedidoEditando(pedido);
+    const convertidos: ItemLote[] = (pedido.itens || []).map((it: any) => ({
+      sigtap: {
+        id: it.sigtap_id,
+        codigo: it.codigo || it.procedimento_codigo || "",
+        descricao: it.descricao || it.procedimento_descricao || "",
+      } as SigtapProc,
+      quantidade: it.quantidade || 1,
+    }));
+    setItensEdicao(convertidos);
+    setMedicoIdEdicao(pedido.medico_id ? String(pedido.medico_id) : "");
+    setUnidadeIdEdicao(pedido.unidade_saude_id ? String(pedido.unidade_saude_id) : "");
+    setJustificativaEdicao(pedido.observacao || pedido.justificativa || "");
+    setBuscaSigEdicao("");
+    setErroEdicao("");
+    setModalEditar(true);
+  }
+
+  function fecharModalEditar() {
+    setModalEditar(false);
+    setPedidoEditando(null);
+    setItensEdicao([]);
+    setErroEdicao("");
+  }
+
+  function adicionarItemEdicao(proc: SigtapProc) {
+    setItensEdicao((prev) => {
+      const idx = prev.findIndex((i) => i.sigtap.id === proc.id);
+      if (idx >= 0) {
+        return prev.map((item, i) =>
+          i === idx ? { ...item, quantidade: Math.min(10, item.quantidade + 1) } : item
+        );
+      }
+      return [...prev, { sigtap: proc, quantidade: 1 }];
+    });
+  }
+
+  function removerItemEdicao(sigtapId: number) {
+    setItensEdicao((prev) => prev.filter((i) => i.sigtap.id !== sigtapId));
+  }
+
+  function alterarQtdItemEdicao(sigtapId: number, delta: number) {
+    setItensEdicao((prev) =>
+      prev
+        .map((i) => {
+          if (i.sigtap.id !== sigtapId) return i;
+          const novaQtd = i.quantidade + delta;
+          return novaQtd > 0 ? { ...i, quantidade: Math.min(10, novaQtd) } : null;
+        })
+        .filter(Boolean) as ItemLote[]
+    );
+  }
+
+  async function salvarEdicaoPedido() {
+    if (!pedidoEditando) return;
+    if (itensEdicao.length === 0) {
+      setErroEdicao("O pedido precisa conter pelo menos um exame.");
+      return;
+    }
+
+    setSalvandoEdicao(true);
+    setErroEdicao("");
+    try {
+      const isGenerico = medicoIdEdicao === "GENERICO_UNIDADE";
+      const medGenerico = medicos.find(
+        (m) =>
+          m.nome.toLowerCase().includes("médico da unidade") ||
+          m.nome.toLowerCase().includes("medico da unidade")
+      );
+      const med = isGenerico ? medGenerico : medicos.find((m) => String(m.id) === medicoIdEdicao);
+      const uni = unidades.find((u) => String(u.id) === unidadeIdEdicao);
+
+      const atualizado = await labEditarPedidoExames(pedidoEditando.id, {
+        itens: itensEdicao.map((i) => ({
+          sigtap_id: i.sigtap.id,
+          quantidade: i.quantidade,
+        })),
+        medico_id: isGenerico ? medGenerico?.id : (medicoIdEdicao ? Number(medicoIdEdicao) : undefined),
+        medico_nome: isGenerico ? "Médico da Unidade / Responsável Técnico" : med?.nome,
+        unidade_id: unidadeIdEdicao ? Number(unidadeIdEdicao) : undefined,
+        unidade_nome: uni?.nome,
+        justificativa: justificativaEdicao.trim() || undefined,
+      });
+
+      setOk(`Pedido #${pedidoEditando.id} atualizado com sucesso! Exames sincronizados.`);
+      setPedidosEncontrados((atual) =>
+        atual.map((p) => (p.id === pedidoEditando.id ? mapMestre(atualizado) : p))
+      );
+      fecharModalEditar();
+    } catch (e: any) {
+      setErroEdicao(e?.response?.data?.detail || "Erro ao atualizar pedido de exames.");
+    } finally {
+      setSalvandoEdicao(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Topo Limpo: Título e Botão Principal */}
@@ -616,7 +738,7 @@ export default function LabMarcacao() {
                     </div>
 
                     {/* Ações do Card */}
-                    <div className="flex items-center justify-between pt-3 border-t border-sus-900/10 gap-2">
+                    <div className="flex flex-wrap items-center justify-between pt-3 border-t border-sus-900/10 gap-2">
                       <Button
                         type="button"
                         onClick={() => setComprovanteModalId(m.id)}
@@ -625,7 +747,18 @@ export default function LabMarcacao() {
                         <Printer className="h-3.5 w-3.5" /> Imprimir Comprovante
                       </Button>
 
-                      {m.status !== "cancelado" && m.status !== "coletado" && (
+                      {m.status !== "cancelado" && m.status !== "realizado" && (
+                        <Button
+                          type="button"
+                          onClick={() => abrirModalEditar(m)}
+                          className="border border-teal/40 bg-teal/5 text-teal hover:bg-teal/15 !h-9 text-xs flex items-center gap-1.5 font-semibold"
+                          title="Editar procedimentos do pedido"
+                        >
+                          <Edit className="h-3.5 w-3.5" /> Editar Pedido
+                        </Button>
+                      )}
+
+                      {m.status !== "cancelado" && m.status !== "coletado" && m.status !== "realizado" && (
                         <Button
                           type="button"
                           onClick={() => cancelarPedido(m.id)}
@@ -1084,6 +1217,233 @@ export default function LabMarcacao() {
           </div>
         </div>
       )}
+      {/* Modal de Edição de Pedido de Exames */}
+      {modalEditar && pedidoEditando && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-sus-950/60 p-3 sm:p-5">
+          <div className="rise max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+            {/* Topo do Modal de Edição */}
+            <div className="flex items-start justify-between border-b border-sus-900/10 pb-4 mb-4">
+              <div>
+                <h3 className="font-display text-lg font-bold text-sus-950 flex items-center gap-2">
+                  <Edit className="h-5 w-5 text-teal" />
+                  Editar Solicitação de Exames #{pedidoEditando.id}
+                </h3>
+                <p className="mt-1 text-xs text-ink/70">
+                  Paciente: <strong className="text-sus-950">{pedidoEditando.paciente_nome}</strong> · Data Coleta:{" "}
+                  <strong>{String(pedidoEditando.data_agendada).slice(0, 10).split("-").reverse().join("/")}</strong> · Lab:{" "}
+                  <strong>{pedidoEditando.laboratorio}</strong>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={fecharModalEditar}
+                className="rounded-xl p-2 text-ink/50 hover:bg-sand transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {erroEdicao && (
+              <div className="mb-4 rounded-xl bg-red-50 p-3 text-xs font-medium text-red-700 flex items-center justify-between">
+                <span>{erroEdicao}</span>
+                <button onClick={() => setErroEdicao("")} className="text-red-500 hover:text-red-700">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
+              {/* Coluna 1: Gestão de Procedimentos (Adicionar e Remover) */}
+              <div className="md:col-span-7 space-y-4">
+                <div className="rounded-2xl border border-sus-900/10 p-4 space-y-3 bg-sand/10">
+                  <div className="flex items-center justify-between">
+                    <Label className="!mb-0 font-bold text-sus-950 flex items-center gap-1.5">
+                      <FlaskConical className="h-4 w-4 text-teal" /> Procedimentos do Pedido ({itensEdicao.length})
+                    </Label>
+                    <span className="text-[11px] font-bold text-teal">
+                      {itensEdicao.reduce((acc, i) => acc + i.quantidade, 0)} exame(s) no total
+                    </span>
+                  </div>
+
+                  {/* Lista dos exames do pedido com controle de quantidade e exclusão */}
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                    {itensEdicao.map((item) => (
+                      <div
+                        key={item.sigtap.id}
+                        className="flex items-center justify-between gap-2 p-2 rounded-xl bg-white border border-sus-900/10 shadow-2xs text-xs"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <span className="font-mono text-[10px] text-teal font-bold mr-1.5">
+                            {item.sigtap.codigo}
+                          </span>
+                          <span className="font-medium text-sus-950 truncate block">
+                            {item.sigtap.descricao}
+                          </span>
+                        </div>
+
+                        {/* Controles de Quantidade e Remoção */}
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <div className="flex items-center rounded-lg border border-sus-900/15 bg-sand/40 p-0.5">
+                            <button
+                              type="button"
+                              onClick={() => alterarQtdItemEdicao(item.sigtap.id, -1)}
+                              className="h-6 w-6 flex items-center justify-center rounded text-ink/70 hover:bg-white hover:text-sus-950"
+                            >
+                              <Minus className="h-3 w-3" />
+                            </button>
+                            <span className="w-6 text-center font-bold text-xs text-sus-950">
+                              {item.quantidade}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => alterarQtdItemEdicao(item.sigtap.id, 1)}
+                              className="h-6 w-6 flex items-center justify-center rounded text-ink/70 hover:bg-white hover:text-sus-950"
+                            >
+                              <Plus className="h-3 w-3" />
+                            </button>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => removerItemEdicao(item.sigtap.id)}
+                            className="h-7 w-7 flex items-center justify-center rounded-lg text-ink/40 hover:bg-red-50 hover:text-red-600 transition"
+                            title="Remover exame do agendamento"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {itensEdicao.length === 0 && (
+                      <p className="text-center py-4 text-xs text-ink/50 italic">
+                        Nenhum exame selecionado. Adicione procedimentos abaixo.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Busca e Inclusão de Novos Exames SIGTAP */}
+                <div className="rounded-2xl border border-sus-900/10 p-4 space-y-2.5">
+                  <Label className="!mb-0 font-bold text-sus-950 flex items-center gap-1.5">
+                    <Search className="h-4 w-4 text-teal" /> Adicionar Novos Procedimentos (SIGTAP)
+                  </Label>
+                  <Input
+                    type="text"
+                    value={buscaSigEdicao}
+                    onChange={(e) => setBuscaSigEdicao(e.target.value)}
+                    placeholder="Digite o código ou nome do exame (ex: Hemograma, Glicose, Ureia)..."
+                    className="text-xs bg-white"
+                  />
+
+                  <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
+                    {sigtapEdicao.slice(0, 6).map((proc) => {
+                      const jaAdicionado = itensEdicao.some((i) => i.sigtap.id === proc.id);
+                      return (
+                        <div
+                          key={proc.id}
+                          className="flex items-center justify-between p-2 rounded-xl border border-sus-900/5 hover:bg-sand/30 transition text-xs"
+                        >
+                          <div className="min-w-0 flex-1 mr-2">
+                            <span className="font-mono text-[10px] text-ink/50 mr-1.5">
+                              {proc.codigo}
+                            </span>
+                            <span className="font-medium text-sus-950 truncate block">
+                              {proc.descricao}
+                            </span>
+                          </div>
+                          <Button
+                            type="button"
+                            onClick={() => adicionarItemEdicao(proc)}
+                            className={`!h-7 text-[11px] font-bold ${
+                              jaAdicionado
+                                ? "bg-sand text-sus-900 hover:bg-sand/80"
+                                : "bg-teal text-white hover:bg-teal/90"
+                            }`}
+                          >
+                            {jaAdicionado ? "+1 Adicional" : "+ Adicionar"}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                    {sigtapEdicao.length === 0 && (
+                      <p className="text-center py-2 text-[11px] text-ink/40">
+                        {buscaSigEdicao ? "Nenhum exame encontrado com este termo." : "Digite acima para buscar na tabela SIGTAP."}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Coluna 2: Ajuste de Unidade, Médico e Justificativa */}
+              <div className="md:col-span-5 space-y-4 flex flex-col justify-between">
+                <div className="space-y-3">
+                  <div>
+                    <Label>Unidade de Saúde (PSF Solicitante)</Label>
+                    <Combobox
+                      value={unidadeIdEdicao}
+                      onChange={setUnidadeIdEdicao}
+                      options={opcoesUnidades}
+                      placeholder="Selecionar PSF solicitante…"
+                      searchPlaceholder="Buscar PSF..."
+                      emptyText="Nenhum PSF encontrado"
+                      showAll={false}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Médico Solicitante</Label>
+                    <Combobox
+                      value={medicoIdEdicao}
+                      onChange={setMedicoIdEdicao}
+                      options={opcoesMedicos}
+                      placeholder="Selecionar médico solicitante…"
+                      searchPlaceholder="Buscar médico..."
+                      emptyText="Nenhum médico encontrado"
+                      showAll={false}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Justificativa Clínica do Pedido</Label>
+                    <textarea
+                      rows={3}
+                      value={justificativaEdicao}
+                      onChange={(e) => setJustificativaEdicao(e.target.value)}
+                      placeholder="Justificativa ou indicação clínica do pedido..."
+                      className="w-full rounded-xl border border-sus-900/15 bg-white p-2.5 text-xs text-ink outline-none focus:border-teal"
+                    />
+                  </div>
+
+                  <div className="p-3 bg-teal/5 border border-teal/20 rounded-xl text-[11px] text-teal-900">
+                    ℹ️ A adição ou remoção de exames atualiza a requisição do paciente e sincroniza automaticamente a tabela de faturamento e o espelho do prestador.
+                  </div>
+                </div>
+
+                {/* Ações do Rodapé do Modal */}
+                <div className="flex items-center justify-end gap-2 pt-4 border-t border-sus-900/10">
+                  <Button
+                    type="button"
+                    disabled={salvandoEdicao}
+                    onClick={fecharModalEditar}
+                    className="border border-sus-900/15 bg-white text-ink hover:bg-sand text-xs"
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={salvarEdicaoPedido}
+                    disabled={salvandoEdicao || itensEdicao.length === 0}
+                    className="bg-teal hover:bg-teal/90 text-white font-bold text-xs"
+                  >
+                    {salvandoEdicao ? "Salvando Alterações..." : "Salvar Alterações do Pedido"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal de Impressão do Comprovante Oficial com Preparo */}
       {comprovanteModalId && (
         <ComprovanteExameModal

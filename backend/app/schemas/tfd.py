@@ -598,10 +598,19 @@ class TipoFilaIn(BaseModel):
     nome: str = Field(min_length=2, max_length=80)
     tipo_fila: str = Field(default="REGULACAO_GERAL", max_length=40)
     ativo: bool = True
+    cbos_permitidos: str = Field(default="", max_length=2000)
+    exigir_cbo_estrito: bool = False
+    prefixos_sigtap: str = Field(default="", max_length=500)
+    excluir_prefixos_sigtap: str = Field(default="", max_length=500)
+    especialidade_padrao: str = Field(default="", max_length=120)
+    cbo_padrao: str = Field(default="", max_length=10)
+    sinonimos: str = Field(default="", max_length=1000)
+    descricao_regras: str = Field(default="", max_length=1000)
 
 
 class TipoFilaOut(TipoFilaIn):
     id: int
+    cbos_detalhes: list[dict] = []
 
 
 class ProcedimentoIn(BaseModel):

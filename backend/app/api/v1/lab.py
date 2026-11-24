@@ -1153,12 +1153,14 @@ def api_remover_preco_contrato(
 def api_relatorio_faturamento_prestador(
     laboratorio_id: int,
     competencia: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    visao: str = Query("concluidos", pattern=r"^(concluidos|projetado)$"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
     """Emite o espelho de faturamento e produção mensal do prestador.
     
     Perfil laboratorial restrito só acessa seu próprio laboratório e somente se liberado pela Secretaria.
+    Permite alternar entre visão de faturamento final (concluídos) e faturamento projetado (total agendado).
     """
     from app.services.lab_faturamento_service import obter_relatorio_prestador
 
@@ -1174,6 +1176,7 @@ def api_relatorio_faturamento_prestador(
         laboratorio_id=laboratorio_id,
         competencia=competencia,
         eh_perfil_laboratorio=eh_perfil_lab,
+        visao=visao,
     )
 
 

@@ -108,6 +108,7 @@ export default function LabFaturamento() {
   const [justificativaPreco, setJustificativaPreco] = useState("");
 
   // ABA 2: ESPELHO DO PRESTADOR
+  const [visaoFaturamento, setVisaoFaturamento] = useState<"concluidos" | "projetado">("concluidos");
   const [relatorioPrestador, setRelatorioPrestador] = useState<LabFaturamentoRelatorio | null>(null);
   const [parecerAprovacao, setParecerAprovacao] = useState("");
   const [liberarVisualizacaoLab, setLiberarVisualizacaoLab] = useState(true);
@@ -171,7 +172,7 @@ export default function LabFaturamento() {
     } else if (aba === "nominal") {
       carregarNominal(1);
     }
-  }, [aba, comp, labSelecionadoId]);
+  }, [aba, comp, labSelecionadoId, visaoFaturamento]);
 
   async function carregarPainelContratos() {
     try {
@@ -187,7 +188,7 @@ export default function LabFaturamento() {
     setBusy(true);
     setErro("");
     try {
-      const rel = await labFaturamentoRelatorio(Number(labSelecionadoId), comp);
+      const rel = await labFaturamentoRelatorio(Number(labSelecionadoId), comp, visaoFaturamento);
       setRelatorioPrestador(rel);
       setParecerAprovacao(rel.parecer_secretaria || "");
       setLiberarVisualizacaoLab(rel.liberado_visualizacao_lab);
@@ -836,6 +837,51 @@ export default function LabFaturamento() {
       {/* ========================================================================= */}
       {aba === "espelho" && (
         <div className="space-y-4">
+          {/* Seletor de Visão de Faturamento (Concluídos vs Projetado) */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-sus-900/15 shadow-2xs print:hidden">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-bold text-sus-950 flex items-center gap-1.5">
+                <Filter className="h-3.5 w-3.5 text-teal" /> Visão de Faturamento:
+              </span>
+              <div className="inline-flex rounded-lg border border-sus-900/15 bg-sand/50 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setVisaoFaturamento("concluidos")}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-md transition ${
+                    visaoFaturamento === "concluidos"
+                      ? "bg-teal text-white shadow-2xs"
+                      : "text-ink/65 hover:text-sus-950"
+                  }`}
+                >
+                  ✓ Faturamento Final (Apenas Concluídos com PDF)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVisaoFaturamento("projetado")}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-md transition ${
+                    visaoFaturamento === "projetado"
+                      ? "bg-teal text-white shadow-2xs"
+                      : "text-ink/65 hover:text-sus-950"
+                  }`}
+                >
+                  📊 Faturamento Possível (Projeção Total Agendado)
+                </button>
+              </div>
+            </div>
+
+            <div className="text-[11px] text-ink/65">
+              {visaoFaturamento === "concluidos" ? (
+                <span className="text-emerald-700 font-medium">
+                  ● Liquidação Oficial: apenas pedidos recepcionados com laudo PDF conferido.
+                </span>
+              ) : (
+                <span className="text-amber-800 font-medium">
+                  ● Projeção Financeira: simulação caso 100% dos exames agendados no mês sejam concluídos.
+                </span>
+              )}
+            </div>
+          </div>
+
           {relatorioPrestador ? (
             <Card className="p-6 border-sus-900/15 shadow-sm space-y-6 print:border-none print:shadow-none print:p-0">
               {/* CABEÇALHO DO ESPELHO */}
@@ -847,6 +893,9 @@ export default function LabFaturamento() {
                     </span>
                     <Badge variant={relatorioPrestador.liberado_visualizacao_lab ? "success" : "warning"}>
                       {relatorioPrestador.liberado_visualizacao_lab ? "Liberado pela Secretaria" : "Pendente Aprovação"}
+                    </Badge>
+                    <Badge variant={visaoFaturamento === "concluidos" ? "default" : "secondary"}>
+                      {visaoFaturamento === "concluidos" ? "Faturamento Final" : "Faturamento Projetado"}
                     </Badge>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-1 text-xs text-ink/65 mt-2">
@@ -868,7 +917,86 @@ export default function LabFaturamento() {
                 </div>
               </div>
 
-              {/* TABELA DE ITENS EXECUTADOS */}
+              {/* CARDS COMPARATIVOS DE FATURAMENTO (DOIS VALORES E PROJEÇÃO) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 print:grid-cols-4">
+                {/* CARD 1: VALOR CONTRATO (VALOR PRATICADO) */}
+                <div className="p-3.5 bg-teal/5 border border-teal/20 rounded-xl">
+                  <div className="flex items-center justify-between text-ink/60 text-xs mb-1">
+                    <span className="font-bold text-teal flex items-center gap-1">
+                      <DollarSign className="h-3.5 w-3.5" /> Total Contrato (Pactuado)
+                    </span>
+                    <span className="font-mono text-[10px] bg-teal/10 text-teal px-1.5 py-0.2 rounded font-bold">
+                      {relatorioPrestador.total_exames ?? 0} exames
+                    </span>
+                  </div>
+                  <div className="text-xl font-bold font-mono text-teal">
+                    {(Number(relatorioPrestador.valor_total_contrato ?? relatorioPrestador.valor_total) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                  </div>
+                  <p className="text-[10px] text-ink/60 mt-1">
+                    {visaoFaturamento === "concluidos" ? "Apenas exames com laudo homologado" : "Inclui projeção dos agendados"}
+                  </p>
+                </div>
+
+                {/* CARD 2: VALOR TABELA SUS (SIGTAP) */}
+                <div className="p-3.5 bg-sand/50 border border-sus-900/15 rounded-xl">
+                  <div className="flex items-center justify-between text-ink/60 text-xs mb-1">
+                    <span className="font-bold text-sus-900 flex items-center gap-1">
+                      <FileSpreadsheet className="h-3.5 w-3.5 text-sus-900" /> Tabela SUS (SIGTAP)
+                    </span>
+                    <span className="font-mono text-[10px] bg-sus-900/10 text-sus-900 px-1.5 py-0.2 rounded font-bold">
+                      Federal
+                    </span>
+                  </div>
+                  <div className="text-xl font-bold font-mono text-sus-950">
+                    {(Number(relatorioPrestador.valor_total_sigtap) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                  </div>
+                  <p className="text-[10px] text-ink/60 mt-1">
+                    Repasse federal base SIGTAP para SIA-SUS
+                  </p>
+                </div>
+
+                {/* CARD 3: APORTE / COMPLEMENTO MUNICIPAL */}
+                <div className="p-3.5 bg-indigo-50/50 border border-indigo-200 rounded-xl">
+                  <div className="flex items-center justify-between text-ink/60 text-xs mb-1">
+                    <span className="font-bold text-indigo-900 flex items-center gap-1">
+                      <TrendingUp className="h-3.5 w-3.5 text-indigo-700" /> Complemento Municipal
+                    </span>
+                    <span className="font-mono text-[10px] bg-indigo-100 text-indigo-800 px-1.5 py-0.2 rounded font-bold">
+                      Prefeitura
+                    </span>
+                  </div>
+                  <div className="text-xl font-bold font-mono text-indigo-950">
+                    {Math.max(
+                      0,
+                      (Number(relatorioPrestador.valor_total_contrato ?? relatorioPrestador.valor_total) || 0) -
+                        (Number(relatorioPrestador.valor_total_sigtap) || 0)
+                    ).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                  </div>
+                  <p className="text-[10px] text-indigo-700/70 mt-1">
+                    Diferença entre Contrato e Tabela SUS
+                  </p>
+                </div>
+
+                {/* CARD 4: PENDENTES / PROJEÇÃO RESTANTE */}
+                <div className="p-3.5 bg-amber-50/50 border border-amber-200 rounded-xl">
+                  <div className="flex items-center justify-between text-ink/60 text-xs mb-1">
+                    <span className="font-bold text-amber-900 flex items-center gap-1">
+                      <Clock className="h-3.5 w-3.5 text-amber-700" /> Pendentes / Em Aberto
+                    </span>
+                    <span className="font-mono text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded font-bold">
+                      {relatorioPrestador.qtd_exames_pendentes ?? 0} agendados
+                    </span>
+                  </div>
+                  <div className="text-xl font-bold font-mono text-amber-900">
+                    {(Number(relatorioPrestador.valor_pendente_contrato) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                  </div>
+                  <p className="text-[10px] text-amber-700 mt-1">
+                    Valor a faturar se concluírem coleta e laudo
+                  </p>
+                </div>
+              </div>
+
+              {/* TABELA DE ITENS EXECUTADOS COM OS 2 VALORES */}
               {(() => {
                 const itensPrestador = Array.isArray(relatorioPrestador.itens)
                   ? relatorioPrestador.itens
@@ -880,61 +1008,80 @@ export default function LabFaturamento() {
                     <table className="w-full text-left text-xs">
                       <thead>
                         <tr className="border-b border-sus-900/15 bg-sand/60 font-semibold uppercase text-sus-900/70">
-                          <th className="px-3 py-2.5">Código</th>
+                          <th className="px-3 py-2.5">Código SIGTAP</th>
                           <th className="px-3 py-2.5">Procedimento / Exame</th>
                           <th className="px-3 py-2.5 text-center">Origem Preço</th>
-                          <th className="px-3 py-2.5 text-center">Qtd Executada</th>
-                          <th className="px-3 py-2.5 text-right">Valor Unitário</th>
-                          <th className="px-3 py-2.5 text-right">Total Faturado</th>
+                          <th className="px-3 py-2.5 text-center">Qtd</th>
+                          <th className="px-3 py-2.5 text-right">Unit. SUS</th>
+                          <th className="px-3 py-2.5 text-right">Total SUS</th>
+                          <th className="px-3 py-2.5 text-right">Unit. Contrato</th>
+                          <th className="px-3 py-2.5 text-right">Total Contrato</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {itensPrestador.map((it: any) => (
-                          <tr key={it.sigtap_id} className="border-b border-sus-900/5 hover:bg-sand/20">
-                            <td className="px-3 py-2 font-mono text-ink/70">{it.codigo_procedimento}</td>
-                            <td className="px-3 py-2 font-medium text-sus-950">{it.descricao_procedimento}</td>
-                            <td className="px-3 py-2 text-center">
-                              {it.origem_preco === "contrato_custom" || it.origem_preco === "contrato_customizado" ? (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
-                                  Tabela Contrato
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-50 text-slate-600 border border-slate-200">
-                                  SIGTAP SUS
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-3 py-2 text-center font-bold text-sus-950">
-                              {it.quantidade ?? it.quantidade_executada ?? 0}
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono">
-                              {(Number(it.valor_unitario) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono font-bold text-teal">
-                              {(Number(it.valor_total) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                            </td>
-                          </tr>
-                        ))}
+                        {itensPrestador.map((it: any) => {
+                          const vlrUnitSigtap = Number(it.valor_unitario_sigtap ?? 0);
+                          const vlrTotalSigtap = Number(it.valor_total_sigtap ?? (vlrUnitSigtap * (it.quantidade ?? 1)));
+                          const vlrUnitContrato = Number(it.valor_unitario_contrato ?? it.valor_unitario ?? 0);
+                          const vlrTotalContrato = Number(it.valor_total_contrato ?? it.valor_total ?? (vlrUnitContrato * (it.quantidade ?? 1)));
+
+                          return (
+                            <tr key={it.sigtap_id} className="border-b border-sus-900/5 hover:bg-sand/20">
+                              <td className="px-3 py-2 font-mono text-ink/70">{it.codigo_procedimento}</td>
+                              <td className="px-3 py-2 font-medium text-sus-950">{it.descricao_procedimento}</td>
+                              <td className="px-3 py-2 text-center">
+                                {it.origem_preco === "contrato_custom" || it.origem_preco === "contrato_customizado" ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                                    Tabela Contrato
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-50 text-slate-600 border border-slate-200">
+                                    SIGTAP SUS
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-center font-bold text-sus-950">
+                                {it.quantidade ?? it.quantidade_executada ?? 0}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono text-ink/70">
+                                {vlrUnitSigtap.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono text-sus-900 font-medium">
+                                {vlrTotalSigtap.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono text-ink/80">
+                                {vlrUnitContrato.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono font-bold text-teal">
+                                {vlrTotalContrato.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                              </td>
+                            </tr>
+                          );
+                        })}
                         {itensPrestador.length === 0 && (
                           <tr>
-                            <td colSpan={6} className="px-3 py-8 text-center text-ink/40">
-                              Nenhum exame executado nesta competência para este prestador.
+                            <td colSpan={8} className="px-3 py-8 text-center text-ink/40">
+                              Nenhum exame apurado nesta competência para a visão selecionada ({visaoFaturamento === "concluidos" ? "Concluídos" : "Projetado"}).
                             </td>
                           </tr>
                         )}
                       </tbody>
-                      {/* TOTALIZADOR */}
+                      {/* TOTALIZADOR COM OS DOIS VALORES LADO A LADO */}
                       <tfoot>
                         <tr className="bg-sand/60 font-bold border-t-2 border-sus-900/15">
                           <td colSpan={3} className="px-3 py-3 uppercase text-sus-950">
-                            Total Geral da Produção ({relatorioPrestador.competencia})
+                            Total Geral ({relatorioPrestador.competencia}) · {visaoFaturamento === "concluidos" ? "Concluídos" : "Projetados"}
                           </td>
                           <td className="px-3 py-3 text-center text-sm text-sus-950">
                             {relatorioPrestador.total_exames ?? (relatorioPrestador as any).qtd_exames_total ?? 0}
                           </td>
                           <td className="px-3 py-3 text-right text-xs text-ink/50">—</td>
+                          <td className="px-3 py-3 text-right font-mono text-sm text-sus-900">
+                            {(Number(relatorioPrestador.valor_total_sigtap) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                          </td>
+                          <td className="px-3 py-3 text-right text-xs text-ink/50">—</td>
                           <td className="px-3 py-3 text-right font-mono text-base text-teal">
-                            {(Number(relatorioPrestador.valor_total ?? (relatorioPrestador as any).valor_total_bruto) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                            {(Number(relatorioPrestador.valor_total_contrato ?? relatorioPrestador.valor_total) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                           </td>
                         </tr>
                       </tfoot>

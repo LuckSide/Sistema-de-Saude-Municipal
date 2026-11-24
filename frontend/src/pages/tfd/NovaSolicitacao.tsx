@@ -59,6 +59,8 @@ import {
   type UnidadeSaude,
   tfdVerificarDuplicidade,
   type PedidoDuplicadoTfd,
+  validarCboProcedimento,
+  type ValidarCboResult,
 } from "../../services/api";
 import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
 import { Combobox } from "../../components/ui/combobox";
@@ -126,6 +128,10 @@ export default function NovaSolicitacao() {
   const [unidadeId, setUnidadeId] = useState<string>("");
   const [medicoId, setMedicoId] = useState<string>("");
   const [dataPedido, setDataPedido] = useState<string>(hojeISO());
+
+  // Validação Dinâmica de CBO com o Tipo de Serviço e Procedimento
+  const [valCbo, setValCbo] = useState<ValidarCboResult | null>(null);
+  const [validandoCbo, setValidandoCbo] = useState(false);
 
   // Dados Clínicos
   const [prioridade, setPrioridade] = useState<"rotina" | "urgente">("rotina");
@@ -301,6 +307,31 @@ export default function NovaSolicitacao() {
     tipoServico,
   ]);
 
+  // Verificação em Tempo Real de CBO com as regras do Tipo de Serviço / Procedimento
+  useEffect(() => {
+    const codProc = (codigoProcedimento || procedimentoSel?.codigo_procedimento || "").trim();
+    if (!tipoServico && !codProc) {
+      setValCbo(null);
+      return;
+    }
+    const medObj = medicos.find((m) => String(m.id) === String(medicoId));
+    const t = setTimeout(() => {
+      setValidandoCbo(true);
+      validarCboProcedimento({
+        codigo_procedimento: codProc || "",
+        medico_id: medicoId ? Number(medicoId) : undefined,
+        medico_nome: medObj?.nome || undefined,
+        cbo: medObj?.cbo_codigo || undefined,
+        tipo_fila: tipoServico || undefined,
+      })
+        .then((res) => setValCbo(res))
+        .catch(() => setValCbo(null))
+        .finally(() => setValidandoCbo(false));
+    }, 250);
+
+    return () => clearTimeout(t);
+  }, [medicoId, tipoServico, codigoProcedimento, procedimentoSel, medicos]);
+
   async function adicionarPacienteAoLote(pac: Paciente | null) {
     if (!pac?.id) return;
     if (pacientesLote.some((p) => p.paciente.id === pac.id)) {
@@ -407,6 +438,27 @@ export default function NovaSolicitacao() {
     if (!medicoId) {
       setErro("Selecione o(a) Médico(a) Requisitante / Profissional Responsável.");
       return;
+    }
+    if (tipoFilaAtivo?.exigir_cbo_estrito && cbosLiberadosServico.length > 0) {
+      const medObj = medicos.find((m) => String(m.id) === String(medicoId));
+      const isGenerico =
+        medObj?.nome.includes("Responsável Técnico") ||
+        medObj?.nome.includes("Responsavel Tecnico") ||
+        medObj?.nome.includes("Médico da Unidade") ||
+        medObj?.nome.includes("Medico da Unidade");
+      if (!isGenerico && medObj) {
+        const cboMed = (medObj.cbo_codigo || "").replace(/\D/g, "");
+        const cbosSet = new Set(cbosLiberadosServico.map((c) => c.cbo.replace(/\D/g, "")));
+        const cbosPrefix4 = new Set(
+          cbosLiberadosServico.map((c) => c.cbo.replace(/\D/g, "").slice(0, 4)).filter((p) => p.length === 4),
+        );
+        if (!cbosSet.has(cboMed) && !cbosPrefix4.has(cboMed.slice(0, 4))) {
+          setErro(
+            `O Tipo de Serviço "${tipoServico}" possui regra de CBO estrita. O profissional selecionado (${medObj.nome}) possui CBO "${medObj.cbo_codigo || "não cadastrado"}", incompatível com as regras deste serviço.`,
+          );
+          return;
+        }
+      }
     }
     if (isTfdCentral && retroativoBloqueado && dataPedido < hojeISO()) {
       setErro("Seu perfil não possui permissão para realizar lançamentos com datas retroativas.");
@@ -899,8 +951,6 @@ export default function NovaSolicitacao() {
     setProcTexto("");
     setCodigoProcedimento("");
     setBuscaProc("");
-    setEspecialidade("");
-    setCodigoEspecialidade("");
     setCboFiltroSig("");
     setEspsCboSel([]);
     setEspManual(false);
@@ -908,6 +958,20 @@ export default function NovaSolicitacao() {
     setProcedimentosDinamicos([]);
     setTermoDinamico("");
     setErroCatalogo("");
+
+    // Sugestão automática de Especialidade e CBO padrão configurados para o Tipo de Serviço
+    const tfObj = tiposFila.find((tf) => tf.nome.trim().toUpperCase() === novo.trim().toUpperCase());
+    if (tfObj && tfObj.especialidade_padrao) {
+      setEspecialidade(tfObj.especialidade_padrao);
+      if (tfObj.cbo_padrao) {
+        setCodigoEspecialidade(tfObj.cbo_padrao);
+      } else {
+        setCodigoEspecialidade("");
+      }
+    } else {
+      setEspecialidade("");
+      setCodigoEspecialidade("");
+    }
   }
 
   function aoSelecionarGrupoSig(novoGrupo: string) {
@@ -1132,6 +1196,28 @@ export default function NovaSolicitacao() {
       return;
     }
 
+    if (tipoFilaAtivo?.exigir_cbo_estrito && cbosLiberadosServico.length > 0) {
+      const medObj = medicos.find((m) => String(m.id) === String(medicoId));
+      const isGenerico =
+        medObj?.nome.includes("Responsável Técnico") ||
+        medObj?.nome.includes("Responsavel Tecnico") ||
+        medObj?.nome.includes("Médico da Unidade") ||
+        medObj?.nome.includes("Medico da Unidade");
+      if (!isGenerico && medObj) {
+        const cboMed = (medObj.cbo_codigo || "").replace(/\D/g, "");
+        const cbosSet = new Set(cbosLiberadosServico.map((c) => c.cbo.replace(/\D/g, "")));
+        const cbosPrefix4 = new Set(
+          cbosLiberadosServico.map((c) => c.cbo.replace(/\D/g, "").slice(0, 4)).filter((p) => p.length === 4),
+        );
+        if (!cbosSet.has(cboMed) && !cbosPrefix4.has(cboMed.slice(0, 4))) {
+          setErro(
+            `O Tipo de Serviço "${tipoServico}" possui regra de CBO estrita. O profissional selecionado (${medObj.nome}) possui CBO "${medObj.cbo_codigo || "não cadastrado"}", que não está entre os CBOs liberados para este serviço (${cbosLiberadosServico.map((c) => c.cbo + (c.nome ? ` - ${c.nome}` : "")).join(", ")}).`,
+          );
+          return;
+        }
+      }
+    }
+
     if (!justificativa.trim() || justificativa.trim().length < JUST_MIN) {
       setErro(`A Justificativa Clínica é obrigatória e deve conter no mínimo ${JUST_MIN} caracteres.`);
       return;
@@ -1220,16 +1306,85 @@ export default function NovaSolicitacao() {
     [unidades],
   );
 
-  const opcoesMedicos = useMemo(
-    () =>
-      medicos.map((m) => ({
-        value: String(m.id),
-        label: m.nome,
-        sub: m.crm ? `CRM ${m.crm}` : undefined,
-        keywords: `${m.nome} ${m.crm || ""}`,
-      })),
-    [medicos],
-  );
+  const tipoFilaAtivo = useMemo(() => {
+    if (!tipoServico) return null;
+    const tNorm = tipoServico.trim().toUpperCase();
+    return tiposFila.find((tf) => tf.nome.trim().toUpperCase() === tNorm) || null;
+  }, [tipoServico, tiposFila]);
+
+  const cbosLiberadosServico = useMemo(() => {
+    if (!tipoFilaAtivo) return [];
+    if (tipoFilaAtivo.cbos_detalhes && tipoFilaAtivo.cbos_detalhes.length > 0) {
+      return tipoFilaAtivo.cbos_detalhes;
+    }
+    const raw = tipoFilaAtivo.cbos_permitidos;
+    if (!raw) return [];
+    try {
+      if (raw.startsWith("[")) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          return arr.map((c: string) => ({ cbo: String(c).trim(), nome: `CBO ${c}` }));
+        }
+      }
+    } catch {}
+    return raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((c) => ({ cbo: c, nome: `CBO ${c}` }));
+  }, [tipoFilaAtivo]);
+
+  const opcoesMedicos = useMemo(() => {
+    const cbosSet = new Set(cbosLiberadosServico.map((c) => c.cbo.replace(/\D/g, "")));
+    const cbosPrefix4 = new Set(
+      cbosLiberadosServico.map((c) => c.cbo.replace(/\D/g, "").slice(0, 4)).filter((p) => p.length === 4),
+    );
+    const temRegra = cbosSet.size > 0;
+
+    return medicos
+      .map((m) => {
+        const cboMed = (m.cbo_codigo || "").replace(/\D/g, "");
+        const isGenerico =
+          m.nome.includes("Responsável Técnico") ||
+          m.nome.includes("Responsavel Tecnico") ||
+          m.nome.includes("Médico da Unidade") ||
+          m.nome.includes("Medico da Unidade");
+        const cboMatch =
+          temRegra &&
+          !isGenerico &&
+          (cbosSet.has(cboMed) || cbosPrefix4.has(cboMed.slice(0, 4)));
+
+        let subTexto = m.crm ? `CRM ${m.crm}` : "";
+        if (m.cbo_codigo) {
+          subTexto += (subTexto ? " · " : "") + `CBO ${m.cbo_codigo}`;
+        }
+        if (cboMatch) {
+          subTexto += ` · ⭐ CBO Liberado p/ ${tipoServico}`;
+        } else if (temRegra && tipoFilaAtivo?.exigir_cbo_estrito && !isGenerico) {
+          subTexto += " · ⚠️ Não autorizado neste serviço";
+        }
+
+        return {
+          value: String(m.id),
+          label: cboMatch ? `⭐ ${m.nome} [CBO Liberado]` : m.nome,
+          sub: subTexto || undefined,
+          keywords: `${m.nome} ${m.crm || ""} ${m.cbo_codigo || ""} ${m.especialidade || ""} ${
+            cboMatch ? "liberado autorizado cardiologista especialista" : ""
+          }`,
+          cboMatch,
+          isGenerico,
+        };
+      })
+      .sort((a, b) => {
+        // 1. Médicos com CBO liberado no topo
+        if (a.cboMatch && !b.cboMatch) return -1;
+        if (!a.cboMatch && b.cboMatch) return 1;
+        // 2. Médico genérico da unidade
+        if (a.isGenerico && !b.isGenerico) return -1;
+        if (!a.isGenerico && b.isGenerico) return 1;
+        return a.label.localeCompare(b.label, "pt-BR");
+      });
+  }, [medicos, cbosLiberadosServico, tipoServico, tipoFilaAtivo]);
 
   const opcoesCboArvore = useMemo(() => {
     const base = arvoreSigtap?.cbos ?? [];
@@ -1506,6 +1661,122 @@ export default function NovaSolicitacao() {
         </p>
       </div>
     );
+  }
+
+  function renderBannerRegrasServico() {
+    if (!tipoServico || !tipoFilaAtivo) return null;
+    const temCbos = cbosLiberadosServico.length > 0;
+    if (!temCbos && !tipoFilaAtivo.descricao_regras) return null;
+
+    return (
+      <div className="mt-2.5 rounded-lg border border-teal/20 bg-teal/5 p-2.5 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-bold text-teal-900 inline-flex items-center gap-1">
+              {tipoFilaAtivo.exigir_cbo_estrito ? (
+                <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-bold text-amber-900 border border-amber-300">
+                  🔒 Regra Estrita
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-bold text-emerald-900 border border-emerald-300">
+                  ℹ️ Regra Flexível
+                </span>
+              )}
+              CBOs Liberados:
+            </span>
+            {temCbos ? (
+              cbosLiberadosServico.map((c) => (
+                <span
+                  key={c.cbo}
+                  className="inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 text-[11px] font-semibold text-sus-900 border border-teal/20 shadow-xs"
+                >
+                  <span className="font-mono text-[10px] font-bold text-teal">{c.cbo}</span>
+                  <span>{c.nome || `CBO ${c.cbo}`}</span>
+                </span>
+              ))
+            ) : (
+              <span className="text-[11px] text-ink/70">Acesso amplo a todos os CBOs médicos</span>
+            )}
+          </div>
+          <Link
+            to="/configuracoes?aba=servicos"
+            target="_blank"
+            className="text-[11px] font-semibold text-teal hover:underline inline-flex items-center gap-1"
+          >
+            Editar regras nas Configurações →
+          </Link>
+        </div>
+        {tipoFilaAtivo.descricao_regras && (
+          <p className="mt-1.5 text-[11px] text-ink/75 border-t border-teal/10 pt-1.5">
+            {tipoFilaAtivo.descricao_regras}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  function renderAlertaCboMedico() {
+    if (!medicoId || !tipoServico) return null;
+    const medObj = medicos.find((m) => String(m.id) === String(medicoId));
+    if (!medObj) return null;
+    const isGenerico =
+      medObj.nome.includes("Responsável Técnico") ||
+      medObj.nome.includes("Responsavel Tecnico") ||
+      medObj.nome.includes("Médico da Unidade") ||
+      medObj.nome.includes("Medico da Unidade");
+
+    if (validandoCbo) {
+      return (
+        <p className="mt-1 text-[11px] text-ink/60 animate-pulse">
+          Verificando compatibilidade de CBO do médico com o serviço...
+        </p>
+      );
+    }
+
+    if (valCbo && !valCbo.compativel) {
+      return (
+        <div className="mt-2 rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs text-red-800 flex items-start gap-2">
+          <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-bold">Incompatibilidade com as regras de {tipoServico}</p>
+            <p className="mt-0.5 text-[11px]">
+              {valCbo.alerta ||
+                valCbo.motivo ||
+                "O profissional selecionado não possui CBO autorizado para este tipo de serviço."}
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    if (
+      valCbo?.compativel &&
+      valCbo?.cbo_profissional &&
+      cbosLiberadosServico.some((c) => c.cbo === valCbo.cbo_profissional)
+    ) {
+      return (
+        <div className="mt-1.5 flex items-center gap-1.5 text-[11px] font-medium text-emerald-700">
+          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+          <span>Médico especialista autorizado para {tipoServico} (CBO {valCbo.cbo_profissional}).</span>
+        </div>
+      );
+    }
+
+    if (isGenerico && tipoFilaAtivo?.exigir_cbo_estrito) {
+      return (
+        <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 flex items-start gap-2">
+          <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-bold">Serviço com Regra Estrita de CBO</p>
+            <p className="mt-0.5 text-[11px]">
+              O serviço &quot;{tipoServico}&quot; foi configurado para exigir médico especialista com CBO autorizado.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    return null;
   }
 
   const unidNomeAtual = useMemo(() => {
@@ -1830,6 +2101,7 @@ export default function NovaSolicitacao() {
                   ? "Consulta médica especializada: requer apenas a definição do CBO/especialidade."
                   : "Filtra automaticamente o catálogo de procedimentos e exames correspondentes."}
               </p>
+              {renderBannerRegrasServico()}
             </div>
 
             {/* Especialidade Médica / CBO */}
@@ -2231,6 +2503,7 @@ export default function NovaSolicitacao() {
                   showAll={false}
                 />
               </div>
+              {renderAlertaCboMedico()}
             </div>
           </div>
         </Card>
@@ -2809,6 +3082,7 @@ export default function NovaSolicitacao() {
                       ? "Consulta médica especializada em lote: requer apenas a definição do CBO/especialidade."
                       : "Filtra automaticamente o catálogo de procedimentos correspondentes."}
                   </p>
+                  {renderBannerRegrasServico()}
                 </div>
 
                 {/* Especialidade Médica / CBO */}
@@ -3021,22 +3295,35 @@ export default function NovaSolicitacao() {
                 </div>
 
                 <div>
-                  <Label className="text-xs font-bold text-sus-950">
-                    Médico(a) Requisitante / Responsável <span className="text-red-500">*</span>
-                  </Label>
-                  <Select
-                    value={medicoId}
-                    onChange={(e) => setMedicoId(e.target.value)}
-                    className="mt-1 text-xs"
-                    required
-                  >
-                    <option value="">Selecione o(a) Profissional…</option>
-                    {medicos.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.nome} {m.crm ? `(CRM: ${m.crm})` : ""}
-                      </option>
-                    ))}
-                  </Select>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-bold text-sus-950">
+                      Médico(a) Requisitante / Responsável <span className="text-red-500">*</span>
+                    </Label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const mGen = medicos.find((m) =>
+                          m.nome.includes("Responsável Técnico") || m.nome.includes("Médico da Unidade"),
+                        );
+                        if (mGen) setMedicoId(String(mGen.id));
+                      }}
+                      className="text-[10px] font-bold text-teal hover:underline"
+                    >
+                      Usar Médico da Unidade
+                    </button>
+                  </div>
+                  <div className="mt-1">
+                    <Combobox
+                      value={medicoId}
+                      onChange={(v) => setMedicoId(v)}
+                      options={opcoesMedicos}
+                      placeholder="Buscar Médico(a) Requisitante…"
+                      searchPlaceholder="Digite o nome do médico ou CRM…"
+                      emptyText="Nenhum médico encontrado"
+                      showAll={false}
+                    />
+                  </div>
+                  {renderAlertaCboMedico()}
                 </div>
               </div>
 

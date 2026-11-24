@@ -19,6 +19,8 @@ import {
   ArrowRightLeft,
   History,
   Database,
+  Edit2,
+  Trash2,
 } from "lucide-react";
 import {
   oxigenioResumoEstoque,
@@ -27,6 +29,8 @@ import {
   oxigenioCriarCompra,
   oxigenioCriarLicitacao,
   oxigenioCriarComodato,
+  oxigenioEditarComodato,
+  oxigenioExcluirComodato,
   oxigenioListarComodato,
   oxigenioSeedDadosReais,
   type EstoqueOxigenioResumo,
@@ -46,8 +50,10 @@ import {
 } from "recharts";
 import { Button, Card, Input, Label, Badge } from "../../components/ui/primitives";
 import ExportarExcel from "../../components/ExportarExcel";
+import { useConfirm } from "../../components/ConfirmDialog";
 
 export default function OxigenioPainelEstoque() {
+  const { confirmar } = useConfirm();
   const [resumo, setResumo] = useState<EstoqueOxigenioResumo | null>(null);
   const [empresas, setEmpresas] = useState<EmpresaOxigenio[]>([]);
   const [licitacoes, setLicitacoes] = useState<LicitacaoOxigenio[]>([]);
@@ -118,6 +124,22 @@ export default function OxigenioPainelEstoque() {
   const [historicoComodato, setHistoricoComodato] = useState<ComodatoMovimentacao[]>([]);
   const [carregandoHistorico, setCarregandoHistorico] = useState(false);
   const [sincronizando, setSincronizando] = useState(false);
+
+  // Edição de Comodato
+  const [modalEditarComodato, setModalEditarComodato] = useState(false);
+  const [movComodatoEditando, setMovComodatoEditando] = useState<ComodatoMovimentacao | null>(null);
+  const [formEditarComodato, setFormEditarComodato] = useState({
+    empresa_id: "",
+    tipo_movimentacao: "ENTRADA_COMODATO",
+    tipo_cilindro: "10m3",
+    quantidade: "1",
+    numero_nota_remessa: "",
+    data_movimentacao: new Date().toISOString().slice(0, 10),
+    responsavel: "",
+    observacoes: "",
+  });
+  const [salvandoEdicaoComodato, setSalvandoEdicaoComodato] = useState(false);
+  const [erroEdicaoComodato, setErroEdicaoComodato] = useState("");
 
   // Helper anti-bloqueio de "0" inicial
   const handleNumChange = (
@@ -372,6 +394,76 @@ export default function OxigenioPainelEstoque() {
       setErro(e?.response?.data?.detail || "Erro ao carregar histórico de comodato");
     } finally {
       setCarregandoHistorico(false);
+    }
+  };
+
+  const abrirModalEdicaoComodato = (mov: ComodatoMovimentacao) => {
+    setMovComodatoEditando(mov);
+    setFormEditarComodato({
+      empresa_id: String(mov.empresa_id),
+      tipo_movimentacao: mov.tipo_movimentacao,
+      tipo_cilindro: mov.tipo_cilindro,
+      quantidade: String(mov.quantidade),
+      numero_nota_remessa: mov.numero_documento || (mov as any).numero_nota_remessa || "",
+      data_movimentacao: (mov.data_movimento || (mov as any).data_movimentacao || new Date().toISOString().slice(0, 10)).slice(0, 10),
+      responsavel: mov.responsavel || "",
+      observacoes: mov.observacoes || "",
+    });
+    setErroEdicaoComodato("");
+    setModalEditarComodato(true);
+  };
+
+  const handleSalvarEdicaoComodato = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!movComodatoEditando) return;
+    setSalvandoEdicaoComodato(true);
+    setErroEdicaoComodato("");
+    try {
+      const atualizado = await oxigenioEditarComodato(movComodatoEditando.id, {
+        empresa_id: Number(formEditarComodato.empresa_id),
+        tipo_movimentacao: formEditarComodato.tipo_movimentacao,
+        tipo_cilindro: formEditarComodato.tipo_cilindro,
+        quantidade: Number(formEditarComodato.quantidade) || 1,
+        numero_nota_remessa: formEditarComodato.numero_nota_remessa.trim(),
+        numero_documento: formEditarComodato.numero_nota_remessa.trim(),
+        data_movimentacao: formEditarComodato.data_movimentacao,
+        data_movimento: formEditarComodato.data_movimentacao,
+        responsavel: formEditarComodato.responsavel.trim(),
+        observacoes: formEditarComodato.observacoes.trim(),
+      });
+      setSucesso(`Lançamento de comodato #${movComodatoEditando.id} atualizado com sucesso!`);
+      setHistoricoComodato((atual) =>
+        atual.map((m) => (m.id === movComodatoEditando.id ? atualizado : m))
+      );
+      setModalEditarComodato(false);
+      setMovComodatoEditando(null);
+      carregarDados();
+    } catch (e: any) {
+      setErroEdicaoComodato(e?.response?.data?.detail || "Erro ao atualizar lançamento de comodato");
+    } finally {
+      setSalvandoEdicaoComodato(false);
+    }
+  };
+
+  const handleExcluirComodato = async (mov: ComodatoMovimentacao) => {
+    const isEntrada = mov.tipo_movimentacao === "ENTRADA_COMODATO" || mov.tipo_movimentacao === "ENTRADA";
+    const rotuloTipo = isEntrada ? "Entrada" : "Devolução";
+    const ok = await confirmar({
+      titulo: `Excluir ${rotuloTipo} de Comodato #${mov.id}`,
+      descricao: `Deseja realmente excluir este lançamento de ${mov.quantidade} unid(s) de cilindro ${mov.tipo_cilindro} (${mov.empresa_nome})? O saldo de comodato do estoque será recalculado.`,
+      textoConfirmar: "Sim, Excluir",
+      textoCancelar: "Cancelar",
+      variante: "danger",
+    });
+    if (!ok) return;
+
+    try {
+      await oxigenioExcluirComodato(mov.id);
+      setSucesso(`Lançamento de comodato #${mov.id} excluído com sucesso!`);
+      setHistoricoComodato((atual) => atual.filter((m) => m.id !== mov.id));
+      carregarDados();
+    } catch (e: any) {
+      setErro(e?.response?.data?.detail || "Erro ao excluir movimentação de comodato.");
     }
   };
 
@@ -1803,6 +1895,7 @@ export default function OxigenioPainelEstoque() {
                         <th className="p-3 border-b text-center">Quantidade</th>
                         <th className="p-3 border-b">Doc / Remessa</th>
                         <th className="p-3 border-b">Responsável / Obs</th>
+                        <th className="p-3 border-b text-right">Ações</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -1844,6 +1937,26 @@ export default function OxigenioPainelEstoque() {
                             <td className="p-3 text-slate-500 text-[11px]">
                               {mov.observacoes || mov.responsavel || "—"}
                             </td>
+                            <td className="p-3 text-right whitespace-nowrap">
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => abrirModalEdicaoComodato(mov)}
+                                  className="p-1.5 text-slate-500 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition"
+                                  title="Editar este lançamento de comodato"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleExcluirComodato(mov)}
+                                  className="p-1.5 text-slate-400 hover:text-red-700 hover:bg-red-50 rounded-lg transition"
+                                  title="Excluir este lançamento de comodato"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </td>
                           </tr>
                         );
                       })}
@@ -1865,6 +1978,163 @@ export default function OxigenioPainelEstoque() {
                 Fechar
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDITAR MOVIMENTAÇÃO DE COMODATO */}
+      {modalEditarComodato && movComodatoEditando && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full overflow-hidden border border-slate-200">
+            <div className="px-6 py-4 bg-amber-800 text-white flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <Edit2 className="w-5 h-5 text-amber-200" />
+                <div>
+                  <h3 className="font-bold text-base">Editar Lançamento de Comodato #{movComodatoEditando.id}</h3>
+                  <p className="text-[11px] text-amber-200">
+                    Ajuste os dados de entrada ou devolução de cilindro cedido
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setModalEditarComodato(false)}
+                className="text-white/80 hover:text-white text-xl font-bold"
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={handleSalvarEdicaoComodato} className="p-6 space-y-4">
+              {erroEdicaoComodato && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-red-500" />
+                  <span>{erroEdicaoComodato}</span>
+                </div>
+              )}
+
+              <div>
+                <Label className="text-xs font-bold text-slate-700">Empresa Fornecedora *</Label>
+                <select
+                  value={formEditarComodato.empresa_id}
+                  onChange={(e) => setFormEditarComodato({ ...formEditarComodato, empresa_id: e.target.value })}
+                  className="w-full text-xs rounded-xl border border-slate-300 p-2.5 mt-1 bg-white outline-none focus:border-amber-600 font-medium"
+                  required
+                >
+                  {empresas.map((emp) => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.nome_fantasia || emp.razao_social}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs font-bold text-slate-700">Tipo de Movimentação *</Label>
+                  <select
+                    value={formEditarComodato.tipo_movimentacao}
+                    onChange={(e) => setFormEditarComodato({ ...formEditarComodato, tipo_movimentacao: e.target.value })}
+                    className="w-full text-xs rounded-xl border border-slate-300 p-2.5 mt-1 bg-white outline-none focus:border-amber-600 font-medium"
+                    required
+                  >
+                    <option value="ENTRADA_COMODATO">Entrada de Comodato (Cilindro Cedido)</option>
+                    <option value="DEVOLUCAO_EMPRESA">Devolução para a Empresa</option>
+                  </select>
+                </div>
+
+                <div>
+                  <Label className="text-xs font-bold text-slate-700">Tamanho do Cilindro *</Label>
+                  <select
+                    value={formEditarComodato.tipo_cilindro}
+                    onChange={(e) => setFormEditarComodato({ ...formEditarComodato, tipo_cilindro: e.target.value })}
+                    className="w-full text-xs rounded-xl border border-slate-300 p-2.5 mt-1 bg-white outline-none focus:border-amber-600 font-medium"
+                    required
+                  >
+                    <option value="10m3">Cilindro Grande (10 m³ / 50L)</option>
+                    <option value="3m3">Cilindro Médio (3 m³ / 15L)</option>
+                    <option value="1m3">Cilindro Transporte (1 m³ / 7L)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs font-bold text-slate-700">Quantidade (Cilindros) *</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={formEditarComodato.quantidade}
+                    onChange={(e) => setFormEditarComodato({ ...formEditarComodato, quantidade: e.target.value })}
+                    className="mt-1"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-xs font-bold text-slate-700">Data do Lançamento *</Label>
+                  <Input
+                    type="date"
+                    value={formEditarComodato.data_movimentacao}
+                    onChange={(e) => setFormEditarComodato({ ...formEditarComodato, data_movimentacao: e.target.value })}
+                    className="mt-1"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs font-bold text-slate-700">Nº Nota de Remessa / Doc</Label>
+                  <Input
+                    type="text"
+                    value={formEditarComodato.numero_nota_remessa}
+                    onChange={(e) => setFormEditarComodato({ ...formEditarComodato, numero_nota_remessa: e.target.value })}
+                    placeholder="Ex: NF 12345 / Remessa"
+                    className="mt-1"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-xs font-bold text-slate-700">Responsável pelo Lançamento</Label>
+                  <Input
+                    type="text"
+                    value={formEditarComodato.responsavel}
+                    onChange={(e) => setFormEditarComodato({ ...formEditarComodato, responsavel: e.target.value })}
+                    placeholder="Ex: Almoxarifado / Servidor"
+                    className="mt-1"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <Label className="text-xs font-bold text-slate-700">Observações</Label>
+                <textarea
+                  rows={2}
+                  value={formEditarComodato.observacoes}
+                  onChange={(e) => setFormEditarComodato({ ...formEditarComodato, observacoes: e.target.value })}
+                  placeholder="Observações complementares..."
+                  className="w-full text-xs rounded-xl border border-slate-300 p-2.5 mt-1 bg-white outline-none focus:border-amber-600"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setModalEditarComodato(false)}
+                  disabled={salvandoEdicaoComodato}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={salvandoEdicaoComodato}
+                  className="bg-amber-600 hover:bg-amber-700 text-white font-bold"
+                >
+                  {salvandoEdicaoComodato ? "Salvando..." : "Salvar Alterações"}
+                </Button>
+              </div>
+            </form>
           </div>
         </div>
       )}

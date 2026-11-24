@@ -11,8 +11,9 @@ Mapeia grupos, subgrupos, formas de organização e regras de compatibilidade
 com CBOs (tb_procedimento_cbo / sigtap_cbos).
 """
 
-from sqlmodel import Session, select
+from sqlmodel import Session, select, or_
 from app.models.lab_exames import SigtapProcedimento, SigtapCbo
+import json
 
 
 GRUPOS_SIGTAP: dict[str, str] = {
@@ -408,6 +409,567 @@ def corresponde_especialidade_sigtap(codigo: str, nome_proc: str, especialidade_
     return False
 
 
+REGRAS_PADRAO_TIPOS_SERVICO: dict[str, dict] = {
+    "EXAMES CARDIOLOGICOS": {
+        "codigo": "35",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps(["225120", "225215"]),
+        "exigir_cbo_estrito": True,
+        "prefixos_sigtap": "021102, 020501, 021001, 0406",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Cardiologia",
+        "cbo_padrao": "225120",
+        "sinonimos": "CARD, CARDIO, CARDIOLOGIA, ECG, ECO, HOLTER, MAPA, TESTE ERGOMETRICO, CATETERISMO",
+        "descricao_regras": "Exames diagnósticos cardiológicos (ECG, Holter, MAPA, Ecocardiograma, Teste Ergométrico). Liberado exclusivamente para médicos cardiologistas.",
+    },
+    "ULTRASSONOGRAFIA": {
+        "codigo": "31",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps(["225320", "225315", "225250"]),
+        "exigir_cbo_estrito": False,
+        "prefixos_sigtap": "0205",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Ultrassonografia / Radiologia",
+        "cbo_padrao": "225320",
+        "sinonimos": "USG, ULTRA, ULTRASSOM, ULTRASSONOGRAFIA, ECOGRAFIA, DOPPLER",
+        "descricao_regras": "Exames diagnósticos por ultrassonografia / ecografia em geral.",
+    },
+    "TOMOGRAFIA": {
+        "codigo": "34",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps(["225320"]),
+        "exigir_cbo_estrito": False,
+        "prefixos_sigtap": "0206",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Radiologia e Diagnóstico por Imagem",
+        "cbo_padrao": "225320",
+        "sinonimos": "TOMO, TC, TOMOGRAFIA, TOMOGRAFIA COMPUTADORIZADA",
+        "descricao_regras": "Exames de tomografia computadorizada com ou sem contraste.",
+    },
+    "RESSONÂNCIA MAGNÉTICA": {
+        "codigo": "32",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps(["225320"]),
+        "exigir_cbo_estrito": False,
+        "prefixos_sigtap": "0207",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Radiologia e Diagnóstico por Imagem",
+        "cbo_padrao": "225320",
+        "sinonimos": "RNM, RM, RESSONANCIA, RESSONÂNCIA MAGNÉTICA",
+        "descricao_regras": "Exames de alta complexidade de ressonância magnética nuclear.",
+    },
+    "EXAMES NEUROLOGICOS": {
+        "codigo": "37",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps(["225112", "225260"]),
+        "exigir_cbo_estrito": True,
+        "prefixos_sigtap": "021105, 020601, 020701, 0210010010",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Neurologia",
+        "cbo_padrao": "225112",
+        "sinonimos": "NEU, NEURO, NEUROLOGIA, EEG, ELETROENCEFALOGRAMA, ELETROENCEFALOGRAFIA",
+        "descricao_regras": "Métodos diagnósticos em neurologia (EEG, mapeamento cerebral). Restrito a neurologistas e neurocirurgiões.",
+    },
+    "EXAMES OTORRINOLARINGOLOGIA": {
+        "codigo": "38",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps(["225275"]),
+        "exigir_cbo_estrito": True,
+        "prefixos_sigtap": "021107",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Otorrinolaringologia",
+        "cbo_padrao": "225275",
+        "sinonimos": "ORL, OTORRINO, OTORRINOLARINGOLOGIA, AUDIOMETRIA, BERA, IMPEDANCIOMETRIA",
+        "descricao_regras": "Exames de audiometria, imitanciometria, BERA e videolaringoscopia.",
+    },
+    "EXAMES UROLOGICOS": {
+        "codigo": "40",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps(["225285"]),
+        "exigir_cbo_estrito": True,
+        "prefixos_sigtap": "021109, 020902",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Urologia",
+        "cbo_padrao": "225285",
+        "sinonimos": "EXURO, URO, UROLOGIA, URODINAMICA, ESTUDO URODINAMICO, CISTOSCOPIA",
+        "descricao_regras": "Exames diagnósticos urológicos e urodinâmicos.",
+    },
+    "EXAMES GASTROENTEROLOGIA": {
+        "codigo": "41",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps(["225165", "225235"]),
+        "exigir_cbo_estrito": True,
+        "prefixos_sigtap": "0209",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Gastroenterologia",
+        "cbo_padrao": "225165",
+        "sinonimos": "EXGAS, GASTRO, ENDOSCOPIA, COLONOSCOPIA, EDA, COLONO",
+        "descricao_regras": "Endoscopias digestivas altas e colonoscopias.",
+    },
+    "PROCEDIMENTOS OFTALMOLOGICOS": {
+        "codigo": "43",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps(["225265"]),
+        "exigir_cbo_estrito": True,
+        "prefixos_sigtap": "021106, 0405, 030305",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Oftalmologia",
+        "cbo_padrao": "225265",
+        "sinonimos": "POF, OFTALMO, OFTALMOLOGIA, CATARATA, MAPEAMENTO DE RETINA, TONOMETRIA",
+        "descricao_regras": "Procedimentos e exames diagnósticos oftalmológicos.",
+    },
+    "MAMOGRAFIA E MASTOLOGIA": {
+        "codigo": "33",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps(["225271", "225320", "225250"]),
+        "exigir_cbo_estrito": False,
+        "prefixos_sigtap": "020403, 0201010585",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Mastologia",
+        "cbo_padrao": "225271",
+        "sinonimos": "MAMO, MASTO, MAMOGRAFIA, MAMOGRAFIA BILATERAL",
+        "descricao_regras": "Mamografias diagnósticas e de rastreamento do câncer de mama.",
+    },
+    "DENSITOMETRIA OSSEA": {
+        "codigo": "39",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps(["225320"]),
+        "exigir_cbo_estrito": False,
+        "prefixos_sigtap": "020405",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Radiologia e Diagnóstico por Imagem",
+        "cbo_padrao": "225320",
+        "sinonimos": "DEOS, DENSITOMETRIA, DENSITOMETRIA OSSEA",
+        "descricao_regras": "Densitometria óssea para avaliação de osteoporose.",
+    },
+    "ESPIROMETRIA": {
+        "codigo": "42",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps(["225180"]),
+        "exigir_cbo_estrito": True,
+        "prefixos_sigtap": "021108",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Pneumologia",
+        "cbo_padrao": "225180",
+        "sinonimos": "ESPM, ESPIROMETRIA, PROVA DE FUNCAO PULMONAR",
+        "descricao_regras": "Prova de função pulmonar / espirometria clínica.",
+    },
+    "BIOPSIA": {
+        "codigo": "48",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps(["225305", "225225", "225135"]),
+        "exigir_cbo_estrito": False,
+        "prefixos_sigtap": "0201",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Anatomia Patológica",
+        "cbo_padrao": "225305",
+        "sinonimos": "BIO, BIOPSIA, PUNCAO, HISTOPATOLOGICO",
+        "descricao_regras": "Punções, biópsias de tecidos e exames anatomopatológicos.",
+    },
+    "CINTILOGRAFIA": {
+        "codigo": "36",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps(["225315"]),
+        "exigir_cbo_estrito": True,
+        "prefixos_sigtap": "0208",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Medicina Nuclear",
+        "cbo_padrao": "225315",
+        "sinonimos": "CINT, CINTILOGRAFIA, MEDICINA NUCLEAR",
+        "descricao_regras": "Cintilografias ósseas, miocárdicas e de tireoide via medicina nuclear.",
+    },
+    "EXAME RADIOLOGICO CONTRASTADO E TFD": {
+        "codigo": "47",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps(["225320"]),
+        "exigir_cbo_estrito": False,
+        "prefixos_sigtap": "0204",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Radiologia e Diagnóstico por Imagem",
+        "cbo_padrao": "225320",
+        "sinonimos": "RXCTS, RAIO X, RX, RADIOGRAFIA, CONTRASTADO",
+        "descricao_regras": "Exames de radiologia convencional e exames contrastados do TFD.",
+    },
+    "CIRURGIAS": {
+        "codigo": "9",
+        "tipo_fila": "ALTA_COMPLEXIDADE",
+        "cbos_permitidos": json.dumps(["225225", "225226", "225230", "225240", "225215", "225260", "225265", "225270", "225275", "225285"]),
+        "exigir_cbo_estrito": True,
+        "prefixos_sigtap": "04, 0301010072, 0301010064",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Cirurgia Geral",
+        "cbo_padrao": "225225",
+        "sinonimos": "CIR, CIRURGIAS, CIRURGIA, CIRURGIAS ESPECIALIZADAS",
+        "descricao_regras": "Cirurgias hospitalares e eletivas de média e alta complexidade.",
+    },
+    "PEQUENA CIRURGIA": {
+        "codigo": "23",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps(["225225", "225226", "225135", "225125", "225142"]),
+        "exigir_cbo_estrito": False,
+        "prefixos_sigtap": "0401, 0301010072",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Cirurgia Geral",
+        "cbo_padrao": "225225",
+        "sinonimos": "PCIR, PEQUENA CIRURGIA, PROCEDIMENTO AMBULATORIAL",
+        "descricao_regras": "Pequenas cirurgias ambulatoriais, suturas e retiradas de lesões cutâneas.",
+    },
+    "AVALIAÇÃO CIRURGIA": {
+        "codigo": "22",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps(["225225", "225226", "225270", "225285", "225265", "225275", "225215"]),
+        "exigir_cbo_estrito": True,
+        "prefixos_sigtap": "0301010072, 04",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Cirurgia Geral",
+        "cbo_padrao": "225225",
+        "sinonimos": "AVPC, AVALIACAO CIRURGIA, CONSULTA CIRURGICA, RISCO CIRURGICO",
+        "descricao_regras": "Consultas médicas e triagem para avaliação de risco e indicação cirúrgica.",
+    },
+    "CONSULTAS ESPECIALIZADAS": {
+        "codigo": "2",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps([]),
+        "exigir_cbo_estrito": False,
+        "prefixos_sigtap": "0301",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Clínica Médica / Especializada",
+        "cbo_padrao": "225125",
+        "sinonimos": "CES, CONSULTA, CONSULTAS, CONSULTAS ESPECIALIZADAS",
+        "descricao_regras": "Consultas médicas em todas as especialidades ambulatoriais da rede.",
+    },
+    "RETORNO CONSULTA ESPECIALIZADA": {
+        "codigo": "30",
+        "tipo_fila": "REGULACAO_GERAL",
+        "cbos_permitidos": json.dumps([]),
+        "exigir_cbo_estrito": False,
+        "prefixos_sigtap": "0301",
+        "excluir_prefixos_sigtap": "0202",
+        "especialidade_padrao": "Clínica Médica / Especializada",
+        "cbo_padrao": "225125",
+        "sinonimos": "RCES, RETORNO, RETORNO CONSULTA ESPECIALIZADA",
+        "descricao_regras": "Consultas de retorno médico especializado.",
+    },
+    "EX. LAB. PSF ROTINA": {
+        "codigo": "25",
+        "tipo_fila": "EXAME_LABORATORIAL",
+        "cbos_permitidos": json.dumps(["225310", "225125", "225142"]),
+        "exigir_cbo_estrito": False,
+        "prefixos_sigtap": "0202",
+        "excluir_prefixos_sigtap": "",
+        "especialidade_padrao": "Patologia Clínica / Medicina Laboratorial",
+        "cbo_padrao": "225310",
+        "sinonimos": "EXPSF, LAB, EXAMES LABORATORIAIS, SANGUE, ROTINA PSF",
+        "descricao_regras": "Exames laboratoriais clínicos da atenção primária e saúde da família.",
+    },
+    "EX. LAB. HIPERDIA": {
+        "codigo": "26",
+        "tipo_fila": "EXAME_LABORATORIAL",
+        "cbos_permitidos": json.dumps(["225310", "225125", "225142"]),
+        "exigir_cbo_estrito": False,
+        "prefixos_sigtap": "0202",
+        "excluir_prefixos_sigtap": "",
+        "especialidade_padrao": "Patologia Clínica / Medicina Laboratorial",
+        "cbo_padrao": "225310",
+        "sinonimos": "EXHD, HIPERDIA, GLICEMIA, COLESTEROL, CREATININA",
+        "descricao_regras": "Exames laboratoriais para pacientes com hipertensão e diabetes.",
+    },
+    "EX. LAB. PEDIATRIA": {
+        "codigo": "27",
+        "tipo_fila": "EXAME_LABORATORIAL",
+        "cbos_permitidos": json.dumps(["225310", "225124", "225125", "225142"]),
+        "exigir_cbo_estrito": False,
+        "prefixos_sigtap": "0202",
+        "excluir_prefixos_sigtap": "",
+        "especialidade_padrao": "Patologia Clínica / Medicina Laboratorial",
+        "cbo_padrao": "225310",
+        "sinonimos": "EXPED, PEDIATRIA, EXAMES PEDIATRICOS",
+        "descricao_regras": "Exames laboratoriais para pacientes pediátricos.",
+    },
+    "EX. LAB. PRÉ-NATAL": {
+        "codigo": "44",
+        "tipo_fila": "EXAME_LABORATORIAL",
+        "cbos_permitidos": json.dumps(["225310", "225250", "225125", "225142"]),
+        "exigir_cbo_estrito": False,
+        "prefixos_sigtap": "0202",
+        "excluir_prefixos_sigtap": "",
+        "especialidade_padrao": "Patologia Clínica / Medicina Laboratorial",
+        "cbo_padrao": "225310",
+        "sinonimos": "EXPN, PRE-NATAL, GESTANTE, SOROLOGIAS",
+        "descricao_regras": "Exames laboratoriais e sorologias do pré-natal municipal.",
+    },
+    "EX. LAB. GINECOLOGIA": {
+        "codigo": "28",
+        "tipo_fila": "EXAME_LABORATORIAL",
+        "cbos_permitidos": json.dumps(["225310", "225250", "225125", "225142"]),
+        "exigir_cbo_estrito": False,
+        "prefixos_sigtap": "0202",
+        "excluir_prefixos_sigtap": "",
+        "especialidade_padrao": "Patologia Clínica / Medicina Laboratorial",
+        "cbo_padrao": "225310",
+        "sinonimos": "EXGO, GINECOLOGIA, PREVENTIVO, COLPOCITOLOGIA",
+        "descricao_regras": "Exames laboratoriais voltados à saúde da mulher e ginecologia.",
+    },
+    "EX. LAB. SECRETARIA": {
+        "codigo": "29",
+        "tipo_fila": "EXAME_LABORATORIAL",
+        "cbos_permitidos": json.dumps(["225310", "225125", "225142"]),
+        "exigir_cbo_estrito": False,
+        "prefixos_sigtap": "0202",
+        "excluir_prefixos_sigtap": "",
+        "especialidade_padrao": "Patologia Clínica / Medicina Laboratorial",
+        "cbo_padrao": "225310",
+        "sinonimos": "EXSEC, SECRETARIA, EXAMES DEMANDAS ADMINISTRATIVAS",
+        "descricao_regras": "Exames laboratoriais autorizados por demandas da Secretaria Municipal.",
+    },
+}
+
+
+def seed_regras_padrao_tipos_servico(db: Session, sobrescrever: bool = False) -> dict:
+    """
+    Popula ou atualiza as regras padrão de organização, CBOs autorizados e vínculos
+    SIGTAP para todos os tipos de serviço conhecidos do SUS/Vivver na tabela tfd_tipos_fila.
+    """
+    from app.models.tfd import TipoFila
+
+    try:
+        existentes = {t.nome.strip().upper(): t for t in db.exec(select(TipoFila)).all()}
+    except Exception:
+        return {"ok": False, "inseridos": 0, "atualizados": 0}
+
+    inseridos = 0
+    atualizados = 0
+
+    for nome_servico, regras in REGRAS_PADRAO_TIPOS_SERVICO.items():
+        nome_up = nome_servico.strip().upper()
+        item = existentes.get(nome_up)
+        if item:
+            alterou = False
+            if sobrescrever or not getattr(item, "cbos_permitidos", ""):
+                item.cbos_permitidos = regras["cbos_permitidos"]
+                alterou = True
+            if sobrescrever or (not getattr(item, "prefixos_sigtap", "") and regras.get("prefixos_sigtap")):
+                item.prefixos_sigtap = regras["prefixos_sigtap"]
+                alterou = True
+            if sobrescrever or (not getattr(item, "excluir_prefixos_sigtap", "") and regras.get("excluir_prefixos_sigtap")):
+                item.excluir_prefixos_sigtap = regras["excluir_prefixos_sigtap"]
+                alterou = True
+            if sobrescrever or not getattr(item, "especialidade_padrao", ""):
+                item.especialidade_padrao = regras["especialidade_padrao"]
+                alterou = True
+            if sobrescrever or not getattr(item, "cbo_padrao", ""):
+                item.cbo_padrao = regras["cbo_padrao"]
+                alterou = True
+            if sobrescrever or not getattr(item, "sinonimos", ""):
+                item.sinonimos = regras["sinonimos"]
+                alterou = True
+            if sobrescrever or not getattr(item, "descricao_regras", ""):
+                item.descricao_regras = regras["descricao_regras"]
+                alterou = True
+            if sobrescrever:
+                item.exigir_cbo_estrito = regras["exigir_cbo_estrito"]
+                alterou = True
+            if not getattr(item, "codigo", "") and regras.get("codigo"):
+                item.codigo = regras["codigo"]
+                alterou = True
+            if not getattr(item, "tipo_fila", "") and regras.get("tipo_fila"):
+                item.tipo_fila = regras["tipo_fila"]
+                alterou = True
+            if alterou:
+                db.add(item)
+                atualizados += 1
+        else:
+            novo = TipoFila(
+                codigo=regras.get("codigo", ""),
+                nome=nome_servico,
+                tipo_fila=regras.get("tipo_fila", "REGULACAO_GERAL"),
+                ativo=True,
+                cbos_permitidos=regras["cbos_permitidos"],
+                exigir_cbo_estrito=regras["exigir_cbo_estrito"],
+                prefixos_sigtap=regras.get("prefixos_sigtap", ""),
+                excluir_prefixos_sigtap=regras.get("excluir_prefixos_sigtap", ""),
+                especialidade_padrao=regras.get("especialidade_padrao", ""),
+                cbo_padrao=regras.get("cbo_padrao", ""),
+                sinonimos=regras.get("sinonimos", ""),
+                descricao_regras=regras.get("descricao_regras", ""),
+            )
+            db.add(novo)
+            existentes[nome_up] = novo
+            inseridos += 1
+
+    if inseridos > 0 or atualizados > 0:
+        db.commit()
+
+    return {"ok": True, "inseridos": inseridos, "atualizados": atualizados}
+
+
+def parse_cbos_lista(valor: str | None) -> list[str]:
+    """Converte valor de cbos_permitidos (JSON string ou CSV) em lista de códigos CBO limpos."""
+    if not valor:
+        return []
+    v = str(valor).strip()
+    if v.startswith("[") and v.endswith("]"):
+        try:
+            parsed = json.loads(v)
+            if isinstance(parsed, list):
+                res = []
+                for item in parsed:
+                    if isinstance(item, dict):
+                        c = str(item.get("cbo") or item.get("codigo") or "").strip()
+                    else:
+                        c = str(item).strip()
+                    if c:
+                        res.append(c)
+                return list(dict.fromkeys(res))
+        except Exception:
+            pass
+    partes = [p.strip() for p in v.replace(";", ",").replace("\n", ",").split(",") if p.strip()]
+    return list(dict.fromkeys(partes))
+
+
+ESPECIALIDADES_PADRAO: list[dict] = [
+    {"codigo_cbo": "225120", "nome": "Cardiologia"},
+    {"codigo_cbo": "225225", "nome": "Cirurgia Geral"},
+    {"codigo_cbo": "225125", "nome": "Clínica Médica"},
+    {"codigo_cbo": "225135", "nome": "Dermatologia"},
+    {"codigo_cbo": "225155", "nome": "Endocrinologia e Metabologia"},
+    {"codigo_cbo": "225165", "nome": "Gastroenterologia"},
+    {"codigo_cbo": "225250", "nome": "Ginecologia e Obstetrícia"},
+    {"codigo_cbo": "225270", "nome": "Ortopedia e Traumatologia"},
+    {"codigo_cbo": "225275", "nome": "Otorrinolaringologia"},
+    {"codigo_cbo": "225124", "nome": "Pediatria"},
+    {"codigo_cbo": "225112", "nome": "Neurologia"},
+    {"codigo_cbo": "225260", "nome": "Neurocirurgia"},
+    {"codigo_cbo": "225265", "nome": "Oftalmologia"},
+    {"codigo_cbo": "225180", "nome": "Pneumologia"},
+    {"codigo_cbo": "225133", "nome": "Psiquiatria"},
+    {"codigo_cbo": "225320", "nome": "Radiologia e Diagnóstico por Imagem"},
+    {"codigo_cbo": "225195", "nome": "Reumatologia"},
+    {"codigo_cbo": "225285", "nome": "Urologia"},
+    {"codigo_cbo": "225210", "nome": "Angiologia e Cirurgia Vascular"},
+    {"codigo_cbo": "225109", "nome": "Nefrologia"},
+    {"codigo_cbo": "225181", "nome": "Geriatria"},
+    {"codigo_cbo": "225103", "nome": "Infectologia"},
+    {"codigo_cbo": "225122", "nome": "Oncologia Clínica"},
+    {"codigo_cbo": "225185", "nome": "Hematologia e Hemoterapia"},
+    {"codigo_cbo": "225142", "nome": "Medicina de Família e Comunidade"},
+    {"codigo_cbo": "225160", "nome": "Fisiatria e Medicina Física"},
+    {"codigo_cbo": "225271", "nome": "Mastologia"},
+    {"codigo_cbo": "225310", "nome": "Patologia Clínica / Medicina Laboratorial"},
+    {"codigo_cbo": "225305", "nome": "Anatomia Patológica e Citopatologia"},
+    {"codigo_cbo": "225315", "nome": "Medicina Nuclear"},
+    {"codigo_cbo": "225230", "nome": "Cirurgia Plástica"},
+    {"codigo_cbo": "225240", "nome": "Cirurgia Pediátrica"},
+    {"codigo_cbo": "225215", "nome": "Cirurgia Cardiovascular"},
+    {"codigo_cbo": "225235", "nome": "Coloproctologia"},
+    {"codigo_cbo": "225110", "nome": "Alergia e Imunologia"},
+    {"codigo_cbo": "225151", "nome": "Anestesiologia"},
+    {"codigo_cbo": "225140", "nome": "Nutrologia"},
+    {"codigo_cbo": "225226", "nome": "Pequena Cirurgia"},
+]
+
+
+def obter_detalhes_cbos(db: Session, cbos: list[str]) -> list[dict]:
+    """Retorna lista com código e descrição legível para cada CBO informado."""
+    if not cbos:
+        return []
+    from app.models.tfd import Especialidade
+
+    mapa_desc: dict[str, str] = {}
+    for esp in ESPECIALIDADES_PADRAO:
+        mapa_desc[esp["codigo_cbo"].strip()] = esp["nome"].strip()
+
+    try:
+        esps_db = db.exec(select(Especialidade).where(Especialidade.codigo_cbo.in_(cbos))).all()
+        for e in esps_db:
+            if e.codigo_cbo and e.nome:
+                mapa_desc[e.codigo_cbo.strip()] = e.nome.strip()
+    except Exception:
+        pass
+
+    faltantes = [c for c in cbos if c not in mapa_desc]
+    if faltantes:
+        try:
+            sc_db = db.exec(select(SigtapCbo).where(SigtapCbo.cbo.in_(faltantes))).all()
+            for sc in sc_db:
+                if sc.cbo and sc.descricao and sc.cbo.strip() not in mapa_desc:
+                    mapa_desc[sc.cbo.strip()] = sc.descricao.strip()
+        except Exception:
+            pass
+
+    out = []
+    for c in cbos:
+        c_clean = str(c).strip()
+        if c_clean:
+            out.append({
+                "cbo": c_clean,
+                "descricao": mapa_desc.get(c_clean, f"CBO {c_clean}"),
+            })
+    return out
+
+
+def obter_regras_tipo_fila(db: Session, tipo_fila: str | None) -> dict:
+    """
+    Busca no banco de dados (tfd_tipos_fila) as regras configuradas para o tipo de serviço.
+    Retorna CBOs permitidos, prefixos SIGTAP, especialidade padrão e restrições.
+    """
+    if not tipo_fila:
+        return {"encontrado": False, "cbos_permitidos": [], "prefixos": [], "excluir_prefixos": [], "sinonimos": []}
+
+    from app.models.tfd import TipoFila
+
+    tf_str = tipo_fila.strip()
+    tf_norm = _remover_acentos(tf_str).upper()
+    tipo_canonico, sigla_canonico = normalizar_tipo_fila(tf_str)
+
+    try:
+        tipos_todos = db.exec(select(TipoFila)).all()
+    except Exception:
+        tipos_todos = []
+
+    tipo_encontrado = None
+    for t in tipos_todos:
+        t_nome_norm = _remover_acentos(t.nome or "").upper()
+        if t_nome_norm == tf_norm or (tipo_canonico and t_nome_norm == _remover_acentos(tipo_canonico).upper()):
+            tipo_encontrado = t
+            break
+        if t.codigo and (t.codigo.upper() == tf_norm or (sigla_canonico and t.codigo.upper() == sigla_canonico)):
+            tipo_encontrado = t
+            break
+
+    if not tipo_encontrado:
+        for t in tipos_todos:
+            t_nome_norm = _remover_acentos(t.nome or "").upper()
+            if len(tf_norm) >= 4 and (tf_norm in t_nome_norm or t_nome_norm in tf_norm):
+                tipo_encontrado = t
+                break
+
+    if not tipo_encontrado:
+        return {"encontrado": False, "cbos_permitidos": [], "prefixos": [], "excluir_prefixos": [], "sinonimos": []}
+
+    cbos = parse_cbos_lista(getattr(tipo_encontrado, "cbos_permitidos", "") or "")
+    pref_sigtap = [p.strip() for p in (getattr(tipo_encontrado, "prefixos_sigtap", "") or "").split(",") if p.strip()]
+    excl_pref = [p.strip() for p in (getattr(tipo_encontrado, "excluir_prefixos_sigtap", "") or "").split(",") if p.strip()]
+    sinons = [s.strip() for s in (getattr(tipo_encontrado, "sinonimos", "") or "").split(",") if s.strip()]
+
+    return {
+        "encontrado": True,
+        "id": tipo_encontrado.id,
+        "nome": tipo_encontrado.nome,
+        "codigo": tipo_encontrado.codigo,
+        "tipo_fila": tipo_encontrado.tipo_fila,
+        "ativo": tipo_encontrado.ativo,
+        "cbos_permitidos": cbos,
+        "exigir_cbo_estrito": bool(getattr(tipo_encontrado, "exigir_cbo_estrito", False)),
+        "prefixos": pref_sigtap,
+        "excluir_prefixos": excl_pref,
+        "especialidade_padrao": getattr(tipo_encontrado, "especialidade_padrao", "") or "",
+        "cbo_padrao": getattr(tipo_encontrado, "cbo_padrao", "") or "",
+        "sinonimos": sinons,
+        "descricao_regras": getattr(tipo_encontrado, "descricao_regras", "") or "",
+    }
+
+
 def validar_cbo_procedimento(
     db: Session,
     codigo_procedimento: str,
@@ -416,22 +978,18 @@ def validar_cbo_procedimento(
     tipo_fila: str | None = None,
 ) -> dict:
     """
-    Analisa se o procedimento exige CBO restrito conforme o SIGTAP e se o
-    profissional informado possui o CBO compatível.
-
-    Retorna status de compatibilidade, CBOs autorizados e aviso orientativo,
-    sempre garantindo o uso do Médico da Unidade / Responsável Técnico
-    para máxima flexibilidade na atenção primária.
+    Analisa se o procedimento exige CBO restrito conforme o SIGTAP e as regras dinâmicas
+    do Tipo de Serviço configuradas no banco de dados, e se o profissional informado possui o CBO compatível.
     """
     cod_limpo = "".join(c for c in (codigo_procedimento or "") if c.isdigit())
     cbo_limpo = "".join(c for c in (cbo_profissional or "") if c.isdigit() or c.isalpha()).upper()
     nome_med = (medico_nome or "").strip()
 
     info_sigtap = decompor_codigo_sigtap(cod_limpo)
-    proc_obj = db.exec(select(SigtapProcedimento).where(SigtapProcedimento.codigo == cod_limpo)).first()
+    proc_obj = db.exec(select(SigtapProcedimento).where(SigtapProcedimento.codigo == cod_limpo)).first() if cod_limpo else None
     nome_proc = proc_obj.descricao if proc_obj else ""
 
-    # 1. Médico da Unidade / Responsável Técnico: sempre aceito com flexibilidade total
+    # 1. Médico da Unidade / Responsável Técnico
     eh_resp_tecnico = (
         "RESPONSÁVEL TÉCNICO" in nome_med.upper()
         or "RESPONSAVEL TECNICO" in nome_med.upper()
@@ -470,8 +1028,88 @@ def validar_cbo_procedimento(
             "cbos_autorizados": [],
         }
 
-    # 4. Busca CBOs oficiais no SIGTAP (sigtap_cbos)
-    cbos_db = db.exec(select(SigtapCbo).where(SigtapCbo.procedimento_codigo == cod_limpo)).all()
+    # 4. Regras dinâmicas do Tipo de Serviço configuradas no banco de dados (tfd_tipos_fila)
+    # Permite ao gestor municipal liberar CBOs específicos (ex: apenas Cardiologista em Exames Cardiológicos)
+    regras_tf = obter_regras_tipo_fila(db, tipo_fila)
+    if not regras_tf.get("encontrado") and cod_limpo:
+        from app.models.tfd import ProcedimentoCatalogo
+        p_cat = db.exec(select(ProcedimentoCatalogo).where(ProcedimentoCatalogo.codigo == cod_limpo)).first()
+        if p_cat and p_cat.tipo_fila:
+            regras_tf = obter_regras_tipo_fila(db, p_cat.tipo_fila)
+
+    cbos_tf = regras_tf.get("cbos_permitidos", [])
+    if cbos_tf:
+        cbos_detalhes_tf = obter_detalhes_cbos(db, cbos_tf)
+        exigir_estrito_tf = regras_tf.get("exigir_cbo_estrito", False)
+
+        # Se o médico possui exatamente um dos CBOs liberados para este serviço
+        if cbo_limpo and cbo_limpo in cbos_tf:
+            return {
+                "codigo_procedimento": cod_limpo,
+                "nome_procedimento": nome_proc,
+                "hierarquia": info_sigtap,
+                "exige_cbo_estrito": exigir_estrito_tf,
+                "cbo_profissional": cbo_limpo,
+                "compativel": True,
+                "motivo": f"CBO {cbo_limpo} expressamente liberado para as regras de '{regras_tf.get('nome')}'.",
+                "alerta": None,
+                "permite_responsavel_tecnico": True,
+                "cbos_autorizados": cbos_detalhes_tf,
+            }
+
+        # Se possui CBO da mesma família médica de 4 dígitos
+        familia_prof = cbo_limpo[:4] if len(cbo_limpo) >= 4 else ""
+        familias_permitidas_tf = {c[:4] for c in cbos_tf}
+        if familia_prof and familia_prof in familias_permitidas_tf and not exigir_estrito_tf:
+            return {
+                "codigo_procedimento": cod_limpo,
+                "nome_procedimento": nome_proc,
+                "hierarquia": info_sigtap,
+                "exige_cbo_estrito": False,
+                "cbo_profissional": cbo_limpo,
+                "compativel": True,
+                "motivo": f"CBO da mesma família médica ({familia_prof}) autorizada no serviço '{regras_tf.get('nome')}'.",
+                "alerta": None,
+                "permite_responsavel_tecnico": True,
+                "cbos_autorizados": cbos_detalhes_tf,
+            }
+
+        # Se Responsável Técnico / Médico da Unidade foi informado
+        if eh_resp_tecnico and not exigir_estrito_tf:
+            return {
+                "codigo_procedimento": cod_limpo,
+                "nome_procedimento": nome_proc,
+                "hierarquia": info_sigtap,
+                "exige_cbo_estrito": False,
+                "cbo_profissional": cbo_limpo,
+                "compativel": True,
+                "motivo": f"Serviço '{regras_tf.get('nome')}' com autorização por Médico da Unidade / Responsável Técnico.",
+                "alerta": f"Serviço com recomendação de especialistas ({', '.join(cbos_tf)}), requisitado por Responsável Técnico.",
+                "permite_responsavel_tecnico": True,
+                "cbos_autorizados": cbos_detalhes_tf,
+            }
+
+        # Divergência de CBO configurado nas regras do serviço
+        primeiros_cbos_str = ", ".join(f"{c['cbo']} ({c['descricao']})" for c in cbos_detalhes_tf[:3])
+        alerta_msg = (
+            f"O profissional selecionado possui CBO {cbo_limpo}, divergente dos CBOs liberados "
+            f"nas configurações de '{regras_tf.get('nome')}' ({primeiros_cbos_str})."
+        )
+        return {
+            "codigo_procedimento": cod_limpo,
+            "nome_procedimento": nome_proc,
+            "hierarquia": info_sigtap,
+            "exige_cbo_estrito": exigir_estrito_tf,
+            "cbo_profissional": cbo_limpo,
+            "compativel": False,
+            "motivo": f"CBO {cbo_limpo} não está entre os CBOs liberados para o serviço '{regras_tf.get('nome')}'.",
+            "alerta": alerta_msg,
+            "permite_responsavel_tecnico": not exigir_estrito_tf,
+            "cbos_autorizados": cbos_detalhes_tf,
+        }
+
+    # 5. Busca CBOs oficiais no SIGTAP (sigtap_cbos)
+    cbos_db = db.exec(select(SigtapCbo).where(SigtapCbo.procedimento_codigo == cod_limpo)).all() if cod_limpo else []
     cbos_permitidos = [c.cbo for c in cbos_db]
 
     # Se o SIGTAP não tem CBOs específicos cadastrados para este procedimento
@@ -558,48 +1196,6 @@ def validar_cbo_procedimento(
         "permite_responsavel_tecnico": True,
         "cbos_autorizados": cbos_formatados,
     }
-
-
-ESPECIALIDADES_PADRAO = [
-    {"codigo_cbo": "225120", "nome": "Cardiologia"},
-    {"codigo_cbo": "225225", "nome": "Cirurgia Geral"},
-    {"codigo_cbo": "225125", "nome": "Clínica Médica"},
-    {"codigo_cbo": "225135", "nome": "Dermatologia"},
-    {"codigo_cbo": "225155", "nome": "Endocrinologia e Metabologia"},
-    {"codigo_cbo": "225165", "nome": "Gastroenterologia"},
-    {"codigo_cbo": "225250", "nome": "Ginecologia e Obstetrícia"},
-    {"codigo_cbo": "225270", "nome": "Ortopedia e Traumatologia"},
-    {"codigo_cbo": "225275", "nome": "Otorrinolaringologia"},
-    {"codigo_cbo": "225124", "nome": "Pediatria"},
-    {"codigo_cbo": "225112", "nome": "Neurologia"},
-    {"codigo_cbo": "225260", "nome": "Neurocirurgia"},
-    {"codigo_cbo": "225265", "nome": "Oftalmologia"},
-    {"codigo_cbo": "225180", "nome": "Pneumologia"},
-    {"codigo_cbo": "225133", "nome": "Psiquiatria"},
-    {"codigo_cbo": "225320", "nome": "Radiologia e Diagnóstico por Imagem"},
-    {"codigo_cbo": "225195", "nome": "Reumatologia"},
-    {"codigo_cbo": "225285", "nome": "Urologia"},
-    {"codigo_cbo": "225210", "nome": "Angiologia e Cirurgia Vascular"},
-    {"codigo_cbo": "225109", "nome": "Nefrologia"},
-    {"codigo_cbo": "225181", "nome": "Geriatria"},
-    {"codigo_cbo": "225103", "nome": "Infectologia"},
-    {"codigo_cbo": "225122", "nome": "Oncologia Clínica"},
-    {"codigo_cbo": "225185", "nome": "Hematologia e Hemoterapia"},
-    {"codigo_cbo": "225142", "nome": "Medicina de Família e Comunidade"},
-    {"codigo_cbo": "225160", "nome": "Fisiatria e Medicina Física"},
-    {"codigo_cbo": "225271", "nome": "Mastologia"},
-    {"codigo_cbo": "225310", "nome": "Patologia Clínica / Medicina Laboratorial"},
-    {"codigo_cbo": "225305", "nome": "Anatomia Patológica e Citopatologia"},
-    {"codigo_cbo": "225315", "nome": "Medicina Nuclear"},
-    {"codigo_cbo": "225230", "nome": "Cirurgia Plástica"},
-    {"codigo_cbo": "225240", "nome": "Cirurgia Pediátrica"},
-    {"codigo_cbo": "225215", "nome": "Cirurgia Cardiovascular"},
-    {"codigo_cbo": "225235", "nome": "Coloproctologia"},
-    {"codigo_cbo": "225110", "nome": "Alergia e Imunologia"},
-    {"codigo_cbo": "225151", "nome": "Anestesiologia"},
-    {"codigo_cbo": "225140", "nome": "Nutrologia"},
-    {"codigo_cbo": "225226", "nome": "Pequena Cirurgia"},
-]
 
 MAPA_TIPO_ESPECIALIDADE: dict[str, tuple[str, str]] = {
     "ULTRASSONOGRAFIA": ("Ultrassonografia / Radiologia", "225320"),

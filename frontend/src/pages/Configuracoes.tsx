@@ -90,7 +90,7 @@ import {
 type Aba = "geral" | "gestao_filas" | "filas" | "pec" | "rnds" | "whatsapp" | "exames" | "medicos" | "unidades" | "laboratorios" | "dados" | "backup";
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "geral", rotulo: "Geral" },
-  { id: "gestao_filas", rotulo: "Gestão de Filas" },
+  { id: "gestao_filas", rotulo: "Tipos de Serviço & Regras CBO" },
   { id: "filas", rotulo: "Importar filas" },
   { id: "pec", rotulo: "PEC / e-SUS APS" },
   { id: "rnds", rotulo: "RNDS" },
@@ -133,14 +133,19 @@ export default function Configuracoes() {
     if (a.id === "backup") return !!user?.is_superuser;
     return can("cfg_rnds");
   });
-  const pedida = (params.get("aba") as Aba) || "geral";
+  const normalizarAbaParam = (raw: string | null): Aba => {
+    if (!raw) return "geral";
+    if (raw === "servicos" || raw === "tipos_servico") return "gestao_filas";
+    return raw as Aba;
+  };
+  const pedida = normalizarAbaParam(params.get("aba"));
   const inicial: Aba = abasVisiveis.some((a) => a.id === pedida)
     ? pedida
     : (abasVisiveis[0]?.id ?? "geral");
   const [aba, setAba] = useState<Aba>(inicial);
 
   useEffect(() => {
-    const p = (params.get("aba") as Aba) || "geral";
+    const p = normalizarAbaParam(params.get("aba"));
     if (abasVisiveis.some((a) => a.id === p) && p !== aba) {
       setAba(p);
     }

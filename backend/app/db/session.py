@@ -999,8 +999,13 @@ def _init_db_impl() -> None:
         except Exception:
             pass
         try:
-            from app.services.sigtap_hierarquia import seed_arvore_sigtap, seed_vivver_procedimentos
+            from app.services.sigtap_hierarquia import (
+                seed_arvore_sigtap,
+                seed_vivver_procedimentos,
+                seed_regras_padrao_tipos_servico,
+            )
             seed_vivver_procedimentos(db)
+            seed_regras_padrao_tipos_servico(db)
             if not db.exec(select(SigtapGrupo.id)).first():
                 seed_arvore_sigtap(db)
         except Exception:
@@ -1646,9 +1651,17 @@ def _init_db_impl() -> None:
             """,
             "CREATE INDEX IF NOT EXISTS ix_lab_inconsistencias_solic_id ON lab_inconsistencias_justificativas (solicitacao_id)",
             "CREATE INDEX IF NOT EXISTS ix_lab_inconsistencias_status_revisao ON lab_inconsistencias_justificativas (status_revisao)",
-            # Migrações Subagente 1: Tipagem de Filas (tfd_tipos_fila)
+            # Migrações Subagente 1: Tipagem de Filas e Regras de Serviços (tfd_tipos_fila)
             "ALTER TABLE tfd_tipos_fila ADD COLUMN IF NOT EXISTS tipo_fila VARCHAR(40) DEFAULT 'REGULACAO_GERAL' NOT NULL",
             "CREATE INDEX IF NOT EXISTS ix_tfd_tipos_fila_tipo_fila ON tfd_tipos_fila (tipo_fila)",
+            "ALTER TABLE tfd_tipos_fila ADD COLUMN IF NOT EXISTS cbos_permitidos VARCHAR(2000) DEFAULT '' NOT NULL",
+            "ALTER TABLE tfd_tipos_fila ADD COLUMN IF NOT EXISTS exigir_cbo_estrito BOOLEAN DEFAULT FALSE NOT NULL",
+            "ALTER TABLE tfd_tipos_fila ADD COLUMN IF NOT EXISTS prefixos_sigtap VARCHAR(500) DEFAULT '' NOT NULL",
+            "ALTER TABLE tfd_tipos_fila ADD COLUMN IF NOT EXISTS excluir_prefixos_sigtap VARCHAR(500) DEFAULT '' NOT NULL",
+            "ALTER TABLE tfd_tipos_fila ADD COLUMN IF NOT EXISTS especialidade_padrao VARCHAR(120) DEFAULT '' NOT NULL",
+            "ALTER TABLE tfd_tipos_fila ADD COLUMN IF NOT EXISTS cbo_padrao VARCHAR(10) DEFAULT '' NOT NULL",
+            "ALTER TABLE tfd_tipos_fila ADD COLUMN IF NOT EXISTS sinonimos VARCHAR(1000) DEFAULT '' NOT NULL",
+            "ALTER TABLE tfd_tipos_fila ADD COLUMN IF NOT EXISTS descricao_regras VARCHAR(1000) DEFAULT '' NOT NULL",
             "UPDATE tfd_tipos_fila SET tipo_fila = 'EXAME_LABORATORIAL' WHERE (nome ILIKE '%SANGUE%' OR nome ILIKE '%LABORAT%' OR nome ILIKE '%BIOQUIM%') AND (tipo_fila IS NULL OR tipo_fila = '' OR tipo_fila = 'REGULACAO_GERAL')",
             "UPDATE tfd_tipos_fila SET tipo_fila = 'ALTA_COMPLEXIDADE' WHERE (nome ILIKE '%APAC%' OR nome ILIKE '%ALTA COMPLEX%') AND (tipo_fila IS NULL OR tipo_fila = '' OR tipo_fila = 'REGULACAO_GERAL')",
             # Migrações Subagente 2: Composição de Equipamentos de Oxigênio

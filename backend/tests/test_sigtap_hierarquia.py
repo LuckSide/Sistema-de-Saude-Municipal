@@ -455,4 +455,73 @@ def test_catalogo_procedimentos_especialidades_e_cbos_contextual(session):
     assert all(not p["codigo_procedimento"].startswith("0202") for p in res_cir_orto)
 
 
+def test_regras_tipo_fila_cbos_estrito_e_liberados(session):
+    from app.services.sigtap_hierarquia import seed_regras_padrao_tipos_servico
+    from app.models.tfd import TipoFila
+    from app.api.v1.tfd import atualizar_tipo, listar_tipos, redefinir_regras_padrao_endpoint
+    from app.schemas.tfd import TipoFilaIn
+
+    # Popula regras padrão
+    res_seed = seed_regras_padrao_tipos_servico(session, sobrescrever=True)
+    assert res_seed["ok"] is True
+
+    tf_cardio = session.exec(select(TipoFila).where(TipoFila.nome == "EXAMES CARDIOLOGICOS")).first()
+    assert tf_cardio is not None
+    assert "225120" in tf_cardio.cbos_permitidos
+    assert tf_cardio.exigir_cbo_estrito is True
+
+    # 1. Cardiologista (225120) executando exame cardiológico -> COMPATÍVEL
+    res_cardio = validar_cbo_procedimento(
+        session,
+        codigo_procedimento="0211020036",  # ECG
+        cbo_profissional="225120",
+        medico_nome="Dr. Cardiologista",
+        tipo_fila="EXAMES CARDIOLOGICOS",
+    )
+    assert res_cardio["compativel"] is True
+    assert "225120" in [c["cbo"] for c in res_cardio["cbos_autorizados"]]
+
+    # 2. Dermatologista (225135) executando exame cardiológico com regra estrita -> INCOMPATÍVEL
+    res_dermato = validar_cbo_procedimento(
+        session,
+        codigo_procedimento="0211020036",
+        cbo_profissional="225135",
+        medico_nome="Dr. Dermatologista",
+        tipo_fila="EXAMES CARDIOLOGICOS",
+    )
+    assert res_dermato["compativel"] is False
+    assert "divergente dos CBOs liberados" in res_dermato["alerta"]
+
+    # 3. Altera regra dinamicamente: libera CBO de Dermatologista também
+    payload_in = TipoFilaIn(
+        codigo=tf_cardio.codigo,
+        nome=tf_cardio.nome,
+        tipo_fila=tf_cardio.tipo_fila,
+        ativo=True,
+        cbos_permitidos='["225120", "225135"]',
+        exigir_cbo_estrito=True,
+    )
+    atualizar_tipo(tf_cardio.id, payload_in, db=session, _=None)
+
+    # 4. Agora Dermatologista passa a ser compatível imediatamente
+    res_dermato_liberado = validar_cbo_procedimento(
+        session,
+        codigo_procedimento="0211020036",
+        cbo_profissional="225135",
+        medico_nome="Dr. Dermatologista",
+        tipo_fila="EXAMES CARDIOLOGICOS",
+    )
+    assert res_dermato_liberado["compativel"] is True
+
+    # 5. Listar tipos retorna cbos_detalhes preenchidos
+    lista = listar_tipos(q="CARDIOLOGICOS", db=session, _=None)
+    assert len(lista["data"]) == 1
+    detalhes = lista["data"][0].cbos_detalhes
+    assert any(d["cbo"] == "225120" for d in detalhes)
+
+    # 6. Endpoint de redefinir regras padrão funciona
+    res_endpoint = redefinir_regras_padrao_endpoint(payload=None, db=session, _=None)
+    assert res_endpoint["ok"] is True
+
+
 
