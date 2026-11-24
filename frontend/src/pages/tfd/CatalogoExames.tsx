@@ -32,8 +32,15 @@ type Aba = "tipos" | "procedimentos" | "especialidades" | "sigtap";
 
 const vazioTipo = { codigo: "", nome: "", ativo: true };
 const vazioProc = {
-  codigo: "", nome: "", tipo_fila: "", codigo_especialidade: "",
-  nome_especialidade: "", codigo_curto: "", ativo: true,
+  codigo: "",
+  nome: "",
+  tipo_fila: "",
+  codigo_especialidade: "",
+  nome_especialidade: "",
+  codigo_curto: "",
+  sem_codigo_especifico: false,
+  codigo_faturamento_sigtap: "",
+  ativo: true,
 };
 const vazioEsp = { codigo_cbo: "", nome: "", ativo: true };
 
@@ -131,10 +138,15 @@ export default function CatalogoExames() {
         if (t) {
           setEditId(t.id);
           setFormProc({
-            codigo: t.codigo, nome: t.nome, tipo_fila: t.tipo_fila,
+            codigo: t.codigo,
+            nome: t.nome,
+            tipo_fila: t.tipo_fila,
             codigo_especialidade: t.codigo_especialidade,
             nome_especialidade: t.nome_especialidade,
-            codigo_curto: t.codigo_curto, ativo: t.ativo,
+            codigo_curto: t.codigo_curto,
+            sem_codigo_especifico: Boolean(t.sem_codigo_especifico),
+            codigo_faturamento_sigtap: t.codigo_faturamento_sigtap || "",
+            ativo: t.ativo,
           });
         }
       } else { setEditId(null); setFormProc(vazioProc); }
@@ -163,7 +175,12 @@ export default function CatalogoExames() {
         else await tfdCriarTipo(payload);
         setOk(editId ? "Tipo atualizado." : "Tipo cadastrado.");
       } else if (aba === "procedimentos") {
-        if (!formProc.codigo.trim() || formProc.nome.trim().length < 2) throw new Error("Código e nome do procedimento são obrigatórios.");
+        if (!formProc.sem_codigo_especifico && !formProc.codigo.trim()) {
+          throw new Error("Código do procedimento é obrigatório.");
+        }
+        if (formProc.nome.trim().length < 2) {
+          throw new Error("Nome do procedimento é obrigatório.");
+        }
         const payload = {
           ...formProc,
           codigo: formProc.codigo.trim(),
@@ -172,6 +189,8 @@ export default function CatalogoExames() {
           codigo_especialidade: formProc.codigo_especialidade.replace(/\D/g, "").slice(0, 6),
           nome_especialidade: formProc.nome_especialidade.trim(),
           codigo_curto: formProc.codigo_curto.trim().toUpperCase(),
+          sem_codigo_especifico: formProc.sem_codigo_especifico,
+          codigo_faturamento_sigtap: formProc.codigo_faturamento_sigtap.trim(),
         };
         if (editId) await tfdAtualizarProcedimento(editId, payload);
         else await tfdCriarProcedimento(payload);
@@ -348,7 +367,20 @@ export default function CatalogoExames() {
                 <tbody>
                   {procs.map((t) => (
                     <tr key={t.id} className="border-b border-sus-900/5 last:border-0">
-                      <td className="px-4 py-3 font-mono text-xs">{t.codigo}{t.codigo_curto ? <span className="block text-teal">· {t.codigo_curto}</span> : null}</td>
+                      <td className="px-4 py-3 font-mono text-xs">
+                        {t.codigo}
+                        {t.codigo_curto ? <span className="block text-teal">· {t.codigo_curto}</span> : null}
+                        {t.sem_codigo_especifico ? (
+                          <span className="mt-0.5 inline-block rounded bg-amber-100 px-1 py-0.5 text-[10px] font-bold text-amber-800">
+                            Sem Cód. Específico
+                          </span>
+                        ) : null}
+                        {t.codigo_faturamento_sigtap ? (
+                          <span className="block text-[10px] font-semibold text-teal mt-0.5">
+                            Fatura SIGTAP: {t.codigo_faturamento_sigtap}
+                          </span>
+                        ) : null}
+                      </td>
                       <td className="px-4 py-3 font-semibold">{t.nome}</td>
                       <td className="px-4 py-3 text-xs text-ink/60">
                         {t.tipo_fila || "—"}
@@ -441,7 +473,37 @@ export default function CatalogoExames() {
               )}
               {aba === "procedimentos" && (
                 <div className="grid gap-3 md:grid-cols-2">
-                  <div><Label>Código procedimento *</Label><Input value={formProc.codigo} onChange={(e) => setFormProc({ ...formProc, codigo: e.target.value })} placeholder="Ex: 0205020186" /></div>
+                  <div className="md:col-span-2 rounded-xl border border-amber-300 bg-amber-50/70 p-2.5">
+                    <label className="flex cursor-pointer items-center gap-2 text-xs font-bold text-amber-950">
+                      <input
+                        type="checkbox"
+                        checked={formProc.sem_codigo_especifico}
+                        onChange={(e) => setFormProc({ ...formProc, sem_codigo_especifico: e.target.checked })}
+                        className="rounded border-amber-400 text-teal"
+                      />
+                      <span>Procedimento não tem código específico no SIGTAP</span>
+                    </label>
+                  </div>
+                  {formProc.sem_codigo_especifico && (
+                    <div className="md:col-span-2 rounded-xl border border-teal/20 bg-teal/5 p-2.5 space-y-1">
+                      <Label className="text-xs font-bold text-teal-950">Código SIGTAP para Faturamento SUS (de-para)</Label>
+                      <Input
+                        value={formProc.codigo_faturamento_sigtap}
+                        onChange={(e) => setFormProc({ ...formProc, codigo_faturamento_sigtap: e.target.value.replace(/\D/g, "") })}
+                        placeholder="Ex: 0205020186 (10 dígitos)"
+                        maxLength={10}
+                        className="font-mono text-xs"
+                      />
+                    </div>
+                  )}
+                  <div>
+                    <Label>{formProc.sem_codigo_especifico ? "Código interno (opcional)" : "Código procedimento *"}</Label>
+                    <Input
+                      value={formProc.codigo}
+                      onChange={(e) => setFormProc({ ...formProc, codigo: e.target.value })}
+                      placeholder={formProc.sem_codigo_especifico ? "Auto 99... se vazio" : "Ex: 0205020186"}
+                    />
+                  </div>
                   <div><Label>Código curto</Label><Input value={formProc.codigo_curto} onChange={(e) => setFormProc({ ...formProc, codigo_curto: e.target.value.toUpperCase() })} placeholder="Ex: USG-TV" /></div>
                   <div className="md:col-span-2"><Label>Nome procedimento *</Label><Input value={formProc.nome} onChange={(e) => setFormProc({ ...formProc, nome: e.target.value.toUpperCase() })} placeholder="Ex: ULTRASSONOGRAFIA TRANSVAGINAL" /></div>
                   <div><Label>Tipo de fila</Label><Input value={formProc.tipo_fila} onChange={(e) => setFormProc({ ...formProc, tipo_fila: e.target.value.toUpperCase() })} placeholder="Ex: ULTRASSONOGRAFIA" /></div>

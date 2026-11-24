@@ -252,16 +252,57 @@ def criar_sigtap(
     db: Session = Depends(get_db),
     user=Depends(need_any_perm("lab_sigtap", "cfg_exames", "usuarios", "tfd_catalogo", acoes=("criar",))),
 ):
+    sem_cod = bool(data.sem_codigo_especifico)
     codigo = data.codigo.strip()
+    cod_fat = (data.codigo_faturamento_sigtap or "").strip().replace(" ", "")
+
+    if sem_cod:
+        if not codigo:
+            # Gerar código sequencial interno com prefixo 99
+            registros = db.exec(
+                select(SigtapProcedimento.codigo)
+                .where(SigtapProcedimento.codigo.like("99%"))
+            ).all()
+            seq_max = 0
+            for r in registros:
+                if len(r) == 10 and r[2:].isdigit():
+                    val = int(r[2:])
+                    if val > seq_max:
+                        seq_max = val
+            codigo = f"99{seq_max + 1:08d}"
+        if cod_fat:
+            cod_fat_limpo = "".join(filter(str.isdigit, cod_fat))
+            if len(cod_fat_limpo) == 10:
+                cod_fat = cod_fat_limpo
+            proc_fat = db.exec(select(SigtapProcedimento).where(SigtapProcedimento.codigo == cod_fat)).first()
+            if proc_fat:
+                if not data.valor_sa and not data.valor_sp and not data.valor_sh:
+                    data.valor_sa = proc_fat.valor_sa
+                    data.valor_sp = proc_fat.valor_sp
+                    data.valor_sh = proc_fat.valor_sh
+                if not data.complexidade:
+                    data.complexidade = proc_fat.complexidade
+                if not data.instrumento:
+                    data.instrumento = proc_fat.instrumento
+    else:
+        cod_limpo = "".join(filter(str.isdigit, codigo))
+        if len(cod_limpo) != 10:
+            raise HTTPException(400, "O código SIGTAP padrão deve conter exatamente 10 dígitos numéricos.")
+        codigo = cod_limpo
+
     if db.exec(select(SigtapProcedimento).where(SigtapProcedimento.codigo == codigo)).first():
-        raise HTTPException(400, "Código SIGTAP já cadastrado")
+        raise HTTPException(400, f"Código SIGTAP ou identificador '{codigo}' já cadastrado.")
+
+    ref_codigo = cod_fat or codigo
     dump = data.model_dump()
     dump["codigo"] = codigo
     dump["descricao"] = data.descricao.strip().upper()
+    dump["sem_codigo_especifico"] = sem_cod
+    dump["codigo_faturamento_sigtap"] = cod_fat
     dump["origem_manual"] = True
-    dump["grupo_codigo"] = codigo[:2]
-    dump["subgrupo_codigo"] = codigo[:4]
-    dump["forma_organizacao_codigo"] = codigo[:6]
+    dump["grupo_codigo"] = ref_codigo[:2] if len(ref_codigo) >= 2 else "99"
+    dump["subgrupo_codigo"] = ref_codigo[:4] if len(ref_codigo) >= 4 else "9999"
+    dump["forma_organizacao_codigo"] = ref_codigo[:6] if len(ref_codigo) >= 6 else "999999"
     dump["competencia"] = date.today().strftime("%Y-%m")
     obj = SigtapProcedimento(**dump)
     db.add(obj)

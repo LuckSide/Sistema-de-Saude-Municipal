@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   Archive,
@@ -2337,14 +2337,21 @@ function AbaExamesPermitidos() {
   const [novoValorSa, setNovoValorSa] = useState("0,00");
   const [novoValorSh, setNovoValorSh] = useState("0,00");
   const [novoValorSp, setNovoValorSp] = useState("0,00");
+  const [novoSemCodigo, setNovoSemCodigo] = useState(false);
+  const [novoCodigoFat, setNovoCodigoFat] = useState("");
   const [salvandoNovo, setSalvandoNovo] = useState(false);
   const [erroNovo, setErroNovo] = useState("");
 
   async function criarProcedimentoManual() {
     setErroNovo("");
     const codLimpo = novoCodigo.trim().replace(/\D/g, "");
-    if (codLimpo.length !== 10) {
-      setErroNovo("O código SIGTAP deve conter exatamente 10 dígitos numéricos.");
+    if (!novoSemCodigo && codLimpo.length !== 10) {
+      setErroNovo("O código SIGTAP padrão deve conter exatamente 10 dígitos numéricos.");
+      return;
+    }
+    const codFatLimpo = novoCodigoFat.trim().replace(/\D/g, "");
+    if (novoSemCodigo && codFatLimpo && codFatLimpo.length !== 10) {
+      setErroNovo("O código SIGTAP para faturamento deve conter exatamente 10 dígitos numéricos.");
       return;
     }
     if (novoDescricao.trim().length < 3) {
@@ -2356,22 +2363,26 @@ function AbaExamesPermitidos() {
       const vSa = parseFloat(novoValorSa.replace(/\./g, "").replace(",", ".")) || 0;
       const vSh = parseFloat(novoValorSh.replace(/\./g, "").replace(",", ".")) || 0;
       const vSp = parseFloat(novoValorSp.replace(/\./g, "").replace(",", ".")) || 0;
-      await labSigtapCriar({
-        codigo: codLimpo,
+      const resp = await labSigtapCriar({
+        codigo: novoSemCodigo ? novoCodigo.trim() : codLimpo,
         descricao: novoDescricao.trim().toUpperCase(),
         complexidade: novoComplexidade,
         instrumento: novoInstrumento,
         valor_sa: vSa,
         valor_sh: vSh,
         valor_sp: vSp,
+        sem_codigo_especifico: novoSemCodigo,
+        codigo_faturamento_sigtap: codFatLimpo,
       });
-      setOk(`Procedimento ${codLimpo} cadastrado manualmente com compatibilidade SIGTAP.`);
+      setOk(`Procedimento ${resp.codigo} cadastrado com sucesso.`);
       setModalNovo(false);
       setNovoCodigo("");
       setNovoDescricao("");
       setNovoValorSa("0,00");
       setNovoValorSh("0,00");
       setNovoValorSp("0,00");
+      setNovoSemCodigo(false);
+      setNovoCodigoFat("");
       await carregar();
     } catch (e: unknown) {
       setErroNovo(msgErro(e, "Falha ao cadastrar procedimento manual compatível com o SIGTAP."));
@@ -2895,17 +2906,61 @@ function AbaExamesPermitidos() {
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-xs font-bold text-sus-950">Código SIGTAP (10 dígitos) *</Label>
+              {/* Checkbox: Não tem código específico */}
+              <div className="rounded-xl border border-amber-300 bg-amber-50/70 p-3 space-y-1.5">
+                <label className="flex items-center gap-2 text-xs font-bold text-amber-950 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={novoSemCodigo}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setNovoSemCodigo(checked);
+                      if (checked) {
+                        setNovoCodigo("");
+                      }
+                    }}
+                    className="rounded border-amber-400 text-teal"
+                  />
+                  <span>Procedimento não tem código específico no SIGTAP</span>
+                </label>
+                <p className="text-[11px] text-amber-900/90 leading-relaxed">
+                  Permite cadastrar o exame pelo nome próprio e utilizar o código SIGTAP de outro exame apenas para fins de faturamento e BPA do SUS.
+                </p>
+              </div>
+
+              {novoSemCodigo && (
+                <div className="rounded-xl border border-teal/20 bg-teal/5 p-3.5 space-y-1.5">
+                  <Label className="text-xs font-bold text-teal-950">
+                    Código SIGTAP de Outro Exame (Apenas para Faturamento SUS) *
+                  </Label>
                   <Input
-                    value={novoCodigo}
-                    onChange={(e) => setNovoCodigo(e.target.value)}
-                    placeholder="Ex: 0202010120"
+                    placeholder="Ex: 0202010183 (10 dígitos numéricos)"
                     maxLength={10}
+                    value={novoCodigoFat}
+                    onChange={(e) => setNovoCodigoFat(e.target.value.replace(/\D/g, ""))}
                     className="mt-1 text-xs font-mono font-bold"
                   />
-                  <p className="text-[10px] text-ink/50 mt-0.5">Padrão oficial DATASUS (somente números)</p>
+                  <p className="text-[10px] text-ink/50">
+                    Código oficial que constará no BPA/Faturamento, faturando o procedimento sob as regras deste item no SUS.
+                  </p>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">
+                    {novoSemCodigo ? "Código Interno (opcional — gerado 99... se vazio)" : "Código SIGTAP (10 dígitos) *"}
+                  </Label>
+                  <Input
+                    value={novoCodigo}
+                    onChange={(e) => setNovoCodigo(novoSemCodigo ? e.target.value : e.target.value)}
+                    placeholder={novoSemCodigo ? "Deixe vazio para gerar 99... automático" : "Ex: 0202010120"}
+                    maxLength={novoSemCodigo ? 20 : 10}
+                    className="mt-1 text-xs font-mono font-bold"
+                  />
+                  <p className="text-[10px] text-ink/50 mt-0.5">
+                    {novoSemCodigo ? "Identificador do procedimento no catálogo" : "Padrão oficial DATASUS (somente números)"}
+                  </p>
                 </div>
 
                 <div>
@@ -2989,7 +3044,7 @@ function AbaExamesPermitidos() {
               </Button>
               <Button
                 onClick={criarProcedimentoManual}
-                disabled={salvandoNovo}
+                disabled={salvandoNovo || (!novoSemCodigo && !novoCodigo) || !novoDescricao.trim()}
                 className="bg-teal text-white hover:bg-teal/90 text-xs"
               >
                 {salvandoNovo ? "Salvando..." : "Cadastrar no SIGTAP"}
@@ -3107,6 +3162,21 @@ function AbaLaboratorios() {
 
   return (
     <Card className="max-w-3xl p-6 space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-teal/30 bg-teal/5 p-3.5 text-xs text-teal-950">
+        <div className="flex items-center gap-2">
+          <FlaskConical className="h-4 w-4 text-teal shrink-0" />
+          <span>
+            O gerenciamento de laboratórios foi unificado na tela de <strong>Prestadores de Serviços</strong>.
+          </span>
+        </div>
+        <Link
+          to="/prestadores?aba=laboratorios"
+          className="inline-flex items-center gap-1 rounded-lg bg-teal px-3 py-1.5 font-bold text-white hover:bg-teal/90 shrink-0 text-xs shadow-2xs"
+        >
+          Ir para Prestadores & Laboratórios →
+        </Link>
+      </div>
+
       <div>
         <p className="flex items-center gap-2 font-display text-base font-bold text-sus-950">
           <FlaskConical className="h-5 w-5 text-teal" /> Laboratórios e Prestadores de Exames

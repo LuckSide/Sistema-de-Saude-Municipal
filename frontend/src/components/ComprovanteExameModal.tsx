@@ -64,9 +64,22 @@ export default function ComprovanteExameModal({
       className="fixed inset-0 z-50 flex items-center justify-center bg-sus-950/70 p-3 sm:p-5 print:p-0 print:bg-white print:static print:z-auto"
       {...backdrop}
     >
-      {/* Estilo exclusivo para impressão */}
+      {/* Estilo exclusivo para impressão A4 */}
       <style>{`
+        @page {
+          size: A4 portrait;
+          margin: 6mm 8mm;
+        }
         @media print {
+          html, body {
+            height: auto !important;
+            min-height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #fff !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
           body * {
             visibility: hidden;
           }
@@ -77,11 +90,16 @@ export default function ComprovanteExameModal({
             position: absolute;
             left: 0;
             top: 0;
-            width: 100%;
-            margin: 0;
-            padding: 1.5cm;
-            box-shadow: none;
-            border: none;
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            box-shadow: none !important;
+            border: none !important;
+            font-size: 11px !important;
+            line-height: 1.25 !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
           .no-print {
             display: none !important;
@@ -150,17 +168,17 @@ export default function ComprovanteExameModal({
         {comprovante && !loading && (
           <div className="text-sus-950">
             {/* Cabeçalho Oficial SUS / Guapé */}
-            <div className="border-b-2 border-sus-900/20 pb-4 text-center">
-              <p className="text-xs uppercase font-bold tracking-wider text-sus-900/70">
+            <div className="border-b-2 border-sus-900/20 pb-4 print:pb-1.5 print:border-b text-center">
+              <p className="text-xs print:text-[9px] uppercase font-bold tracking-wider text-sus-900/70">
                 República Federativa do Brasil · Sistema Único de Saúde (SUS)
               </p>
-              <h1 className="font-display text-lg sm:text-xl font-black uppercase text-sus-950">
+              <h1 className="font-display text-lg sm:text-xl print:text-base font-black uppercase text-sus-950">
                 Prefeitura Municipal de Guapé
               </h1>
-              <h2 className="text-xs sm:text-sm font-bold text-teal">
+              <h2 className="text-xs sm:text-sm print:text-[11px] font-bold text-teal">
                 Secretaria Municipal de Saúde · Setor de Regulação e Exames
               </h2>
-              <div className="mt-2 inline-block rounded-md border border-sus-900/20 bg-sand/50 px-3 py-1 text-xs font-semibold">
+              <div className="mt-2 print:mt-1 inline-block rounded-md border border-sus-900/20 bg-sand/50 px-3 py-1 print:px-2 print:py-0.5 text-xs print:text-[10px] font-semibold">
                 {comprovante.exige_preparo
                   ? "COMPROVANTE OFICIAL DE AGENDAMENTO DE EXAMES DE SANGUE"
                   : "COMPROVANTE OFICIAL DE AGENDAMENTO"}
@@ -168,11 +186,11 @@ export default function ComprovanteExameModal({
             </div>
 
             {/* Protocolo, Identificação e QR Code */}
-            <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-4 rounded-2xl bg-sand/30 p-4 text-xs border border-sus-900/10">
-              <div className="space-y-1.5 flex-1 w-full sm:w-auto">
+            <div className="mt-4 print:mt-2 flex flex-col sm:flex-row items-center justify-between gap-4 print:gap-2 rounded-2xl print:rounded-xl bg-sand/30 p-4 print:p-2 text-xs border border-sus-900/10">
+              <div className="space-y-1.5 print:space-y-0.5 flex-1 w-full sm:w-auto">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-ink/60">Protocolo da Solicitação: </span>
-                  <span className="font-mono font-bold text-sm text-sus-950">
+                  <span className="font-mono font-bold text-sm print:text-xs text-sus-950">
                     {comprovante.numero_pedido || comprovante.protocolo || `#${comprovante.id}`}
                   </span>
                 </div>
@@ -185,7 +203,7 @@ export default function ComprovanteExameModal({
                 <div className="flex flex-wrap items-center gap-3 pt-0.5">
                   <div>
                     <span className="text-ink/60">Status: </span>
-                    <span className="rounded bg-teal/15 px-2 py-0.5 font-bold uppercase text-teal text-[11px]">
+                    <span className="rounded bg-teal/15 px-2 py-0.5 font-bold uppercase text-teal text-[11px] print:text-[10px]">
                       {comprovante.status}
                     </span>
                   </div>
@@ -198,49 +216,49 @@ export default function ComprovanteExameModal({
 
               {/* QR Code de Identificação Exclusiva */}
               {comprovante.qr_code_url && (
-                <div className="flex flex-col items-center justify-center p-2 rounded-xl bg-white border border-sus-900/15 shadow-sm text-center shrink-0">
+                <div className="flex flex-col items-center justify-center p-2 print:p-1 rounded-xl bg-white border border-sus-900/15 shadow-sm text-center shrink-0">
                   <img
                     src={comprovante.qr_code_url}
                     alt="QR Code da Solicitação"
-                    className="h-24 w-24 object-contain print:h-28 print:w-28"
+                    className="h-24 w-24 object-contain print:h-14 print:w-14"
                     loading="eager"
                   />
-                  <span className="text-[10px] font-mono font-bold text-ink/75 mt-1">
+                  <span className="text-[10px] print:text-[9px] font-mono font-bold text-ink/75 mt-1">
                     {comprovante.codigo_curto || comprovante.protocolo}
                   </span>
-                  <span className="text-[9px] text-teal font-semibold tracking-tight">Leitura Rápida / Balcão</span>
+                  <span className="text-[9px] print:text-[8px] text-teal font-semibold tracking-tight">Leitura Rápida / Balcão</span>
                 </div>
               )}
             </div>
 
             {/* Dados do Paciente */}
-            <div className="mt-4 rounded-xl border border-sus-900/10 p-3.5">
-              <h3 className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase text-sus-900/70">
-                <User className="h-3.5 w-3.5 text-teal" /> Identificação do Paciente
+            <div className="mt-4 print:mt-2 rounded-xl border border-sus-900/10 p-3.5 print:p-2 text-xs print:text-[11px]">
+              <h3 className="mb-2 print:mb-1 flex items-center gap-1.5 text-xs print:text-[10px] font-bold uppercase text-sus-900/70">
+                <User className="h-3.5 w-3.5 print:h-3 print:w-3 text-teal" /> Identificação do Paciente
               </h3>
-              <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+              <div className="grid grid-cols-2 gap-2 print:gap-1 text-xs print:text-[11px] sm:grid-cols-4">
                 <div className="col-span-2 sm:col-span-2">
-                  <p className="text-[10px] text-ink/60">Nome Completo</p>
-                  <p className="font-bold text-sm text-sus-950">{comprovante.paciente_nome}</p>
+                  <p className="text-[10px] print:text-[9px] text-ink/60">Nome Completo</p>
+                  <p className="font-bold text-sm print:text-xs text-sus-950">{comprovante.paciente_nome}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-ink/60">CPF</p>
+                  <p className="text-[10px] print:text-[9px] text-ink/60">CPF</p>
                   <p className="font-medium font-mono">{comprovante.paciente_cpf || "—"}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-ink/60">Cartão SUS (CNS)</p>
+                  <p className="text-[10px] print:text-[9px] text-ink/60">Cartão SUS (CNS)</p>
                   <p className="font-medium font-mono">{comprovante.paciente_cns || "—"}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-ink/60">Prontuário</p>
+                  <p className="text-[10px] print:text-[9px] text-ink/60">Prontuário</p>
                   <p className="font-medium font-mono">{comprovante.paciente_prontuario || "—"}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-ink/60">Data de Nascimento</p>
+                  <p className="text-[10px] print:text-[9px] text-ink/60">Data de Nascimento</p>
                   <p className="font-medium">{comprovante.paciente_nascimento || "—"}</p>
                 </div>
                 <div className="col-span-2">
-                  <p className="text-[10px] text-ink/60">Unidade Solicitante / Médico</p>
+                  <p className="text-[10px] print:text-[9px] text-ink/60">Unidade Solicitante / Médico</p>
                   <p className="font-medium">
                     {comprovante.unidade_psf || "Secretaria de Saúde"}
                     {comprovante.medico_solicitante ? ` · Dr(a). ${comprovante.medico_solicitante}` : ""}
@@ -250,34 +268,34 @@ export default function ComprovanteExameModal({
             </div>
 
             {/* Dados do Agendamento e Laboratório */}
-            <div className="mt-4 rounded-xl border border-teal/20 bg-teal/5 p-3.5">
-              <h3 className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase text-teal">
-                <FlaskConical className="h-3.5 w-3.5" /> Local e Data da Coleta
+            <div className="mt-4 print:mt-2 rounded-xl border border-teal/20 bg-teal/5 p-3.5 print:p-2 text-xs print:text-[11px]">
+              <h3 className="mb-2 print:mb-1 flex items-center gap-1.5 text-xs print:text-[10px] font-bold uppercase text-teal">
+                <FlaskConical className="h-3.5 w-3.5 print:h-3 print:w-3" /> Local e Data da Coleta
               </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 print:gap-1 text-xs print:text-[11px]">
                 <div>
-                  <p className="text-[10px] text-ink/60 flex items-center gap-1">
-                    <Calendar className="h-3 w-3 text-teal" /> Data do Exame
+                  <p className="text-[10px] print:text-[9px] text-ink/60 flex items-center gap-1">
+                    <Calendar className="h-3 w-3 print:h-2.5 print:w-2.5 text-teal" /> Data do Exame
                   </p>
-                  <p className="text-sm font-bold text-sus-950">
+                  <p className="text-sm print:text-xs font-bold text-sus-950">
                     {comprovante.data_agendada
                       ? comprovante.data_agendada.split("-").reverse().join("/")
                       : "—"}
                   </p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-ink/60 flex items-center gap-1">
-                    <Clock className="h-3 w-3 text-teal" /> Horário de Coleta
+                  <p className="text-[10px] print:text-[9px] text-ink/60 flex items-center gap-1">
+                    <Clock className="h-3 w-3 print:h-2.5 print:w-2.5 text-teal" /> Horário de Coleta
                   </p>
-                  <p className="text-sm font-bold text-sus-950">
+                  <p className="text-sm print:text-xs font-bold text-sus-950">
                     {comprovante.hora_agendada || "07:00 às 09:00"}
                   </p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-ink/60 flex items-center gap-1">
-                    <MapPin className="h-3 w-3 text-teal" /> Laboratório Conveniado
+                  <p className="text-[10px] print:text-[9px] text-ink/60 flex items-center gap-1">
+                    <MapPin className="h-3 w-3 print:h-2.5 print:w-2.5 text-teal" /> Laboratório Conveniado
                   </p>
-                  <p className="text-sm font-bold text-teal">
+                  <p className="text-sm print:text-xs font-bold text-teal">
                     {comprovante.laboratorio_nome || "Laboratório Municipal"}
                   </p>
                 </div>
@@ -286,33 +304,33 @@ export default function ComprovanteExameModal({
 
             {/* Transporte Municipal Vinculado (Oculto se sem viagem vinculada) */}
             {comprovante.transporte && comprovante.transporte.possui_viagem && (
-              <div className="mt-4 rounded-xl border border-teal/30 bg-teal/5 p-3.5 text-xs text-sus-950">
-                <div className="flex items-center justify-between border-b border-teal/15 pb-1.5 mb-2">
-                  <h3 className="flex items-center gap-1.5 text-xs font-bold uppercase text-teal">
-                    <Bus className="h-3.5 w-3.5" /> Transporte Municipal Vinculado (TFD)
+              <div className="mt-4 print:mt-2 rounded-xl border border-teal/30 bg-teal/5 p-3.5 print:p-2 text-xs print:text-[11px] text-sus-950">
+                <div className="flex items-center justify-between border-b border-teal/15 pb-1.5 print:pb-0.5 mb-2 print:mb-1">
+                  <h3 className="flex items-center gap-1.5 text-xs print:text-[10px] font-bold uppercase text-teal">
+                    <Bus className="h-3.5 w-3.5 print:h-3 print:w-3" /> Transporte Municipal Vinculado (TFD)
                   </h3>
                   {comprovante.transporte.viagem_id && (
-                    <span className="font-mono text-[10px] text-teal font-bold">
+                    <span className="font-mono text-[10px] print:text-[9px] text-teal font-bold">
                       Viagem #{comprovante.transporte.viagem_id}
                     </span>
                   )}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 print:gap-1 text-xs print:text-[11px]">
                   <div>
-                    <span className="text-[10px] text-ink/60 block font-semibold">Veículo / Modelo:</span>
+                    <span className="text-[10px] print:text-[9px] text-ink/60 block font-semibold">Veículo / Modelo:</span>
                     <span className="font-bold text-sus-950">{comprovante.transporte.veiculo}</span>
                   </div>
                   <div>
-                    <span className="text-[10px] text-ink/60 block font-semibold">Ponto de Saída:</span>
+                    <span className="text-[10px] print:text-[9px] text-ink/60 block font-semibold">Ponto de Saída:</span>
                     <span className="font-bold text-sus-950">{comprovante.transporte.ponto_saida}</span>
                   </div>
                   <div>
-                    <span className="text-[10px] text-ink/60 block font-semibold">Horário de Saída:</span>
+                    <span className="text-[10px] print:text-[9px] text-ink/60 block font-semibold">Horário de Saída:</span>
                     <span className="font-bold text-teal">{comprovante.transporte.horario_saida}</span>
                   </div>
                 </div>
                 {(comprovante.transporte.destino || comprovante.transporte.motorista || comprovante.transporte.acompanhante) && (
-                  <div className="mt-2 pt-1.5 border-t border-teal/15 flex flex-wrap gap-x-4 text-[11px] text-ink/75">
+                  <div className="mt-2 print:mt-1 pt-1.5 print:pt-0.5 border-t border-teal/15 flex flex-wrap gap-x-4 text-[11px] print:text-[10px] text-ink/75">
                     {comprovante.transporte.destino && (
                       <span>Destino: <b>{comprovante.transporte.destino}</b></span>
                     )}
@@ -329,9 +347,9 @@ export default function ComprovanteExameModal({
 
             {/* Instruções Adicionais / Orientações de Transporte */}
             {comprovante.instrucoes_transporte && (
-              <div className="mt-4 rounded-xl border border-sus-900/15 bg-sand/40 p-3.5 text-xs text-sus-950">
-                <h4 className="flex items-center gap-1.5 font-bold text-teal uppercase text-[11px] mb-1">
-                  <Bus className="h-3.5 w-3.5" /> Instruções Adicionais para o Paciente:
+              <div className="mt-4 print:mt-2 rounded-xl border border-sus-900/15 bg-sand/40 p-3.5 print:p-2 text-xs print:text-[11px] text-sus-950">
+                <h4 className="flex items-center gap-1.5 font-bold text-teal uppercase text-[11px] print:text-[10px] mb-1 print:mb-0.5">
+                  <Bus className="h-3.5 w-3.5 print:h-3 print:w-3" /> Instruções Adicionais para o Paciente:
                 </h4>
                 <p className="text-ink/80 whitespace-pre-wrap">{comprovante.instrucoes_transporte}</p>
               </div>
@@ -346,41 +364,41 @@ export default function ComprovanteExameModal({
               );
 
               return (
-                <div className="mt-4">
-                  <h3 className="mb-1.5 text-xs font-bold uppercase text-sus-900/70">
+                <div className="mt-4 print:mt-2">
+                  <h3 className="mb-1.5 print:mb-1 text-xs print:text-[10px] font-bold uppercase text-sus-900/70">
                     Procedimentos / Exames Solicitados ({comprovante.itens?.length || 0})
                   </h3>
                   <div className="overflow-hidden rounded-xl border border-sus-900/10">
-                    <table className="w-full text-left text-xs">
+                    <table className="w-full text-left text-xs print:text-[11px]">
                       <thead className="bg-sand/60 text-ink/75">
                         <tr>
-                          <th className="px-3 py-2 font-semibold">Código SIGTAP</th>
-                          <th className="px-3 py-2 font-semibold">Procedimento / Exame</th>
-                          {temPreparo && <th className="px-3 py-2 font-semibold">Preparo / Cuidados</th>}
-                          <th className="px-3 py-2 text-center font-semibold">Qtd</th>
+                          <th className="px-3 py-2 print:py-1 print:px-2 font-semibold">Código SIGTAP</th>
+                          <th className="px-3 py-2 print:py-1 print:px-2 font-semibold">Procedimento / Exame</th>
+                          {temPreparo && <th className="px-3 py-2 print:py-1 print:px-2 font-semibold">Preparo / Cuidados</th>}
+                          <th className="px-3 py-2 print:py-1 print:px-2 text-center font-semibold">Qtd</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-sus-900/10">
                         {(comprovante.itens || []).map((it, idx) => (
                           <tr key={idx} className="hover:bg-sand/20">
-                            <td className="px-3 py-2 font-mono text-ink/70">
+                            <td className="px-3 py-2 print:py-1 print:px-2 font-mono text-ink/70">
                               {it.procedimento_codigo || "—"}
                             </td>
-                            <td className="px-3 py-2 font-medium text-sus-950">
+                            <td className="px-3 py-2 print:py-1 print:px-2 font-medium text-sus-950">
                               {it.procedimento_descricao}
                             </td>
                             {temPreparo && (
-                              <td className="px-3 py-2">
+                              <td className="px-3 py-2 print:py-1 print:px-2">
                                 {it.preparo_especifico ? (
-                                  <span className="inline-block rounded-md bg-amber-100/80 px-2 py-0.5 text-[10px] font-semibold text-amber-900 border border-amber-300">
+                                  <span className="inline-block rounded-md bg-amber-100/80 px-2 py-0.5 text-[10px] print:text-[9px] font-semibold text-amber-900 border border-amber-300">
                                     {it.preparo_especifico}
                                   </span>
                                 ) : (
-                                  <span className="text-ink/40 text-[11px]">—</span>
+                                  <span className="text-ink/40 text-[11px] print:text-[10px]">—</span>
                                 )}
                               </td>
                             )}
-                            <td className="px-3 py-2 text-center font-semibold">
+                            <td className="px-3 py-2 print:py-1 print:px-2 text-center font-semibold">
                               {it.quantidade || 1}
                             </td>
                           </tr>
@@ -394,17 +412,17 @@ export default function ComprovanteExameModal({
 
             {/* Orientações Clínicas e Preparo (Apenas para Exames de Sangue / Laboratoriais) */}
             {comprovante.exige_preparo && (comprovante.jejum_horas || (comprovante.preparo_instrucoes && comprovante.preparo_instrucoes.length > 0)) && (
-              <div className="mt-4 rounded-xl border-2 border-amber-300 bg-amber-50/70 p-3.5 text-xs text-amber-950">
-                <div className="flex items-center gap-1.5 font-bold text-amber-900 mb-2">
-                  <AlertCircle className="h-4 w-4 text-amber-600" />
+              <div className="mt-4 print:mt-2 rounded-xl border-2 border-amber-300 bg-amber-50/70 p-3.5 print:p-2 text-xs print:text-[11px] text-amber-950">
+                <div className="flex items-center gap-1.5 font-bold text-amber-900 mb-2 print:mb-1">
+                  <AlertCircle className="h-4 w-4 print:h-3.5 print:w-3.5 text-amber-600" />
                   <span>INSTRUÇÕES DE PREPARO E JEJUM CLÍNICO:</span>
                 </div>
                 {comprovante.jejum_horas && (
-                  <p className="font-semibold text-sm text-amber-950 mb-1">
+                  <p className="font-semibold text-sm print:text-xs text-amber-950 mb-1">
                     ⏱️ Jejum: {comprovante.jejum_horas}
                   </p>
                 )}
-                <ul className="list-disc pl-5 space-y-1 text-xs text-amber-900/90">
+                <ul className="list-disc pl-5 space-y-1 print:space-y-0.5 text-xs print:text-[10px] text-amber-900/90">
                   {(comprovante.preparo_instrucoes || []).map((prep, i) => (
                     <li key={i}>{prep}</li>
                   ))}
@@ -416,8 +434,8 @@ export default function ComprovanteExameModal({
             )}
 
             {/* Rodapé e Assinaturas */}
-            <div className="mt-8 pt-4 border-t border-sus-900/20 text-xs">
-              <div className="grid grid-cols-2 gap-8 text-center pt-8">
+            <div className="mt-8 print:mt-3 pt-4 print:pt-2 border-t border-sus-900/20 text-xs print:text-[10px]">
+              <div className="grid grid-cols-2 gap-8 print:gap-4 text-center pt-8 print:pt-3">
                 <div>
                   <div className="border-t border-sus-900/40 pt-1 font-semibold text-ink/75">
                     Assinatura do Paciente / Responsável
@@ -429,7 +447,11 @@ export default function ComprovanteExameModal({
                   </div>
                 </div>
               </div>
-              <p className="mt-6 text-[10px] text-center text-ink/40">
+              <p className="mt-6 print:mt-2 text-[10px] print:text-[8px] text-center text-ink/40">
+                Documento gerado pelo Sistema Municipal de Regulação de Saúde de Guapé em {comprovante.emitido_em}.
+              </p>
+            </div>
+          </div>
                 Documento gerado pelo Sistema Municipal de Regulação de Saúde de Guapé em {comprovante.emitido_em}.
               </p>
             </div>

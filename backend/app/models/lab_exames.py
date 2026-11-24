@@ -32,6 +32,8 @@ class SigtapProcedimento(SQLModel, table=True):
     forma_organizacao_codigo: str = Field(default="", max_length=6, index=True)
     forma_organizacao_nome: str = Field(default="", max_length=180)
     origem_manual: bool = Field(default=False, index=True)
+    sem_codigo_especifico: bool = Field(default=False, index=True)
+    codigo_faturamento_sigtap: str = Field(default="", max_length=20, index=True)
 
 
 class SigtapGrupo(SQLModel, table=True):

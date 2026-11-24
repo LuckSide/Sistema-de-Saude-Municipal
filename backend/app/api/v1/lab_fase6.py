@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import FileResponse
 from sqlmodel import Session, func, select, or_
 
-from app.core.deps import get_current_user_senha_ok as get_current_user, get_db
+from app.core.deps import get_current_user_senha_ok as get_current_user, get_db, get_user_from_header_or_query
 from app.models.lab_exames import SigtapProcedimento
 from app.models.lab_fase6 import (
     FilaPsf,
@@ -2153,7 +2153,7 @@ def submeter_justificativa_inconsistencia(
 def visualizar_resultado_pdf(
     mid: int,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(get_user_from_header_or_query),
 ):
     """Endpoint seguro para visualização/download do laudo em PDF.
     Protegido por RBAC: acesso concedido apenas à Secretaria, profissionais de saúde e ao laboratório responsável.

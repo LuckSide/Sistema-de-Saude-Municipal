@@ -673,10 +673,26 @@ def _init_db_impl() -> None:
             "forma_organizacao_nome": "VARCHAR(180) DEFAULT '' NOT NULL",
             "valor_combinado": "FLOAT DEFAULT 0.0 NOT NULL",
             "tipos_fila_permitidos": "VARCHAR(500) DEFAULT '' NOT NULL",
+            "sem_codigo_especifico": "BOOLEAN DEFAULT FALSE NOT NULL",
+            "codigo_faturamento_sigtap": "VARCHAR(20) DEFAULT '' NOT NULL",
         }.items():
             if col not in cols_sg:
                 try:
                     conn.execute(text(f"ALTER TABLE sigtap_procedimentos ADD COLUMN {col} {ddl}"))
+                except Exception:
+                    pass
+        # tfd_procedimentos: colunas sem_codigo_especifico e codigo_faturamento_sigtap
+        try:
+            cols_tfd_proc = [c["name"] for c in inspect(conn).get_columns("tfd_procedimentos")]
+        except Exception:
+            cols_tfd_proc = []
+        for col, ddl in {
+            "sem_codigo_especifico": "BOOLEAN DEFAULT FALSE NOT NULL",
+            "codigo_faturamento_sigtap": "VARCHAR(20) DEFAULT '' NOT NULL",
+        }.items():
+            if col not in cols_tfd_proc:
+                try:
+                    conn.execute(text(f"ALTER TABLE tfd_procedimentos ADD COLUMN {col} {ddl}"))
                 except Exception:
                     pass
         # Frota/viagem: status do veículo, manutenção, dados da ordem de circulação e snapshots do passageiro

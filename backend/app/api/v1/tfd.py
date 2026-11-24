@@ -5799,6 +5799,23 @@ def listar_procedimentos(
 def criar_procedimento(data: ProcedimentoIn, db: Session = Depends(get_db), _=Depends(need_perm("tfd_catalogo", "criar"))):
     codigo = data.codigo.strip()
     nome = data.nome.strip().upper()
+    sem_cod = bool(data.sem_codigo_especifico)
+    cod_fat = (data.codigo_faturamento_sigtap or "").strip()
+
+    if sem_cod and not codigo:
+        ultimo = db.exec(
+            select(ProcedimentoCatalogo.codigo)
+            .where(ProcedimentoCatalogo.codigo.like("99%"))
+            .order_by(ProcedimentoCatalogo.codigo.desc())
+        ).first()
+        seq = 1
+        if ultimo and len(ultimo) == 10 and ultimo.isdigit():
+            try:
+                seq = int(ultimo[2:]) + 1
+            except Exception:
+                seq = 1
+        codigo = f"99{seq:08d}"
+
     dup = db.exec(
         select(ProcedimentoCatalogo).where(
             ProcedimentoCatalogo.codigo == codigo, ProcedimentoCatalogo.nome == nome
@@ -5812,6 +5829,8 @@ def criar_procedimento(data: ProcedimentoIn, db: Session = Depends(get_db), _=De
         codigo_especialidade=data.codigo_especialidade.strip(),
         nome_especialidade=data.nome_especialidade.strip(),
         codigo_curto=data.codigo_curto.strip().upper(),
+        sem_codigo_especifico=sem_cod,
+        codigo_faturamento_sigtap=cod_fat,
         ativo=data.ativo,
     )
     db.add(obj)
@@ -5832,6 +5851,8 @@ def atualizar_procedimento(pid: int, data: ProcedimentoIn, db: Session = Depends
     obj.codigo_especialidade = data.codigo_especialidade.strip()
     obj.nome_especialidade = data.nome_especialidade.strip()
     obj.codigo_curto = data.codigo_curto.strip().upper()
+    obj.sem_codigo_especifico = bool(data.sem_codigo_especifico)
+    obj.codigo_faturamento_sigtap = (data.codigo_faturamento_sigtap or "").strip()
     obj.ativo = data.ativo
     db.add(obj)
     db.commit()

@@ -1242,8 +1242,16 @@ export type TipoFila = {
   ativo: boolean;
 };
 export type ProcedimentoCat = {
-  id: number; codigo: string; nome: string; tipo_fila: string;
-  codigo_especialidade: string; nome_especialidade: string; codigo_curto: string; ativo: boolean;
+  id: number;
+  codigo: string;
+  nome: string;
+  tipo_fila: string;
+  codigo_especialidade: string;
+  nome_especialidade: string;
+  codigo_curto: string;
+  sem_codigo_especifico?: boolean;
+  codigo_faturamento_sigtap?: string;
+  ativo: boolean;
 };
 export type EspecialidadeCat = { id: number; codigo_cbo: string; nome: string; ativo: boolean };
 
@@ -1698,6 +1706,8 @@ export type SigtapProc = {
   forma_organizacao_codigo?: string;
   forma_organizacao_nome?: string;
   origem_manual?: boolean;
+  sem_codigo_especifico?: boolean;
+  codigo_faturamento_sigtap?: string;
 };
 
 export const sigtapCriarManual = (p: {
@@ -1709,6 +1719,8 @@ export const sigtapCriarManual = (p: {
   valor_sp?: number;
   valor_sh?: number;
   sexo?: string;
+  sem_codigo_especifico?: boolean;
+  codigo_faturamento_sigtap?: string;
 }) => api.post<SigtapProc>("/api/lab/sigtap", p).then((r) => r.data);
 
 export const labSigtapCriar = sigtapCriarManual;
@@ -2719,8 +2731,11 @@ export const labJustificarInconsistencia = (
 ): Promise<{ ok: boolean; status: string; mensagem: string }> =>
   api.post(`/api/exames/solicitacoes/${mid}/justificar-inconsistencia`, payload).then((r) => r.data);
 
-export const labVisualizarLaudoPdfUrl = (mid: number): string =>
-  `/api/exames/solicitacoes/${mid}/resultado-pdf`;
+export const labVisualizarLaudoPdfUrl = (mid: number): string => {
+  const token = typeof window !== "undefined" ? localStorage.getItem("guape:token") : null;
+  const baseUrl = `/api/exames/solicitacoes/${mid}/resultado-pdf`;
+  return token ? `${baseUrl}?token=${encodeURIComponent(token)}` : baseUrl;
+};
 
 export const labAuditoriaLaudosListar = (params?: { q?: string; status?: string; limit?: number }): Promise<LabAuditoriaItem[]> =>
   api.get<LabAuditoriaItem[]>("/api/exames/auditoria-laudos", { params }).then((r) => r.data);

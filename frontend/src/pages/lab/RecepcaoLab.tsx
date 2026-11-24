@@ -714,9 +714,9 @@ export default function RecepcaoLab() {
                         type="button"
                         onClick={() => abrirModalAjuste(item)}
                         className="border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 !h-9 text-xs"
-                        title="Notificar divergência ou solicitar alteração"
+                        title="Notificar divergência ou solicitar correção"
                       >
-                        <AlertTriangle className="h-3.5 w-3.5 text-amber-600" /> Solicitar Ajuste
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-600" /> Solicitar Correção / Ajuste
                       </Button>
 
                       <Button
@@ -731,13 +731,24 @@ export default function RecepcaoLab() {
 
                   {/* Status 2: Coletado (Aguardando Laudo) */}
                   {isColetado && (
-                    <Button
-                      type="button"
-                      onClick={() => abrirModalUpload(item)}
-                      className="!h-9 text-xs bg-teal hover:bg-teal/90 text-white font-bold flex items-center gap-1.5 shadow-xs"
-                    >
-                      <UploadCloud className="h-4 w-4" /> Upload Laudo PDF (Validação)
-                    </Button>
+                    <>
+                      <Button
+                        type="button"
+                        onClick={() => abrirModalAjuste(item)}
+                        className="border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 !h-9 text-xs"
+                        title="Enviar pedido de correção para a Secretaria"
+                      >
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-600" /> Pedido de Correção
+                      </Button>
+
+                      <Button
+                        type="button"
+                        onClick={() => abrirModalUpload(item)}
+                        className="!h-9 text-xs bg-teal hover:bg-teal/90 text-white font-bold flex items-center gap-1.5 shadow-xs"
+                      >
+                        <UploadCloud className="h-4 w-4" /> Enviar PDF para Análise
+                      </Button>
+                    </>
                   )}
 
                   {/* Status 3: Aguardando Justificativa de Inconsistência */}
@@ -745,11 +756,20 @@ export default function RecepcaoLab() {
                     <>
                       <Button
                         type="button"
+                        onClick={() => abrirModalAjuste(item)}
+                        className="border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 !h-9 text-xs"
+                        title="Enviar pedido de correção para a Secretaria"
+                      >
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-600" /> Pedido de Correção
+                      </Button>
+
+                      <Button
+                        type="button"
                         onClick={() => abrirModalUpload(item)}
-                        className="border border-sus-900/15 bg-white text-ink hover:bg-sand !h-9 text-xs flex items-center gap-1"
+                        className="border border-teal/30 bg-teal/5 text-teal hover:bg-teal/10 !h-9 text-xs flex items-center gap-1 font-semibold"
                         title="Enviar outro PDF para reprocessamento"
                       >
-                        <RefreshCw className="h-3.5 w-3.5" /> Reenviar PDF
+                        <RefreshCw className="h-3.5 w-3.5" /> Reenviar PDF para Análise
                       </Button>
 
                       <Button
@@ -764,26 +784,57 @@ export default function RecepcaoLab() {
 
                   {/* Status 4: Em Revisão Secretaria */}
                   {isEmRevisao && (
-                    <a
-                      href={labVisualizarLaudoPdfUrl(item.id)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-900 hover:bg-indigo-100"
-                    >
-                      <Eye className="h-3.5 w-3.5" /> Ver Laudo Enviado
-                    </a>
+                    <>
+                      <a
+                        href={labVisualizarLaudoPdfUrl(item.id)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-900 hover:bg-indigo-100"
+                      >
+                        <Eye className="h-3.5 w-3.5" /> Ver Laudo Enviado
+                      </a>
+
+                      <Button
+                        type="button"
+                        onClick={() => abrirModalAjuste(item)}
+                        className="border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 !h-9 text-xs"
+                        title="Enviar pedido de correção para a Secretaria"
+                      >
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-600" /> Pedido de Correção
+                      </Button>
+
+                      <Button
+                        type="button"
+                        onClick={() => abrirModalUpload(item)}
+                        className="border border-teal/40 bg-teal/5 text-teal hover:bg-teal/10 !h-9 text-xs flex items-center gap-1 font-semibold"
+                        title="Enviar novo PDF revisado para análise"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" /> Reenviar PDF para Análise
+                      </Button>
+                    </>
                   )}
 
                   {/* Status 5: Realizado */}
                   {isRealizado && (
-                    <a
-                      href={labVisualizarLaudoPdfUrl(item.id)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-900 hover:bg-emerald-100 shadow-2xs"
-                    >
-                      <FileCheck className="h-4 w-4 text-emerald-700" /> Visualizar Laudo Oficial (PDF)
-                    </a>
+                    <>
+                      <Button
+                        type="button"
+                        onClick={() => abrirModalUpload(item)}
+                        className="border border-sus-900/15 bg-white text-ink hover:bg-sand !h-9 text-xs flex items-center gap-1"
+                        title="Substituir PDF do laudo caso haja retificação"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" /> Reenviar PDF Retificado
+                      </Button>
+
+                      <a
+                        href={labVisualizarLaudoPdfUrl(item.id)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-900 hover:bg-emerald-100 shadow-2xs"
+                      >
+                        <FileCheck className="h-4 w-4 text-emerald-700" /> Visualizar Laudo Oficial (PDF)
+                      </a>
+                    </>
                   )}
                 </div>
               </Card>
@@ -808,7 +859,7 @@ export default function RecepcaoLab() {
               <div>
                 <h3 className="font-display text-base font-bold text-sus-950 flex items-center gap-2">
                   <UploadCloud className="h-5 w-5 text-teal" />
-                  Conferência Automatizada de Laudo (PDF)
+                  Conferência Automatizada de Laudo (Upload ou Reenvio de PDF)
                 </h3>
                 <p className="mt-0.5 text-xs text-ink/65">
                   Paciente: <strong>{itemUpload.paciente_nome}</strong> · Pedido #{itemUpload.id}
@@ -1120,7 +1171,7 @@ export default function RecepcaoLab() {
               <div>
                 <h3 className="font-display text-base font-bold text-sus-950 flex items-center gap-2">
                   <AlertTriangle className="h-5 w-5 text-amber-600" />
-                  Solicitar Ajuste / Notificar Divergência
+                  Solicitar Ajuste / Pedido de Correção
                 </h3>
                 <p className="mt-0.5 text-xs text-ink/65">
                   Paciente: <strong>{itemAjuste.paciente_nome}</strong> (Pedido #{itemAjuste.id})

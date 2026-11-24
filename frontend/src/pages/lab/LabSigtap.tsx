@@ -89,11 +89,49 @@ export default function LabSigtap() {
   const [manualValorSp, setManualValorSp] = useState("0");
   const [manualValorSh, setManualValorSh] = useState("0");
   const [manualSexo, setManualSexo] = useState("");
+  const [manualSemCodigo, setManualSemCodigo] = useState(false);
+  const [manualCodigoFat, setManualCodigoFat] = useState("");
+  const [nomeProcFat, setNomeProcFat] = useState("");
+  const [buscandoProcFat, setBuscandoProcFat] = useState(false);
   const [salvandoManual, setSalvandoManual] = useState(false);
 
+  // Busca automática da descrição e valores do exame SIGTAP de faturamento
+  async function buscarExameFaturamento(cod: string) {
+    const codLimpo = cod.trim().replace(/\D/g, "");
+    if (codLimpo.length !== 10) {
+      setNomeProcFat("");
+      return;
+    }
+    setBuscandoProcFat(true);
+    try {
+      const resp = await labSigtap(codLimpo, undefined, 1, 5, false);
+      const achado = (resp?.data || []).find((x) => x.codigo === codLimpo);
+      if (achado) {
+        setNomeProcFat(achado.descricao);
+        if (Number(manualValorSa) === 0 && Number(manualValorSp) === 0 && Number(manualValorSh) === 0) {
+          setManualValorSa(String(achado.valor_sa || 0));
+          setManualValorSp(String(achado.valor_sp || 0));
+          setManualValorSh(String(achado.valor_sh || 0));
+        }
+        if (achado.complexidade) setManualComplexidade(achado.complexidade);
+        if (achado.instrumento) setManualInstrumento(achado.instrumento);
+      } else {
+        setNomeProcFat("Código informado não localizado na base local (será validado no envio).");
+      }
+    } catch {
+      setNomeProcFat("");
+    } finally {
+      setBuscandoProcFat(false);
+    }
+  }
+
   async function salvarProcedimentoManual() {
-    if (!/^\d{10}$/.test(manualCodigo.trim())) {
-      setErro("O código SIGTAP deve conter exatamente 10 dígitos numéricos.");
+    if (!manualSemCodigo && !/^\d{10}$/.test(manualCodigo.trim())) {
+      setErro("O código SIGTAP padrão deve conter exatamente 10 dígitos numéricos.");
+      return;
+    }
+    if (manualSemCodigo && manualCodigoFat.trim() && !/^\d{10}$/.test(manualCodigoFat.trim().replace(/\D/g, ""))) {
+      setErro("O código SIGTAP para faturamento deve conter exatamente 10 dígitos numéricos.");
       return;
     }
     if (!manualDescricao.trim()) {
@@ -103,7 +141,7 @@ export default function LabSigtap() {
     setSalvandoManual(true);
     setErro("");
     try {
-      await sigtapCriarManual({
+      const resp = await sigtapCriarManual({
         codigo: manualCodigo.trim(),
         descricao: manualDescricao.trim(),
         complexidade: manualComplexidade,
@@ -112,14 +150,19 @@ export default function LabSigtap() {
         valor_sp: Number(manualValorSp) || 0,
         valor_sh: Number(manualValorSh) || 0,
         sexo: manualSexo || undefined,
+        sem_codigo_especifico: manualSemCodigo,
+        codigo_faturamento_sigtap: manualCodigoFat.trim().replace(/\D/g, ""),
       });
-      setOk(`Procedimento ${manualCodigo.trim()} cadastrado com sucesso.`);
+      setOk(`Procedimento ${resp.codigo} cadastrado com sucesso.`);
       setModalManual(false);
       setManualCodigo("");
       setManualDescricao("");
       setManualValorSa("0");
       setManualValorSp("0");
       setManualValorSh("0");
+      setManualSemCodigo(false);
+      setManualCodigoFat("");
+      setNomeProcFat("");
       buscar(1);
     } catch (e: any) {
       setErro(msgErro(e, "Erro ao cadastrar procedimento manual."));
@@ -497,14 +540,23 @@ export default function LabSigtap() {
               <tr key={s.id ?? s.codigo} className="border-b border-sus-900/5 last:border-0">
                 <td className="px-4 py-3 font-mono font-semibold">
                   <span>{s.codigo}</span>
-                  {s.origem_manual && (
+                  {s.sem_codigo_especifico ? (
                     <span className="ml-2 inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">
+                      SEM CÓD. ESPECÍFICO
+                    </span>
+                  ) : s.origem_manual ? (
+                    <span className="ml-2 inline-flex items-center rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-800">
                       MANUAL
                     </span>
-                  )}
+                  ) : null}
                 </td>
                 <td className="px-4 py-3">
                   <p className="font-medium text-sus-950">{s.descricao}</p>
+                  {s.codigo_faturamento_sigtap && (
+                    <p className="mt-0.5 text-[11px] font-bold text-teal">
+                      Faturamento SUS: SIGTAP {s.codigo_faturamento_sigtap}
+                    </p>
+                  )}
                   {(s.grupo_nome || s.subgrupo_nome) && (
                     <p className="mt-0.5 text-[11px] text-ink/55">
                       {s.grupo_codigo ? `${s.grupo_codigo} ${s.grupo_nome}` : ""}
@@ -817,16 +869,80 @@ export default function LabSigtap() {
             </div>
 
             <div className="space-y-3">
+              {/* Opção: Não possui código SIGTAP específico */}
+              <div className="rounded-xl border border-amber-300 bg-amber-50/70 p-3 space-y-1.5">
+                <label className="flex items-center gap-2 text-xs font-bold text-amber-950 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={manualSemCodigo}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setManualSemCodigo(checked);
+                      if (checked) {
+                        setManualCodigo("");
+                      }
+                    }}
+                    className="rounded border-amber-400 text-teal"
+                  />
+                  <span>Procedimento não tem código específico no SIGTAP</span>
+                </label>
+                <p className="text-[11px] text-amber-900/90 leading-relaxed">
+                  Permite cadastrar exames/procedimentos sem código próprio no SUS e informar o código SIGTAP de outro exame equivalente para ser usado no faturamento/BPA.
+                </p>
+              </div>
+
+              {manualSemCodigo && (
+                <div className="rounded-xl border border-teal/20 bg-teal/5 p-3.5 space-y-2">
+                  <Label className="text-xs font-bold text-teal-950">
+                    Código de Outro Exame para Faturamento (SIGTAP / BPA) *
+                  </Label>
+                  <div className="relative">
+                    <Input
+                      placeholder="Ex: 0202010183 (10 dígitos)"
+                      maxLength={10}
+                      value={manualCodigoFat}
+                      onChange={(e) => {
+                        const v = e.target.value.replace(/\D/g, "");
+                        setManualCodigoFat(v);
+                        if (v.length === 10) {
+                          buscarExameFaturamento(v);
+                        } else {
+                          setNomeProcFat("");
+                        }
+                      }}
+                      className="font-mono font-bold text-xs"
+                    />
+                    {buscandoProcFat && (
+                      <span className="absolute right-3 top-2.5 text-[11px] text-teal">Buscando…</span>
+                    )}
+                  </div>
+                  {nomeProcFat && (
+                    <p className="text-[11px] font-semibold text-teal-900 bg-white/80 p-2 rounded border border-teal/20">
+                      Procedimento para faturamento: <strong>{nomeProcFat}</strong>
+                    </p>
+                  )}
+                  <p className="text-[10px] text-ink/55">
+                    Este código será utilizado no arquivo de produção ambulatorial (BPA), utilizando os valores e regras do SUS para este item.
+                  </p>
+                </div>
+              )}
+
               <div>
-                <Label>Código SIGTAP (10 dígitos numéricos) *</Label>
+                <Label>
+                  {manualSemCodigo
+                    ? "Código Interno / Identificador (opcional — gerado automaticamente se vazio)"
+                    : "Código SIGTAP (10 dígitos numéricos) *"}
+                </Label>
                 <Input
-                  placeholder="Ex: 0202010183"
-                  maxLength={10}
+                  placeholder={manualSemCodigo ? "Deixe em branco para gerar código 99... automático" : "Ex: 0202010183"}
+                  maxLength={manualSemCodigo ? 20 : 10}
                   value={manualCodigo}
-                  onChange={(e) => setManualCodigo(e.target.value.replace(/\D/g, ""))}
+                  onChange={(e) => setManualCodigo(manualSemCodigo ? e.target.value : e.target.value.replace(/\D/g, ""))}
                 />
                 <p className="mt-1 text-[11px] text-ink/50">
-                  Os 2 primeiros dígitos definem o Grupo (ex: 02 = Procedimentos com Finalidade Diagnóstica).
+                  {manualSemCodigo
+                    ? "Identificador exclusivo do exame para prescrição e agendamento interno."
+                    : "Os 2 primeiros dígitos definem o Grupo (ex: 02 = Procedimentos com Finalidade Diagnóstica)."}
                 </p>
               </div>
 
@@ -911,7 +1027,7 @@ export default function LabSigtap() {
                 </Button>
                 <Button
                   onClick={salvarProcedimentoManual}
-                  disabled={salvandoManual || !manualCodigo || !manualDescricao.trim()}
+                  disabled={salvandoManual || (!manualSemCodigo && !manualCodigo) || !manualDescricao.trim()}
                   className="!bg-teal !text-sus-950 font-bold"
                 >
                   {salvandoManual ? "Salvando…" : "Salvar Procedimento"}

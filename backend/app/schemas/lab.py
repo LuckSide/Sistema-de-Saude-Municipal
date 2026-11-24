@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 # ---------- SIGTAP ----------
 class SigtapIn(BaseModel):
-    codigo: str = Field(min_length=10, max_length=10, pattern=r"^\d{10}$")
+    codigo: str = Field(default="", max_length=20)
     descricao: str = Field(min_length=2, max_length=255)
     complexidade: str = Field(default="MC", pattern="^(NA|AB|MC|AC)$")
     instrumento: str = Field(default="BPA-C", pattern="^(BPA-C|BPA-I|BPA-F|AIH|APAC|RAAS)$")
@@ -15,6 +15,8 @@ class SigtapIn(BaseModel):
     valor_combinado: float = Field(default=0.0, ge=0)
     tipos_fila_permitidos: str = Field(default="")
     sexo: str = Field(default="")
+    sem_codigo_especifico: bool = Field(default=False)
+    codigo_faturamento_sigtap: str = Field(default="", max_length=20)
 
 
 class SigtapOut(SigtapIn):
@@ -35,6 +37,8 @@ class SigtapOut(SigtapIn):
     forma_organizacao_codigo: str = ""
     forma_organizacao_nome: str = ""
     origem_manual: bool = False
+    sem_codigo_especifico: bool = False
+    codigo_faturamento_sigtap: str = ""
 
 
 class SigtapVersaoOut(BaseModel):

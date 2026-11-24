@@ -286,6 +286,8 @@ class ProcedimentoCatalogo(SQLModel, table=True):
     codigo_especialidade: str = Field(default="", max_length=10, index=True)  # CBO padrão
     nome_especialidade: str = Field(default="", max_length=120)
     codigo_curto: str = Field(default="", max_length=12, index=True)
+    sem_codigo_especifico: bool = Field(default=False, index=True)
+    codigo_faturamento_sigtap: str = Field(default="", max_length=20, index=True)
     ativo: bool = Field(default=True, index=True)
 
 

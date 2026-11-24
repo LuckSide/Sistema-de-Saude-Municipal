@@ -605,12 +605,14 @@ class TipoFilaOut(TipoFilaIn):
 
 
 class ProcedimentoIn(BaseModel):
-    codigo: str = Field(min_length=1, max_length=20)
+    codigo: str = Field(default="", max_length=20)
     nome: str = Field(min_length=2, max_length=150)
     tipo_fila: str = Field(default="", max_length=80)
     codigo_especialidade: str = Field(default="", max_length=10)
     nome_especialidade: str = Field(default="", max_length=120)
     codigo_curto: str = Field(default="", max_length=12)
+    sem_codigo_especifico: bool = False
+    codigo_faturamento_sigtap: str = Field(default="", max_length=20)
     ativo: bool = True
 
 
