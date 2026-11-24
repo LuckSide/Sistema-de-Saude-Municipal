@@ -725,26 +725,35 @@ export function WidgetOxigenioResumo() {
 
   if (!res) return <div>{erro ? <Erro msg={erro} /> : <p className="text-xs text-ink/45 py-2">Carregando oxigenioterapia…</p>}</div>;
 
+  const totalCilindrosEmUso = (res.saldos_cilindros || []).reduce((acc, s) => acc + (s.em_uso || 0), 0);
+  const totalCheios = (res.saldos_cilindros || []).reduce((acc, s) => acc + (s.saldo_estoque_disponivel || 0), 0);
+
   return (
     <div>
       <div className="grid grid-cols-2 gap-2 text-center">
         <div className="rounded-xl bg-sky-50 p-2.5 border border-sky-200/60">
           <span className="text-[10px] font-bold text-sky-800 uppercase">Pacientes Ativos</span>
-          <p className="font-display text-2xl font-extrabold text-sky-950">{res.pacientes_ativos_oxigenioterapia || 0}</p>
+          <p className="font-display text-2xl font-extrabold text-sky-950">
+            {res.pacientes_ativos_oxigenio ?? res.pacientes_ativos_oxigenioterapia ?? res.total_pacientes_ativos ?? 0}
+          </p>
           <p className="text-[10px] text-sky-700">Em oxigenioterapia</p>
         </div>
         <div className="rounded-xl bg-teal/10 p-2.5 border border-teal/20">
           <span className="text-[10px] font-bold text-teal uppercase">Cilindros em Uso</span>
-          <p className="font-display text-2xl font-extrabold text-sus-950">{res.cilindros_em_uso_total || 0}</p>
+          <p className="font-display text-2xl font-extrabold text-sus-950">
+            {totalCilindrosEmUso || res.cilindros_em_uso_total || 0}
+          </p>
           <p className="text-[10px] text-ink/50">
-            {res.cilindros_proprios_em_uso || 0} próprios · {res.cilindros_comodato_em_uso || 0} comodato
+            {totalCheios} cheios em estoque
           </p>
         </div>
       </div>
       <div className="mt-2.5 grid grid-cols-2 gap-2 text-xs">
         <div className="rounded-lg bg-sand p-2 flex justify-between items-center">
           <span className="text-slate-600">Concentradores:</span>
-          <strong className="text-sus-950 font-bold">{res.concentradores_em_uso || 0}</strong>
+          <strong className="text-sus-950 font-bold">
+            {res.pacientes_ativos_concentrador ?? res.concentradores_em_uso ?? res.equipamentos_em_uso ?? 0}
+          </strong>
         </div>
         <div className="rounded-lg bg-amber-50 border border-amber-200/50 p-2 flex justify-between items-center">
           <span className="text-amber-800">Trocas 7 dias:</span>

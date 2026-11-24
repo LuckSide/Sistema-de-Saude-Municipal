@@ -3596,6 +3596,11 @@ export interface EstoqueOxigenioResumo {
   saldos_cilindros: SaldoCilindroTipo[];
   total_pacientes_ativos: number;
   pacientes_ativos_oxigenio: number;
+  pacientes_ativos_oxigenioterapia?: number;
+  cilindros_em_uso_total?: number;
+  cilindros_proprios_em_uso?: number;
+  cilindros_comodato_em_uso?: number;
+  concentradores_em_uso?: number;
   pacientes_ativos_maquinas: number;
   pacientes_ativos_concentrador: number;
   pacientes_ativos_concentrador_5l?: number;
