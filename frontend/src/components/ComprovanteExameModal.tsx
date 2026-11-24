@@ -452,10 +452,6 @@ export default function ComprovanteExameModal({
               </p>
             </div>
           </div>
-                Documento gerado pelo Sistema Municipal de Regulação de Saúde de Guapé em {comprovante.emitido_em}.
-              </p>
-            </div>
-          </div>
         )}
       </div>
     </div>
