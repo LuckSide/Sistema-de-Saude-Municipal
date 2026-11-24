@@ -225,6 +225,30 @@ export default function Prestadores() {
     }
   }
 
+  async function excluirLabPermanente(id: number) {
+    const alvo = labsLista.find((x) => x.id === id);
+    const okConf = await confirmar({
+      titulo: `Excluir PERMANENTEMENTE ${alvo?.nome ?? ""}`,
+      descricao: `ATENÇÃO: Deseja apagar definitivamente o laboratório "${alvo?.nome ?? ""}" do banco de dados? Esta ação é irreversível e só será permitida se não houver exames ou faturas vinculadas.`,
+      textoConfirmar: "Sim, Excluir Definitivamente",
+      variante: "danger",
+    });
+    if (!okConf) return;
+    setLabBusy(true);
+    setLabErro("");
+    setLabOk("");
+    try {
+      await labsRemover(id, true);
+      await carregarLabs();
+      setLabOk(`Laboratório "${alvo?.nome ?? ""}" excluído permanentemente do banco de dados.`);
+    } catch (e: unknown) {
+      const d = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Falha ao excluir permanentemente.";
+      setLabErro(typeof d === "string" ? d : "Falha ao excluir permanentemente o laboratório.");
+    } finally {
+      setLabBusy(false);
+    }
+  }
+
   useEffect(() => {
     const rid = Number(sp.get("registro"));
     if (!rid || modal) return;
@@ -331,6 +355,24 @@ export default function Prestadores() {
       });
     } catch {
       setErro("Falha ao inativar prestador.");
+    }
+  }
+
+  async function excluirPrestadorPermanente(p: Prestador) {
+    const okConf = await confirmar({
+      titulo: `Excluir PERMANENTEMENTE prestador ${p.razao_social}`,
+      descricao: `ATENÇÃO: Deseja apagar definitivamente o prestador "${p.razao_social}" do banco de dados? Esta operação não pode ser desfeita.`,
+      textoConfirmar: "Sim, Excluir Definitivamente",
+      variante: "danger",
+    });
+    if (!okConf) return;
+    try {
+      await deletePrestador(p.id, true);
+      await carregar();
+      setOk(`Prestador "${p.razao_social}" excluído permanentemente.`);
+    } catch (e: unknown) {
+      const d = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Falha ao excluir permanentemente prestador.";
+      setErro(typeof d === "string" ? d : "Falha ao excluir permanentemente prestador.");
     }
   }
 
@@ -572,11 +614,20 @@ export default function Prestadores() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => excluir(p)}
-                            className="h-8 w-8 p-0 text-red-600 hover:bg-red-50"
-                            title="Inativar Prestador"
+                            onClick={() => (p.ativo ? excluir(p) : updatePrestador(p.id, { ativo: true }).then(() => carregar()))}
+                            className="h-8 px-2 text-amber-700 hover:bg-amber-50 text-xs font-semibold"
+                            title={p.ativo ? "Inativar Prestador" : "Reativar Prestador"}
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <RotateCcw className="h-3.5 w-3.5 mr-1" /> {p.ativo ? "Inativar" : "Reativar"}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => excluirPrestadorPermanente(p)}
+                            className="h-8 px-2 text-red-600 hover:bg-red-50 text-xs font-semibold"
+                            title="Excluir Permanentemente do Banco de Dados"
+                          >
+                            <Trash2 className="h-3.5 w-3.5 mr-1" /> Excluir
                           </Button>
                         </div>
                       </td>
@@ -752,27 +803,38 @@ export default function Prestadores() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        {l.ativo ? (
+                        <div className="flex items-center justify-end gap-1.5">
+                          {l.ativo ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => removerLab(l.id)}
+                              className="h-8 px-2 text-amber-700 hover:bg-amber-50 text-xs font-semibold"
+                              title="Desativar Laboratório"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5 mr-1" /> Desativar
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => reativarLab(l.id, l.nome)}
+                              className="h-8 px-2 text-teal hover:bg-teal/10 text-xs font-semibold"
+                              title="Reativar Laboratório"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5 mr-1" /> Reativar
+                            </Button>
+                          )}
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => removerLab(l.id)}
-                            className="h-8 px-2.5 text-red-600 hover:bg-red-50 text-xs font-semibold"
-                            title="Desativar Laboratório"
+                            onClick={() => excluirLabPermanente(l.id)}
+                            className="h-8 px-2 text-red-600 hover:bg-red-50 text-xs font-semibold"
+                            title="Excluir Permanentemente do Banco de Dados"
                           >
-                            <Trash2 className="h-3.5 w-3.5 mr-1" /> Desativar
+                            <Trash2 className="h-3.5 w-3.5 mr-1" /> Excluir
                           </Button>
-                        ) : (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => reativarLab(l.id, l.nome)}
-                            className="h-8 px-2.5 text-teal hover:bg-teal/10 text-xs font-semibold"
-                            title="Reativar Laboratório"
-                          >
-                            <RotateCcw className="h-3.5 w-3.5 mr-1" /> Reativar
-                          </Button>
-                        )}
+                        </div>
                       </td>
                     </tr>
                   ))}

@@ -877,15 +877,22 @@ def atualizar_prestador(
 @router.delete("/prestadores/{pid}", status_code=204)
 def inativar_prestador(
     pid: int,
+    permanente: bool = False,
     db: Session = Depends(_get_db),
     _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", "tfd", "lab", acoes=("excluir",))),
 ):
     obj = db.get(Prestador, pid)
     if not obj:
         raise HTTPException(404, "Prestador não encontrado")
-    obj.ativo = False
-    db.add(obj)
+    if not permanente:
+        obj.ativo = False
+        db.add(obj)
+        db.commit()
+        return None
+
+    db.delete(obj)
     db.commit()
+    return None
 
 
 @router.get("/prestadores/exportar")

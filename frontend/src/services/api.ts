@@ -259,8 +259,8 @@ export const createPrestador = (payload: Partial<Prestador>) =>
   api.post<Prestador>("/api/prestadores", payload).then((r) => r.data);
 export const updatePrestador = (id: number, payload: Partial<Prestador>) =>
   api.put<Prestador>(`/api/prestadores/${id}`, payload).then((r) => r.data);
-export const deletePrestador = (id: number) =>
-  api.delete(`/api/prestadores/${id}`).then((r) => r.data);
+export const deletePrestador = (id: number, permanente?: boolean) =>
+  api.delete(`/api/prestadores/${id}`, { params: { permanente } }).then((r) => r.data);
 
 export type UsuariosResumo = {
   total: number;
@@ -2029,8 +2029,8 @@ export const labsCriar = (
   return api.post<Laboratorio>("/api/exames/laboratorios", payload).then((r) => r.data);
 };
 
-export const labsRemover = (id: number) =>
-  api.delete<void>(`/api/exames/laboratorios/${id}`).then((r) => r.data);
+export const labsRemover = (id: number, permanente?: boolean) =>
+  api.delete<void>(`/api/exames/laboratorios/${id}`, { params: { permanente } }).then((r) => r.data);
 
 export type FilaPsfItem = {
   id: number;

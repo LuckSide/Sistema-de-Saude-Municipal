@@ -244,7 +244,7 @@ export default function App() {
                     <Route path="lotes" element={<LabGuard tela="lab_orcamento" telas={["lab_orcamento", "lab_marcacao", "lab"]}><LabOrcamentoLotes /></LabGuard>} />
                     <Route path="faturamento" element={<LabGuard tela="lab_faturamento"><LabFaturamento /></LabGuard>} />
                     <Route path="portal-producao" element={<LabGuard tela="lab_recepcao" telas={["lab_recepcao", "lab_portal", "lab_faturamento", "lab", "usuarios"]}><PortalLaboratorio /></LabGuard>} />
-                    <Route path="sigtap" element={<LabGuard tela="lab_sigtap"><LabSigtap /></LabGuard>} />
+                    <Route path="sigtap" element={<Navigate to="/sigtap" replace />} />
                   </Route>
 
                   <Route path="/prestadores" element={<GuardQualquer telas={["cfg_unidades", "cfg_laboratorios", "usuarios", "tfd", "lab", "cfg_geral"]}><Prestadores /></GuardQualquer>} />

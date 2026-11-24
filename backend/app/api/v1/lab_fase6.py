@@ -188,14 +188,72 @@ def atualizar_lab(
 
 @router.delete("/exames/laboratorios/{lid}", status_code=204)
 def remover_lab(
-    lid: int, db: Session = Depends(get_db), _=Depends(need_any_perm("lab_vagas", "cfg_laboratorios", acoes=("excluir",)))
+    lid: int,
+    permanente: bool = False,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_vagas", "cfg_laboratorios", acoes=("excluir",))),
 ):
     lab = db.get(Laboratorio, lid)
     if not lab:
         raise HTTPException(404, "Laboratório não encontrado")
-    # Remoção lógica para preservar histórico/vagas; não apaga FKs.
-    lab.ativo = False
-    db.add(lab)
+    
+    if not permanente:
+        # Remoção lógica para preservar histórico/vagas; não apaga FKs.
+        lab.ativo = False
+        db.add(lab)
+        db.commit()
+        return None
+
+    # Exclusão permanente: verifica vínculos clínicos e financeiros impeditivos
+    from app.models.lab_fase6 import (
+        SolicitacaoMestre,
+        LabFatura,
+        LabFechamentoFaturamento,
+        VagaLab,
+        LabFeriadoBloqueio,
+        LabContrato,
+        LabItemContratoPreco,
+        LabLoteLiberacao,
+        LabFPOCompetencia,
+        LabPedidoAjuste,
+    )
+    from app.models.user import User
+    from sqlalchemy import delete
+
+    # Verifica se existem exames atrelados
+    solics_count = db.exec(select(func.count(SolicitacaoMestre.id)).where(SolicitacaoMestre.laboratorio_id == lid)).one()
+    if solics_count > 0:
+        raise HTTPException(
+            400,
+            f"Não é possível excluir permanentemente o laboratório '{lab.nome}' pois existem {solics_count} solicitação(ões) de exame vinculadas a ele. Utilize a opção 'Desativar' para preservar o histórico médico.",
+        )
+
+    # Verifica se existem faturas ou fechamentos
+    faturas_count = db.exec(select(func.count(LabFatura.id)).where(LabFatura.laboratorio_id == lid)).one()
+    fechamentos_count = db.exec(select(func.count(LabFechamentoFaturamento.id)).where(LabFechamentoFaturamento.laboratorio_id == lid)).one()
+    if faturas_count > 0 or fechamentos_count > 0:
+        raise HTTPException(
+            400,
+            f"Não é possível excluir permanentemente o laboratório '{lab.nome}' pois existem registros de faturamento ({faturas_count + fechamentos_count}) vinculados a ele. Utilize a opção 'Desativar'.",
+        )
+
+    # Remove vínculos que podem ser limpos com segurança
+    db.exec(delete(LabPedidoAjuste).where(LabPedidoAjuste.laboratorio_id == lid))
+    db.exec(delete(LabLoteLiberacao).where(LabLoteLiberacao.laboratorio_id == lid))
+    db.exec(delete(LabFPOCompetencia).where(LabFPOCompetencia.laboratorio_id == lid))
+    db.exec(delete(LabItemContratoPreco).where(LabItemContratoPreco.laboratorio_id == lid))
+    db.exec(delete(LabContrato).where(LabContrato.laboratorio_id == lid))
+    db.exec(delete(LabFeriadoBloqueio).where(LabFeriadoBloqueio.laboratorio_id == lid))
+    db.exec(delete(VagaLab).where(VagaLab.laboratorio_id == lid))
+
+    # Desvincula usuários associados
+    users = db.exec(select(User).where(User.laboratorio_id == lid)).all()
+    for u in users:
+        u.laboratorio_id = None
+        db.add(u)
+
+    # Remove o laboratório fisicamente
+    db.delete(lab)
     db.commit()
     return None
 

@@ -26,9 +26,9 @@ import { Badge, Button, Card, Input, Label } from "../../components/ui/primitive
 import Paginacao from "../../components/Paginacao";
 import { useBackdropClose } from "../../hooks/useBackdropClose";
 import { useConfirm } from "../../components/ConfirmDialog";
-import LabSigtap from "../lab/LabSigtap";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 
-type Aba = "tipos" | "procedimentos" | "especialidades" | "sigtap";
+type Aba = "tipos" | "procedimentos" | "especialidades";
 
 const vazioTipo = { codigo: "", nome: "", ativo: true };
 const vazioProc = {
@@ -47,9 +47,14 @@ const vazioEsp = { codigo_cbo: "", nome: "", ativo: true };
 export default function CatalogoExames() {
   const { confirmar } = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
+
+  if (searchParams.get("aba") === "sigtap") {
+    return <Navigate to="/sigtap" replace />;
+  }
+
   const abaParam = searchParams.get("aba") as Aba | null;
   const [aba, setAba] = useState<Aba>(
-    abaParam === "sigtap" || abaParam === "procedimentos" || abaParam === "especialidades"
+    abaParam === "procedimentos" || abaParam === "especialidades"
       ? abaParam
       : "tipos",
   );
@@ -96,7 +101,6 @@ export default function CatalogoExames() {
   }
 
   async function carregar(p = 1, abaAtual = aba, busca = q, limite = pageSize) {
-    if (abaAtual === "sigtap") return;
     const params = { q: busca.trim() || undefined, page: p, limit: limite };
     if (abaAtual === "tipos") {
       const r = await tfdTipos(params);
@@ -118,9 +122,7 @@ export default function CatalogoExames() {
 
   useEffect(() => {
     setPage(1);
-    if (aba !== "sigtap") {
-      carregar(1, aba, "").catch(() => setErro("Falha ao carregar catálogo."));
-    }
+    carregar(1, aba, "").catch(() => setErro("Falha ao carregar catálogo."));
     setQ("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aba]);
@@ -239,21 +241,28 @@ export default function CatalogoExames() {
 
   const titulo =
     aba === "tipos" ? "Tipos de fila" :
-    aba === "procedimentos" ? "Procedimentos" :
-    aba === "especialidades" ? "Especialidades Médicas" : "Tabela SIGTAP";
+    aba === "procedimentos" ? "Procedimentos" : "Especialidades Médicas";
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <h2 className="font-display text-lg font-bold text-sus-950">Catálogo e Tabela SIGTAP</h2>
-        {aba !== "sigtap" && (
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <h2 className="font-display text-lg font-bold text-sus-950">Catálogo de Procedimentos e Filas</h2>
           <span className="rounded-full bg-teal/10 px-2.5 py-0.5 text-xs font-semibold text-teal">
             {total} registro(s)
           </span>
-        )}
-        {aba !== "sigtap" && (
-          <Button onClick={() => abrirModal()} className="ml-auto"><Plus className="h-4 w-4" /> Novo</Button>
-        )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Link
+            to="/sigtap"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-xs font-bold text-sus-950 hover:bg-sand transition shadow-2xs"
+          >
+            <BookOpenText className="h-4 w-4 text-teal" /> Tabela Oficial SIGTAP (SUS) →
+          </Link>
+          <Button onClick={() => abrirModal()} className="bg-teal text-white hover:bg-teal/90">
+            <Plus className="h-4 w-4 mr-1" /> Novo
+          </Button>
+        </div>
       </div>
       {erro && !modal && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
       {ok && <p className="mb-3 rounded-xl bg-teal/10 px-3 py-2 text-sm text-teal">{ok}</p>}
@@ -264,7 +273,6 @@ export default function CatalogoExames() {
             { id: "tipos", label: "Tipos de fila" },
             { id: "procedimentos", label: "Procedimentos" },
             { id: "especialidades", label: "Especialidades Médicas" },
-            { id: "sigtap", label: "Tabela e Importação SIGTAP" },
           ] as { id: Aba; label: string }[]
         ).map((t) => (
           <button
@@ -279,11 +287,7 @@ export default function CatalogoExames() {
         ))}
       </div>
 
-      {aba === "sigtap" ? (
-        <LabSigtap />
-      ) : (
-        <>
-          <Card className="mb-4 p-4">
+      <Card className="mb-4 p-4">
             <form onSubmit={buscar} className="flex flex-wrap items-end gap-2">
               <div className="min-w-52 flex-1">
                 <Label>Buscar {titulo.toLowerCase()}</Label>
@@ -451,8 +455,6 @@ export default function CatalogoExames() {
               onPage={(p) => carregar(p, aba, q, pageSize).catch(() => setErro("Falha ao carregar catálogo."))}
             />
           </Card>
-        </>
-      )}
 
       {modal && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" {...modalBackdrop}>

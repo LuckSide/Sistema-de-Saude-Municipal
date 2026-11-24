@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   Archive,
@@ -52,10 +52,6 @@ import {
   fetchPecSyncStatus,
   fetchSettings,
   importarFilas,
-  labsAtualizar,
-  labsCriar,
-  labsListar,
-  labsRemover,
   labSigtapCriar,
   limparDuplicadosPec,
   resetarERessincronizarPec,
@@ -78,7 +74,6 @@ import {
   type ExamePermitidoItem,
   type ImportFilasOut,
   type Integracoes,
-  type Laboratorio,
   type PecResetPreview,
   type PecSyncLogItem,
   type PecSyncStatus,
@@ -87,7 +82,7 @@ import {
   type WhatsAppLogItem,
 } from "../services/api";
 
-type Aba = "geral" | "gestao_filas" | "filas" | "pec" | "rnds" | "whatsapp" | "exames" | "medicos" | "unidades" | "laboratorios" | "dados" | "backup";
+type Aba = "geral" | "gestao_filas" | "filas" | "pec" | "rnds" | "whatsapp" | "exames" | "medicos" | "unidades" | "dados" | "backup";
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "geral", rotulo: "Geral" },
   { id: "gestao_filas", rotulo: "Tipos de Serviço & Regras CBO" },
@@ -98,7 +93,6 @@ const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "exames", rotulo: "Procedimentos / Exames Permitidos" },
   { id: "medicos", rotulo: "Médicos e Profissionais de Saúde" },
   { id: "unidades", rotulo: "Unidades de Saúde e PSFs" },
-  { id: "laboratorios", rotulo: "Laboratórios" },
   { id: "dados", rotulo: "Gerenciamento de Dados" },
   { id: "backup", rotulo: "Backup e Restauração" },
 ];
@@ -115,6 +109,11 @@ export default function Configuracoes() {
   const { user, can } = useAuth();
   const { confirmar } = useConfirm();
   const [params, setParams] = useSearchParams();
+
+  if (params.get("aba") === "laboratorios") {
+    return <Navigate to="/prestadores?aba=laboratorios" replace />;
+  }
+
   // Abas condicionais à matriz (pai "integracoes" implica as 4 via can()).
   // "usuarios" mantém acesso à Geral como antes da granularidade.
   // Médicos/PSFs exigem "usuarios" (mesma regra das telas standalone —
@@ -128,7 +127,6 @@ export default function Configuracoes() {
     if (a.id === "exames") return can("cfg_exames") || can("cfg_geral") || can("usuarios") || can("tfd_catalogo") || can("lab_vagas");
     if (a.id === "medicos") return can("cfg_medicos") || can("usuarios") || can("lab_vagas");
     if (a.id === "unidades") return can("cfg_unidades") || can("usuarios") || can("lab_vagas");
-    if (a.id === "laboratorios") return can("cfg_laboratorios") || can("usuarios") || can("lab_vagas");
     if (a.id === "dados") return !!user?.is_superuser || can("cfg_dados");
     if (a.id === "backup") return !!user?.is_superuser;
     return can("cfg_rnds");
@@ -189,7 +187,6 @@ export default function Configuracoes() {
       {aba === "exames" && <AbaExamesPermitidos />}
       {aba === "medicos" && <Medicos />}
       {aba === "unidades" && <UnidadesSaude />}
-      {aba === "laboratorios" && <AbaLaboratorios />}
       {aba === "dados" && <GerenciamentoDados />}
       {aba === "backup" && <AbaBackup />}
     </div>
@@ -3059,231 +3056,6 @@ function AbaExamesPermitidos() {
         </div>
       )}
     </div>
-  );
-}
-
-// ---------- Aba: Laboratórios ----------
-function AbaLaboratorios() {
-  const { notificarUndo } = useUndo();
-  const { confirmar } = useConfirm();
-  const [lista, setLista] = useState<Laboratorio[]>([]);
-  const [nome, setNome] = useState("");
-  const [responsavelTecnico, setResponsavelTecnico] = useState("");
-  const [horarioFuncionamento, setHorarioFuncionamento] = useState("07:00 às 17:00");
-  const [criarUsuarioAcesso, setCriarUsuarioAcesso] = useState(true);
-  const [credenciaisCriadas, setCredenciaisCriadas] = useState<{ usuario: string; senha: string } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [erro, setErro] = useState("");
-  const [ok, setOk] = useState("");
-
-  async function carregar() {
-    try {
-      setLista(await labsListar(false));
-    } catch {
-      setErro("Falha ao carregar laboratórios.");
-    }
-  }
-
-  async function reativar(id: number, nomeAtual: string) {
-    setBusy(true);
-    setErro("");
-    setOk("");
-    try {
-      await labsAtualizar(id, { nome: nomeAtual, ativo: true });
-      setOk("Laboratório reativado — volta aos seletores de marcação.");
-      await carregar();
-    } catch {
-      setErro("Falha ao reativar.");
-    } finally {
-      setBusy(false);
-    }
-  }
-  useEffect(() => {
-    carregar();
-  }, []);
-
-  async function adicionar() {
-    if (nome.trim().length < 2) {
-      setErro("Nome do laboratório inválido.");
-      return;
-    }
-    setBusy(true);
-    setErro("");
-    setOk("");
-    setCredenciaisCriadas(null);
-    try {
-      const res = await labsCriar({
-        nome: nome.trim(),
-        ativo: true,
-        responsavel_tecnico: responsavelTecnico.trim(),
-        horario_funcionamento: horarioFuncionamento.trim(),
-        criar_usuario_acesso: criarUsuarioAcesso,
-      });
-      setNome("");
-      setResponsavelTecnico("");
-      setOk("Laboratório adicionado com sucesso.");
-      if (res.usuario_criado && res.senha_temporaria) {
-        setCredenciaisCriadas({ usuario: res.usuario_criado, senha: res.senha_temporaria });
-      }
-      await carregar();
-    } catch (e: unknown) {
-      const d = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Falha.";
-      setErro(typeof d === "string" ? d : "Falha ao criar.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function remover(id: number) {
-    const alvo = lista.find((x) => x.id === id);
-    const okConf = await confirmar({
-      titulo: `Desativar laboratório ${alvo?.nome ?? ""}`,
-      descricao: "Deseja realmente desativar este laboratório? As vagas e agendamentos atuais serão preservados no histórico.",
-      textoConfirmar: "Sim, Desativar",
-      variante: "danger",
-    });
-    if (!okConf) return;
-    setBusy(true);
-    setErro("");
-    setOk("");
-    try {
-      await labsRemover(id);
-      await carregar();
-      notificarUndo({
-        titulo: `Laboratório ${alvo?.nome ?? ""} inativado.`,
-        descricao: "Desfazer reativa o laboratório nos seletores.",
-        onUndo: async () => {
-          await labsAtualizar(id, { nome: alvo?.nome ?? "", ativo: true });
-          await carregar();
-        },
-      });
-    } catch (e: unknown) {
-      const d = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Falha.";
-      setErro(typeof d === "string" ? d : "Falha ao remover.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Card className="max-w-3xl p-6 space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-teal/30 bg-teal/5 p-3.5 text-xs text-teal-950">
-        <div className="flex items-center gap-2">
-          <FlaskConical className="h-4 w-4 text-teal shrink-0" />
-          <span>
-            O gerenciamento de laboratórios foi unificado na tela de <strong>Prestadores de Serviços</strong>.
-          </span>
-        </div>
-        <Link
-          to="/prestadores?aba=laboratorios"
-          className="inline-flex items-center gap-1 rounded-lg bg-teal px-3 py-1.5 font-bold text-white hover:bg-teal/90 shrink-0 text-xs shadow-2xs"
-        >
-          Ir para Prestadores & Laboratórios →
-        </Link>
-      </div>
-
-      <div>
-        <p className="flex items-center gap-2 font-display text-base font-bold text-sus-950">
-          <FlaskConical className="h-5 w-5 text-teal" /> Laboratórios e Prestadores de Exames
-        </p>
-        <p className="text-xs text-ink/55 mt-1">
-          Cadastre prestadores conveniados com horários, responsável técnico e perfil de acesso restrito gerado automaticamente.
-        </p>
-      </div>
-
-      <div className="p-4 bg-sand/30 border border-sus-900/10 rounded-xl space-y-3">
-        <p className="text-xs font-bold text-sus-950">Cadastrar Novo Laboratório</p>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div>
-            <Label className="text-[11px]">Nome do Laboratório *</Label>
-            <Input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex: Laboratório São Lucas" className="text-xs" />
-          </div>
-          <div>
-            <Label className="text-[11px]">Responsável Técnico</Label>
-            <Input value={responsavelTecnico} onChange={(e) => setResponsavelTecnico(e.target.value)} placeholder="Ex: Dr. Roberto / Dra. Ana" className="text-xs" />
-          </div>
-          <div>
-            <Label className="text-[11px]">Horário de Funcionamento</Label>
-            <Input value={horarioFuncionamento} onChange={(e) => setHorarioFuncionamento(e.target.value)} placeholder="Ex: 07:00 às 17:00" className="text-xs" />
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-          <label className="flex items-center gap-2 text-xs font-medium text-sus-950 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={criarUsuarioAcesso}
-              onChange={(e) => setCriarUsuarioAcesso(e.target.checked)}
-              className="rounded border-sus-900/20 text-teal"
-            />
-            Gerar credenciais de acesso restrito automaticamente para recepção
-          </label>
-
-          <Button disabled={busy} onClick={adicionar} className="bg-teal text-white font-bold text-xs !h-9">
-            {busy ? "Salvando…" : "Adicionar Laboratório"}
-          </Button>
-        </div>
-      </div>
-
-      {credenciaisCriadas && (
-        <div className="rounded-xl border border-teal/20 bg-teal/10 p-4 text-xs space-y-1">
-          <p className="font-bold text-teal flex items-center gap-1.5">
-            Conta de Acesso Criada com Sucesso para o Laboratório:
-          </p>
-          <p className="text-sus-950 font-mono">
-            Usuário: <strong>{credenciaisCriadas.usuario}</strong> | Senha Provisória: <strong>{credenciaisCriadas.senha}</strong>
-          </p>
-          <p className="text-[11px] text-ink/60">
-            O prestador terá acesso restrito à recepção e conferência de sua produção.
-          </p>
-        </div>
-      )}
-
-      {erro && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
-      {ok && <p className="rounded-xl bg-teal/10 px-3 py-2 text-sm text-teal">{ok}</p>}
-
-      <div className="overflow-x-auto rounded-xl border border-sus-900/10">
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="bg-sand text-xs uppercase text-sus-900/60">
-              <th className="px-3 py-2.5">ID</th>
-              <th className="px-3 py-2.5">Laboratório</th>
-              <th className="px-3 py-2.5">Responsável</th>
-              <th className="px-3 py-2.5">Horário</th>
-              <th className="px-3 py-2.5">Status</th>
-              <th className="px-3 py-2.5 text-right">Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lista.map((l) => (
-              <tr key={l.id} className="border-t border-sus-900/5 hover:bg-sand/20">
-                <td className="px-3 py-2.5 font-mono text-xs">{l.id}</td>
-                <td className="px-3 py-2.5 font-semibold text-sus-950">{l.nome}</td>
-                <td className="px-3 py-2.5 text-xs text-ink/70">{l.responsavel_tecnico || "—"}</td>
-                <td className="px-3 py-2.5 text-xs text-ink/70">{l.horario_funcionamento || "—"}</td>
-                <td className="px-3 py-2.5 text-xs">
-                  <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold ${l.ativo ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
-                    {l.ativo ? "Ativo" : "Inativo"}
-                  </span>
-                </td>
-                <td className="px-3 py-2.5 text-right">
-                  {l.ativo ? (
-                    <button onClick={() => remover(l.id)} className="rounded-lg px-2 py-1 text-xs font-bold text-red-700 hover:bg-red-50">
-                      Desativar
-                    </button>
-                  ) : (
-                    <button onClick={() => reativar(l.id, l.nome)} className="rounded-lg px-2 py-1 text-xs font-bold text-teal hover:bg-teal/10">
-                      Reativar
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {lista.length === 0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-ink/45">Nenhum laboratório cadastrado.</td></tr>}
-          </tbody>
-        </table>
-      </div>
-    </Card>
   );
 }
 
