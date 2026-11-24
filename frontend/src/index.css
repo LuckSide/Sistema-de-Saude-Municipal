@@ -24,36 +24,25 @@ body.modal-aberto {
 }
 
 /* Backdrop com blur perfeito e sem o bug da faixa branca no topo da tela no Chromium.
-   O espaçamento negativo de -50px faz o blur começar fora do viewport visível. */
+   Usa posicionamento fixo cobrindo a viewport com desfoque gaussiano suave e elegante. */
 .dialog-backdrop,
 .modal-backdrop-blur {
   position: fixed;
-  top: -50px;
-  right: -50px;
-  bottom: -50px;
-  left: -50px;
+  inset: 0;
   background-color: rgba(6, 40, 61, 0.65);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   pointer-events: auto;
 }
 
-/* Proteção global para qualquer dialog ou overlay fixed do app:
-   Aplica backdrop-blur moderno e o overscan de 40px além da viewport que
-   elimina a faixa branca de amostragem gaussiana no topo no Chromium,
-   enquanto o padding interno preserva o alinhamento central perfeito do conteúdo. */
+/* Aplicação universal de backdrop blur suave em todos os modais e diálogos do sistema */
+div[class*="fixed"][class*="inset-0"][class*="bg-sus-950/"]:not(.print\:bg-white):not(.print\:static),
+div[class*="fixed"][class*="inset-0"][class*="bg-slate-900/"]:not(.print\:bg-white):not(.print\:static),
+div[class*="fixed"][class*="inset-0"][class*="bg-black/"]:not(.print\:bg-white):not(.print\:static),
 .fixed.inset-0[class*="backdrop-blur"],
-.modal-backdrop-blur,
-div[class*="fixed"][class*="inset-0"][class*="z-"][class*="bg-sus-950/"]:not(.print\:static):not(.print\:hidden-backdrop),
-div[class*="fixed"][class*="inset-0"][class*="z-"][class*="bg-black/"]:not(.print\:static):not(.print\:hidden-backdrop),
-div[class*="fixed"][class*="inset-0"][class*="z-"][class*="bg-slate-900/"]:not(.print\:static):not(.print\:hidden-backdrop) {
-  top: -40px !important;
-  right: -40px !important;
-  bottom: -40px !important;
-  left: -40px !important;
-  padding: 40px !important;
-  backdrop-filter: blur(8px) !important;
-  -webkit-backdrop-filter: blur(8px) !important;
+div[class*="fixed"][class*="inset-0"][class*="backdrop-blur"] {
+  backdrop-filter: blur(6px) !important;
+  -webkit-backdrop-filter: blur(6px) !important;
 }
 
 /* textura sutil + reveal */

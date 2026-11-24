@@ -942,13 +942,13 @@ export default function OxigenioEquipamentos() {
       {/* MODAL: NOVO / EDITAR EQUIPAMENTO */}
       {modalEquipAberto &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto print:hidden">
             <div
               className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
               onClick={() => setModalEquipAberto(false)}
               aria-hidden="true"
             />
-            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-lg w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-xl md:max-w-2xl w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
               <div className="px-6 py-4 bg-sky-800 text-white flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-2.5">
                   <Stethoscope className="w-5 h-5 text-sky-200" />
@@ -1153,13 +1153,13 @@ export default function OxigenioEquipamentos() {
       {/* MODAL: REGISTRAR TROCA DE CILINDRO */}
       {modalTrocaAberto && emprestimoSelecionado &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto print:hidden">
             <div
               className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
               onClick={() => setModalTrocaAberto(false)}
               aria-hidden="true"
             />
-            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-md w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-lg md:max-w-xl w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
               <div className="px-6 py-4 bg-indigo-900 text-white flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-2.5">
                   <RotateCcw className="w-5 h-5 text-indigo-300" />
@@ -1258,13 +1258,13 @@ export default function OxigenioEquipamentos() {
       {/* MODAL: HISTÓRICO DE TROCAS */}
       {modalHistoricoAberto && emprestimoSelecionado &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto print:hidden">
             <div
               className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
               onClick={() => setModalHistoricoAberto(false)}
               aria-hidden="true"
             />
-            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-lg w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-xl md:max-w-2xl w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
               <div className="px-6 py-4 bg-slate-900 text-white flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-2.5">
                   <History className="w-5 h-5 text-sky-400" />
@@ -1333,13 +1333,13 @@ export default function OxigenioEquipamentos() {
       {/* MODAL: ALTERAR STATUS OPERACIONAL DO EQUIPAMENTO */}
       {modalStatusAberto && equipamentoStatus &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto print:hidden">
             <div
               className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
               onClick={() => setModalStatusAberto(false)}
               aria-hidden="true"
             />
-            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-md w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-lg w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
               <div className="px-6 py-4 bg-amber-700 text-white flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-2.5">
                   <RefreshCw className="w-5 h-5 text-amber-200" />

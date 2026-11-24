@@ -590,7 +590,7 @@ export default function OxigenioEmpresas() {
       {/* MODAL: NOVA / EDITAR EMPRESA */}
       {modalAberto &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto print:hidden">
             <div
               className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
               onClick={() => setModalAberto(false)}
@@ -913,7 +913,7 @@ export default function OxigenioEmpresas() {
       {/* MODAL: TRANSIÇÃO / MIGRAÇÃO GLOBAL DE EMPRESA */}
       {modalMigracaoAberto &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto print:hidden">
             <div
               className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
               onClick={() => setModalMigracaoAberto(false)}

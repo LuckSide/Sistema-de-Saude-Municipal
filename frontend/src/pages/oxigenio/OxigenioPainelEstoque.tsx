@@ -1256,7 +1256,7 @@ export default function OxigenioPainelEstoque() {
       {/* MODAL: REGISTRAR COMPRA / ENTRADA DE CILINDROS */}
       {modalCompraAberto &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto print:hidden">
             <div
               className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
               onClick={() => setModalCompraAberto(false)}
@@ -1406,7 +1406,7 @@ export default function OxigenioPainelEstoque() {
       {/* MODAL: NOVA LICITAÇÃO / CONTRATO */}
       {modalLicitacaoAberto &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto print:hidden">
             <div
               className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
               onClick={() => setModalLicitacaoAberto(false)}
@@ -1748,7 +1748,7 @@ export default function OxigenioPainelEstoque() {
       {/* MODAL: MOVIMENTAÇÃO DE CILINDROS EM COMODATO */}
       {modalComodatoAberto &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto print:hidden">
             <div
               className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
               onClick={() => setModalComodatoAberto(false)}
@@ -1879,7 +1879,7 @@ export default function OxigenioPainelEstoque() {
       {/* MODAL: HISTÓRICO DE MOVIMENTAÇÕES DE COMODATO */}
       {modalHistoricoComodato &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto print:hidden">
             <div
               className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
               onClick={() => setModalHistoricoComodato(false)}
@@ -2018,7 +2018,7 @@ export default function OxigenioPainelEstoque() {
       {/* MODAL: EDITAR MOVIMENTAÇÃO DE COMODATO */}
       {modalEditarComodato && movComodatoEditando &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto print:hidden">
             <div
               className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
               onClick={() => setModalEditarComodato(false)}

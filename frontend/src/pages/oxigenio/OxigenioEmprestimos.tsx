@@ -844,13 +844,13 @@ export default function OxigenioEmprestimos() {
       {/* MODAL: NOVO EMPRÉSTIMO / SAÍDA RÁPIDA */}
       {modalNovoAberto &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 md:p-6 overflow-hidden print:hidden">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 md:p-6 overflow-y-auto print:hidden">
             <div
               className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
               onClick={() => setModalNovoAberto(false)}
               aria-hidden="true"
             />
-            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-4xl xl:max-w-5xl w-full flex flex-col max-h-[92vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-5xl xl:max-w-6xl w-full flex flex-col max-h-[92vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
               <div className="px-6 py-4 bg-sky-900 text-white flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-2.5">
                   <div className="p-2 bg-sky-800/80 rounded-xl text-sky-300">
@@ -1342,13 +1342,13 @@ export default function OxigenioEmprestimos() {
       {/* MODAL: DEVOLVER / INATIVAR EMPRÉSTIMO */}
       {modalInativarAberto && emprestimoParaInativar &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto print:hidden">
             <div
               className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
               onClick={() => setModalInativarAberto(false)}
               aria-hidden="true"
             />
-            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-lg w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-xl w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
               <div className="px-6 py-4 bg-rose-900 text-white flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-2.5">
                   <div className="p-2 bg-rose-800/80 rounded-xl text-rose-200">
@@ -1444,13 +1444,13 @@ export default function OxigenioEmprestimos() {
       {/* MODAL: RECOLHIMENTO DE CILINDRO VAZIO */}
       {modalRecolherAberto && cilindroParaRecolher &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto print:hidden">
             <div
               className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
               onClick={() => setModalRecolherAberto(false)}
               aria-hidden="true"
             />
-            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-lg w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-xl w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
               <div className="px-6 py-4 bg-amber-800 text-white flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-2.5">
                   <div className="p-2 bg-amber-700/80 rounded-xl text-amber-200">
