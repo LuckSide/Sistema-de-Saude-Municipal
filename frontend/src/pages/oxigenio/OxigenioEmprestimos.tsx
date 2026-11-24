@@ -840,19 +840,6 @@ export default function OxigenioEmprestimos() {
           </div>
         </div>
       )}
-                          >
-                            Recolher
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
       {/* MODAL: NOVO EMPRÉSTIMO / SAÍDA RÁPIDA */}
       {modalNovoAberto &&

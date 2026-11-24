@@ -274,9 +274,10 @@ export default function AlertaPedidoDuplicado({
                 </Button>
               </div>
             </div>
-          </div>,
-          document.body
-        )}
+          </div>
+        </div>,
+        document.body
+      )}
     </>
   );
 }

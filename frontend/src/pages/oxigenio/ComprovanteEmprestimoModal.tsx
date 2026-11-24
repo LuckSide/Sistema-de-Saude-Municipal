@@ -420,7 +420,8 @@ export default function ComprovanteEmprestimoModal({
           ) : null}
         </div>
       </div>
-    </div>,
-    document.body
-  );
+    </div>
+  </div>,
+  document.body
+);
 }

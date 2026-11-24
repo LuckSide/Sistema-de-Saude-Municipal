@@ -1173,15 +1173,8 @@ export default function OxigenioEquipamentos() {
                   <span className="text-xl font-bold leading-none">×</span>
                 </button>
               </div>
-              <button
-                onClick={() => setModalTrocaAberto(false)}
-                className="text-white/80 hover:text-white text-xl font-bold"
-              >
-                ×
-              </button>
-            </div>
 
-            <form onSubmit={handleSalvarTroca} className="p-6 space-y-4 text-xs">
+              <form onSubmit={handleSalvarTroca} className="p-6 space-y-4 text-xs">
               <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100 text-xs text-indigo-900">
                 <span className="block font-bold">{emprestimoSelecionado.paciente_nome}</span>
                 <span className="text-[11px] text-indigo-700">
