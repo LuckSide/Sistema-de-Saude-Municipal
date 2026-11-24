@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { BookOpenText, Layers, Pencil, Plus, Search, ShieldCheck, ShieldOff, Trash2, X } from "lucide-react";
 import {
   msgErro,
@@ -26,7 +26,6 @@ import { Badge, Button, Card, Input, Label } from "../../components/ui/primitive
 import Paginacao from "../../components/Paginacao";
 import { useBackdropClose } from "../../hooks/useBackdropClose";
 import { useConfirm } from "../../components/ConfirmDialog";
-import { Link, Navigate, useSearchParams } from "react-router-dom";
 
 type Aba = "tipos" | "procedimentos" | "especialidades";
 
