@@ -702,7 +702,7 @@ export default function FaturamentoBpa() {
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"
-                  variant={filtroTipoCritica === "todas" ? "primary" : "outline"}
+                  variant={filtroTipoCritica === "todas" ? "default" : "outline"}
                   onClick={() => setFiltroTipoCritica("todas")}
                   className="text-xs !h-7"
                 >
@@ -710,15 +710,15 @@ export default function FaturamentoBpa() {
                 </Button>
                 <Button
                   size="sm"
-                  variant={filtroTipoCritica === "bloqueantes" ? "primary" : "outline"}
+                  variant={filtroTipoCritica === "bloqueantes" ? "danger" : "outline"}
                   onClick={() => setFiltroTipoCritica("bloqueantes")}
-                  className="text-xs !h-7 !bg-rose-600 !text-white"
+                  className="text-xs !h-7"
                 >
                   Bloqueantes ({criticas?.total_bloqueantes ?? 0})
                 </Button>
                 <Button
                   size="sm"
-                  variant={filtroTipoCritica === "avisos" ? "primary" : "outline"}
+                  variant={filtroTipoCritica === "avisos" ? "default" : "outline"}
                   onClick={() => setFiltroTipoCritica("avisos")}
                   className="text-xs !h-7"
                 >

@@ -34,7 +34,7 @@ import {
   farmaciaResumo,
   fetchApacSolicitacoes,
   labContratosPainel,
-  labBpaConsolidado,
+  fetchBpaResumo,
   type Fatura,
   type Veiculo,
   type Viagem,
@@ -811,7 +811,7 @@ export function WidgetLabFaturamento() {
   useEffect(() => {
     const hoje = new Date();
     const comp = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`;
-    labBpaConsolidado(comp)
+    fetchBpaResumo(comp)
       .then(setBpa)
       .catch(() => setErro("Sem dados de faturamento."));
   }, []);
@@ -849,8 +849,8 @@ export function WidgetApacResumo() {
     fetchApacSolicitacoes({ limit: 100 })
       .then((r) => {
         const lista = pagData<SolicitacaoApac>(r);
-        const aut = lista.filter((s) => s.status === "AUTORIZADA" || s.status === "EMITIDA").length;
-        const pend = lista.filter((s) => s.status === "PENDENTE" || s.status === "ANALISE").length;
+        const aut = lista.filter((s) => s.status === "AUTORIZADO").length;
+        const pend = lista.filter((s) => s.status === "PENDENTE" || s.status === "EM ANALISE").length;
         setDados({ total: lista.length, autorizadas: aut, pendentes: pend });
       })
       .catch(() => setErro("Sem dados APAC."));
@@ -936,8 +936,8 @@ export function WidgetPrestadoresContratos() {
     <div>
       <div className="space-y-2">
         {contratos.slice(0, 3).map((c) => {
-          const valor = Number(c.teto_mensal) || 1;
-          const consumido = Number(c.saldo_consumido_mes) || 0;
+          const valor = Number(c.valor_mensal_teto) || 1;
+          const consumido = Number(c.valor_gasto_mes_atual) || 0;
           const pct = Math.min(100, Math.round((consumido / valor) * 100));
           return (
             <div key={c.id}>

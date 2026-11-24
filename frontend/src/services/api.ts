@@ -170,6 +170,8 @@ export const fetchMe = () => api.get<Usuario>("/api/me").then((r) => r.data);
 export const createUnidadeSaude = (payload: Record<string, unknown>) => api.post<UnidadeSaude>("/api/unidades-saude", payload).then((r) => r.data);
 export const updateUnidadeSaude = (id: number, payload: Record<string, unknown>) => api.put<UnidadeSaude>(`/api/unidades-saude/${id}`, payload).then((r) => r.data);
 export const deleteUnidadeSaude = (id: number) => api.delete(`/api/unidades-saude/${id}`).then((r) => r.data);
+export const listarMedicos = fetchMedicos;
+export const listarUnidades = fetchUnidadesSaude;
 
 // ---------- Serviços Especializados (CNES) ----------
 export type UnidadeServicoEspecializado = {
@@ -667,6 +669,7 @@ export type Paciente = {
   nome: string;
   cpf: string;
   cns: string;
+  sexo?: string | null;
   nascimento: string | null;
   telefone: string;
   endereco: string;
@@ -3636,6 +3639,7 @@ export interface EstoqueOxigenioResumo {
   total_cilindros_cheios_disponiveis?: number;
   seed_habilitado?: boolean;
 }
+export type ResumoEstoqueOxigenio = EstoqueOxigenioResumo;
 
 export interface ItemRequisicaoAF {
   tipo_cilindro: string;
@@ -3895,6 +3899,7 @@ export const oxigenioEmprestimos = (params?: {
   empresa_id?: number;
   paciente_id?: number;
   apenas_trocas_proximas?: boolean;
+  limit?: number;
   q?: string;
 }) => api.get<EmprestimoOxigenio[]>("/api/oxigenio/emprestimos", { params }).then((r) => r.data);
 
@@ -5343,15 +5348,6 @@ export interface ProcedimentoSigtapItem {
   valor_sa: number;
   valor_sp: number;
   valor_total: number;
-}
-
-export interface EquipeSaude {
-  id: number;
-  unidade_saude_id: number;
-  ine: string;
-  nome_equipe: string;
-  tipo_equipe: string;
-  ativo: boolean;
 }
 
 export interface Cid10Item {
