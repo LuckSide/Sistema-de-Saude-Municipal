@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   UserX,
@@ -111,13 +112,18 @@ export default function ModalPedidosInelegiveis({
   const totalPedidos = analise?.total_pedidos ?? 0;
   const todosSelecionados = totalPedidos > 0 && selecionados.size === totalPedidos;
 
-  return (
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-sus-950/60 backdrop-blur-xs animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
     >
-      <div className="relative w-full max-w-4xl max-h-[90vh] flex flex-col bg-white rounded-2xl shadow-2xl border border-sus-900/10 overflow-hidden">
+      <div
+        className="fixed -inset-10 bg-sus-950/60 backdrop-blur-md animate-in fade-in duration-200"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <div className="relative z-10 w-full max-w-4xl max-h-[90vh] flex flex-col bg-white rounded-2xl shadow-2xl border border-sus-900/10 overflow-hidden">
         {/* Cabeçalho */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-sus-900/10 bg-rose-50/70">
           <div className="flex items-center gap-2.5">
@@ -374,6 +380,7 @@ export default function ModalPedidosInelegiveis({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

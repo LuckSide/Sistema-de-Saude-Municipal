@@ -1,4 +1,5 @@
-import { ReactNode } from "react";
+import { useEffect, ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { useBackdropClose } from "../../hooks/useBackdropClose";
 import { cn } from "./primitives";
@@ -12,7 +13,7 @@ export interface ModalProps {
   isDirty?: boolean;
   mensagemDirty?: string;
   className?: string;
-  tamanho?: "sm" | "md" | "lg" | "xl" | "2xl" | "4xl" | "full";
+  tamanho?: "sm" | "md" | "lg" | "xl" | "2xl" | "3xl" | "4xl" | "5xl" | "full";
   esconderBotaoFechar?: boolean;
 }
 
@@ -22,8 +23,10 @@ const TAMANHOS = {
   lg: "max-w-lg",
   xl: "max-w-xl",
   "2xl": "max-w-2xl",
+  "3xl": "max-w-3xl",
   "4xl": "max-w-4xl",
-  full: "max-w-5xl",
+  "5xl": "max-w-5xl",
+  full: "max-w-6xl",
 };
 
 export default function Modal({
@@ -45,18 +48,32 @@ export default function Modal({
     mensagemDirty,
   });
 
+  useEffect(() => {
+    if (aberto) {
+      document.body.classList.add("modal-aberto");
+      return () => {
+        document.body.classList.remove("modal-aberto");
+      };
+    }
+  }, [aberto]);
+
   if (!aberto) return null;
 
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 md:p-6 bg-sus-950/60 backdrop-blur-xs overflow-y-auto print:hidden animate-in fade-in duration-150"
-      onMouseDown={onMouseDown}
-      onMouseUp={onMouseUp}
-      onClick={onClick}
-    >
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 md:p-6 overflow-y-auto print:hidden">
+      {/* Backdrop com blur estendido além das bordas da viewport (-inset-10 / -40px)
+          para eliminar 100% da faixa branca/artefato no topo da página no Chromium */}
+      <div
+        className="fixed -inset-10 bg-sus-950/60 backdrop-blur-md transition-opacity animate-in fade-in duration-150 pointer-events-auto"
+        onMouseDown={onMouseDown}
+        onMouseUp={onMouseUp}
+        onClick={onClick}
+        aria-hidden="true"
+      />
+
       <div
         className={cn(
-          "w-full rounded-2xl bg-white shadow-2xl border border-sus-900/10 overflow-hidden my-auto max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-150",
+          "relative z-10 w-full rounded-2xl bg-white shadow-2xl border border-sus-900/10 overflow-hidden my-auto max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-150",
           TAMANHOS[tamanho] || TAMANHOS.xl,
           className
         )}
@@ -90,6 +107,7 @@ export default function Modal({
         )}
         <div className="p-4 sm:p-6 overflow-y-auto flex-1">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

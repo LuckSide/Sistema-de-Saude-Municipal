@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Wind,
   Package,
@@ -1253,21 +1254,28 @@ export default function OxigenioPainelEstoque() {
       </div>
 
       {/* MODAL: REGISTRAR COMPRA / ENTRADA DE CILINDROS */}
-      {modalCompraAberto && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full overflow-hidden border border-slate-200">
-            <div className="px-6 py-4 bg-sky-800 text-white flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <ShoppingCart className="w-5 h-5" />
-                <h3 className="font-bold text-base">Registrar Entrada de Compras (Cilindros)</h3>
+      {modalCompraAberto &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+            <div
+              className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
+              onClick={() => setModalCompraAberto(false)}
+              aria-hidden="true"
+            />
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-lg w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
+              <div className="px-6 py-4 bg-sky-800 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <ShoppingCart className="w-5 h-5 text-sky-200" />
+                  <h3 className="font-bold text-base md:text-lg">Registrar Entrada de Compras (Cilindros)</h3>
+                </div>
+                <button
+                  onClick={() => setModalCompraAberto(false)}
+                  className="rounded-xl p-1.5 text-white/80 hover:bg-white/10 hover:text-white transition"
+                  title="Fechar"
+                >
+                  <span className="text-xl font-bold leading-none">×</span>
+                </button>
               </div>
-              <button
-                onClick={() => setModalCompraAberto(false)}
-                className="text-white/80 hover:text-white text-xl font-bold"
-              >
-                ×
-              </button>
-            </div>
 
             <form onSubmit={handleSalvarCompra} className="p-6 space-y-4 text-xs">
               <div>
@@ -1391,25 +1399,33 @@ export default function OxigenioPainelEstoque() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* MODAL: NOVA LICITAÇÃO / CONTRATO */}
-      {modalLicitacaoAberto && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-xl w-full overflow-hidden border border-slate-200">
-            <div className="px-6 py-4 bg-slate-900 text-white flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <FileCheck className="w-5 h-5 text-sky-400" />
-                <h3 className="font-bold text-base">Cadastrar Nova Licitação / Contrato</h3>
+      {modalLicitacaoAberto &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+            <div
+              className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
+              onClick={() => setModalLicitacaoAberto(false)}
+              aria-hidden="true"
+            />
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-xl w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
+              <div className="px-6 py-4 bg-slate-900 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <FileCheck className="w-5 h-5 text-sky-400" />
+                  <h3 className="font-bold text-base md:text-lg">Cadastrar Nova Licitação / Contrato</h3>
+                </div>
+                <button
+                  onClick={() => setModalLicitacaoAberto(false)}
+                  className="rounded-xl p-1.5 text-white/80 hover:bg-white/10 hover:text-white transition"
+                  title="Fechar"
+                >
+                  <span className="text-xl font-bold leading-none">×</span>
+                </button>
               </div>
-              <button
-                onClick={() => setModalLicitacaoAberto(false)}
-                className="text-white/80 hover:text-white text-xl font-bold"
-              >
-                ×
-              </button>
-            </div>
 
             <form onSubmit={handleSalvarLicitacao} className="p-6 space-y-4 text-xs">
               <div>
@@ -1725,25 +1741,33 @@ export default function OxigenioPainelEstoque() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* MODAL: MOVIMENTAÇÃO DE CILINDROS EM COMODATO */}
-      {modalComodatoAberto && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full overflow-hidden border border-slate-200">
-            <div className="px-6 py-4 bg-amber-700 text-white flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <ArrowRightLeft className="w-5 h-5 text-amber-200" />
-                <h3 className="font-bold text-base">Movimentação de Comodato (Cilindros)</h3>
+      {modalComodatoAberto &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+            <div
+              className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
+              onClick={() => setModalComodatoAberto(false)}
+              aria-hidden="true"
+            />
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-lg w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
+              <div className="px-6 py-4 bg-amber-700 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <ArrowRightLeft className="w-5 h-5 text-amber-200" />
+                  <h3 className="font-bold text-base md:text-lg">Movimentação de Comodato (Cilindros)</h3>
+                </div>
+                <button
+                  onClick={() => setModalComodatoAberto(false)}
+                  className="rounded-xl p-1.5 text-white/80 hover:bg-white/10 hover:text-white transition"
+                  title="Fechar"
+                >
+                  <span className="text-xl font-bold leading-none">×</span>
+                </button>
               </div>
-              <button
-                onClick={() => setModalComodatoAberto(false)}
-                className="text-white/80 hover:text-white text-xl font-bold"
-              >
-                ×
-              </button>
-            </div>
 
             <form onSubmit={handleSalvarComodato} className="p-6 space-y-4 text-xs">
               <div>
@@ -1848,30 +1872,38 @@ export default function OxigenioPainelEstoque() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* MODAL: HISTÓRICO DE MOVIMENTAÇÕES DE COMODATO */}
-      {modalHistoricoComodato && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-4xl w-full overflow-hidden border border-slate-200 max-h-[90vh] flex flex-col">
-            <div className="px-6 py-4 bg-amber-800 text-white flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <History className="w-5 h-5 text-amber-200" />
-                <div>
-                  <h3 className="font-bold text-base">Histórico de Movimentações de Comodato</h3>
-                  <p className="text-[11px] text-amber-200">
-                    Registro de entradas (balas cedidas) e devoluções para as fornecedoras
-                  </p>
+      {modalHistoricoComodato &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+            <div
+              className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
+              onClick={() => setModalHistoricoComodato(false)}
+              aria-hidden="true"
+            />
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-4xl w-full overflow-hidden border border-slate-200 max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-150">
+              <div className="px-6 py-4 bg-amber-800 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <History className="w-5 h-5 text-amber-200" />
+                  <div>
+                    <h3 className="font-bold text-base md:text-lg">Histórico de Movimentações de Comodato</h3>
+                    <p className="text-xs text-amber-200">
+                      Registro de entradas (balas cedidas) e devoluções para as fornecedoras
+                    </p>
+                  </div>
                 </div>
+                <button
+                  onClick={() => setModalHistoricoComodato(false)}
+                  className="rounded-xl p-1.5 text-white/80 hover:bg-white/10 hover:text-white transition"
+                  title="Fechar"
+                >
+                  <span className="text-xl font-bold leading-none">×</span>
+                </button>
               </div>
-              <button
-                onClick={() => setModalHistoricoComodato(false)}
-                className="text-white/80 hover:text-white text-xl font-bold"
-              >
-                ×
-              </button>
-            </div>
 
             <div className="p-6 overflow-y-auto flex-1 space-y-4">
               {carregandoHistorico ? (
@@ -1979,30 +2011,38 @@ export default function OxigenioPainelEstoque() {
               </Button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* MODAL: EDITAR MOVIMENTAÇÃO DE COMODATO */}
-      {modalEditarComodato && movComodatoEditando && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full overflow-hidden border border-slate-200">
-            <div className="px-6 py-4 bg-amber-800 text-white flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <Edit2 className="w-5 h-5 text-amber-200" />
-                <div>
-                  <h3 className="font-bold text-base">Editar Lançamento de Comodato #{movComodatoEditando.id}</h3>
-                  <p className="text-[11px] text-amber-200">
-                    Ajuste os dados de entrada ou devolução de cilindro cedido
-                  </p>
+      {modalEditarComodato && movComodatoEditando &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+            <div
+              className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
+              onClick={() => setModalEditarComodato(false)}
+              aria-hidden="true"
+            />
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-lg w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
+              <div className="px-6 py-4 bg-amber-800 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <Edit2 className="w-5 h-5 text-amber-200" />
+                  <div>
+                    <h3 className="font-bold text-base md:text-lg">Editar Lançamento de Comodato #{movComodatoEditando.id}</h3>
+                    <p className="text-xs text-amber-200">
+                      Ajuste os dados de entrada ou devolução de cilindro cedido
+                    </p>
+                  </div>
                 </div>
+                <button
+                  onClick={() => setModalEditarComodato(false)}
+                  className="rounded-xl p-1.5 text-white/80 hover:bg-white/10 hover:text-white transition"
+                  title="Fechar"
+                >
+                  <span className="text-xl font-bold leading-none">×</span>
+                </button>
               </div>
-              <button
-                onClick={() => setModalEditarComodato(false)}
-                className="text-white/80 hover:text-white text-xl font-bold"
-              >
-                ×
-              </button>
-            </div>
 
             <form onSubmit={handleSalvarEdicaoComodato} className="p-6 space-y-4">
               {erroEdicaoComodato && (
@@ -2136,7 +2176,8 @@ export default function OxigenioPainelEstoque() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

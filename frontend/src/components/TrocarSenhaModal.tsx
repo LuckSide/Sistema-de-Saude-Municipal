@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { KeyRound, X } from "lucide-react";
 import { trocarMinhaSenha } from "../services/api";
 import { Button, Input, Label } from "./ui/primitives";
@@ -40,13 +41,15 @@ export default function TrocarSenhaModal({ onClose }: { onClose: () => void }) {
     }
   }
 
-  return (
-    <div
-      className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4"
-      onClick={onClose}
-    >
+  return createPortal(
+    <div className="fixed inset-0 z-50 grid place-items-center p-4">
       <div
-        className="rise max-h-[90vh] w-full max-w-sm overflow-y-auto rounded-2xl bg-white p-6 shadow-card"
+        className="fixed -inset-10 bg-sus-950/60 backdrop-blur-md animate-in fade-in duration-150"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <div
+        className="relative z-10 max-h-[90vh] w-full max-w-sm overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
@@ -116,6 +119,7 @@ export default function TrocarSenhaModal({ onClose }: { onClose: () => void }) {
           </Button>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

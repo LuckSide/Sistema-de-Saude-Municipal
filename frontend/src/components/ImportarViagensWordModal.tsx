@@ -138,12 +138,14 @@ export default function ImportarViagensWordModal({
   }
 
   const modalContent = (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-sus-950/60 p-4 backdrop-blur-xs transition-opacity animate-fadeIn"
-      onClick={onFechar}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-4 transition-opacity animate-fadeIn">
       <div
-        className="my-auto flex max-h-[92vh] w-full max-w-4xl flex-col rounded-3xl bg-white shadow-2xl border border-sus-900/10 overflow-hidden"
+        className="fixed -inset-10 bg-sus-950/60 backdrop-blur-md transition-opacity"
+        onClick={onFechar}
+        aria-hidden="true"
+      />
+      <div
+        className="relative z-10 my-auto flex max-h-[92vh] w-full max-w-4xl flex-col rounded-3xl bg-white shadow-2xl border border-sus-900/10 overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Topo do Modal */}

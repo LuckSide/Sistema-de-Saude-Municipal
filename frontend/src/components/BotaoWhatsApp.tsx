@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, Copy, ExternalLink, MessageCircle, Send, X } from "lucide-react";
 import { whatsappEnviar, whatsappPreview, type Exame } from "../services/api";
 
@@ -369,13 +370,15 @@ function ModalWhatsApp({
   enviarAutomatico: () => void;
   statusEnvio: string;
 }) {
-  return (
-    <div
-      className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4 print:hidden"
-      onClick={fechar}
-    >
+  return createPortal(
+    <div className="fixed inset-0 z-50 grid place-items-center p-4 print:hidden">
       <div
-        className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-card"
+        className="fixed -inset-10 bg-sus-950/60 backdrop-blur-md animate-in fade-in duration-150"
+        onClick={fechar}
+        aria-hidden="true"
+      />
+      <div
+        className="relative z-10 w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-emerald-200 bg-emerald-50 px-5 py-3.5">
@@ -467,6 +470,7 @@ function ModalWhatsApp({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

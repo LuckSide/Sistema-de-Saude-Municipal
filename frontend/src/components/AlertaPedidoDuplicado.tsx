@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   ExternalLink,
@@ -177,10 +178,16 @@ export default function AlertaPedidoDuplicado({
       </div>
 
       {/* MODAL IN-PLACE PARA INSPEÇÃO COMPLETA DO PEDIDO ANTERIOR */}
-      {modalDetalhesAberto && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-200">
-            <div className="px-5 py-4 bg-amber-600 text-white flex justify-between items-center">
+      {modalDetalhesAberto &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div
+              className="fixed -inset-10 bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-150"
+              onClick={() => setModalDetalhesAberto(false)}
+              aria-hidden="true"
+            />
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-200">
+              <div className="px-5 py-4 bg-amber-600 text-white flex justify-between items-center">
               <div className="flex items-center gap-2 font-bold text-sm">
                 <ShieldAlert className="w-5 h-5 text-amber-200" />
                 <span>Pedido Ativo Existente · Detalhes Cadastrais</span>
@@ -267,9 +274,9 @@ export default function AlertaPedidoDuplicado({
                 </Button>
               </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </>
   );
 }

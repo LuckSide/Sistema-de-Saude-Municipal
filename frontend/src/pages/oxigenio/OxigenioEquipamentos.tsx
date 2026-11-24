@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Stethoscope,
   Plus,
@@ -939,23 +940,30 @@ export default function OxigenioEquipamentos() {
       )}
 
       {/* MODAL: NOVO / EDITAR EQUIPAMENTO */}
-      {modalEquipAberto && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full overflow-hidden border border-slate-200">
-            <div className="px-6 py-4 bg-sky-800 text-white flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <Stethoscope className="w-5 h-5" />
-                <h3 className="font-bold text-base">
-                  {equipamentoEdicao ? "Editar Equipamento" : "Cadastrar Equipamento"}
-                </h3>
+      {modalEquipAberto &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+            <div
+              className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
+              onClick={() => setModalEquipAberto(false)}
+              aria-hidden="true"
+            />
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-lg w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
+              <div className="px-6 py-4 bg-sky-800 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <Stethoscope className="w-5 h-5 text-sky-200" />
+                  <h3 className="font-bold text-base md:text-lg">
+                    {equipamentoEdicao ? "Editar Equipamento" : "Cadastrar Equipamento"}
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setModalEquipAberto(false)}
+                  className="rounded-xl p-1.5 text-white/80 hover:bg-white/10 hover:text-white transition"
+                  title="Fechar"
+                >
+                  <span className="text-xl font-bold leading-none">×</span>
+                </button>
               </div>
-              <button
-                onClick={() => setModalEquipAberto(false)}
-                className="text-white/80 hover:text-white text-xl font-bold"
-              >
-                ×
-              </button>
-            </div>
 
             <form onSubmit={handleSalvarEquipamento} className="p-6 space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-3">
@@ -1138,17 +1146,32 @@ export default function OxigenioEquipamentos() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* MODAL: REGISTRAR TROCA DE CILINDRO */}
-      {modalTrocaAberto && emprestimoSelecionado && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full overflow-hidden border border-slate-200">
-            <div className="px-6 py-4 bg-indigo-900 text-white flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <RotateCcw className="w-5 h-5" />
-                <h3 className="font-bold text-base">Registrar Troca Semanal de Cilindro</h3>
+      {modalTrocaAberto && emprestimoSelecionado &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+            <div
+              className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
+              onClick={() => setModalTrocaAberto(false)}
+              aria-hidden="true"
+            />
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-md w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
+              <div className="px-6 py-4 bg-indigo-900 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <RotateCcw className="w-5 h-5 text-indigo-300" />
+                  <h3 className="font-bold text-base md:text-lg">Registrar Troca Semanal de Cilindro</h3>
+                </div>
+                <button
+                  onClick={() => setModalTrocaAberto(false)}
+                  className="rounded-xl p-1.5 text-white/80 hover:bg-white/10 hover:text-white transition"
+                  title="Fechar"
+                >
+                  <span className="text-xl font-bold leading-none">×</span>
+                </button>
               </div>
               <button
                 onClick={() => setModalTrocaAberto(false)}
@@ -1235,25 +1258,33 @@ export default function OxigenioEquipamentos() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* MODAL: HISTÓRICO DE TROCAS */}
-      {modalHistoricoAberto && emprestimoSelecionado && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full overflow-hidden border border-slate-200">
-            <div className="px-6 py-4 bg-slate-900 text-white flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <History className="w-5 h-5 text-sky-400" />
-                <h3 className="font-bold text-base">Histórico de Trocas de Cilindro</h3>
+      {modalHistoricoAberto && emprestimoSelecionado &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+            <div
+              className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
+              onClick={() => setModalHistoricoAberto(false)}
+              aria-hidden="true"
+            />
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-lg w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
+              <div className="px-6 py-4 bg-slate-900 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <History className="w-5 h-5 text-sky-400" />
+                  <h3 className="font-bold text-base md:text-lg">Histórico de Trocas de Cilindro</h3>
+                </div>
+                <button
+                  onClick={() => setModalHistoricoAberto(false)}
+                  className="rounded-xl p-1.5 text-white/80 hover:bg-white/10 hover:text-white transition"
+                  title="Fechar"
+                >
+                  <span className="text-xl font-bold leading-none">×</span>
+                </button>
               </div>
-              <button
-                onClick={() => setModalHistoricoAberto(false)}
-                className="text-white/80 hover:text-white text-xl font-bold"
-              >
-                ×
-              </button>
-            </div>
 
             <div className="p-6 space-y-4 text-xs">
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
@@ -1302,25 +1333,33 @@ export default function OxigenioEquipamentos() {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* MODAL: ALTERAR STATUS OPERACIONAL DO EQUIPAMENTO */}
-      {modalStatusAberto && equipamentoStatus && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full overflow-hidden border border-slate-200">
-            <div className="px-6 py-4 bg-amber-700 text-white flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <RefreshCw className="w-5 h-5 text-amber-200" />
-                <h3 className="font-bold text-base">Alterar Status do Equipamento</h3>
+      {modalStatusAberto && equipamentoStatus &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+            <div
+              className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
+              onClick={() => setModalStatusAberto(false)}
+              aria-hidden="true"
+            />
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-md w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
+              <div className="px-6 py-4 bg-amber-700 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <RefreshCw className="w-5 h-5 text-amber-200" />
+                  <h3 className="font-bold text-base md:text-lg">Alterar Status do Equipamento</h3>
+                </div>
+                <button
+                  onClick={() => setModalStatusAberto(false)}
+                  className="rounded-xl p-1.5 text-white/80 hover:bg-white/10 hover:text-white transition"
+                  title="Fechar"
+                >
+                  <span className="text-xl font-bold leading-none">×</span>
+                </button>
               </div>
-              <button
-                onClick={() => setModalStatusAberto(false)}
-                className="text-white/80 hover:text-white text-xl font-bold"
-              >
-                ×
-              </button>
-            </div>
 
             <form onSubmit={handleSalvarStatus} className="p-6 space-y-4 text-xs">
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
@@ -1404,7 +1443,8 @@ export default function OxigenioEquipamentos() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* MODAL: COMPROVANTE TERMO */}

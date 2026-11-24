@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { useLocation } from "react-router-dom";
 import {
   AlertCircle,
@@ -123,17 +124,23 @@ export default function BotaoAjudaFlutuante() {
       </button>
 
       {/* Modal de Suporte */}
-      {aberto && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-150 print:hidden"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="modal-ajuda-titulo"
-        >
+      {aberto &&
+        createPortal(
           <div
-            className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="modal-ajuda-titulo"
           >
+            <div
+              className="fixed -inset-10 bg-sus-950/60 backdrop-blur-md animate-in fade-in duration-150"
+              onClick={() => setAberto(false)}
+              aria-hidden="true"
+            />
+            <div
+              className="relative z-10 w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10 animate-in zoom-in-95 duration-150"
+              onClick={(e) => e.stopPropagation()}
+            >
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-100 bg-sus-950 px-6 py-4 text-white">
               <div className="flex items-center gap-2.5">
@@ -297,7 +304,8 @@ export default function BotaoAjudaFlutuante() {
               </form>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

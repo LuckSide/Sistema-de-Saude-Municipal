@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Building2,
   Plus,
@@ -587,23 +588,30 @@ export default function OxigenioEmpresas() {
       </div>
 
       {/* MODAL: NOVA / EDITAR EMPRESA */}
-      {modalAberto && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[92vh] overflow-y-auto border border-slate-200">
-            <div className="sticky top-0 z-10 px-6 py-4 bg-sky-900 text-white flex justify-between items-center shadow-sm">
-              <div className="flex items-center gap-2">
-                <Building2 className="w-5 h-5 text-sky-300" />
-                <h3 className="font-bold text-base">
-                  {empresaEdicao ? "Editar Empresa Fornecedora" : "Cadastrar Nova Empresa"}
-                </h3>
+      {modalAberto &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+            <div
+              className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
+              onClick={() => setModalAberto(false)}
+              aria-hidden="true"
+            />
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[92vh] overflow-y-auto border border-slate-200 animate-in zoom-in-95 duration-150">
+              <div className="sticky top-0 z-10 px-6 py-4 bg-sky-900 text-white flex justify-between items-center shadow-sm">
+                <div className="flex items-center gap-2.5">
+                  <Building2 className="w-5 h-5 text-sky-300" />
+                  <h3 className="font-bold text-base md:text-lg">
+                    {empresaEdicao ? "Editar Empresa Fornecedora" : "Cadastrar Nova Empresa"}
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setModalAberto(false)}
+                  className="rounded-xl p-1.5 text-white/80 hover:bg-white/10 hover:text-white transition"
+                  title="Fechar"
+                >
+                  <span className="text-xl font-bold leading-none">×</span>
+                </button>
               </div>
-              <button
-                onClick={() => setModalAberto(false)}
-                className="text-white/80 hover:text-white text-xl font-bold"
-              >
-                ×
-              </button>
-            </div>
 
             <form onSubmit={handleSalvar} className="p-6 space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-3">
@@ -898,27 +906,35 @@ export default function OxigenioEmpresas() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* MODAL: TRANSIÇÃO / MIGRAÇÃO GLOBAL DE EMPRESA */}
-      {modalMigracaoAberto && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-xl w-full overflow-hidden border border-slate-200">
-            <div className="px-6 py-4 bg-amber-600 text-white flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <ArrowRightLeft className="w-5 h-5 text-amber-200" />
-                <h3 className="font-bold text-base">
-                  Migração Global / Troca de Empresa Contratada
-                </h3>
+      {modalMigracaoAberto &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
+            <div
+              className="fixed -inset-10 bg-slate-900/65 backdrop-blur-md animate-in fade-in duration-150"
+              onClick={() => setModalMigracaoAberto(false)}
+              aria-hidden="true"
+            />
+            <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-xl w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
+              <div className="px-6 py-4 bg-amber-600 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <ArrowRightLeft className="w-5 h-5 text-amber-200" />
+                  <h3 className="font-bold text-base md:text-lg">
+                    Migração Global / Troca de Empresa Contratada
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setModalMigracaoAberto(false)}
+                  className="rounded-xl p-1.5 text-white/80 hover:bg-white/10 hover:text-white transition"
+                  title="Fechar"
+                >
+                  <span className="text-xl font-bold leading-none">×</span>
+                </button>
               </div>
-              <button
-                onClick={() => setModalMigracaoAberto(false)}
-                className="text-white/80 hover:text-white text-xl font-bold"
-              >
-                ×
-              </button>
-            </div>
 
             <form onSubmit={handleSalvarMigracao} className="p-6 space-y-4 text-xs">
               <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 space-y-1">
@@ -1019,7 +1035,8 @@ export default function OxigenioEmpresas() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

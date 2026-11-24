@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { AlertCircle, AlertTriangle, HelpCircle, X } from "lucide-react";
 import { Button } from "./ui/primitives";
 
@@ -58,20 +59,25 @@ export function ConfirmDialogProvider({ children }: { children: ReactNode }) {
     <ConfirmContext.Provider value={value}>
       {children}
 
-      {dialogo && (
-        <div
-          className="fixed inset-0 z-[100] grid place-items-center bg-sus-950/60 p-4 print:hidden backdrop-blur-xs animate-in fade-in duration-150"
-          onClick={() => fechar(false)}
-          role="dialog"
-          aria-modal="true"
-        >
+      {dialogo &&
+        createPortal(
           <div
-            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl animate-in zoom-in-95 duration-150"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") fechar(false);
-            }}
+            className="fixed inset-0 z-[100] grid place-items-center p-4 print:hidden"
+            role="dialog"
+            aria-modal="true"
           >
+            <div
+              className="fixed -inset-10 bg-sus-950/60 backdrop-blur-md animate-in fade-in duration-150"
+              onClick={() => fechar(false)}
+              aria-hidden="true"
+            />
+            <div
+              className="relative z-10 w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl animate-in zoom-in-95 duration-150"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") fechar(false);
+              }}
+            >
             <div className="flex items-start gap-3.5">
               <div
                 className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${
@@ -136,7 +142,8 @@ export function ConfirmDialogProvider({ children }: { children: ReactNode }) {
               </Button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </ConfirmContext.Provider>
   );

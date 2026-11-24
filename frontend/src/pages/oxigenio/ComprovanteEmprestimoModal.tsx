@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Printer,
   X,
@@ -55,8 +56,14 @@ export default function ComprovanteEmprestimoModal({
     window.print();
   };
 
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/70 backdrop-blur-sm flex justify-center p-4 print:p-0 print:bg-white print:static">
+  return createPortal(
+    <div className="fixed inset-0 z-50 overflow-y-auto flex justify-center p-4 print:p-0 print:bg-white print:static">
+      <div
+        className="fixed -inset-10 bg-slate-900/75 backdrop-blur-md animate-in fade-in duration-150 print:hidden"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <div className="relative z-10 w-full flex justify-center print:static">
       <style>{`
         @media print {
           @page {
@@ -413,6 +420,7 @@ export default function ComprovanteEmprestimoModal({
           ) : null}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
