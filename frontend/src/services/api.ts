@@ -2252,6 +2252,7 @@ export type SolicMestre = {
   status_auditoria: string;
   observacao_laboratorio: string;
   observacoes: string;
+  observacao?: string;
   coletado_em?: string | null;
   coletado_por?: string;
   laudo_arquivo_id?: number | null;
@@ -2368,7 +2369,8 @@ export function mapMestre(o: any): SolicMestre {
     status: o.status ?? "",
     status_auditoria: o.status_auditoria ?? "",
     observacao_laboratorio: o.observacao_laboratorio ?? "",
-    observacoes: o.observacao_laboratorio ?? "",
+    observacoes: o.observacoes ?? o.observacao_laboratorio ?? o.observacao ?? "",
+    observacao: o.observacao ?? o.observacao_laboratorio ?? o.observacoes ?? "",
     coletado_em: o.coletado_em ?? null,
     coletado_por: o.coletado_por ?? "",
     laudo_arquivo_id: o.laudo_arquivo_id ?? null,
@@ -4561,7 +4563,12 @@ export const labFaturamentoRelatorio = (
 
 export const labAlterarStatusSolicitacao = (
   mid: number,
-  payload: { status: string; motivo?: string },
+  payload: {
+    status: string;
+    motivo?: string;
+    observacao?: string;
+    observacoes?: string;
+  },
 ) =>
   api
     .patch<SolicMestre>(`/api/lab/exames/solicitacoes/${mid}/status`, payload)

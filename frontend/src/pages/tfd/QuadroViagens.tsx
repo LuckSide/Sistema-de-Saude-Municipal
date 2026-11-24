@@ -2821,7 +2821,7 @@ export default function QuadroViagens() {
         aberto={modalImportarWord}
         onFechar={() => setModalImportarWord(false)}
         onSucesso={() => {
-          carregarSemana();
+          recarregar();
           setOk("Viagens e passageiros importados com sucesso a partir do arquivo Word.");
         }}
       />

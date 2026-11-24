@@ -464,7 +464,7 @@ export default function LabMarcacao() {
     setItensEdicao(convertidos);
     setMedicoIdEdicao(pedido.medico_id ? String(pedido.medico_id) : "");
     setUnidadeIdEdicao(pedido.unidade_saude_id ? String(pedido.unidade_saude_id) : "");
-    setJustificativaEdicao(pedido.observacao || pedido.justificativa || "");
+    setJustificativaEdicao(pedido.observacoes || pedido.observacao || pedido.justificativa || "");
     setBuscaSigEdicao("");
     setErroEdicao("");
     setModalEditar(true);
@@ -530,9 +530,9 @@ export default function LabMarcacao() {
           quantidade: i.quantidade,
         })),
         medico_id: isGenerico ? medGenerico?.id : (medicoIdEdicao ? Number(medicoIdEdicao) : undefined),
-        medico_nome: isGenerico ? "Médico da Unidade / Responsável Técnico" : med?.nome,
-        unidade_id: unidadeIdEdicao ? Number(unidadeIdEdicao) : undefined,
-        unidade_nome: uni?.nome,
+        medico_solicitante: isGenerico ? "Médico da Unidade / Responsável Técnico" : med?.nome,
+        unidade_saude_id: unidadeIdEdicao ? Number(unidadeIdEdicao) : undefined,
+        unidade_psf: uni?.nome,
         justificativa: justificativaEdicao.trim() || undefined,
       });
 

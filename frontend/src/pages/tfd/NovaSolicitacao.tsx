@@ -1315,7 +1315,11 @@ export default function NovaSolicitacao() {
   const cbosLiberadosServico = useMemo(() => {
     if (!tipoFilaAtivo) return [];
     if (tipoFilaAtivo.cbos_detalhes && tipoFilaAtivo.cbos_detalhes.length > 0) {
-      return tipoFilaAtivo.cbos_detalhes;
+      return tipoFilaAtivo.cbos_detalhes.map((c) => ({
+        cbo: c.cbo,
+        nome: c.descricao || `CBO ${c.cbo}`,
+        descricao: c.descricao || `CBO ${c.cbo}`,
+      }));
     }
     const raw = tipoFilaAtivo.cbos_permitidos;
     if (!raw) return [];
@@ -1323,7 +1327,10 @@ export default function NovaSolicitacao() {
       if (raw.startsWith("[")) {
         const arr = JSON.parse(raw);
         if (Array.isArray(arr)) {
-          return arr.map((c: string) => ({ cbo: String(c).trim(), nome: `CBO ${c}` }));
+          return arr.map((c: string) => {
+            const cod = String(c).trim();
+            return { cbo: cod, nome: `CBO ${cod}`, descricao: `CBO ${cod}` };
+          });
         }
       }
     } catch {}
@@ -1331,7 +1338,7 @@ export default function NovaSolicitacao() {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean)
-      .map((c) => ({ cbo: c, nome: `CBO ${c}` }));
+      .map((c) => ({ cbo: c, nome: `CBO ${c}`, descricao: `CBO ${c}` }));
   }, [tipoFilaAtivo]);
 
   const opcoesMedicos = useMemo(() => {

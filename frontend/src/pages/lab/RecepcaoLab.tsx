@@ -776,9 +776,9 @@ export default function RecepcaoLab() {
                   </div>
 
                   {/* Informações de Cancelamento se houver */}
-                  {isCancelado && item.observacao && (
+                  {isCancelado && (item.observacoes || item.observacao) && (
                     <div className="rounded-lg bg-red-50 p-2 text-[11px] text-red-800 border border-red-200 mb-2">
-                      <span className="font-bold">Motivo do Cancelamento:</span> {item.observacao}
+                      <span className="font-bold">Motivo do Cancelamento:</span> {item.observacoes || item.observacao}
                     </div>
                   )}
 

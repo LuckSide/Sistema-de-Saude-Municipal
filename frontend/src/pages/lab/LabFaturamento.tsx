@@ -894,7 +894,7 @@ export default function LabFaturamento() {
                     <Badge variant={relatorioPrestador.liberado_visualizacao_lab ? "success" : "warning"}>
                       {relatorioPrestador.liberado_visualizacao_lab ? "Liberado pela Secretaria" : "Pendente Aprovação"}
                     </Badge>
-                    <Badge variant={visaoFaturamento === "concluidos" ? "default" : "secondary"}>
+                    <Badge variant={visaoFaturamento === "concluidos" ? "default" : "outline"}>
                       {visaoFaturamento === "concluidos" ? "Faturamento Final" : "Faturamento Projetado"}
                     </Badge>
                   </div>

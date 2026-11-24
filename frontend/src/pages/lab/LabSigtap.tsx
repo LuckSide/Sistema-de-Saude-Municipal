@@ -105,7 +105,8 @@ export default function LabSigtap() {
     setBuscandoProcFat(true);
     try {
       const resp = await labSigtap(codLimpo, undefined, 1, 5, false);
-      const achado = (resp?.data || []).find((x) => x.codigo === codLimpo);
+      const lista = pagData<SigtapProc>(resp);
+      const achado = lista.find((x: SigtapProc) => x.codigo === codLimpo);
       if (achado) {
         setNomeProcFat(achado.descricao);
         if (Number(manualValorSa) === 0 && Number(manualValorSp) === 0 && Number(manualValorSh) === 0) {
