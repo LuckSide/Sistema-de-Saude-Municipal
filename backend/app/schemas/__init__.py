@@ -1,3 +1,4 @@
+from typing import Any
 from pydantic import BaseModel, Field
 
 
@@ -83,12 +84,13 @@ class DashboardItem(BaseModel):
     id: str = Field(min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
     tipo: str = Field(pattern="^(atalho|widget)$")
     ref: str = Field(min_length=1, max_length=40)
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class DashboardIn(BaseModel):
     model_config = {"extra": "forbid"}
 
-    items: list[DashboardItem] = Field(default_factory=list, max_length=30)
+    items: list[DashboardItem] = Field(default_factory=list, max_length=60)
 
 
 class DashboardOut(BaseModel):

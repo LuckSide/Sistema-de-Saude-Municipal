@@ -24,12 +24,19 @@ WIDGETS: dict[str, list[str]] = {
     "resumo-tfd": ["tfd_resumo", "tfd"],
     "fila-especialidade": ["tfd_exames", "tfd_medico", "tfd"],
     "fila-prioridades": ["tfd_exames", "tfd_medico", "tfd"],
+    "fila-personalizada": ["tfd_exames", "tfd_medico", "tfd", "dashboard", "dash_indicadores"],
     "agenda-semana": ["lab_agenda", "lab_vagas", "lab"],
     "painel-aps": ["aps"],
     "frota-status": ["tfd_frota", "tfd_frota_gestao", "tfd"],
     "viagens-proximas": ["tfd_viagens", "tfd_frota_gestao", "tfd"],
     "tempo-fila-indicadores": ["dash_indicadores", "dashboard", "tfd", "tfd_exames"],
     "faturamento-resumo": ["tfd_faturamento", "tfd"],
+    "oxigenio-resumo": ["oxigenio", "oxigenio_painel", "oxigenio_emprestimos"],
+    "oxigenio-trocas": ["oxigenio", "oxigenio_emprestimos", "oxigenio_equipamentos"],
+    "lab-faturamento": ["lab_faturamento", "lab", "bpa"],
+    "apac-resumo": ["apac", "apac_regulacao", "apac_solicitacao"],
+    "farmacia-validade": ["farmacia", "farmacia_estoque", "farmacia_insumos"],
+    "prestadores-contratos": ["tfd_faturamento", "tfd", "prestadores"],
 }
 
 
@@ -51,7 +58,7 @@ def validar_items(items, user: User) -> list[dict]:
                 raise HTTPException(status_code=400, detail=f"widget desconhecido: {it.ref}")
             if not any(tem_tela(user, t) for t in telas):
                 raise HTTPException(status_code=403, detail=f"sem permissão p/ widget {it.ref}")
-        out.append({"id": it.id, "tipo": it.tipo, "ref": it.ref})
+        out.append({"id": it.id, "tipo": it.tipo, "ref": it.ref, "config": it.config or {}})
     return out
 
 

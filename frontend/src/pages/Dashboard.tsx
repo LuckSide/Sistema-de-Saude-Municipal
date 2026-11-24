@@ -4,19 +4,25 @@ import {
   BarChart3,
   CalendarDays,
   ChartColumn,
+  Check,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Database,
+  Filter,
   FlaskConical,
   History,
   LayoutGrid,
   ListOrdered,
+  Maximize2,
+  Minimize2,
   Pencil,
   Plus,
   RotateCcw,
   Search,
   Settings2,
+  SlidersHorizontal,
   Sparkles,
   Users,
   X,
@@ -24,11 +30,19 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useAuth } from "../hooks/useAuth";
 import { Card } from "../components/ui/primitives";
 import { useConfirm } from "../components/ConfirmDialog";
 import UpdateBanner, { VersaoRodape } from "../components/UpdateBanner";
-import { fetchDashboard, saveDashboard, updateStatus, type DashboardItem, type UpdateStatus } from "../services/api";
+import {
+  fetchDashboard,
+  saveDashboard,
+  updateStatus,
+  tfdFiltrosOpcoes,
+  type DashboardItem,
+  type UpdateStatus,
+} from "../services/api";
 import { MODULOS, type NoPermissao } from "../permissoes";
 import { WIDGETS, WidgetMiniPreview, WidgetPorId } from "../widgets";
 
@@ -75,7 +89,9 @@ export default function Dashboard() {
   const [salvos, setSalvos] = useState<DashboardItem[]>([]);
   const [editando, setEditando] = useState(false);
   const [galeria, setGaleria] = useState<null | "atalho" | "widget">(null);
+  const [categoriaGaleria, setCategoriaGaleria] = useState<string>("todas");
   const [buscaGaleria, setBuscaGaleria] = useState("");
+  const [configurandoItem, setConfigurandoItem] = useState<DashboardItem | null>(null);
   const [saveState, setSaveState] = useState<"ok" | "salvando" | "erro">("ok");
   const timer = useRef<number | null>(null);
   const saveSeq = useRef(0);
@@ -149,9 +165,33 @@ export default function Dashboard() {
     alterar((items ?? []).filter((x) => x.id !== id));
   }
 
-  function adicionar(tipo: "atalho" | "widget", ref: string) {
-    alterar([...(items ?? []), { id: uid(ref), tipo, ref }]);
+  function adicionar(tipo: "atalho" | "widget", ref: string, configPadrao?: Record<string, any>) {
+    alterar([...(items ?? []), { id: uid(ref), tipo, ref, config: configPadrao || {} }]);
     setGaleria(null);
+  }
+
+  function duplicar(it: DashboardItem) {
+    const arr = [...(items ?? [])];
+    const index = arr.findIndex((x) => x.id === it.id);
+    const novo: DashboardItem = {
+      id: uid(it.ref),
+      tipo: it.tipo,
+      ref: it.ref,
+      config: it.config ? JSON.parse(JSON.stringify(it.config)) : {},
+    };
+    if (index >= 0) {
+      arr.splice(index + 1, 0, novo);
+    } else {
+      arr.push(novo);
+    }
+    alterar(arr);
+  }
+
+  function salvarConfig(id: string, novaConfig: Record<string, any>) {
+    alterar(
+      (items ?? []).map((x) => (x.id === id ? { ...x, config: novaConfig } : x))
+    );
+    setConfigurandoItem(null);
   }
 
   function usarPadraoComoBase() {
@@ -235,7 +275,8 @@ export default function Dashboard() {
   const widgetsGal = WIDGETS.filter(
     (w) =>
       w.telas.some((t) => can(t)) &&
-      !refsUsados.has(`widget:${w.id}`) &&
+      (w.configuravel || !refsUsados.has(`widget:${w.id}`)) &&
+      (categoriaGaleria === "todas" || w.categoria === categoriaGaleria) &&
       (buscaGaleria === "" ||
         w.titulo.toLowerCase().includes(buscaGaleria.toLowerCase()) ||
         w.desc.toLowerCase().includes(buscaGaleria.toLowerCase()))
@@ -413,7 +454,7 @@ export default function Dashboard() {
               const w = WIDGETS.find((x) => x.id === it.ref);
               if (!w || !w.telas.some((t) => can(t))) return null;
               const Icone = w.icone;
-              const isWide = WIDE_WIDGETS.has(w.id);
+              const isWide = WIDE_WIDGETS.has(w.id) || it.config?.largura === "largo";
 
               return (
                 <Card
@@ -426,19 +467,41 @@ export default function Dashboard() {
                     editando={editando}
                     onRemover={() => remover(it.id)}
                     onMover={(d) => mover(it.id, d)}
+                    onConfigurar={() => setConfigurandoItem(it)}
+                    onDuplicar={() => duplicar(it)}
                   />
                   <div className="mb-3 flex items-center gap-2.5 border-b border-sus-900/5 pb-2.5">
-                    <div className="grid h-8 w-8 place-items-center rounded-lg bg-sus-900 text-white">
+                    <div className="grid h-8 w-8 place-items-center rounded-lg bg-sus-900 text-white shrink-0">
                       <Icone className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate font-display text-xs font-bold text-sus-950">
-                        {w.titulo}
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <p className="truncate font-display text-xs font-bold text-sus-950">
+                          {it.config?.tituloCustomizado || w.titulo}
+                        </p>
+                        {it.config?.fila && (
+                          <span className="shrink-0 text-[10px] bg-teal/15 text-teal font-bold px-1.5 py-0.2 rounded truncate max-w-[120px]">
+                            {it.config.fila}
+                          </span>
+                        )}
+                        {it.config?.largura === "largo" && (
+                          <span className="shrink-0 text-[9px] bg-slate-100 text-slate-600 font-bold px-1 rounded border border-slate-200">
+                            2x1
+                          </span>
+                        )}
+                      </div>
                       <p className="truncate text-[11px] text-ink/50">{w.desc}</p>
                     </div>
                   </div>
-                  <WidgetPorId id={w.id} />
+                  <WidgetPorId
+                    id={w.id}
+                    config={it.config}
+                    onUpdateConfig={(novaConfig) => {
+                      alterar(
+                        (items ?? []).map((x) => (x.id === it.id ? { ...x, config: novaConfig } : x))
+                      );
+                    }}
+                  />
                 </Card>
               );
             })}
@@ -524,45 +587,75 @@ export default function Dashboard() {
             </div>
 
             {/* Barra de Filtros e Abas */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sus-900/5 bg-sand/30 px-6 py-3">
-              <div className="inline-flex rounded-xl bg-white p-1 shadow-sm border border-sus-900/10">
-                <button
-                  onClick={() => {
-                    setGaleria("atalho");
-                  }}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
-                    galeria === "atalho"
-                      ? "bg-sus-900 text-white"
-                      : "text-sus-900 hover:bg-sand"
-                  }`}
-                >
-                  <Sparkles className="h-3.5 w-3.5" /> Atalhos Rápidos ({atalhosGal.length})
-                </button>
-                <button
-                  onClick={() => {
-                    setGaleria("widget");
-                  }}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
-                    galeria === "widget"
-                      ? "bg-sus-900 text-white"
-                      : "text-sus-900 hover:bg-sand"
-                  }`}
-                >
-                  <BarChart3 className="h-3.5 w-3.5" /> Gráficos e Painéis ({widgetsGal.length})
-                </button>
+            <div className="flex flex-col gap-2.5 border-b border-sus-900/5 bg-sand/30 px-6 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="inline-flex rounded-xl bg-white p-1 shadow-sm border border-sus-900/10">
+                  <button
+                    onClick={() => {
+                      setGaleria("atalho");
+                    }}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
+                      galeria === "atalho"
+                        ? "bg-sus-900 text-white"
+                        : "text-sus-900 hover:bg-sand"
+                    }`}
+                  >
+                    <Sparkles className="h-3.5 w-3.5" /> Atalhos Rápidos ({atalhosGal.length})
+                  </button>
+                  <button
+                    onClick={() => {
+                      setGaleria("widget");
+                    }}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
+                      galeria === "widget"
+                        ? "bg-sus-900 text-white"
+                        : "text-sus-900 hover:bg-sand"
+                    }`}
+                  >
+                    <BarChart3 className="h-3.5 w-3.5" /> Gráficos e Painéis ({widgetsGal.length})
+                  </button>
+                </div>
+
+                {/* Campo de Busca */}
+                <div className="relative min-w-[220px]">
+                  <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-ink/40" />
+                  <input
+                    type="text"
+                    placeholder="Pesquisar opções…"
+                    value={buscaGaleria}
+                    onChange={(e) => setBuscaGaleria(e.target.value)}
+                    className="w-full rounded-xl border border-sus-900/15 bg-white py-1.5 pl-8 pr-3 text-xs outline-none focus:border-teal"
+                  />
+                </div>
               </div>
 
-              {/* Campo de Busca */}
-              <div className="relative min-w-[220px]">
-                <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-ink/40" />
-                <input
-                  type="text"
-                  placeholder="Pesquisar opções…"
-                  value={buscaGaleria}
-                  onChange={(e) => setBuscaGaleria(e.target.value)}
-                  className="w-full rounded-xl border border-sus-900/15 bg-white py-1.5 pl-8 pr-3 text-xs outline-none focus:border-teal"
-                />
-              </div>
+              {/* Filtro por Categorias quando em aba Widgets */}
+              {galeria === "widget" && (
+                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                  <span className="text-[11px] font-bold text-slate-500 mr-1">Filtrar por:</span>
+                  {[
+                    { id: "todas", rotulo: "Todos os Blocos" },
+                    { id: "filas", rotulo: "Filas & Regulação" },
+                    { id: "tfd", rotulo: "TFD & Frota" },
+                    { id: "lab", rotulo: "Laboratório & BPA" },
+                    { id: "oxigenio", rotulo: "Oxigênio" },
+                    { id: "farmacia", rotulo: "Farmácia" },
+                    { id: "aps", rotulo: "APS Previne" },
+                  ].map((cat) => (
+                    <button
+                      key={cat.id}
+                      onClick={() => setCategoriaGaleria(cat.id)}
+                      className={`text-[11px] font-semibold px-2.5 py-1 rounded-lg transition ${
+                        categoriaGaleria === cat.id
+                          ? "bg-sus-900 text-white font-bold"
+                          : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200/60"
+                      }`}
+                    >
+                      {cat.rotulo}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Conteúdo com Pré-visualização */}
@@ -635,15 +728,22 @@ export default function Dashboard() {
                           <div>
                             {/* Topo do card com ícone, título e badge de tipo */}
                             <div className="flex items-start justify-between gap-2 mb-2">
-                              <div className="flex items-center gap-2.5">
+                              <div className="flex items-center gap-2.5 min-w-0">
                                 <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-sus-900 text-white">
                                   <Icone className="h-4 w-4" />
                                 </div>
-                                <div>
-                                  <h4 className="font-display text-sm font-bold text-sus-950">
-                                    {w.titulo}
-                                  </h4>
-                                  <p className="text-[11px] text-ink/55">{w.desc}</p>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <h4 className="font-display text-sm font-bold text-sus-950 truncate">
+                                      {w.titulo}
+                                    </h4>
+                                    {w.configuravel && (
+                                      <span className="shrink-0 rounded bg-teal/15 text-teal text-[9px] font-bold px-1.5 py-0.5">
+                                        Configurável
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-[11px] text-ink/55 truncate">{w.desc}</p>
                                 </div>
                               </div>
                               <span className="shrink-0 rounded-md bg-teal/10 px-2 py-0.5 text-[10px] font-bold text-teal uppercase">
@@ -663,7 +763,7 @@ export default function Dashboard() {
                           {/* Rodapé com botão adicionar */}
                           <div className="mt-2 flex items-center justify-between border-t border-sus-900/10 pt-2.5">
                             <span className="text-[11px] text-ink/50">
-                              Atualização dinâmica em tempo real
+                              {w.configuravel ? "Permite escolher filas e filtros" : "Atualização dinâmica em tempo real"}
                             </span>
                             <button
                               onClick={() => adicionar("widget", w.id)}
@@ -680,7 +780,7 @@ export default function Dashboard() {
                   {widgetsGal.length === 0 && (
                     <div className="py-12 text-center">
                       <p className="text-xs font-semibold text-ink/50">
-                        Nenhum gráfico disponível ou todos já foram adicionados.
+                        Nenhum gráfico disponível nesta categoria ou com os termos pesquisados.
                       </p>
                     </div>
                   )}
@@ -704,6 +804,15 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* MODAL DE CONFIGURAÇÃO DO WIDGET / BLOCO */}
+      {configurandoItem && (
+        <ModalConfigurarWidget
+          item={configurandoItem}
+          onSalvar={(novaConfig) => salvarConfig(configurandoItem.id, novaConfig)}
+          onFechar={() => setConfigurandoItem(null)}
+        />
+      )}
+
       {user?.is_superuser && <VersaoRodape st={versao} />}
     </div>
   );
@@ -713,15 +822,45 @@ function Controles({
   editando,
   onRemover,
   onMover,
+  onConfigurar,
+  onDuplicar,
 }: {
   editando: boolean;
   onRemover: () => void;
   onMover: (d: -1 | 1) => void;
+  onConfigurar?: () => void;
+  onDuplicar?: () => void;
 }) {
   if (!editando) return null;
   const btn = "rounded-lg bg-sus-950/75 p-1 text-white transition hover:bg-sus-950";
   return (
-    <div className="absolute right-1.5 top-1.5 z-10 flex gap-0.5">
+    <div className="absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5">
+      {onConfigurar && (
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            onConfigurar();
+          }}
+          className="rounded-lg bg-teal p-1 text-sus-950 font-bold transition hover:brightness-110 shadow-xs"
+          title="Configurar opções e filtros deste gráfico"
+          aria-label="Configurar gráfico"
+        >
+          <SlidersHorizontal className="h-3 w-3" />
+        </button>
+      )}
+      {onDuplicar && (
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            onDuplicar();
+          }}
+          className={btn}
+          title="Duplicar bloco (ex: criar outro com fila diferente)"
+          aria-label="Duplicar bloco"
+        >
+          <Copy className="h-3 w-3" />
+        </button>
+      )}
       <button
         onClick={(e) => {
           e.preventDefault();
@@ -756,5 +895,251 @@ function Controles({
         <X className="h-3 w-3" />
       </button>
     </div>
+  );
+}
+
+function ModalConfigurarWidget({
+  item,
+  onSalvar,
+  onFechar,
+}: {
+  item: DashboardItem;
+  onSalvar: (novaConfig: Record<string, any>) => void;
+  onFechar: () => void;
+}) {
+  const w = WIDGETS.find((x) => x.id === item.ref);
+  const [opcoesFilas, setOpcoesFilas] = useState<{ value: string; label: string; total: number }[]>([]);
+  const [tituloCustomizado, setTituloCustomizado] = useState(item.config?.tituloCustomizado || "");
+  const [largura, setLargura] = useState(item.config?.largura || "normal");
+  const [fila, setFila] = useState(item.config?.fila || "");
+  const [tipoGrafico, setTipoGrafico] = useState(item.config?.tipoGrafico || w?.tipoGrafico || "barras");
+  const [periodo, setPeriodo] = useState(item.config?.periodo || "30d");
+  const [mostrarUrgentes, setMostrarUrgentes] = useState(item.config?.mostrarUrgentes !== false);
+  const [mostrarEletivos, setMostrarEletivos] = useState(item.config?.mostrarEletivos !== false);
+  const [mostrarTempo, setMostrarTempo] = useState(item.config?.mostrarTempo !== false);
+
+  useEffect(() => {
+    tfdFiltrosOpcoes("aguardando")
+      .then((r) => setOpcoesFilas(r.especialidades ?? []))
+      .catch(() => {});
+  }, []);
+
+  const handleSalvar = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSalvar({
+      ...(item.config || {}),
+      tituloCustomizado: tituloCustomizado.trim(),
+      largura,
+      fila,
+      tipoGrafico,
+      periodo,
+      mostrarUrgentes,
+      mostrarEletivos,
+      mostrarTempo,
+    });
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 overflow-hidden">
+      <div
+        className="fixed -inset-10 bg-sus-950/60 backdrop-blur-md animate-in fade-in duration-150"
+        onClick={onFechar}
+        aria-hidden="true"
+      />
+      <div className="relative z-10 bg-white rounded-2xl shadow-2xl max-w-lg w-full flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
+        <div className="px-6 py-4 bg-sus-950 text-white flex justify-between items-center shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-white/10 rounded-xl text-teal">
+              <SlidersHorizontal className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-bold text-base">Configurar Bloco · {w?.titulo || "Widget"}</h3>
+              <p className="text-xs text-teal-200">Personalize dados exibidos, visualização e filtros</p>
+            </div>
+          </div>
+          <button
+            onClick={onFechar}
+            className="rounded-xl p-1.5 text-white/80 hover:bg-white/10 hover:text-white transition"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSalvar} className="flex flex-col flex-1 overflow-hidden min-h-0">
+          <div className="flex-1 overflow-y-auto p-6 space-y-4 text-xs text-slate-700">
+            {/* Título do Bloco */}
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-1">
+                Nome de Exibição do Bloco (Opcional)
+              </label>
+              <input
+                type="text"
+                value={tituloCustomizado}
+                onChange={(e) => setTituloCustomizado(e.target.value)}
+                placeholder={w?.titulo || "Ex: Minha Fila de Cardiologia"}
+                className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 outline-none focus:border-teal"
+              />
+            </div>
+
+            {/* Largura no Grid */}
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-1">
+                Tamanho do Bloco no Painel
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setLargura("normal")}
+                  className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition ${
+                    largura === "normal"
+                      ? "border-teal bg-teal/10 text-sus-950 font-bold"
+                      : "border-slate-200 hover:bg-slate-50 text-slate-600"
+                  }`}
+                >
+                  <Minimize2 className="w-4 h-4 text-slate-500" />
+                  <span>Padrão (1 Coluna)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLargura("largo")}
+                  className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition ${
+                    largura === "largo"
+                      ? "border-teal bg-teal/10 text-sus-950 font-bold"
+                      : "border-slate-200 hover:bg-slate-50 text-slate-600"
+                  }`}
+                >
+                  <Maximize2 className="w-4 h-4 text-teal" />
+                  <span>Expandido (2 Colunas)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Seleção de Fila/Especialidade */}
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-1">
+                Fila de Atendimento / Especialidade a Acompanhar
+              </label>
+              <select
+                value={fila}
+                onChange={(e) => setFila(e.target.value)}
+                className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 outline-none focus:border-teal bg-white"
+              >
+                <option value="">Todas as Filas (Visão Geral / Consolidada)</option>
+                {opcoesFilas.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label || o.value} ({o.total} pacientes aguardando)
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[11px] text-slate-500">
+                O gráfico filtrará apenas os pacientes e métricas pertencentes a esta fila.
+              </p>
+            </div>
+
+            {/* Formato do Gráfico */}
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-1">
+                Modo de Apresentação Visual
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTipoGrafico("barras")}
+                  className={`p-2.5 rounded-xl border text-xs font-semibold text-center transition ${
+                    tipoGrafico === "barras"
+                      ? "border-teal bg-teal/10 text-sus-950 font-bold"
+                      : "border-slate-200 hover:bg-slate-50 text-slate-600"
+                  }`}
+                >
+                  Barras & Distribuição
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTipoGrafico("kpi")}
+                  className={`p-2.5 rounded-xl border text-xs font-semibold text-center transition ${
+                    tipoGrafico === "kpi"
+                      ? "border-teal bg-teal/10 text-sus-950 font-bold"
+                      : "border-slate-200 hover:bg-slate-50 text-slate-600"
+                  }`}
+                >
+                  Cards Numéricos (KPI)
+                </button>
+              </div>
+            </div>
+
+            {/* Período */}
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-1">
+                Janela Temporal de Análise
+              </label>
+              <select
+                value={periodo}
+                onChange={(e) => setPeriodo(e.target.value)}
+                className="w-full rounded-xl border border-slate-300 p-2.5 text-xs text-slate-900 outline-none focus:border-teal bg-white"
+              >
+                <option value="7d">Últimos 7 dias</option>
+                <option value="30d">Últimos 30 dias (Recomendado)</option>
+                <option value="mes">Competência do Mês Vigente</option>
+                <option value="90d">Últimos 90 dias (Trimestral)</option>
+              </select>
+            </div>
+
+            {/* Métricas Visíveis */}
+            <div className="space-y-2 pt-1 border-t border-slate-100">
+              <label className="block text-xs font-bold text-slate-800">
+                Métricas e Dados a Exibir no Card
+              </label>
+              <div className="space-y-1.5">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={mostrarUrgentes}
+                    onChange={(e) => setMostrarUrgentes(e.target.checked)}
+                    className="rounded text-teal focus:ring-teal"
+                  />
+                  <span>Destacar volume de pacientes com prioridade urgente (vermelho)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={mostrarEletivos}
+                    onChange={(e) => setMostrarEletivos(e.target.checked)}
+                    className="rounded text-teal focus:ring-teal"
+                  />
+                  <span>Exibir proporção de pacientes eletivos e rotina</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={mostrarTempo}
+                    onChange={(e) => setMostrarTempo(e.target.checked)}
+                    className="rounded text-teal focus:ring-teal"
+                  />
+                  <span>Exibir projeção de dias médios de espera até agendamento</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={onFechar}
+              className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 rounded-xl"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              className="px-5 py-2 text-xs font-bold bg-teal hover:bg-teal/90 text-sus-950 rounded-xl shadow-sm transition flex items-center gap-1.5"
+            >
+              <Check className="w-4 h-4" />
+              <span>Salvar Configuração</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>,
+    document.body
   );
 }

@@ -508,7 +508,12 @@ export const updateLog = (linhas = 200) =>
   api.get<{ log: string }>("/api/update/log", { params: { linhas } }).then((r) => r.data);
 
 // ---------- Dashboard customizável ----------
-export type DashboardItem = { id: string; tipo: "atalho" | "widget"; ref: string };
+export type DashboardItem = {
+  id: string;
+  tipo: "atalho" | "widget";
+  ref: string;
+  config?: Record<string, any>;
+};
 export const fetchDashboard = () =>
   api.get<{ items: DashboardItem[] }>("/api/user/dashboard").then((r) => r.data.items ?? []);
 export const saveDashboard = (items: DashboardItem[]) =>
