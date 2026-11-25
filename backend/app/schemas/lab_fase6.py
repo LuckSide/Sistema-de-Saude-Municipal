@@ -9,6 +9,10 @@ class LaboratorioIn(BaseModel):
     ativo: bool = True
     responsavel_tecnico: str = Field(default="", max_length=120)
     horario_funcionamento: str = Field(default="", max_length=120)
+    cnpj: str = Field(default="", max_length=18)
+    cnes: str = Field(default="", max_length=10)
+    telefone: str = Field(default="", max_length=25)
+    endereco: str = Field(default="", max_length=200)
     criar_usuario_acesso: bool = True
 
 
@@ -16,6 +20,8 @@ class LaboratorioOut(LaboratorioIn):
     id: int
     usuario_criado: str | None = None
     senha_temporaria: str | None = None
+    usuario_acesso: str | None = None
+    usuario_ativo: bool = False
 
 
 # ---------- Vagas ----------

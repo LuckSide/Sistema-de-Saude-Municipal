@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlmodel import Session, col, func, select
 
 from app.models.cadastros_saude import EquipeSaude, Medico, UnidadeSaude
-from app.models.lab_exames import SigtapCbo, SigtapProcedimento
+from app.models.lab_exames import SigtapCbo, SigtapCid, SigtapProcedimento
 from app.models.producao_ambulatorial import ProducaoAmbulatorial
 from app.models.tfd import Paciente
 from app.models.user import User
@@ -16,7 +16,7 @@ from app.schemas.producao_ambulatorial import (
     ResumoCompetenciaOut,
     ResumoTopProcedimento,
 )
-from app.services.validacoes import so_digitos, valida_cns
+from app.services.validacoes import so_digitos, valida_cns, valida_cpf
 
 
 def limpar_numeros(valor: Any) -> str:
@@ -150,9 +150,11 @@ def validar_e_preparar_dados_producao(
 
     # 8. Instrumento de Registro e Validações BPA-C vs BPA-I
     inst_procedimento = (proc.instrumento or "BPA-C").strip().upper()
+    insts_perm_raw = (getattr(proc, "instrumentos_permitidos", "") or "").upper()
+    insts_permitidos = [x.strip() for x in insts_perm_raw.split(",") if x.strip()] or [inst_procedimento]
     inst_informado = (d.get("instrumento_registro") or (producao_existente.instrumento_registro if producao_existente else inst_procedimento) or "BPA-C").strip().upper()
 
-    if "BPA-I" in inst_procedimento and inst_informado != "BPA-I":
+    if "BPA-I" in inst_procedimento and "BPA-C" not in insts_permitidos and inst_informado != "BPA-I":
         raise HTTPException(
             status_code=422,
             detail=(
@@ -161,7 +163,10 @@ def validar_e_preparar_dados_producao(
             ),
         )
 
-    instrumento_registro = "BPA-I" if (inst_informado == "BPA-I" or inst_procedimento == "BPA-I") else "BPA-C"
+    if inst_informado == "BPA-I" or (inst_procedimento == "BPA-I" and "BPA-C" not in insts_permitidos):
+        instrumento_registro = "BPA-I"
+    else:
+        instrumento_registro = "BPA-C"
 
     # Quantidade
     quantidade = int(d.get("quantidade") or (producao_existente.quantidade if producao_existente else 1))
@@ -173,6 +178,24 @@ def validar_e_preparar_dados_producao(
             status_code=422,
             detail=f"Quantidade informada ({quantidade}) excede a quantidade máxima permitida ({proc.qtd_maxima}) pelo SIGTAP para este procedimento.",
         )
+
+    # Idade no BPA-C quando o procedimento exigir PA_IDEBPA='S'
+    idade_informada_raw = d.get("idade_paciente_informada") if "idade_paciente_informada" in d else (producao_existente.idade_paciente_informada if producao_existente else None)
+    idade_informada = int(idade_informada_raw) if idade_informada_raw is not None else None
+    if instrumento_registro == "BPA-C" and bool(getattr(proc, "exige_idade_bpa", False)):
+        if idade_informada is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"O procedimento '{proc_codigo_10} - {proc_nome}' exige o preenchimento da idade do paciente mesmo no registro consolidado (BPA-C).",
+            )
+        if proc.idade_max and proc.idade_max > 0:
+            idade_min_a = proc.idade_min // 12 if proc.idade_max > 150 else proc.idade_min
+            idade_max_a = proc.idade_max // 12 if proc.idade_max > 150 else proc.idade_max
+            if idade_informada < idade_min_a or idade_informada > idade_max_a:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Idade informada ({idade_informada} anos) fora da faixa permitida ({idade_min_a} a {idade_max_a} anos) para este procedimento.",
+                )
 
     # Campos de Paciente (BPA-I)
     paciente_id = d.get("paciente_id") if "paciente_id" in d else (producao_existente.paciente_id if producao_existente else None)
@@ -186,12 +209,25 @@ def validar_e_preparar_dados_producao(
         or (producao_existente.paciente_nome if producao_existente else "")
     ).strip()
 
+    paciente_cpf_raw = (
+        d.get("paciente_cpf")
+        if "paciente_cpf" in d
+        else (
+            (producao_existente.paciente_cpf if producao_existente else "")
+            or (paciente_obj.cpf if paciente_obj else "")
+        )
+    )
+    paciente_cpf = so_digitos(paciente_cpf_raw)[:11]
+
     paciente_cns_raw = (
         d.get("paciente_cns")
-        or (paciente_obj.cns if paciente_obj else "")
-        or (producao_existente.paciente_cns if producao_existente else "")
+        if "paciente_cns" in d
+        else (
+            (producao_existente.paciente_cns if producao_existente else "")
+            or (paciente_obj.cns if paciente_obj else "")
+        )
     )
-    paciente_cns = so_digitos(paciente_cns_raw)
+    paciente_cns = so_digitos(paciente_cns_raw)[:15]
 
     paciente_sexo = (
         d.get("paciente_sexo")
@@ -211,9 +247,75 @@ def validar_e_preparar_dados_producao(
 
     paciente_ibge = (
         d.get("paciente_municipio_ibge")
+        or (getattr(paciente_obj, "municipio", "") if paciente_obj else "")
         or (producao_existente.paciente_municipio_ibge if producao_existente else "")
         or "312810"
     ).strip()
+
+    paciente_raca_cor = (
+        d.get("paciente_raca_cor")
+        or (producao_existente.paciente_raca_cor if producao_existente else "")
+        or "99"
+    ).strip()[:2]
+    paciente_etnia = (
+        d.get("paciente_etnia")
+        or (producao_existente.paciente_etnia if producao_existente else "")
+        or ""
+    ).strip()[:4]
+    paciente_nacionalidade = (
+        d.get("paciente_nacionalidade")
+        or (producao_existente.paciente_nacionalidade if producao_existente else "")
+        or "010"
+    ).strip()[:3]
+    carater_atendimento = (
+        d.get("carater_atendimento")
+        or (producao_existente.carater_atendimento if producao_existente else "")
+        or "01"
+    ).strip()[:2]
+    paciente_cep = so_digitos(
+        d.get("paciente_cep")
+        or (getattr(paciente_obj, "cep", "") if paciente_obj else "")
+        or (producao_existente.paciente_cep if producao_existente else "")
+    )[:8]
+    paciente_logradouro = (
+        d.get("paciente_logradouro")
+        or (getattr(paciente_obj, "endereco", "") if paciente_obj else "")
+        or (producao_existente.paciente_logradouro if producao_existente else "")
+    ).strip()[:100]
+    paciente_numero = (
+        d.get("paciente_numero")
+        or (getattr(paciente_obj, "endereco_numero", "") if paciente_obj else "")
+        or (producao_existente.paciente_numero if producao_existente else "")
+    ).strip()[:10]
+    paciente_complemento = (
+        d.get("paciente_complemento")
+        or (getattr(paciente_obj, "complemento", "") if paciente_obj else "")
+        or (producao_existente.paciente_complemento if producao_existente else "")
+    ).strip()[:30]
+    paciente_bairro = (
+        d.get("paciente_bairro")
+        or (getattr(paciente_obj, "bairro", "") if paciente_obj else "")
+        or (producao_existente.paciente_bairro if producao_existente else "")
+    ).strip()[:60]
+    paciente_telefone = so_digitos(
+        d.get("paciente_telefone")
+        or (getattr(paciente_obj, "telefone", "") if paciente_obj else "")
+        or (producao_existente.paciente_telefone if producao_existente else "")
+    )[:15]
+    paciente_situacao_rua = (
+        (d.get("paciente_situacao_rua") or (producao_existente.paciente_situacao_rua if producao_existente else "N"))
+        .strip()
+        .upper()[:1]
+    )
+    if paciente_situacao_rua not in ("S", "N"):
+        paciente_situacao_rua = "N"
+    paciente_sem_cpf = (
+        (d.get("paciente_sem_cpf") or (producao_existente.paciente_sem_cpf if producao_existente else "N"))
+        .strip()
+        .upper()[:1]
+    )
+    if paciente_sem_cpf not in ("S", "N"):
+        paciente_sem_cpf = "N"
 
     cid10 = (d.get("cid10") or (producao_existente.cid10 if producao_existente else "")).strip().upper()
     numero_autorizacao = (d.get("numero_autorizacao") or (producao_existente.numero_autorizacao if producao_existente else "")).strip()
@@ -228,17 +330,61 @@ def validar_e_preparar_dados_producao(
                 detail="No registro individualizado (BPA-I), o nome do paciente é obrigatório.",
             )
 
-        if not paciente_cns:
+        if paciente_cpf:
+            ok_cpf, mot_cpf = valida_cpf(paciente_cpf)
+            if not ok_cpf:
+                raise HTTPException(status_code=422, detail=f"CPF do paciente inválido: {mot_cpf}")
+
+        if paciente_cns:
+            valido, motivo_cns = valida_cns(paciente_cns)
+            if not valido:
+                raise HTTPException(status_code=422, detail=f"CNS do paciente inválido: {motivo_cns}")
+
+        if bool(getattr(proc, "exige_cpf", False)) and not paciente_cpf and paciente_sem_cpf != "S":
             raise HTTPException(
                 status_code=422,
-                detail="No registro individualizado (BPA-I), o Cartão Nacional de Saúde (CNS) do paciente é obrigatório.",
+                detail=f"O procedimento '{proc_codigo_10} - {proc_nome}' exige obrigatoriamente o CPF do paciente no SIA/DATASUS (ou marque 'Paciente sem CPF').",
             )
 
-        valido, motivo_cns = valida_cns(paciente_cns)
-        if not valido:
+        if not paciente_cpf and not paciente_cns and paciente_sem_cpf != "S":
             raise HTTPException(
                 status_code=422,
-                detail=f"CNS do paciente inválido: {motivo_cns}",
+                detail="No registro individualizado (BPA-I), informe ao menos o CPF (11 dígitos) ou o Cartão SUS / CNS (15 dígitos) do paciente.",
+            )
+
+        if paciente_raca_cor == "05" and not paciente_etnia:
+            raise HTTPException(
+                status_code=422,
+                detail="Quando a Raça/Cor do paciente for 05 (Indígena), o código da Etnia é obrigatório no layout do BPA-I.",
+            )
+
+        if bool(getattr(proc, "exige_cid", False)):
+            cids_proc = list(
+                db.exec(
+                    select(SigtapCid.cid).where(
+                        (SigtapCid.procedimento_codigo == proc.codigo)
+                        | (SigtapCid.procedimento_codigo == proc_codigo_10)
+                    )
+                ).all()
+            )
+            if cids_proc:
+                if not cid10:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"O procedimento '{proc_codigo_10} - {proc_nome}' exige a informação do CID-10 compatível.",
+                    )
+                cid_norm = cid10.replace(".", "").upper()
+                cids_validos = {c.replace(".", "").upper() for c in cids_proc if c}
+                if cid_norm not in cids_validos and cid_norm[:3] not in cids_validos:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"O CID-10 '{cid10}' informado não é compatível com o procedimento '{proc_codigo_10} - {proc_nome}' segundo o SIGTAP.",
+                    )
+
+        if bool(getattr(proc, "exige_servico", False)) and (not servico_codigo or not classificacao_codigo):
+            raise HTTPException(
+                status_code=422,
+                detail=f"O procedimento '{proc_codigo_10} - {proc_nome}' exige a seleção do Serviço e Classificação (CNES/SIGTAP).",
             )
 
         if paciente_sexo not in ("M", "F"):
@@ -329,17 +475,31 @@ def validar_e_preparar_dados_producao(
         "valor_total": valor_total,
         "paciente_id": paciente_id,
         "paciente_nome": paciente_nome[:150],
+        "paciente_cpf": paciente_cpf[:11],
         "paciente_cns": paciente_cns[:15],
         "paciente_sexo": paciente_sexo[:1],
         "paciente_data_nascimento": paciente_nasc,
         "paciente_municipio_ibge": paciente_ibge[:10],
+        "paciente_raca_cor": paciente_raca_cor[:2],
+        "paciente_etnia": paciente_etnia[:4],
+        "paciente_nacionalidade": paciente_nacionalidade[:3],
+        "carater_atendimento": carater_atendimento[:2],
+        "paciente_cep": paciente_cep[:8],
+        "paciente_logradouro": paciente_logradouro[:100],
+        "paciente_numero": paciente_numero[:10],
+        "paciente_complemento": paciente_complemento[:30],
+        "paciente_bairro": paciente_bairro[:60],
+        "paciente_telefone": paciente_telefone[:15],
+        "paciente_situacao_rua": paciente_situacao_rua[:1],
+        "paciente_sem_cpf": paciente_sem_cpf[:1],
+        "idade_paciente_informada": idade_informada,
         "cid10": cid10[:10],
         "numero_autorizacao": numero_autorizacao[:20],
         "servico_codigo": servico_codigo[:10],
         "classificacao_codigo": classificacao_codigo[:10],
         "origem": (d.get("origem") or (producao_existente.origem if producao_existente else "DIGITACAO_PROFISSIONAL"))[:50],
         "status": (d.get("status") or (producao_existente.status if producao_existente else "VALIDADO"))[:20],
-        "usuario_id": usuario_atual.id if usuario_atual else (producao_existente.usuario_id if producao_existente else None),
+        "usuario_id": (producao_existente.usuario_id if producao_existente and producao_existente.usuario_id else (usuario_atual.id if usuario_atual else None)),
         "atualizado_em": datetime.utcnow(),
     }
     return preparado
@@ -397,6 +557,7 @@ def obter_resumo_competencia(
     competencia: str,
     medico_id: int | None = None,
     unidade_saude_id: int | None = None,
+    usuario_id: int | None = None,
 ) -> ResumoCompetenciaOut:
     """Calcula totais, valores financeiros e distribuição BPA-C vs BPA-I na competência."""
     comp_limpa = extrair_competencia(None, competencia)
@@ -406,6 +567,8 @@ def obter_resumo_competencia(
         stmt = stmt.where(ProducaoAmbulatorial.medico_id == medico_id)
     if unidade_saude_id:
         stmt = stmt.where(ProducaoAmbulatorial.unidade_saude_id == unidade_saude_id)
+    if usuario_id:
+        stmt = stmt.where(ProducaoAmbulatorial.usuario_id == usuario_id)
 
     registros = list(db.exec(stmt).all())
 

@@ -27,6 +27,7 @@ import {
   labsListar,
   labsCriar,
   labsAtualizar,
+  labsRegerarAcesso,
   labsRemover,
 } from "../services/api";
 import { Button, Card, Input, Label } from "../components/ui/primitives";
@@ -79,12 +80,30 @@ export default function Prestadores() {
   const [labNome, setLabNome] = useState("");
   const [labResponsavelTecnico, setLabResponsavelTecnico] = useState("");
   const [labHorarioFuncionamento, setLabHorarioFuncionamento] = useState("07:00 às 17:00");
+  const [labCnpj, setLabCnpj] = useState("");
+  const [labCnes, setLabCnes] = useState("");
+  const [labTelefone, setLabTelefone] = useState("");
+  const [labEndereco, setLabEndereco] = useState("");
   const [labCriarUsuarioAcesso, setLabCriarUsuarioAcesso] = useState(true);
   const [labCredenciaisCriadas, setLabCredenciaisCriadas] = useState<{ usuario: string; senha: string } | null>(null);
   const [labBusy, setLabBusy] = useState(false);
   const [labErro, setLabErro] = useState("");
   const [labOk, setLabOk] = useState("");
   const [labBusca, setLabBusca] = useState("");
+
+  // Modal de Edição de Laboratório
+  const [labEditModal, setLabEditModal] = useState(false);
+  const [labEditId, setLabEditId] = useState<number | null>(null);
+  const [labEditNome, setLabEditNome] = useState("");
+  const [labEditResponsavel, setLabEditResponsavel] = useState("");
+  const [labEditHorario, setLabEditHorario] = useState("");
+  const [labEditCnpj, setLabEditCnpj] = useState("");
+  const [labEditCnes, setLabEditCnes] = useState("");
+  const [labEditTelefone, setLabEditTelefone] = useState("");
+  const [labEditEndereco, setLabEditEndereco] = useState("");
+  const [labEditAtivo, setLabEditAtivo] = useState(true);
+  const [labEditErro, setLabEditErro] = useState("");
+  const [labEditSalvando, setLabEditSalvando] = useState(false);
 
   const prestadoresFiltrados = useMemo(() => {
     let res = lista;
@@ -162,10 +181,18 @@ export default function Prestadores() {
         ativo: true,
         responsavel_tecnico: labResponsavelTecnico.trim(),
         horario_funcionamento: labHorarioFuncionamento.trim(),
+        cnpj: labCnpj.trim(),
+        cnes: labCnes.trim(),
+        telefone: labTelefone.trim(),
+        endereco: labEndereco.trim(),
         criar_usuario_acesso: labCriarUsuarioAcesso,
       });
       setLabNome("");
       setLabResponsavelTecnico("");
+      setLabCnpj("");
+      setLabCnes("");
+      setLabTelefone("");
+      setLabEndereco("");
       setLabOk("Laboratório conveniado adicionado com sucesso.");
       if (res.usuario_criado && res.senha_temporaria) {
         setLabCredenciaisCriadas({ usuario: res.usuario_criado, senha: res.senha_temporaria });
@@ -174,6 +201,84 @@ export default function Prestadores() {
     } catch (e: unknown) {
       const d = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Falha.";
       setLabErro(typeof d === "string" ? d : "Falha ao criar laboratório.");
+    } finally {
+      setLabBusy(false);
+    }
+  }
+
+  function abrirEdicaoLab(l: Laboratorio) {
+    setLabEditId(l.id);
+    setLabEditNome(l.nome);
+    setLabEditResponsavel(l.responsavel_tecnico || "");
+    setLabEditHorario(l.horario_funcionamento || "07:00 às 17:00");
+    setLabEditCnpj(l.cnpj || "");
+    setLabEditCnes(l.cnes || "");
+    setLabEditTelefone(l.telefone || "");
+    setLabEditEndereco(l.endereco || "");
+    setLabEditAtivo(l.ativo);
+    setLabEditErro("");
+    setLabEditModal(true);
+  }
+
+  async function salvarEdicaoLab() {
+    if (!labEditId) return;
+    if (labEditNome.trim().length < 2) {
+      setLabEditErro("Nome do laboratório inválido (mínimo 2 caracteres).");
+      return;
+    }
+    setLabEditSalvando(true);
+    setLabEditErro("");
+    setLabErro("");
+    setLabOk("");
+    try {
+      await labsAtualizar(labEditId, {
+        nome: labEditNome.trim(),
+        responsavel_tecnico: labEditResponsavel.trim(),
+        horario_funcionamento: labEditHorario.trim(),
+        cnpj: labEditCnpj.trim(),
+        cnes: labEditCnes.trim(),
+        telefone: labEditTelefone.trim(),
+        endereco: labEditEndereco.trim(),
+        ativo: labEditAtivo,
+      });
+      setLabEditModal(false);
+      setLabOk("Laboratório atualizado. Os novos pedidos usarão os novos dados, preservando o histórico dos pedidos antigos.");
+      await carregarLabs();
+    } catch (e: unknown) {
+      const d = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail;
+      setLabEditErro(typeof d === "string" ? d : "Falha ao atualizar laboratório.");
+    } finally {
+      setLabEditSalvando(false);
+    }
+  }
+
+  async function regerarAcessoLab(l: Laboratorio) {
+    const temAcesso = Boolean(l.usuario_acesso);
+    const okConf = await confirmar({
+      titulo: temAcesso ? `Regerar senha de acesso — ${l.nome}` : `Gerar acesso ao sistema — ${l.nome}`,
+      descricao: temAcesso
+        ? `Será gerada uma nova senha provisória para o usuário "${l.usuario_acesso}" (a senha atual será substituída e o usuário será reativado).`
+        : `Será criada uma nova conta de recepção vinculada ao laboratório "${l.nome}" com senha provisória.`,
+      textoConfirmar: temAcesso ? "Regerar Senha" : "Gerar Acesso",
+    });
+    if (!okConf) return;
+    setLabBusy(true);
+    setLabErro("");
+    setLabOk("");
+    try {
+      const res = await labsRegerarAcesso(l.id);
+      if (res.usuario_criado && res.senha_temporaria) {
+        setLabCredenciaisCriadas({ usuario: res.usuario_criado, senha: res.senha_temporaria });
+      }
+      setLabOk(
+        temAcesso
+          ? `Nova senha provisória gerada para "${res.usuario_criado}".`
+          : `Conta de acesso "${res.usuario_criado}" criada para o laboratório "${l.nome}".`
+      );
+      await carregarLabs();
+    } catch (e: unknown) {
+      const d = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail;
+      setLabErro(typeof d === "string" ? d : "Falha ao gerar/regerar acesso do laboratório.");
     } finally {
       setLabBusy(false);
     }
@@ -710,6 +815,45 @@ export default function Prestadores() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                <div>
+                  <Label className="text-[11px] font-bold">CNPJ</Label>
+                  <Input
+                    value={labCnpj}
+                    onChange={(e) => setLabCnpj(e.target.value)}
+                    placeholder="00.000.000/0001-00"
+                    className="text-xs mt-1"
+                  />
+                </div>
+                <div>
+                  <Label className="text-[11px] font-bold">CNES</Label>
+                  <Input
+                    value={labCnes}
+                    onChange={(e) => setLabCnes(e.target.value)}
+                    placeholder="7 dígitos"
+                    className="text-xs mt-1"
+                  />
+                </div>
+                <div>
+                  <Label className="text-[11px] font-bold">Telefone</Label>
+                  <Input
+                    value={labTelefone}
+                    onChange={(e) => setLabTelefone(e.target.value)}
+                    placeholder="(35) 99999-0000"
+                    className="text-xs mt-1"
+                  />
+                </div>
+                <div>
+                  <Label className="text-[11px] font-bold">Endereço</Label>
+                  <Input
+                    value={labEndereco}
+                    onChange={(e) => setLabEndereco(e.target.value)}
+                    placeholder="Rua, Nº, Bairro"
+                    className="text-xs mt-1"
+                  />
+                </div>
+              </div>
+
               <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-sus-900/10">
                 <label className="flex items-center gap-2 text-xs font-medium text-sus-950 cursor-pointer">
                   <input
@@ -771,7 +915,8 @@ export default function Prestadores() {
                     <th className="px-4 py-3">ID</th>
                     <th className="px-4 py-3">Laboratório Conveniado</th>
                     <th className="px-4 py-3">Responsável Técnico</th>
-                    <th className="px-4 py-3">Horário de Funcionamento</th>
+                    <th className="px-4 py-3">Horário / Contato</th>
+                    <th className="px-4 py-3">Acesso ao Sistema</th>
                     <th className="px-4 py-3 text-center">Status</th>
                     <th className="px-4 py-3 text-right">Ações</th>
                   </tr>
@@ -783,7 +928,14 @@ export default function Prestadores() {
                       <td className="px-4 py-3 font-bold text-sus-950">
                         <div className="flex items-center gap-2">
                           <FlaskConical className="h-4 w-4 text-teal shrink-0" />
-                          <span>{l.nome}</span>
+                          <div>
+                            <span>{l.nome}</span>
+                            {(l.cnpj || l.cnes) && (
+                              <p className="text-[10px] font-normal text-ink/60">
+                                {l.cnpj ? `CNPJ: ${l.cnpj}` : ""}{l.cnpj && l.cnes ? " • " : ""}{l.cnes ? `CNES: ${l.cnes}` : ""}
+                              </p>
+                            )}
+                          </div>
                         </div>
                       </td>
                       <td className="px-4 py-3 text-ink/75 font-medium">{l.responsavel_tecnico || "—"}</td>
@@ -792,6 +944,16 @@ export default function Prestadores() {
                           <Clock className="h-3 w-3 text-ink/40" />
                           <span>{l.horario_funcionamento || "—"}</span>
                         </div>
+                        {l.telefone && <p className="text-[10px] text-ink/55 mt-0.5">{l.telefone}</p>}
+                      </td>
+                      <td className="px-4 py-3">
+                        {l.usuario_acesso ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 font-mono text-[11px] font-semibold text-sky-800">
+                            <Key className="h-3 w-3" /> {l.usuario_acesso}
+                          </span>
+                        ) : (
+                          <span className="text-[11px] italic text-ink/45">Sem acesso</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-center">
                         <span
@@ -803,7 +965,26 @@ export default function Prestadores() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => abrirEdicaoLab(l)}
+                            className="h-8 px-2 text-sus-900 hover:bg-sus-900/5 text-xs font-semibold"
+                            title="Editar dados do laboratório"
+                          >
+                            <Pencil className="h-3.5 w-3.5 mr-1" /> Editar
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={labBusy}
+                            onClick={() => regerarAcessoLab(l)}
+                            className="h-8 px-2 text-sky-700 hover:bg-sky-50 text-xs font-semibold"
+                            title={l.usuario_acesso ? "Gerar nova senha provisória" : "Criar acesso ao sistema"}
+                          >
+                            <Key className="h-3.5 w-3.5 mr-1" /> {l.usuario_acesso ? "Regerar Senha" : "Gerar Acesso"}
+                          </Button>
                           {l.ativo ? (
                             <Button
                               variant="ghost"
@@ -840,7 +1021,7 @@ export default function Prestadores() {
                   ))}
                   {labsFiltrados.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-ink/50">
+                      <td colSpan={7} className="px-4 py-8 text-center text-ink/50">
                         Nenhum laboratório conveniado cadastrado ou encontrado com a busca.
                       </td>
                     </tr>
@@ -1019,6 +1200,119 @@ export default function Prestadores() {
               </Button>
               <Button onClick={salvar} disabled={salvando} className="bg-teal text-white hover:bg-teal/90 text-xs">
                 {salvando ? "Salvando..." : editId ? "Salvar Alterações" : "Cadastrar Prestador"}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {labEditModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
+          <Card className="w-full max-w-xl overflow-hidden bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-sus-900/10 px-6 py-4 bg-sand/30">
+              <h2 className="text-base font-bold text-sus-950 flex items-center gap-2">
+                <FlaskConical className="h-5 w-5 text-teal" /> Editar Laboratório Conveniado
+              </h2>
+              <button
+                onClick={() => setLabEditModal(false)}
+                className="rounded-lg p-1 text-ink/40 hover:bg-sand hover:text-sus-950"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                Os pedidos já emitidos anteriormente mantêm o registro histórico dos dados da época; somente os novos pedidos utilizarão os dados atualizados.
+              </div>
+
+              {labEditErro && (
+                <div className="rounded-xl bg-red-50 p-3 text-xs font-semibold text-red-700">{labEditErro}</div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="sm:col-span-2">
+                  <Label className="text-xs font-bold text-sus-950">Nome do Laboratório *</Label>
+                  <Input
+                    value={labEditNome}
+                    onChange={(e) => setLabEditNome(e.target.value)}
+                    className="mt-1 text-xs"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">Responsável Técnico</Label>
+                  <Input
+                    value={labEditResponsavel}
+                    onChange={(e) => setLabEditResponsavel(e.target.value)}
+                    placeholder="Ex: Dr. Roberto / Dra. Ana"
+                    className="mt-1 text-xs"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">Horário de Funcionamento</Label>
+                  <Input
+                    value={labEditHorario}
+                    onChange={(e) => setLabEditHorario(e.target.value)}
+                    placeholder="Ex: 07:00 às 17:00"
+                    className="mt-1 text-xs"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">CNPJ</Label>
+                  <Input
+                    value={labEditCnpj}
+                    onChange={(e) => setLabEditCnpj(e.target.value)}
+                    className="mt-1 text-xs"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">CNES</Label>
+                  <Input
+                    value={labEditCnes}
+                    onChange={(e) => setLabEditCnes(e.target.value)}
+                    className="mt-1 text-xs"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-bold text-sus-950">Telefone</Label>
+                  <Input
+                    value={labEditTelefone}
+                    onChange={(e) => setLabEditTelefone(e.target.value)}
+                    className="mt-1 text-xs"
+                  />
+                </div>
+                <div className="flex items-center pt-5">
+                  <label className="flex items-center gap-2 text-xs font-bold text-sus-950 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={labEditAtivo}
+                      onChange={(e) => setLabEditAtivo(e.target.checked)}
+                      className="rounded border-sus-900/20 text-teal"
+                    />
+                    Laboratório Ativo
+                  </label>
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className="text-xs font-bold text-sus-950">Endereço</Label>
+                  <Input
+                    value={labEditEndereco}
+                    onChange={(e) => setLabEditEndereco(e.target.value)}
+                    className="mt-1 text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-sus-900/10 bg-sand/30 px-6 py-4">
+              <Button variant="outline" onClick={() => setLabEditModal(false)} disabled={labEditSalvando} className="text-xs">
+                Cancelar
+              </Button>
+              <Button
+                onClick={salvarEdicaoLab}
+                disabled={labEditSalvando}
+                className="bg-teal text-white hover:bg-teal/90 text-xs"
+              >
+                {labEditSalvando ? "Salvando..." : "Salvar Alterações"}
               </Button>
             </div>
           </Card>

@@ -106,6 +106,7 @@ export default function ProducaoProfissional() {
   // Lista e Resumo da produção
   const [producoes, setProducoes] = useState<ProducaoAmbulatorial[]>([]);
   const [totalRegistros, setTotalRegistros] = useState<number>(0);
+  const [somenteProprios, setSomenteProprios] = useState<boolean>(false);
   const [resumo, setResumo] = useState<ResumoCompetenciaProducao | null>(null);
   const [carregando, setCarregando] = useState<boolean>(false);
   const [erroCarregamento, setErroCarregamento] = useState<string>("");
@@ -126,6 +127,8 @@ export default function ProducaoProfissional() {
   );
   const [formQuantidade, setFormQuantidade] = useState<number>(1);
   const [formCbo, setFormCbo] = useState<string>("");
+  const [instrumentoSelecionado, setInstrumentoSelecionado] = useState<string>("BPA-C");
+  const [idadePacienteInformada, setIdadePacienteInformada] = useState<string>("");
 
   // Autocomplete Procedimento SIGTAP
   const [buscaProcTexto, setBuscaProcTexto] = useState<string>("");
@@ -139,9 +142,23 @@ export default function ProducaoProfissional() {
   const [pacienteId, setPacienteId] = useState<string | number>("");
   const [pacienteObj, setPacienteObj] = useState<Paciente | null>(null);
   const [pacienteNome, setPacienteNome] = useState<string>("");
+  const [pacienteCpf, setPacienteCpf] = useState<string>("");
+  const [pacienteSemCpf, setPacienteSemCpf] = useState<boolean>(false);
   const [pacienteCns, setPacienteCns] = useState<string>("");
   const [pacienteSexo, setPacienteSexo] = useState<string>("M");
   const [pacienteNasc, setPacienteNasc] = useState<string>("");
+  const [pacienteRacaCor, setPacienteRacaCor] = useState<string>("01");
+  const [pacienteEtnia, setPacienteEtnia] = useState<string>("");
+  const [pacienteNacionalidade, setPacienteNacionalidade] = useState<string>("010");
+  const [caraterAtendimento, setCaraterAtendimento] = useState<string>("01");
+  const [pacienteSituacaoRua, setPacienteSituacaoRua] = useState<boolean>(false);
+  const [pacienteCep, setPacienteCep] = useState<string>("");
+  const [pacienteMunicipioIbge, setPacienteMunicipioIbge] = useState<string>("");
+  const [pacienteLogradouro, setPacienteLogradouro] = useState<string>("");
+  const [pacienteNumero, setPacienteNumero] = useState<string>("");
+  const [pacienteComplemento, setPacienteComplemento] = useState<string>("");
+  const [pacienteBairro, setPacienteBairro] = useState<string>("");
+  const [pacienteTelefone, setPacienteTelefone] = useState<string>("");
   const [numeroAutorizacao, setNumeroAutorizacao] = useState<string>("");
   const [servicoCodigo, setServicoCodigo] = useState<string>("");
   const [classificacaoCodigo, setClassificacaoCodigo] = useState<string>("");
@@ -226,6 +243,7 @@ export default function ProducaoProfissional() {
 
       setProducoes(respLista.itens);
       setTotalRegistros(respLista.total);
+      setSomenteProprios(Boolean(respLista.somente_proprios));
       setResumo(respResumo);
     } catch (err) {
       setErroCarregamento(msgErro(err, "Falha ao carregar a produção ambulatorial."));
@@ -280,7 +298,7 @@ export default function ProducaoProfissional() {
     const timer = setTimeout(async () => {
       setBuscandoCid(true);
       try {
-        const itens = await buscarCidsSigtapProducao(buscaCidTexto);
+        const itens = await buscarCidsSigtapProducao(buscaCidTexto, procSelecionado?.codigo);
         setSugestoesCid(itens);
         setDropdownCidAberto(true);
       } catch (err) {
@@ -290,7 +308,7 @@ export default function ProducaoProfissional() {
       }
     }, 250);
     return () => clearTimeout(timer);
-  }, [buscaCidTexto]);
+  }, [buscaCidTexto, procSelecionado?.codigo]);
 
   // Fecha dropdowns se clicar fora
   useEffect(() => {
@@ -312,14 +330,32 @@ export default function ProducaoProfissional() {
     if (p) {
       setPacienteId(p.id ?? "");
       setPacienteNome(p.nome || "");
+      setPacienteCpf(p.cpf || "");
+      setPacienteSemCpf(!(p.cpf || "").replace(/\D/g, ""));
       setPacienteCns(p.cns || "");
       setPacienteSexo(p.sexo ? (p.sexo.toUpperCase().startsWith("F") ? "F" : "M") : "M");
       setPacienteNasc(p.nascimento || "");
+      setPacienteCep(p.cep || "");
+      setPacienteMunicipioIbge(p.municipio || "");
+      setPacienteLogradouro(p.endereco || "");
+      setPacienteNumero(p.endereco_numero || "");
+      setPacienteComplemento(p.complemento || "");
+      setPacienteBairro(p.bairro || "");
+      setPacienteTelefone(p.telefone || "");
     } else {
       setPacienteId("");
       setPacienteNome("");
+      setPacienteCpf("");
+      setPacienteSemCpf(false);
       setPacienteCns("");
       setPacienteNasc("");
+      setPacienteCep("");
+      setPacienteMunicipioIbge("");
+      setPacienteLogradouro("");
+      setPacienteNumero("");
+      setPacienteComplemento("");
+      setPacienteBairro("");
+      setPacienteTelefone("");
     }
   };
 
@@ -330,13 +366,29 @@ export default function ProducaoProfissional() {
     setProcSelecionado(null);
     setBuscaProcTexto("");
     setSugestoesProc([]);
+    setInstrumentoSelecionado("BPA-C");
+    setIdadePacienteInformada("");
     setFormQuantidade(1);
     setPacienteId("");
     setPacienteObj(null);
     setPacienteNome("");
+    setPacienteCpf("");
+    setPacienteSemCpf(false);
     setPacienteCns("");
     setPacienteSexo("M");
     setPacienteNasc("");
+    setPacienteRacaCor("01");
+    setPacienteEtnia("");
+    setPacienteNacionalidade("010");
+    setCaraterAtendimento("01");
+    setPacienteSituacaoRua(false);
+    setPacienteCep("");
+    setPacienteMunicipioIbge("");
+    setPacienteLogradouro("");
+    setPacienteNumero("");
+    setPacienteComplemento("");
+    setPacienteBairro("");
+    setPacienteTelefone("");
     setCidSelecionado("");
     setBuscaCidTexto("");
     setNumeroAutorizacao("");
@@ -364,6 +416,12 @@ export default function ProducaoProfissional() {
     setFormDataAtendimento(prod.data_atendimento);
     setFormQuantidade(prod.quantidade);
     setFormCbo(prod.cbo_codigo);
+    setInstrumentoSelecionado(prod.instrumento_registro || "BPA-C");
+    setIdadePacienteInformada(
+      prod.idade_paciente_informada !== null && prod.idade_paciente_informada !== undefined
+        ? String(prod.idade_paciente_informada)
+        : ""
+    );
 
     setProcSelecionado({
       id: prod.procedimento_id,
@@ -371,6 +429,7 @@ export default function ProducaoProfissional() {
       descricao: prod.procedimento_nome,
       complexidade: "AB",
       instrumento: prod.instrumento_registro,
+      instrumentos_permitidos: prod.instrumento_registro,
       sexo: "I",
       idade_min: 0,
       idade_max: 0,
@@ -382,11 +441,34 @@ export default function ProducaoProfissional() {
     });
     setBuscaProcTexto(`${prod.procedimento_codigo} - ${prod.procedimento_nome}`);
 
+    // Recarrega regras completas do SIGTAP para o procedimento editado
+    buscarProcedimentosSigtapProducao(prod.procedimento_codigo)
+      .then((lista) => {
+        const match = lista.find((it) => it.codigo === prod.procedimento_codigo);
+        if (match) setProcSelecionado(match);
+      })
+      .catch(() => {});
+
     setPacienteId(prod.paciente_id || "");
+    setPacienteObj(null);
     setPacienteNome(prod.paciente_nome || "");
+    setPacienteCpf(prod.paciente_cpf || "");
+    setPacienteSemCpf((prod.paciente_sem_cpf || "N").toUpperCase() === "S");
     setPacienteCns(prod.paciente_cns || "");
     setPacienteSexo(prod.paciente_sexo || "M");
     setPacienteNasc(prod.paciente_data_nascimento || "");
+    setPacienteRacaCor(prod.paciente_raca_cor || "01");
+    setPacienteEtnia(prod.paciente_etnia || "");
+    setPacienteNacionalidade(prod.paciente_nacionalidade || "010");
+    setCaraterAtendimento(prod.carater_atendimento || "01");
+    setPacienteSituacaoRua((prod.paciente_situacao_rua || "N").toUpperCase() === "S");
+    setPacienteCep(prod.paciente_cep || "");
+    setPacienteMunicipioIbge(prod.paciente_municipio_ibge || "");
+    setPacienteLogradouro(prod.paciente_logradouro || "");
+    setPacienteNumero(prod.paciente_numero || "");
+    setPacienteComplemento(prod.paciente_complemento || "");
+    setPacienteBairro(prod.paciente_bairro || "");
+    setPacienteTelefone(prod.paciente_telefone || "");
     setCidSelecionado(prod.cid10 || "");
     setBuscaCidTexto(prod.cid10 || "");
     setNumeroAutorizacao(prod.numero_autorizacao || "");
@@ -422,19 +504,47 @@ export default function ProducaoProfissional() {
       return;
     }
 
-    const ehBpaI = procSelecionado.instrumento === "BPA-I";
+    const instrEfetivo = (instrumentoSelecionado || procSelecionado.instrumento || "BPA-C").toUpperCase();
+    const ehBpaI = instrEfetivo === "BPA-I";
+
+    if (!ehBpaI && procSelecionado.exige_idade_bpa && idadePacienteInformada.trim() === "") {
+      setErroForm("Este procedimento exige a informação da idade do paciente no BPA-C.");
+      return;
+    }
 
     if (ehBpaI) {
       if (!pacienteNome.trim()) {
         setErroForm("Nome do paciente é obrigatório para procedimentos BPA-I.");
         return;
       }
-      if (!pacienteCns.trim() || pacienteCns.replace(/\D/g, "").length !== 15) {
-        setErroForm("Cartão Nacional de Saúde (CNS) com 15 dígitos é obrigatório para BPA-I.");
+      const cpfNum = pacienteCpf.replace(/\D/g, "");
+      const cnsNum = pacienteCns.replace(/\D/g, "");
+      if (procSelecionado.exige_cpf && !pacienteSemCpf && cpfNum.length !== 11) {
+        setErroForm("Este procedimento exige o CPF válido (11 dígitos) do paciente (ou marque 'Sem CPF').");
+        return;
+      }
+      if (!pacienteSemCpf && cpfNum.length !== 11 && cnsNum.length !== 15) {
+        setErroForm("Informe um CPF válido (11 dígitos) ou Cartão Nacional de Saúde (15 dígitos) do paciente.");
+        return;
+      }
+      if (pacienteSemCpf && cnsNum.length !== 15) {
+        setErroForm("Paciente marcado como 'Sem CPF' precisa informar o CNS de 15 dígitos.");
         return;
       }
       if (!pacienteNasc) {
         setErroForm("Data de nascimento do paciente é obrigatória para apuração de idade.");
+        return;
+      }
+      if (pacienteRacaCor === "05" && !pacienteEtnia.trim()) {
+        setErroForm("Código da Etnia Indígena é obrigatório quando Raça/Cor é 05 (Indígena).");
+        return;
+      }
+      if (procSelecionado.exige_cid && !cidSelecionado.trim()) {
+        setErroForm("Este procedimento exige a informação do CID-10.");
+        return;
+      }
+      if (procSelecionado.exige_servico && (!servicoCodigo.trim() || !classificacaoCodigo.trim())) {
+        setErroForm("Este procedimento exige a seleção de Serviço e Classificação (CNES).");
         return;
       }
     }
@@ -451,17 +561,33 @@ export default function ProducaoProfissional() {
         cbo_codigo: formCbo,
         competencia,
         data_atendimento: formDataAtendimento,
-        instrumento_registro: procSelecionado.instrumento,
+        instrumento_registro: instrEfetivo,
         quantidade: Number(formQuantidade),
-        paciente_id: pacienteId ? Number(pacienteId) : null,
-        paciente_nome: pacienteNome.trim(),
-        paciente_cns: pacienteCns.replace(/\D/g, ""),
-        paciente_sexo: pacienteSexo,
-        paciente_data_nascimento: pacienteNasc || null,
-        cid10: cidSelecionado.trim(),
-        numero_autorizacao: numeroAutorizacao.trim(),
-        servico_codigo: servicoCodigo.trim(),
-        classificacao_codigo: classificacaoCodigo.trim(),
+        idade_paciente_informada:
+          !ehBpaI && idadePacienteInformada.trim() !== "" ? Number(idadePacienteInformada) : null,
+        paciente_id: ehBpaI && pacienteId ? Number(pacienteId) : null,
+        paciente_nome: ehBpaI ? pacienteNome.trim() : "",
+        paciente_cpf: ehBpaI && !pacienteSemCpf ? pacienteCpf.replace(/\D/g, "") : "",
+        paciente_sem_cpf: ehBpaI && pacienteSemCpf ? "S" : "N",
+        paciente_cns: ehBpaI ? pacienteCns.replace(/\D/g, "") : "",
+        paciente_sexo: ehBpaI ? pacienteSexo : "I",
+        paciente_data_nascimento: ehBpaI ? pacienteNasc || null : null,
+        paciente_raca_cor: ehBpaI ? pacienteRacaCor : "01",
+        paciente_etnia: ehBpaI && pacienteRacaCor === "05" ? pacienteEtnia.trim() : "",
+        paciente_nacionalidade: ehBpaI ? pacienteNacionalidade.trim() || "010" : "010",
+        carater_atendimento: ehBpaI ? caraterAtendimento : "01",
+        paciente_situacao_rua: ehBpaI && pacienteSituacaoRua ? "S" : "N",
+        paciente_cep: ehBpaI ? pacienteCep.replace(/\D/g, "") : "",
+        paciente_municipio_ibge: ehBpaI ? pacienteMunicipioIbge.replace(/\D/g, "") : "",
+        paciente_logradouro: ehBpaI ? pacienteLogradouro.trim() : "",
+        paciente_numero: ehBpaI ? pacienteNumero.trim() : "",
+        paciente_complemento: ehBpaI ? pacienteComplemento.trim() : "",
+        paciente_bairro: ehBpaI ? pacienteBairro.trim() : "",
+        paciente_telefone: ehBpaI ? pacienteTelefone.replace(/\D/g, "") : "",
+        cid10: ehBpaI ? cidSelecionado.trim() : "",
+        numero_autorizacao: ehBpaI ? numeroAutorizacao.trim() : "",
+        servico_codigo: ehBpaI ? servicoCodigo.trim() : "",
+        classificacao_codigo: ehBpaI ? classificacaoCodigo.trim() : "",
       };
 
       if (editandoId) {
@@ -498,7 +624,7 @@ export default function ProducaoProfissional() {
 
   // Verificação em tempo real de idade/sexo do paciente para aviso visual no form
   const avisoCompatibilidade = useMemo(() => {
-    if (!procSelecionado || procSelecionado.instrumento !== "BPA-I") return null;
+    if (!procSelecionado || instrumentoSelecionado !== "BPA-I") return null;
     const avisos: string[] = [];
 
     if (procSelecionado.sexo && procSelecionado.sexo !== "I") {
@@ -752,6 +878,18 @@ export default function ProducaoProfissional() {
             <span className="text-xs bg-sus-900/5 px-2 py-0.5 rounded-full text-sus-900/70 font-semibold">
               {totalRegistros} itens
             </span>
+            <span
+              className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${
+                somenteProprios ? "bg-amber-50 text-amber-800" : "bg-sky-50 text-sky-800"
+              }`}
+              title={
+                somenteProprios
+                  ? "Por perfil de acesso, são exibidos apenas os lançamentos digitados pelo seu usuário."
+                  : "Visualização administrativa completa com lançamentos de todos os digitadores."
+              }
+            >
+              {somenteProprios ? "Meus Lançamentos" : "Visão Admin (Todos)"}
+            </span>
           </div>
 
           <button
@@ -780,6 +918,7 @@ export default function ProducaoProfissional() {
                 <th className="py-3 px-4">Procedimento SIGTAP</th>
                 <th className="py-3 px-3 text-center">Tipo</th>
                 <th className="py-3 px-4">Paciente (BPA-I)</th>
+                <th className="py-3 px-4">Digitado por</th>
                 <th className="py-3 px-3 text-right">Qtd</th>
                 <th className="py-3 px-3 text-right">Unitário</th>
                 <th className="py-3 px-4 text-right">Total</th>
@@ -789,7 +928,7 @@ export default function ProducaoProfissional() {
             <tbody className="divide-y divide-sus-900/5">
               {producoes.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="py-12 text-center text-sus-900/40">
+                  <td colSpan={11} className="py-12 text-center text-sus-900/40">
                     {carregando ? (
                       <div className="flex flex-col items-center gap-2">
                         <RefreshCw className="h-6 w-6 animate-spin text-teal" />
@@ -851,7 +990,7 @@ export default function ProducaoProfissional() {
                           <div>
                             <p className="font-medium text-sus-950 truncate">{p.paciente_nome}</p>
                             <p className="text-[10px] text-sus-900/60">
-                              CNS: {p.paciente_cns || "—"} • Sexo: {p.paciente_sexo}
+                              {p.paciente_cpf ? `CPF: ${p.paciente_cpf}` : `CNS: ${p.paciente_cns || "—"}`} • Sexo: {p.paciente_sexo}
                               {p.paciente_idade !== null && ` • ${p.paciente_idade} anos`}
                             </p>
                             {p.cid10 && (
@@ -862,9 +1001,12 @@ export default function ProducaoProfissional() {
                           </div>
                         ) : (
                           <span className="text-sus-900/40 text-[11px] italic">
-                            Consolidado (sem identificação)
+                            Consolidado{p.idade_paciente_informada !== null && p.idade_paciente_informada !== undefined ? ` (${p.idade_paciente_informada} anos)` : " (sem identificação)"}
                           </span>
                         )}
+                      </td>
+                      <td className="py-3 px-4 text-[11px] text-sus-900/70 whitespace-nowrap">
+                        {p.usuario_nome || (p.usuario_id ? `Usuário #${p.usuario_id}` : "—")}
                       </td>
                       <td className="py-3 px-3 text-right font-bold text-sus-950 whitespace-nowrap">
                         {p.quantidade}
@@ -1046,19 +1188,30 @@ export default function ProducaoProfissional() {
                 {/* Dropdown de sugestões do SIGTAP */}
                 {dropdownProcAberto && sugestoesProc.length > 0 && (
                   <div className="absolute z-20 left-0 right-0 mt-1 max-h-60 overflow-y-auto bg-white rounded-xl shadow-lg border border-sus-900/10 divide-y divide-sus-900/5">
-                    {sugestoesProc.map((item) => (
+                    {sugestoesProc.map((item) => {
+                      const listaInstrItem = (item.instrumentos_permitidos || item.instrumento || "BPA-C")
+                        .split(",")
+                        .map((s) => s.trim().toUpperCase())
+                        .filter((s) => s === "BPA-C" || s === "BPA-I");
+                      return (
                       <button
                         key={item.id}
                         type="button"
                         onClick={() => {
                           setProcSelecionado(item);
                           setBuscaProcTexto(`${item.codigo} - ${item.descricao}`);
+                          const padrao = (item.instrumento || "BPA-C").toUpperCase();
+                          setInstrumentoSelecionado(padrao);
+                          if (item.servicos_permitidos && item.servicos_permitidos.length === 1) {
+                            setServicoCodigo(item.servicos_permitidos[0].servico_codigo);
+                            setClassificacaoCodigo(item.servicos_permitidos[0].classificacao_codigo);
+                          }
                           setDropdownProcAberto(false);
                         }}
                         className="w-full text-left p-3 hover:bg-sus-900/5 transition-colors flex items-start justify-between gap-3 text-xs"
                       >
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
                             <span className="font-mono font-bold text-sus-950">{item.codigo}</span>
                             <span
                               className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
@@ -1067,8 +1220,25 @@ export default function ProducaoProfissional() {
                                   : "bg-indigo-50 text-indigo-700"
                               }`}
                             >
-                              {item.instrumento}
+                              {listaInstrItem.length > 1
+                                ? listaInstrItem.join(" / ")
+                                : item.instrumento}
                             </span>
+                            {item.exige_cpf && (
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-rose-50 text-rose-700">
+                                Exige CPF
+                              </span>
+                            )}
+                            {item.exige_cid && (
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-purple-50 text-purple-700">
+                                Exige CID
+                              </span>
+                            )}
+                            {item.exige_idade_bpa && (
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-amber-50 text-amber-800">
+                                Exige Idade
+                              </span>
+                            )}
                           </div>
                           <p className="text-sus-900 mt-0.5">{item.descricao}</p>
                         </div>
@@ -1077,46 +1247,111 @@ export default function ProducaoProfissional() {
                           <p className="text-[10px] text-sus-900/50">{item.pontos} pts</p>
                         </div>
                       </button>
-                    ))}
+                    );
+                    })}
                   </div>
                 )}
 
                 {/* Card de Detalhes do Procedimento Selecionado */}
-                {procSelecionado && (
-                  <div className="mt-2 p-3 bg-sus-900/5 rounded-xl border border-sus-900/10 flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-sus-950">Instrumento Exigido:</span>
-                      <span
-                        className={`px-2 py-0.5 rounded-full font-bold ${
-                          procSelecionado.instrumento === "BPA-I"
-                            ? "bg-teal text-white"
-                            : "bg-indigo-600 text-white"
-                        }`}
-                      >
-                        {procSelecionado.instrumento}
-                      </span>
+                {procSelecionado && (() => {
+                  const instrPermitidosProc = (procSelecionado.instrumentos_permitidos || procSelecionado.instrumento || "BPA-C")
+                    .split(",")
+                    .map((s) => s.trim().toUpperCase())
+                    .filter((s) => s === "BPA-C" || s === "BPA-I");
+                  return (
+                  <div className="mt-2 p-3 bg-sus-900/5 rounded-xl border border-sus-900/10 space-y-2 text-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-sus-950">Instrumento:</span>
+                        {instrPermitidosProc.length > 1 ? (
+                          <div className="inline-flex rounded-lg bg-white p-0.5 border border-sus-900/15">
+                            {instrPermitidosProc.map((inst) => (
+                              <button
+                                key={inst}
+                                type="button"
+                                onClick={() => setInstrumentoSelecionado(inst)}
+                                className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold transition-colors ${
+                                  instrumentoSelecionado === inst
+                                    ? inst === "BPA-I"
+                                      ? "bg-teal text-white"
+                                      : "bg-indigo-600 text-white"
+                                    : "text-sus-900/70 hover:bg-sus-900/5"
+                                }`}
+                              >
+                                {inst}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <span
+                            className={`px-2 py-0.5 rounded-full font-bold ${
+                              instrumentoSelecionado === "BPA-I"
+                                ? "bg-teal text-white"
+                                : "bg-indigo-600 text-white"
+                            }`}
+                          >
+                            {instrumentoSelecionado}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-4 text-sus-900/80">
+                        <span>
+                          Valor SUS: <strong className="text-emerald-700">{formatarMoeda(procSelecionado.valor_total)}</strong>
+                        </span>
+                        <span>
+                          Sexo: <strong>{procSelecionado.sexo === "I" ? "Ambos" : procSelecionado.sexo}</strong>
+                        </span>
+                        {procSelecionado.idade_max > 0 && (
+                          <span>
+                            Faixa etária:{" "}
+                            <strong>
+                              {procSelecionado.idade_max > 150
+                                ? `${Math.floor(procSelecionado.idade_min / 12)} a ${Math.floor(procSelecionado.idade_max / 12)} anos`
+                                : `${procSelecionado.idade_min} a ${procSelecionado.idade_max} anos`}
+                            </strong>
+                          </span>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-4 text-sus-900/80">
-                      <span>
-                        Valor SUS: <strong className="text-emerald-700">{formatarMoeda(procSelecionado.valor_total)}</strong>
-                      </span>
-                      <span>
-                        Sexo: <strong>{procSelecionado.sexo === "I" ? "Ambos" : procSelecionado.sexo}</strong>
-                      </span>
-                      {procSelecionado.idade_max > 0 && (
-                        <span>
-                          Faixa etária:{" "}
-                          <strong>
-                            {procSelecionado.idade_max > 150
-                              ? `${Math.floor(procSelecionado.idade_min / 12)} a ${Math.floor(procSelecionado.idade_max / 12)} anos`
-                              : `${procSelecionado.idade_min} a ${procSelecionado.idade_max} anos`}
-                          </strong>
-                        </span>
-                      )}
-                    </div>
+                    {(procSelecionado.exige_cpf ||
+                      procSelecionado.exige_cns ||
+                      procSelecionado.exige_cid ||
+                      procSelecionado.exige_idade_bpa ||
+                      procSelecionado.exige_servico) && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-sus-900/10">
+                        <span className="text-[11px] font-semibold text-sus-900/70">Exigências BPA/SIGTAP:</span>
+                        {procSelecionado.exige_idade_bpa && instrumentoSelecionado !== "BPA-I" && (
+                          <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold">
+                            Idade obrigatória no BPA-C
+                          </span>
+                        )}
+                        {procSelecionado.exige_cpf && (
+                          <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-bold">
+                            CPF do paciente obrigatório
+                          </span>
+                        )}
+                        {procSelecionado.exige_cns && (
+                          <span className="px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 text-[10px] font-bold">
+                            CNS obrigatório
+                          </span>
+                        )}
+                        {procSelecionado.exige_cid && (
+                          <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[10px] font-bold">
+                            CID-10 compatível obrigatório
+                          </span>
+                        )}
+                        {procSelecionado.exige_servico && (
+                          <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 text-[10px] font-bold">
+                            Serviço / Classificação obrigatório
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
-                )}
+                );
+                })()}
               </div>
 
               {/* Linha 4: Data Atendimento e Quantidade */}
@@ -1168,12 +1403,49 @@ export default function ProducaoProfissional() {
                 </div>
               </div>
 
+              {/* BLOCO CONDICIONAL BPA-C COM EXIGÊNCIA DE IDADE */}
+              {procSelecionado && instrumentoSelecionado !== "BPA-I" && (procSelecionado.exige_idade_bpa || idadePacienteInformada !== "") && (
+                <div className="p-3.5 bg-indigo-50/70 border border-indigo-200 rounded-2xl grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                  <div>
+                    <p className="text-xs font-bold text-indigo-900">
+                      Faixa Etária no BPA Consolidado (BPA-C) {procSelecionado.exige_idade_bpa ? "*" : ""}
+                    </p>
+                    <p className="text-[11px] text-indigo-800/80">
+                      Este procedimento SIGTAP exige a idade em anos no registro 02 do BPA-C.
+                    </p>
+                  </div>
+                  <div>
+                    <input
+                      type="number"
+                      min={0}
+                      max={130}
+                      value={idadePacienteInformada}
+                      onChange={(e) => setIdadePacienteInformada(e.target.value)}
+                      placeholder="Idade em anos (0 a 130)"
+                      required={Boolean(procSelecionado.exige_idade_bpa)}
+                      className="w-full text-xs font-bold rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sus-950 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* BLOCO CONDICIONAL BPA-I (INDIVIDUALIZADO) */}
-              {procSelecionado?.instrumento === "BPA-I" && (
+              {procSelecionado && instrumentoSelecionado === "BPA-I" && (
                 <div className="p-4 bg-teal/5 border border-teal/20 rounded-2xl space-y-3.5">
-                  <div className="flex items-center gap-2 text-teal font-bold text-xs uppercase tracking-wide">
-                    <Users className="h-4 w-4" />
-                    <span>Identificação Obrigatória do Paciente (BPA-I)</span>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-teal font-bold text-xs uppercase tracking-wide">
+                      <Users className="h-4 w-4" />
+                      <span>Identificação Obrigatória do Paciente (BPA-I)</span>
+                    </div>
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-sus-900 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pacienteSituacaoRua}
+                        onChange={(e) => setPacienteSituacaoRua(e.target.checked)}
+                        className="rounded border-sus-900/20 text-teal"
+                      />
+                      <span>População em Situação de Rua</span>
+                    </label>
                   </div>
 
                   {/* Busca Paciente Unificada do PEC */}
@@ -1186,11 +1458,40 @@ export default function ProducaoProfissional() {
                     obrigatorio={true}
                   />
 
-                  {/* Dados Complementares do Paciente */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* Dados Documentais, Sexo e Nascimento */}
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-semibold text-sus-950">
+                          CPF {procSelecionado.exige_cpf && !pacienteSemCpf ? "*" : ""}
+                        </label>
+                        <label className="flex items-center gap-1 text-[10px] font-semibold text-sus-900/75 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={pacienteSemCpf}
+                            onChange={(e) => {
+                              setPacienteSemCpf(e.target.checked);
+                              if (e.target.checked) setPacienteCpf("");
+                            }}
+                            className="rounded border-sus-900/20 text-teal"
+                          />
+                          Sem CPF
+                        </label>
+                      </div>
+                      <input
+                        type="text"
+                        value={pacienteCpf}
+                        disabled={pacienteSemCpf}
+                        onChange={(e) => setPacienteCpf(e.target.value)}
+                        placeholder={pacienteSemCpf ? "Sem CPF (usar CNS)" : "11 dígitos"}
+                        maxLength={14}
+                        className="w-full text-xs font-medium rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-sus-950 disabled:bg-sus-900/5 focus:outline-none focus:ring-2 focus:ring-teal/30"
+                      />
+                    </div>
+
                     <div>
                       <label className="block text-xs font-semibold text-sus-950 mb-1">
-                        CNS do Paciente (15 dígitos) *
+                        CNS (15 dígitos) {pacienteSemCpf || procSelecionado.exige_cns ? "*" : ""}
                       </label>
                       <input
                         type="text"
@@ -1199,7 +1500,6 @@ export default function ProducaoProfissional() {
                         placeholder="Cartão Nacional de Saúde"
                         maxLength={15}
                         className="w-full text-xs font-medium rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-sus-950 focus:outline-none focus:ring-2 focus:ring-teal/30"
-                        required
                       />
                     </div>
 
@@ -1231,6 +1531,76 @@ export default function ProducaoProfissional() {
                     </div>
                   </div>
 
+                  {/* Raça/Cor, Etnia, Nacionalidade e Caráter de Atendimento */}
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-sus-950 mb-1">
+                        Raça / Cor *
+                      </label>
+                      <select
+                        value={pacienteRacaCor}
+                        onChange={(e) => setPacienteRacaCor(e.target.value)}
+                        className="w-full text-xs font-medium rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-sus-950 focus:outline-none focus:ring-2 focus:ring-teal/30"
+                      >
+                        <option value="01">01 - Branca</option>
+                        <option value="02">02 - Preta</option>
+                        <option value="03">03 - Parda</option>
+                        <option value="04">04 - Amarela</option>
+                        <option value="05">05 - Indígena</option>
+                        <option value="99">99 - Sem informação</option>
+                      </select>
+                    </div>
+
+                    {pacienteRacaCor === "05" && (
+                      <div>
+                        <label className="block text-xs font-semibold text-sus-950 mb-1">
+                          Etnia Indígena *
+                        </label>
+                        <input
+                          type="text"
+                          value={pacienteEtnia}
+                          onChange={(e) => setPacienteEtnia(e.target.value)}
+                          placeholder="Código IBGE 4 dígitos"
+                          maxLength={4}
+                          className="w-full text-xs font-medium rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-sus-950 focus:outline-none focus:ring-2 focus:ring-teal/30"
+                          required
+                        />
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-xs font-semibold text-sus-950 mb-1">
+                        Nacionalidade
+                      </label>
+                      <input
+                        type="text"
+                        value={pacienteNacionalidade}
+                        onChange={(e) => setPacienteNacionalidade(e.target.value)}
+                        placeholder="010 = Brasil"
+                        maxLength={3}
+                        className="w-full text-xs font-medium rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-sus-950 focus:outline-none focus:ring-2 focus:ring-teal/30"
+                      />
+                    </div>
+
+                    <div className={pacienteRacaCor === "05" ? "" : "sm:col-span-2"}>
+                      <label className="block text-xs font-semibold text-sus-950 mb-1">
+                        Caráter do Atendimento *
+                      </label>
+                      <select
+                        value={caraterAtendimento}
+                        onChange={(e) => setCaraterAtendimento(e.target.value)}
+                        className="w-full text-xs font-medium rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-sus-950 focus:outline-none focus:ring-2 focus:ring-teal/30"
+                      >
+                        <option value="01">01 - Eletivo</option>
+                        <option value="02">02 - Urgência</option>
+                        <option value="03">03 - Acidente no local de trabalho</option>
+                        <option value="04">04 - Acidente no trajeto para o trabalho</option>
+                        <option value="05">05 - Outros tipos de acidente de trânsito</option>
+                        <option value="06">06 - Outros tipos de lesões e envenenamentos</option>
+                      </select>
+                    </div>
+                  </div>
+
                   {/* Alerta de Incompatibilidade Visual */}
                   {avisoCompatibilidade && (
                     <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl flex items-start gap-2">
@@ -1248,7 +1618,7 @@ export default function ProducaoProfissional() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                     <div ref={cidContainerRef} className="relative">
                       <label className="block text-xs font-semibold text-sus-950 mb-1">
-                        CID-10 Principal
+                        CID-10 Principal {procSelecionado.exige_cid ? "*" : ""}
                       </label>
                       <input
                         type="text"
@@ -1260,7 +1630,12 @@ export default function ProducaoProfissional() {
                         onFocus={() => {
                           if (sugestoesCid.length > 0) setDropdownCidAberto(true);
                         }}
-                        placeholder="Buscar por código ou diagnóstico…"
+                        placeholder={
+                          procSelecionado.exige_cid
+                            ? "Obrigatório — buscar CID compatível…"
+                            : "Buscar por código ou diagnóstico…"
+                        }
+                        required={Boolean(procSelecionado.exige_cid)}
                         className="w-full text-xs rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-sus-950 uppercase focus:outline-none focus:ring-2 focus:ring-teal/30"
                       />
 
@@ -1295,9 +1670,123 @@ export default function ProducaoProfissional() {
                         type="text"
                         value={numeroAutorizacao}
                         onChange={(e) => setNumeroAutorizacao(e.target.value)}
-                        placeholder="Opcional"
+                        placeholder="Opcional (13 dígitos)"
                         maxLength={20}
                         className="w-full text-xs font-medium rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-sus-950 focus:outline-none focus:ring-2 focus:ring-teal/30"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Serviço / Classificação CNES */}
+                  {(procSelecionado.exige_servico ||
+                    (procSelecionado.servicos_permitidos && procSelecionado.servicos_permitidos.length > 0) ||
+                    servicoCodigo) && (
+                    <div className="pt-1">
+                      <label className="block text-xs font-semibold text-sus-950 mb-1">
+                        Serviço / Classificação (CNES/SIGTAP) {procSelecionado.exige_servico ? "*" : ""}
+                      </label>
+                      {procSelecionado.servicos_permitidos && procSelecionado.servicos_permitidos.length > 0 ? (
+                        <select
+                          value={servicoCodigo && classificacaoCodigo ? `${servicoCodigo}-${classificacaoCodigo}` : ""}
+                          onChange={(e) => {
+                            const [srv, cls] = e.target.value.split("-");
+                            setServicoCodigo(srv || "");
+                            setClassificacaoCodigo(cls || "");
+                          }}
+                          required={Boolean(procSelecionado.exige_servico)}
+                          className="w-full text-xs font-medium rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-sus-950 focus:outline-none focus:ring-2 focus:ring-teal/30"
+                        >
+                          <option value="">Selecione o Serviço e Classificação…</option>
+                          {procSelecionado.servicos_permitidos.map((sc) => (
+                            <option
+                              key={`${sc.servico_codigo}-${sc.classificacao_codigo}`}
+                              value={`${sc.servico_codigo}-${sc.classificacao_codigo}`}
+                            >
+                              {sc.servico_codigo}/{sc.classificacao_codigo} — {sc.servico_nome || "Serviço"}{" "}
+                              {sc.classificacao_nome ? `(${sc.classificacao_nome})` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-3">
+                          <input
+                            type="text"
+                            value={servicoCodigo}
+                            onChange={(e) => setServicoCodigo(e.target.value)}
+                            placeholder="Cód. Serviço (3 dígitos)"
+                            maxLength={4}
+                            required={Boolean(procSelecionado.exige_servico)}
+                            className="w-full text-xs font-medium rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-sus-950"
+                          />
+                          <input
+                            type="text"
+                            value={classificacaoCodigo}
+                            onChange={(e) => setClassificacaoCodigo(e.target.value)}
+                            placeholder="Cód. Classificação (3 dígitos)"
+                            maxLength={4}
+                            required={Boolean(procSelecionado.exige_servico)}
+                            className="w-full text-xs font-medium rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-sus-950"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Endereço e Contato para BPA-I */}
+                  <div className="pt-1 border-t border-teal/15 space-y-2.5">
+                    <p className="text-[11px] font-bold text-sus-900/75 uppercase tracking-wide">
+                      Endereço e Contato do Paciente (Layout BPA-I)
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      <input
+                        type="text"
+                        value={pacienteCep}
+                        onChange={(e) => setPacienteCep(e.target.value)}
+                        placeholder="CEP (8 dígitos)"
+                        maxLength={9}
+                        className="w-full text-xs rounded-xl border border-sus-900/20 bg-white px-3 py-1.5 text-sus-950"
+                      />
+                      <input
+                        type="text"
+                        value={pacienteMunicipioIbge}
+                        onChange={(e) => setPacienteMunicipioIbge(e.target.value)}
+                        placeholder="Cód. IBGE Município (6 dígitos)"
+                        maxLength={7}
+                        className="w-full text-xs rounded-xl border border-sus-900/20 bg-white px-3 py-1.5 text-sus-950"
+                      />
+                      <input
+                        type="text"
+                        value={pacienteTelefone}
+                        onChange={(e) => setPacienteTelefone(e.target.value)}
+                        placeholder="Telefone com DDD"
+                        maxLength={15}
+                        className="w-full text-xs rounded-xl border border-sus-900/20 bg-white px-3 py-1.5 text-sus-950"
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-6 gap-2.5">
+                      <input
+                        type="text"
+                        value={pacienteLogradouro}
+                        onChange={(e) => setPacienteLogradouro(e.target.value)}
+                        placeholder="Logradouro / Rua"
+                        maxLength={80}
+                        className="sm:col-span-3 w-full text-xs rounded-xl border border-sus-900/20 bg-white px-3 py-1.5 text-sus-950"
+                      />
+                      <input
+                        type="text"
+                        value={pacienteNumero}
+                        onChange={(e) => setPacienteNumero(e.target.value)}
+                        placeholder="Nº"
+                        maxLength={10}
+                        className="sm:col-span-1 w-full text-xs rounded-xl border border-sus-900/20 bg-white px-3 py-1.5 text-sus-950"
+                      />
+                      <input
+                        type="text"
+                        value={pacienteBairro}
+                        onChange={(e) => setPacienteBairro(e.target.value)}
+                        placeholder="Bairro"
+                        maxLength={50}
+                        className="sm:col-span-2 w-full text-xs rounded-xl border border-sus-900/20 bg-white px-3 py-1.5 text-sus-950"
                       />
                     </div>
                   </div>

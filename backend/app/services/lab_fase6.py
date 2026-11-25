@@ -140,12 +140,20 @@ def criar_solicitacao_mestre(
         cod_solic = (getattr(fila, "codigo_solicitacao", "") or "").strip() if fila else ""
         if not cod_solic:
             cod_solic = gerar_protocolo_lab_aleatorio(data_agendada=data_agendada, db=db)
+        lab_obj = get_lab_or_404(db, laboratorio_id)
         mestre = SolicitacaoMestre(
             codigo_solicitacao=cod_solic,
             paciente_id=paciente_id,
             data_agendada=data_agendada,
             hora_agendada=hora_agendada or "07:00",
             laboratorio_id=laboratorio_id,
+            laboratorio_nome_snapshot=lab_obj.nome,
+            laboratorio_responsavel_snapshot=getattr(lab_obj, "responsavel_tecnico", "") or "",
+            laboratorio_horario_snapshot=getattr(lab_obj, "horario_funcionamento", "") or "",
+            laboratorio_cnpj_snapshot=getattr(lab_obj, "cnpj", "") or "",
+            laboratorio_cnes_snapshot=getattr(lab_obj, "cnes", "") or "",
+            laboratorio_telefone_snapshot=getattr(lab_obj, "telefone", "") or "",
+            laboratorio_endereco_snapshot=getattr(lab_obj, "endereco", "") or "",
             status="agendado",
             agendado_por=agendado_por,
             origem_fila_id=origem_fila_id,
@@ -215,7 +223,9 @@ def enriquecer_mestre(db: Session, m: SolicitacaoMestre) -> dict:
         "data_agendada": m.data_agendada,
         "hora_agendada": getattr(m, "hora_agendada", "07:00") or "07:00",
         "laboratorio_id": m.laboratorio_id,
-        "laboratorio_nome": lab.nome if lab else "?",
+        "laboratorio_nome": getattr(m, "laboratorio_nome_snapshot", "") or (lab.nome if lab else "?"),
+        "laboratorio_responsavel": getattr(m, "laboratorio_responsavel_snapshot", "") or (getattr(lab, "responsavel_tecnico", "") if lab else ""),
+        "laboratorio_horario": getattr(m, "laboratorio_horario_snapshot", "") or (getattr(lab, "horario_funcionamento", "") if lab else ""),
         "status": m.status,
         "agendado_por": m.agendado_por,
         "agendado_por_nome": m.agendado_por or "Sistema",
@@ -397,7 +407,9 @@ def gerar_comprovante_agendamento(db: Session, mestre_id: int) -> dict:
         "data_agendada": m.data_agendada.isoformat(),
         "hora_agendada": getattr(m, "hora_agendada", "07:00") or "07:00",
         "laboratorio_id": m.laboratorio_id,
-        "laboratorio_nome": lab.nome if lab else "?",
+        "laboratorio_nome": getattr(m, "laboratorio_nome_snapshot", "") or (lab.nome if lab else "?"),
+        "laboratorio_responsavel": getattr(m, "laboratorio_responsavel_snapshot", "") or (getattr(lab, "responsavel_tecnico", "") if lab else ""),
+        "laboratorio_horario": getattr(m, "laboratorio_horario_snapshot", "") or (getattr(lab, "horario_funcionamento", "") if lab else ""),
         "unidade_psf": getattr(m, "unidade_psf", "") or "Secretaria de Saúde",
         "medico_solicitante": getattr(m, "medico_solicitante", "") or "Médico da Unidade",
         "justificativa": getattr(m, "justificativa", "") or "",

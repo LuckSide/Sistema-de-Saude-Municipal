@@ -21,6 +21,10 @@ class Laboratorio(SQLModel, table=True):
     ativo: bool = Field(default=True, index=True)
     responsavel_tecnico: str = Field(default="", max_length=120)
     horario_funcionamento: str = Field(default="", max_length=120)
+    cnpj: str = Field(default="", max_length=18)
+    cnes: str = Field(default="", max_length=10)
+    telefone: str = Field(default="", max_length=25)
+    endereco: str = Field(default="", max_length=200)
 
 
 class VagaLab(SQLModel, table=True):
@@ -105,6 +109,14 @@ class SolicitacaoMestre(SQLModel, table=True):
     )
     coletado_por: str = Field(default="", max_length=120)
     laudo_arquivo_id: int | None = Field(default=None, index=True)
+    # Snapshot dos dados do laboratório no momento da emissão do pedido (imutável após edição do cadastro)
+    laboratorio_nome_snapshot: str = Field(default="", max_length=120)
+    laboratorio_responsavel_snapshot: str = Field(default="", max_length=120)
+    laboratorio_horario_snapshot: str = Field(default="", max_length=120)
+    laboratorio_cnpj_snapshot: str = Field(default="", max_length=18)
+    laboratorio_cnes_snapshot: str = Field(default="", max_length=10)
+    laboratorio_telefone_snapshot: str = Field(default="", max_length=25)
+    laboratorio_endereco_snapshot: str = Field(default="", max_length=200)
 
 
 class ItemSolic(SQLModel, table=True):

@@ -11,6 +11,7 @@ mapeamento por cabeçalho com apelidos. Nada é aplicado em simulação.
 
 import csv
 import io
+import json
 import re
 import zipfile
 
@@ -194,6 +195,70 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                     for cline in zfiles["tb_cid.txt"].decode("latin-1", "ignore").splitlines():
                         if len(cline) >= 4:
                             cids[cline[0:4].strip()] = cline[4:104].strip()
+
+                # Instrumentos de Registro (rl_procedimento_registro.txt)
+                REGISTRO_MAP = {
+                    "01": "BPA-C",
+                    "02": "BPA-I",
+                    "03": "AIH",
+                    "04": "AIH",
+                    "05": "AIH",
+                    "06": "APAC",
+                    "07": "APAC",
+                    "08": "RAAS",
+                    "09": "RAAS",
+                }
+                registros_por_proc: dict[str, list[str]] = {}
+                if "rl_procedimento_registro.txt" in zfiles:
+                    for rline in zfiles["rl_procedimento_registro.txt"].decode("latin-1", "ignore").splitlines():
+                        if len(rline) >= 12:
+                            rcod = rline[0:10].strip()
+                            rcod_reg = rline[10:12].strip()
+                            nome_reg = REGISTRO_MAP.get(rcod_reg)
+                            if re.fullmatch(r"\d{10}", rcod) and nome_reg:
+                                lista_r = registros_por_proc.setdefault(rcod, [])
+                                if nome_reg not in lista_r:
+                                    lista_r.append(nome_reg)
+
+                # Serviços / Classificações (tb_servico, tb_servico_classificacao, rl_procedimento_servico)
+                servicos_desc: dict[str, str] = {}
+                if "tb_servico.txt" in zfiles:
+                    for sline in zfiles["tb_servico.txt"].decode("latin-1", "ignore").splitlines():
+                        if len(sline) >= 4:
+                            servicos_desc[sline[0:3].strip()] = sline[3:123].strip()
+                classif_desc: dict[tuple[str, str], str] = {}
+                if "tb_servico_classificacao.txt" in zfiles:
+                    for clline in zfiles["tb_servico_classificacao.txt"].decode("latin-1", "ignore").splitlines():
+                        if len(clline) >= 7:
+                            classif_desc[(clline[0:3].strip(), clline[3:6].strip())] = clline[6:156].strip()
+                servicos_por_proc: dict[str, list[dict[str, str]]] = {}
+                if "rl_procedimento_servico.txt" in zfiles:
+                    vistos_srv: set[tuple[str, str, str]] = set()
+                    for rsline in zfiles["rl_procedimento_servico.txt"].decode("latin-1", "ignore").splitlines():
+                        if len(rsline) >= 16:
+                            pc = rsline[0:10].strip()
+                            sv = rsline[10:13].strip()
+                            cl = rsline[13:16].strip()
+                            if re.fullmatch(r"\d{10}", pc) and sv:
+                                ch = (pc, sv, cl)
+                                if ch in vistos_srv:
+                                    continue
+                                vistos_srv.add(ch)
+                                desc_sv = classif_desc.get((sv, cl)) or servicos_desc.get(sv, "")
+                                servicos_por_proc.setdefault(pc, []).append({
+                                    "servico": sv,
+                                    "classificacao": cl,
+                                    "descricao": desc_sv[:120],
+                                })
+
+                procs_com_cid: set[str] = set()
+                if "rl_procedimento_cid.txt" in zfiles:
+                    for cl in zfiles["rl_procedimento_cid.txt"].decode("latin-1", "ignore").splitlines():
+                        if len(cl) >= 14:
+                            pc = cl[0:10].strip()
+                            if re.fullmatch(r"\d{10}", pc):
+                                procs_com_cid.add(pc)
+
                 stats["processados"] += 0
                 for line in zfiles["tb_procedimento.txt"].decode("latin-1", "ignore").splitlines():
                     if not line.strip():
@@ -228,9 +293,21 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                     g_cod = hier["grupo_codigo"]
                     sg_cod = hier["subgrupo_codigo"]
                     f_cod = hier["forma_organizacao"]
+                    regs_cod = registros_por_proc.get(cod, [])
+                    if "BPA-I" in regs_cod and "BPA-C" not in regs_cod:
+                        inst_principal = "BPA-I"
+                    elif "BPA-C" in regs_cod:
+                        inst_principal = "BPA-C"
+                    elif regs_cod:
+                        inst_principal = regs_cod[0]
+                    else:
+                        inst_principal = "BPA-C"
+                    srvs_cod = servicos_por_proc.get(cod, [])
                     pend_proc[cod] = {
                         "codigo": cod, "descricao": desc, "complexidade": comp or "NA",
-                        "instrumento": "BPA-C", "sexo": sexo,
+                        "instrumento": inst_principal,
+                        "instrumentos_permitidos": ",".join(regs_cod)[:60],
+                        "sexo": sexo,
                         "idade_min": idade_min, "idade_max": idade_max,
                         "qtd_maxima": qtd_max, "pontos": pontos,
                         "valor_sa": round(valor_sa, 2),
@@ -243,6 +320,10 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                         "subgrupo_nome": (subgrupos_zip.get(sg_cod) or SUBGRUPOS_SIGTAP.get(sg_cod, hier["subgrupo_nome"]))[:180],
                         "forma_organizacao_codigo": f_cod,
                         "forma_organizacao_nome": formas_zip.get(f_cod, "")[:180],
+                        "exige_cns": "BPA-I" in regs_cod,
+                        "exige_cid": cod in procs_com_cid,
+                        "exige_servico": len(srvs_cod) > 0,
+                        "servicos_permitidos_json": json.dumps(srvs_cod, ensure_ascii=False) if srvs_cod else "[]",
                     }
                 # CBO ocupação compatível
                 if "rl_procedimento_ocupacao.txt" in zfiles:
@@ -422,12 +503,18 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
             if obj:
                 v_comb = getattr(obj, "valor_combinado", 0.0)
                 tp_perm = getattr(obj, "tipos_fila_permitidos", "")
+                exige_cpf_prev = bool(getattr(obj, "exige_cpf", False))
+                exige_idade_prev = bool(getattr(obj, "exige_idade_bpa", False))
                 for k, v in dados.items():
                     setattr(obj, k, v)
                 if v_comb and v_comb > 0:
                     obj.valor_combinado = v_comb
                 if tp_perm:
                     obj.tipos_fila_permitidos = tp_perm
+                if exige_cpf_prev:
+                    obj.exige_cpf = True
+                if exige_idade_prev:
+                    obj.exige_idade_bpa = True
                 db.add(obj)
                 stats["atualizados"] += 1
             else:

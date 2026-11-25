@@ -3,7 +3,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import FileResponse
-from sqlmodel import Session, func, select, or_
+from sqlmodel import Session, col, func, select, or_
 
 from app.core.deps import get_current_user_senha_ok as get_current_user, get_db, get_user_from_header_or_query
 from app.models.lab_exames import SigtapProcedimento
@@ -85,6 +85,30 @@ from app.services.permissoes import need_any_perm, need_perm
 
 
 # ---------- Laboratórios (leitura p/ agenda) ----------
+def _enriquecer_labs_out(db: Session, labs: list[Laboratorio]) -> list[LaboratorioOut]:
+    from app.models.user import User
+
+    ids = [l.id for l in labs if l.id is not None]
+    users_por_lab: dict[int, User] = {}
+    if ids:
+        usuarios = db.exec(
+            select(User).where(col(User.laboratorio_id).in_(ids)).order_by(User.id)
+        ).all()
+        for u in usuarios:
+            if u.laboratorio_id and u.laboratorio_id not in users_por_lab:
+                users_por_lab[u.laboratorio_id] = u
+
+    out: list[LaboratorioOut] = []
+    for l in labs:
+        item = LaboratorioOut.model_validate(l, from_attributes=True)
+        u = users_por_lab.get(l.id) if l.id is not None else None
+        if u:
+            item.usuario_acesso = u.username
+            item.usuario_ativo = bool(u.is_active)
+        out.append(item)
+    return out
+
+
 @router.get("/exames/laboratorios", response_model=list[LaboratorioOut])
 def listar_labs(
     somente_ativos: bool = True,
@@ -100,7 +124,7 @@ def listar_labs(
     base = select(Laboratorio).order_by(Laboratorio.nome)
     if somente_ativos:
         base = select(Laboratorio).where(Laboratorio.ativo == True).order_by(Laboratorio.nome)  # noqa: E712
-    return list(db.exec(base).all())
+    return _enriquecer_labs_out(db, list(db.exec(base).all()))
 
 @router.post("/exames/laboratorios", response_model=LaboratorioOut, status_code=201)
 def criar_lab(
@@ -120,6 +144,10 @@ def criar_lab(
         ativo=data.ativo,
         responsavel_tecnico=(data.responsavel_tecnico or "").strip(),
         horario_funcionamento=(data.horario_funcionamento or "").strip(),
+        cnpj=(data.cnpj or "").strip(),
+        cnes=(data.cnes or "").strip(),
+        telefone=(data.telefone or "").strip(),
+        endereco=(data.endereco or "").strip(),
     )
     db.add(obj)
     db.commit()
@@ -156,7 +184,7 @@ def criar_lab(
         db.commit()
         usuario_criado = login_usuario
 
-    out = LaboratorioOut.model_validate(obj)
+    out = _enriquecer_labs_out(db, [obj])[0]
     out.usuario_criado = usuario_criado
     out.senha_temporaria = senha_temp
     return out
@@ -176,14 +204,100 @@ def atualizar_lab(
     dup = db.exec(select(Laboratorio).where(Laboratorio.nome == nome, Laboratorio.id != lid)).first()
     if dup:
         raise HTTPException(400, "Laboratório já existe")
+
+    # Congela snapshot dos pedidos anteriores que ainda não possuíam registro histórico
+    pedidos_sem_snap = db.exec(
+        select(SolicitacaoMestre).where(
+            SolicitacaoMestre.laboratorio_id == lid,
+            or_(
+                SolicitacaoMestre.laboratorio_nome_snapshot == "",
+                SolicitacaoMestre.laboratorio_nome_snapshot == None,  # noqa: E711
+            ),
+        )
+    ).all()
+    for m in pedidos_sem_snap:
+        m.laboratorio_nome_snapshot = lab.nome
+        m.laboratorio_responsavel_snapshot = getattr(lab, "responsavel_tecnico", "") or ""
+        m.laboratorio_horario_snapshot = getattr(lab, "horario_funcionamento", "") or ""
+        m.laboratorio_cnpj_snapshot = getattr(lab, "cnpj", "") or ""
+        m.laboratorio_cnes_snapshot = getattr(lab, "cnes", "") or ""
+        m.laboratorio_telefone_snapshot = getattr(lab, "telefone", "") or ""
+        m.laboratorio_endereco_snapshot = getattr(lab, "endereco", "") or ""
+        db.add(m)
+
     lab.nome = nome
     lab.ativo = data.ativo
     lab.responsavel_tecnico = (data.responsavel_tecnico or "").strip()
     lab.horario_funcionamento = (data.horario_funcionamento or "").strip()
+    lab.cnpj = (data.cnpj or "").strip()
+    lab.cnes = (data.cnes or "").strip()
+    lab.telefone = (data.telefone or "").strip()
+    lab.endereco = (data.endereco or "").strip()
     db.add(lab)
     db.commit()
     db.refresh(lab)
-    return lab
+    return _enriquecer_labs_out(db, [lab])[0]
+
+
+@router.post("/exames/laboratorios/{lid}/gerar-acesso", response_model=LaboratorioOut)
+def gerar_ou_regerar_acesso_lab(
+    lid: int,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_vagas", "cfg_laboratorios", acoes=("editar",))),
+):
+    """Cria usuário de acesso para o laboratório caso não exista, ou gera nova senha provisória."""
+    import re
+    import unicodedata
+    from app.core.security import hash_password
+    from app.models.user import User
+    from app.services.users import gerar_temporaria
+
+    lab = db.get(Laboratorio, lid)
+    if not lab:
+        raise HTTPException(404, "Laboratório não encontrado")
+
+    senha_temp = gerar_temporaria()
+    usuario_existente = db.exec(
+        select(User).where(User.laboratorio_id == lid).order_by(User.id)
+    ).first()
+
+    if usuario_existente:
+        usuario_existente.password_hash = hash_password(senha_temp)
+        usuario_existente.is_active = True
+        usuario_existente.must_change_password = True
+        if not usuario_existente.telas:
+            usuario_existente.telas = "lab_recepcao"
+        db.add(usuario_existente)
+        db.commit()
+        login_usuario = usuario_existente.username
+    else:
+        base_login = unicodedata.normalize("NFKD", lab.nome).encode("ascii", "ignore").decode("ascii").lower()
+        base_login = re.sub(r"[^a-z0-9]", "", base_login)[:15] or "lab"
+        login_usuario = f"lab_{base_login}"
+        sufixo = 1
+        while db.exec(select(User).where(User.username == login_usuario)).first():
+            login_usuario = f"lab_{base_login}{sufixo}"
+            sufixo += 1
+        novo_user = User(
+            username=login_usuario,
+            password_hash=hash_password(senha_temp),
+            nome=f"Recepção - {lab.nome}",
+            area="painel",
+            telas="lab_recepcao",
+            acoes="{}",
+            laboratorio_id=lab.id,
+            permite_retroativo=False,
+            is_superuser=False,
+            is_active=True,
+            must_change_password=True,
+        )
+        db.add(novo_user)
+        db.commit()
+
+    out = _enriquecer_labs_out(db, [lab])[0]
+    out.usuario_criado = login_usuario
+    out.senha_temporaria = senha_temp
+    return out
 
 
 @router.delete("/exames/laboratorios/{lid}", status_code=204)
@@ -206,19 +320,23 @@ def remover_lab(
 
     # Exclusão permanente: verifica vínculos clínicos e financeiros impeditivos
     from app.models.lab_fase6 import (
-        SolicitacaoMestre,
-        LabFatura,
-        LabFechamentoFaturamento,
-        VagaLab,
-        LabFeriadoBloqueio,
+        FilaPsf,
         LabContrato,
-        LabItemContratoPreco,
-        LabLoteLiberacao,
+        LabContratoPrecoCustomizado,
+        LabFechamentoFaturamento,
+        LabFeriadoBloqueio,
         LabFPOCompetencia,
+        LabFPOItem,
+        LabLoteArtefato,
+        LabLoteItem,
+        LabLoteLiberacao,
         LabPedidoAjuste,
+        LabResultadoArquivo,
+        SolicitacaoMestre,
+        VagaLab,
     )
     from app.models.user import User
-    from sqlalchemy import delete
+    from sqlalchemy import delete, update
 
     # Verifica se existem exames atrelados
     solics_count = db.exec(select(func.count(SolicitacaoMestre.id)).where(SolicitacaoMestre.laboratorio_id == lid)).one()
@@ -228,21 +346,35 @@ def remover_lab(
             f"Não é possível excluir permanentemente o laboratório '{lab.nome}' pois existem {solics_count} solicitação(ões) de exame vinculadas a ele. Utilize a opção 'Desativar' para preservar o histórico médico.",
         )
 
-    # Verifica se existem faturas ou fechamentos
-    faturas_count = db.exec(select(func.count(LabFatura.id)).where(LabFatura.laboratorio_id == lid)).one()
+    # Verifica se existem fechamentos financeiros
     fechamentos_count = db.exec(select(func.count(LabFechamentoFaturamento.id)).where(LabFechamentoFaturamento.laboratorio_id == lid)).one()
-    if faturas_count > 0 or fechamentos_count > 0:
+    if fechamentos_count > 0:
         raise HTTPException(
             400,
-            f"Não é possível excluir permanentemente o laboratório '{lab.nome}' pois existem registros de faturamento ({faturas_count + fechamentos_count}) vinculados a ele. Utilize a opção 'Desativar'.",
+            f"Não é possível excluir permanentemente o laboratório '{lab.nome}' pois existem {fechamentos_count} fechamento(s) de faturamento vinculados a ele. Utilize a opção 'Desativar'.",
         )
 
-    # Remove vínculos que podem ser limpos com segurança
+    # Remove vínculos em ordem topológica segura
+    db.exec(delete(LabResultadoArquivo).where(LabResultadoArquivo.laboratorio_id == lid))
     db.exec(delete(LabPedidoAjuste).where(LabPedidoAjuste.laboratorio_id == lid))
+
+    lote_ids = [r for r in db.exec(select(LabLoteLiberacao.id).where(LabLoteLiberacao.laboratorio_id == lid)).all() if r is not None]
+    if lote_ids:
+        db.exec(update(FilaPsf).where(col(FilaPsf.lote_id).in_(lote_ids)).values(lote_id=None))
+        db.exec(delete(LabLoteItem).where(col(LabLoteItem.lote_id).in_(lote_ids)))
+        db.exec(delete(LabLoteArtefato).where(col(LabLoteArtefato.lote_id).in_(lote_ids)))
     db.exec(delete(LabLoteLiberacao).where(LabLoteLiberacao.laboratorio_id == lid))
+
+    fpo_ids = [r for r in db.exec(select(LabFPOCompetencia.id).where(LabFPOCompetencia.laboratorio_id == lid)).all() if r is not None]
+    if fpo_ids:
+        db.exec(delete(LabFPOItem).where(col(LabFPOItem.fpo_id).in_(fpo_ids)))
     db.exec(delete(LabFPOCompetencia).where(LabFPOCompetencia.laboratorio_id == lid))
-    db.exec(delete(LabItemContratoPreco).where(LabItemContratoPreco.laboratorio_id == lid))
+
+    contrato_ids = [r for r in db.exec(select(LabContrato.id).where(LabContrato.laboratorio_id == lid)).all() if r is not None]
+    if contrato_ids:
+        db.exec(delete(LabContratoPrecoCustomizado).where(col(LabContratoPrecoCustomizado.contrato_id).in_(contrato_ids)))
     db.exec(delete(LabContrato).where(LabContrato.laboratorio_id == lid))
+
     db.exec(delete(LabFeriadoBloqueio).where(LabFeriadoBloqueio.laboratorio_id == lid))
     db.exec(delete(VagaLab).where(VagaLab.laboratorio_id == lid))
 

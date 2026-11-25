@@ -26,7 +26,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from app.models.cadastros_saude import Medico, UnidadeSaude
+from app.models.cadastros_saude import EquipeSaude, Medico, UnidadeSaude
 from app.models.lab_exames import SigtapProcedimento
 from app.models.lab_fase6 import ItemSolic, SolicitacaoMestre
 from app.models.producao_ambulatorial import ProducaoAmbulatorial
@@ -312,6 +312,7 @@ def formatar_registro_03(
     email: str = "",
     cpf_paciente: str | None = None,
     ine: str = "",
+    sem_cpf: bool = False,
 ) -> str:
     """Gera o registro 03 (BPA-I: Individualizado) com exatamente 351 caracteres."""
     ident = "03"
@@ -332,7 +333,7 @@ def formatar_registro_03(
     # Regra oficial DATASUS Layout v05.00 Obs 2:
     # "Deve-se identificar o paciente por apenas um documento: ou o CPF ou o CNS.
     # Sendo assim, se informado o CPF, não informar o CNS e vice-versa."
-    cpf_limpo = limpar_numeros(cpf_paciente)
+    cpf_limpo = "" if sem_cpf else limpar_numeros(cpf_paciente)
     cns_limpo = limpar_numeros(cns_paciente)
     if cpf_limpo and len(cpf_limpo) == 11:
         cpf_str = cpf_limpo.rjust(11, "0")
@@ -576,6 +577,15 @@ def gerar_bpa_completo_municipio(
             medico_cache[mid] = db.get(Medico, mid)
         return medico_cache[mid]
 
+    equipe_cache: dict[int, EquipeSaude | None] = {}
+
+    def get_equipe(eid: int | None) -> EquipeSaude | None:
+        if not eid:
+            return None
+        if eid not in equipe_cache:
+            equipe_cache[eid] = db.get(EquipeSaude, eid)
+        return equipe_cache[eid]
+
     unidade_selecionada = get_unidade(unidade_saude_id) if unidade_saude_id else None
     cnes_filtro = (
         limpar_numeros(unidade_selecionada.cnes)
@@ -584,7 +594,7 @@ def gerar_bpa_completo_municipio(
     )
 
     # Dicionários de consolidação
-    raw_bpac: dict[tuple[str, str, str], dict] = {}
+    raw_bpac: dict[tuple[Any, ...], dict] = {}
     raw_bpai: list[dict] = []
 
     total_exames_count = 0
@@ -622,15 +632,22 @@ def gerar_bpa_completo_municipio(
         if not pac and p_amb.paciente_nome:
             pac = Paciente(
                 nome=p_amb.paciente_nome,
-                cpf="",
+                cpf=getattr(p_amb, "paciente_cpf", "") or "",
                 cns=p_amb.paciente_cns or "",
                 nascimento=p_amb.paciente_data_nascimento or date(1980, 1, 1),
                 sexo=p_amb.paciente_sexo or "M",
                 municipio=p_amb.paciente_municipio_ibge or cfg["ibge"],
+                cep=getattr(p_amb, "paciente_cep", "") or cfg["cep_padrao"],
+                endereco=getattr(p_amb, "paciente_logradouro", "") or "",
+                endereco_numero=getattr(p_amb, "paciente_numero", "") or "",
+                complemento=getattr(p_amb, "paciente_complemento", "") or "",
+                bairro=getattr(p_amb, "paciente_bairro", "") or "",
+                telefone=getattr(p_amb, "paciente_telefone", "") or "",
             )
 
         med = get_medico(p_amb.medico_id) if p_amb.medico_id else None
         u_exec = get_unidade(p_amb.unidade_saude_id) if p_amb.unidade_saude_id else None
+        eq_exec = get_equipe(p_amb.equipe_id) if p_amb.equipe_id else None
 
         cnes_exec = (
             limpar_numeros(getattr(u_exec, "cnes", ""))
@@ -676,6 +693,9 @@ def gerar_bpa_completo_municipio(
             if p_amb.servico_codigo:
                 serv_classif = f"{p_amb.servico_codigo}{p_amb.classificacao_codigo or ''}"
 
+            sem_cpf_flag = (getattr(p_amb, "paciente_sem_cpf", "N") or "N").strip().upper() == "S"
+            cpf_eff = "" if sem_cpf_flag else (getattr(p_amb, "paciente_cpf", "") or getattr(pac, "cpf", ""))
+
             raw_bpai.append({
                 "origem_tipo": "Ambulatório Clínico (BPA-I)",
                 "cnes": cnes_exec,
@@ -691,9 +711,23 @@ def gerar_bpa_completo_municipio(
                 "cid": p_amb.cid10 or "",
                 "numero_autorizacao": p_amb.numero_autorizacao or "",
                 "servico_classificacao": serv_classif,
+                "carater_atendimento": getattr(p_amb, "carater_atendimento", "01") or "01",
+                "raca_cor": getattr(p_amb, "paciente_raca_cor", "01") or "01",
+                "etnia_indigena": getattr(p_amb, "paciente_etnia", "") or "",
+                "nacionalidade": getattr(p_amb, "paciente_nacionalidade", "010") or "010",
+                "ine": getattr(eq_exec, "ine", "") or "",
+                "cpf_override": cpf_eff,
+                "sem_cpf": sem_cpf_flag,
+                "cep": getattr(p_amb, "paciente_cep", "") or getattr(pac, "cep", None) or cfg["cep_padrao"],
+                "logradouro": getattr(p_amb, "paciente_logradouro", "") or getattr(pac, "endereco", ""),
+                "complemento": getattr(p_amb, "paciente_complemento", "") or getattr(pac, "complemento", ""),
+                "numero": getattr(p_amb, "paciente_numero", "") or getattr(pac, "endereco_numero", ""),
+                "bairro": getattr(p_amb, "paciente_bairro", "") or getattr(pac, "bairro", ""),
+                "telefone": getattr(p_amb, "paciente_telefone", "") or getattr(pac, "telefone", None),
             })
         else:
-            chave = (cnes_exec, cbo_prof, cod_proc)
+            idade_bpac = int(getattr(p_amb, "idade_paciente_informada", None) or 0)
+            chave = (cnes_exec, cbo_prof, cod_proc, idade_bpac)
             if chave not in raw_bpac:
                 raw_bpac[chave] = {
                     "origem_tipo": "Ambulatório Clínico (BPA-C)",
@@ -702,7 +736,7 @@ def gerar_bpa_completo_municipio(
                     "procedimento": cod_proc,
                     "descricao_procedimento": desc_proc,
                     "quantidade": 0,
-                    "idade": 0,
+                    "idade": idade_bpac,
                     "valor_unitario": vl_unit,
                     "valor_total": 0.0,
                 }
@@ -947,6 +981,7 @@ def gerar_bpa_completo_municipio(
         dt_atend = item["data_atendimento"]
         idade = calcular_idade_em_anos(getattr(p, "nascimento", None), dt_atend)
 
+        cpf_eff = item.get("cpf_override") if "cpf_override" in item else getattr(p, "cpf", None)
         reg_str = formatar_registro_03(
             cnes=item["cnes"],
             competencia_aaaamm=aaaamm,
@@ -962,18 +997,23 @@ def gerar_bpa_completo_municipio(
             cid=item.get("cid"),
             idade=idade,
             quantidade=item["quantidade"],
-            carater_atendimento="01",
+            carater_atendimento=item.get("carater_atendimento", "01"),
             numero_autorizacao=item.get("numero_autorizacao", ""),
             nome_paciente=getattr(p, "nome", ""),
             data_nascimento=getattr(p, "nascimento", None),
+            raca_cor=item.get("raca_cor", "01"),
+            etnia_indigena=item.get("etnia_indigena", ""),
+            nacionalidade=item.get("nacionalidade", "010"),
             servico_classificacao=item.get("servico_classificacao", ""),
-            cep=getattr(p, "cep", None) or cfg["cep_padrao"],
-            logradouro=getattr(p, "endereco", ""),
-            complemento=getattr(p, "complemento", ""),
-            numero=getattr(p, "endereco_numero", ""),
-            bairro=getattr(p, "bairro", ""),
-            telefone=getattr(p, "telefone", None),
-            cpf_paciente=getattr(p, "cpf", None),
+            cep=item.get("cep") or getattr(p, "cep", None) or cfg["cep_padrao"],
+            logradouro=item.get("logradouro") or getattr(p, "endereco", ""),
+            complemento=item.get("complemento") or getattr(p, "complemento", ""),
+            numero=item.get("numero") or getattr(p, "endereco_numero", ""),
+            bairro=item.get("bairro") or getattr(p, "bairro", ""),
+            telefone=item.get("telefone") or getattr(p, "telefone", None),
+            cpf_paciente=cpf_eff,
+            ine=item.get("ine", ""),
+            sem_cpf=bool(item.get("sem_cpf", False)),
         )
         registros_03_formatados.append(reg_str)
 

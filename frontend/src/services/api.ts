@@ -2008,12 +2008,17 @@ export const labExportarLote = (competencia?: string) =>
 export type Laboratorio = {
   id: number;
   nome: string;
+  cnpj?: string;
   cnes?: string;
+  telefone?: string;
+  endereco?: string;
   ativo: boolean;
   responsavel_tecnico?: string;
   horario_funcionamento?: string;
   usuario_criado?: string;
   senha_temporaria?: string;
+  usuario_acesso?: string | null;
+  usuario_ativo?: boolean | null;
 };
 
 export const labsListar = (somenteAtivos = true) =>
@@ -2023,7 +2028,18 @@ export const labsListar = (somenteAtivos = true) =>
 
 export const labsAtualizar = (
   id: number,
-  p: string | { nome: string; ativo?: boolean; responsavel_tecnico?: string; horario_funcionamento?: string },
+  p:
+    | string
+    | {
+        nome: string;
+        ativo?: boolean;
+        responsavel_tecnico?: string;
+        horario_funcionamento?: string;
+        cnpj?: string;
+        cnes?: string;
+        telefone?: string;
+        endereco?: string;
+      },
   ativo?: boolean
 ) => {
   const payload = typeof p === "string" ? { nome: p, ativo: ativo ?? true } : p;
@@ -2031,18 +2047,27 @@ export const labsAtualizar = (
 };
 
 export const labsCriar = (
-  p: string | {
-    nome: string;
-    ativo?: boolean;
-    responsavel_tecnico?: string;
-    horario_funcionamento?: string;
-    criar_usuario_acesso?: boolean;
-  },
+  p:
+    | string
+    | {
+        nome: string;
+        ativo?: boolean;
+        responsavel_tecnico?: string;
+        horario_funcionamento?: string;
+        cnpj?: string;
+        cnes?: string;
+        telefone?: string;
+        endereco?: string;
+        criar_usuario_acesso?: boolean;
+      },
   ativo = true
 ) => {
   const payload = typeof p === "string" ? { nome: p, ativo } : p;
   return api.post<Laboratorio>("/api/exames/laboratorios", payload).then((r) => r.data);
 };
+
+export const labsRegerarAcesso = (id: number) =>
+  api.post<Laboratorio>(`/api/exames/laboratorios/${id}/gerar-acesso`).then((r) => r.data);
 
 export const labsRemover = (id: number, permanente?: boolean) =>
   api.delete<void>(`/api/exames/laboratorios/${id}`, { params: { permanente } }).then((r) => r.data);
@@ -5288,11 +5313,25 @@ export interface ProducaoAmbulatorial {
   valor_total: number;
   paciente_id?: number | null;
   paciente_nome?: string;
+  paciente_cpf?: string;
   paciente_cns?: string;
   paciente_sexo?: string;
   paciente_data_nascimento?: string | null;
   paciente_idade?: number | null;
   paciente_municipio_ibge?: string;
+  paciente_raca_cor?: string;
+  paciente_etnia?: string;
+  paciente_nacionalidade?: string;
+  carater_atendimento?: string;
+  paciente_cep?: string;
+  paciente_logradouro?: string;
+  paciente_numero?: string;
+  paciente_complemento?: string;
+  paciente_bairro?: string;
+  paciente_telefone?: string;
+  paciente_situacao_rua?: string;
+  paciente_sem_cpf?: string;
+  idade_paciente_informada?: number | null;
   cid10?: string;
   numero_autorizacao?: string;
   servico_codigo?: string;
@@ -5300,6 +5339,7 @@ export interface ProducaoAmbulatorial {
   origem: string;
   status: string;
   usuario_id?: number | null;
+  usuario_nome?: string | null;
   criado_em: string;
   atualizado_em: string;
 }
@@ -5320,10 +5360,24 @@ export interface ProducaoAmbulatorialIn {
   valor_total?: number;
   paciente_id?: number | null;
   paciente_nome?: string;
+  paciente_cpf?: string;
   paciente_cns?: string;
   paciente_sexo?: string;
   paciente_data_nascimento?: string | null;
   paciente_municipio_ibge?: string;
+  paciente_raca_cor?: string;
+  paciente_etnia?: string;
+  paciente_nacionalidade?: string;
+  carater_atendimento?: string;
+  paciente_cep?: string;
+  paciente_logradouro?: string;
+  paciente_numero?: string;
+  paciente_complemento?: string;
+  paciente_bairro?: string;
+  paciente_telefone?: string;
+  paciente_situacao_rua?: string;
+  paciente_sem_cpf?: string;
+  idade_paciente_informada?: number | null;
   cid10?: string;
   numero_autorizacao?: string;
   servico_codigo?: string;
@@ -5354,12 +5408,20 @@ export interface ResumoCompetenciaProducao {
   top_procedimentos: ResumoTopProcedimento[];
 }
 
+export interface ServicoClassificacaoSigtap {
+  servico_codigo: string;
+  servico_nome?: string;
+  classificacao_codigo: string;
+  classificacao_nome?: string;
+}
+
 export interface ProcedimentoSigtapItem {
   id: number;
   codigo: string;
   descricao: string;
   complexidade: string;
   instrumento: string;
+  instrumentos_permitidos?: string;
   sexo: string;
   idade_min: number;
   idade_max: number;
@@ -5368,6 +5430,13 @@ export interface ProcedimentoSigtapItem {
   valor_sa: number;
   valor_sp: number;
   valor_total: number;
+  exige_cpf?: boolean;
+  exige_cns?: boolean;
+  exige_cid?: boolean;
+  exige_idade_bpa?: boolean;
+  exige_cbo?: boolean;
+  exige_servico?: boolean;
+  servicos_permitidos?: ServicoClassificacaoSigtap[];
 }
 
 export interface Cid10Item {
@@ -5385,8 +5454,8 @@ export async function listarProducoesAmbulatoriais(params?: {
   termo?: string;
   limit?: number;
   offset?: number;
-}): Promise<{ total: number; offset: number; limit: number; itens: ProducaoAmbulatorial[] }> {
-  const { data } = await api.get<{ total: number; offset: number; limit: number; itens: ProducaoAmbulatorial[] }>(
+}): Promise<{ total: number; offset: number; limit: number; somente_proprios?: boolean; itens: ProducaoAmbulatorial[] }> {
+  const { data } = await api.get<{ total: number; offset: number; limit: number; somente_proprios?: boolean; itens: ProducaoAmbulatorial[] }>(
     "/api/v1/producoes-ambulatoriais",
     { params }
   );
@@ -5442,11 +5511,12 @@ export async function buscarProcedimentosSigtapProducao(
 }
 
 export async function buscarCidsSigtapProducao(
-  termo: string
+  termo: string,
+  procedimento_codigo?: string
 ): Promise<Cid10Item[]> {
   const { data } = await api.get<Cid10Item[]>(
     "/api/v1/producoes-ambulatoriais/cids",
-    { params: { termo, limit: 25 } }
+    { params: { termo, procedimento_codigo: procedimento_codigo || undefined, limit: 25 } }
   );
   return data;
 }

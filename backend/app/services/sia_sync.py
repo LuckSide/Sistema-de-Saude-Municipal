@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import ftplib
+import json
 import logging
 import os
 import re
@@ -148,6 +149,14 @@ def extrair_dbfs_sia(exe_path: str, dest_dir: str) -> dict[str, str]:
     if res.returncode != 0:
         raise RuntimeError(f"Erro ao extrair arquivos com 7z: {res.stderr}")
 
+    # Extração opcional das tabelas auxiliares de serviço e CID do pacote BDSIA
+    subprocess.run(
+        [seven_z, "e", exe_path, f"-o{dest_dir}", "S_PASRV.DBF", "S_PACID.DBF", "-y"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
     arquivos_extraidos: dict[str, str] = {}
     for item in os.listdir(dest_dir):
         upper = item.upper()
@@ -155,6 +164,10 @@ def extrair_dbfs_sia(exe_path: str, dest_dir: str) -> dict[str, str]:
             arquivos_extraidos["S_PROCED"] = os.path.join(dest_dir, item)
         elif upper == "S_PA.DBF":
             arquivos_extraidos["S_PA"] = os.path.join(dest_dir, item)
+        elif upper == "S_PASRV.DBF":
+            arquivos_extraidos["S_PASRV"] = os.path.join(dest_dir, item)
+        elif upper == "S_PACID.DBF":
+            arquivos_extraidos["S_PACID"] = os.path.join(dest_dir, item)
 
     if "S_PROCED" not in arquivos_extraidos:
         raise FileNotFoundError("O arquivo S_PROCED.DBF não foi encontrado no pacote do SIA.")
@@ -170,6 +183,8 @@ def importar_tabela_sia(
     nome_arquivo: str = "",
     usuario: str = "Sistema",
     simular: bool = False,
+    pasrv_dbf_path: str | None = None,
+    pacid_dbf_path: str | None = None,
 ) -> dict:
     """Importa e consolida os procedimentos da tabela SIA/SUS no banco de dados.
 
@@ -219,6 +234,29 @@ def importar_tabela_sia(
                 if r.get("PA_CMP", "") > atual.get("PA_CMP", ""):
                     proced_lookup[cod] = r
 
+    # 2b. Carrega serviços/classificações (S_PASRV.DBF) e CIDs (S_PACID.DBF) se disponíveis
+    srv_por_pa: dict[str, list[dict[str, str]]] = {}
+    if pasrv_dbf_path and os.path.exists(pasrv_dbf_path):
+        vistos_srv: set[tuple[str, str, str]] = set()
+        for r in iterar_dbf(pasrv_dbf_path):
+            pa9 = (r.get("PASRV_PA") or r.get("PA_ID") or "").strip()[:9]
+            sv = (r.get("PASRV_SRV") or r.get("CO_SERVICO") or "").strip()
+            cl = (r.get("PASRV_CLF") or r.get("CO_CLASSIFICACAO") or "").strip()
+            if pa9 and sv and (pa9, sv, cl) not in vistos_srv:
+                vistos_srv.add((pa9, sv, cl))
+                srv_por_pa.setdefault(pa9, []).append({
+                    "servico": sv,
+                    "classificacao": cl,
+                    "descricao": (r.get("PASRV_DSCR") or "").strip()[:120],
+                })
+
+    cids_pa9: set[str] = set()
+    if pacid_dbf_path and os.path.exists(pacid_dbf_path):
+        for r in iterar_dbf(pacid_dbf_path):
+            pa9 = (r.get("PACID_PA") or r.get("PA_ID") or "").strip()[:9]
+            if pa9:
+                cids_pa9.add(pa9)
+
     # 3. Mapeia e prepara dados estruturados para upsert
     pend_proc: dict[str, dict] = {}
     for cod, r_proc in proced_lookup.items():
@@ -229,19 +267,39 @@ def importar_tabela_sia(
         cpx_raw = r_proc.get("PA_CPX", "").strip()
         complexidade = {"1": "AB", "2": "MC", "3": "AC"}.get(cpx_raw, "MC" if cpx_raw else "NA")
 
-        # Instrumento de Registro (BPA-I, BPA-C, APAC, AIH, RAAS)
+        # Instrumento de Registro (BPA-I, BPA-C, APAC, AIH, RAAS) e regras BPA (CPF/CNS/Idade/CBO)
         r_pa = pa_lookup.get(cod)
         inst = None
+        exige_cpf = False
+        exige_cns = False
+        exige_idade_bpa = False
+        exige_cbo = True
         if r_pa:
             pa_doc = r_pa.get("PA_DOC", "").strip().upper()
             pa_idebpa = r_pa.get("PA_IDEBPA", "").strip().upper()
+            exige_cpf = r_pa.get("PA_CPFPCN", "").strip().upper() == "S"
+            exige_cns = r_pa.get("PA_CNSPCN", "").strip().upper() == "S"
+            exige_idade_bpa = pa_idebpa == "S"
+            exige_cbo = r_pa.get("PA_EXIGCBO", "S").strip().upper() != "N"
             if pa_doc == "B":
                 inst = "BPA-I" if pa_idebpa == "S" else "BPA-C"
             elif pa_doc == "P":
                 inst = "APAC"
 
+        tpreg = r_proc.get("PA_TPREG", "").strip()
+        regs_sia: list[str] = []
+        if "01" in tpreg:
+            regs_sia.append("BPA-C")
+        if "02" in tpreg:
+            regs_sia.append("BPA-I")
+        if "03" in tpreg:
+            regs_sia.append("APAC")
+        if "04" in tpreg:
+            regs_sia.append("AIH")
+        if "05" in tpreg:
+            regs_sia.append("RAAS")
+
         if not inst:
-            tpreg = r_proc.get("PA_TPREG", "").strip()
             if "02" in tpreg:
                 inst = "BPA-I"
             elif "01" in tpreg:
@@ -254,6 +312,13 @@ def importar_tabela_sia(
                 inst = "RAAS"
             else:
                 inst = "BPA-C"
+        if inst not in regs_sia:
+            regs_sia.insert(0, inst)
+        if inst == "BPA-I":
+            exige_cns = True
+
+        srvs_cod = srv_por_pa.get(cod[:9], [])
+        exige_cid = (cod[:9] in cids_pa9) if cids_pa9 else False
 
         raw_sexo = r_proc.get("PA_SEXO", "").strip().upper()
         if raw_sexo == "A":
@@ -300,6 +365,7 @@ def importar_tabela_sia(
             "descricao": desc,
             "complexidade": complexidade,
             "instrumento": inst,
+            "instrumentos_permitidos": ",".join(regs_sia)[:60],
             "sexo": sexo,
             "idade_min": idade_min,
             "idade_max": idade_max,
@@ -314,6 +380,13 @@ def importar_tabela_sia(
             "subgrupo_codigo": hier["subgrupo_codigo"],
             "subgrupo_nome": hier["subgrupo_nome"][:180],
             "forma_organizacao_codigo": hier["forma_organizacao"][:6],
+            "exige_cpf": exige_cpf,
+            "exige_cns": exige_cns,
+            "exige_cid": exige_cid,
+            "exige_idade_bpa": exige_idade_bpa,
+            "exige_cbo": exige_cbo,
+            "exige_servico": len(srvs_cod) > 0,
+            "servicos_permitidos_json": json.dumps(srvs_cod, ensure_ascii=False) if srvs_cod else "[]",
         }
 
     stats = {
@@ -331,17 +404,25 @@ def importar_tabela_sia(
         if obj:
             v_comb = getattr(obj, "valor_combinado", 0.0)
             tp_perm = getattr(obj, "tipos_fila_permitidos", "")
+            ex_cid_prev = bool(getattr(obj, "exige_cid", False))
+            ex_srv_prev = bool(getattr(obj, "exige_servico", False))
+            srvs_prev = getattr(obj, "servicos_permitidos_json", "[]") or "[]"
 
             for k, v in dados.items():
                 setattr(obj, k, v)
 
-            # Preserva customizações locais
+            # Preserva customizações locais e metadados de DBFs auxiliares ausentes neste pacote
             if v_comb and v_comb > 0:
                 obj.valor_combinado = v_comb
                 stats["preservados_valor_combinado"] += 1
             if tp_perm:
                 obj.tipos_fila_permitidos = tp_perm
                 stats["preservados_tipos_fila"] += 1
+            if not cids_pa9 and ex_cid_prev:
+                obj.exige_cid = True
+            if not srv_por_pa and ex_srv_prev:
+                obj.exige_servico = True
+                obj.servicos_permitidos_json = srvs_prev
 
             if not simular:
                 db.add(obj)
@@ -453,6 +534,8 @@ def executar_sync_automatica_sia(
                 nome_arquivo=nome_arq,
                 usuario=usuario,
                 simular=simular,
+                pasrv_dbf_path=dbfs.get("S_PASRV"),
+                pacid_dbf_path=dbfs.get("S_PACID"),
             )
 
         if cfg and not simular:

@@ -34,6 +34,15 @@ class SigtapProcedimento(SQLModel, table=True):
     origem_manual: bool = Field(default=False, index=True)
     sem_codigo_especifico: bool = Field(default=False, index=True)
     codigo_faturamento_sigtap: str = Field(default="", max_length=20, index=True)
+    # Metadados de exigência BPA / SIA-SUS (alimentados na carga SIGTAP / BDSIA)
+    instrumentos_permitidos: str = Field(default="", max_length=60)
+    exige_cpf: bool = Field(default=False)
+    exige_cns: bool = Field(default=False)
+    exige_cid: bool = Field(default=False)
+    exige_idade_bpa: bool = Field(default=False)
+    exige_cbo: bool = Field(default=True)
+    exige_servico: bool = Field(default=False)
+    servicos_permitidos_json: str = Field(default="[]")
 
 
 class SigtapGrupo(SQLModel, table=True):
