@@ -30,6 +30,19 @@ class SettingsOut(BaseModel):
     subtitulo: str = "Secretaria Municipal"
     brasao_url: str = ""
     icone_url: str = ""
+    codigo_ibge: str = "312810"
+    cep_padrao: str = "37177000"
+    cnpj_orgao_gestor: str = "18239616000185"
+    nome_orgao_gestor: str = "SMS GUAPE"
+    sigla_orgao_gestor: str = "312810"
+    nome_orgao_destino: str = "SECRETARIA MUNICIPAL DE SAUDE"
+    tipo_orgao_destino: str = "M"
+    cnes_sms_padrao: str = "2146479"
+    cnes_tfd_padrao: str = "2147092"
+    cns_responsavel_tfd: str = "703403201915616"
+    cbo_responsavel_tfd: str = "225142"
+    cns_responsavel_lab: str = "700508575563459"
+    cbo_responsavel_lab: str = "223415"
 
 
 class SettingsIn(BaseModel):
@@ -38,6 +51,19 @@ class SettingsIn(BaseModel):
     subtitulo: str = Field(default="Secretaria Municipal", max_length=120)
     brasao_url: str = Field(default="", max_length=500)
     icone_url: str = Field(default="", max_length=500)
+    codigo_ibge: str = Field(default="312810", max_length=7)
+    cep_padrao: str = Field(default="37177000", max_length=8)
+    cnpj_orgao_gestor: str = Field(default="18239616000185", max_length=14)
+    nome_orgao_gestor: str = Field(default="SMS GUAPE", max_length=30)
+    sigla_orgao_gestor: str = Field(default="312810", max_length=6)
+    nome_orgao_destino: str = Field(default="SECRETARIA MUNICIPAL DE SAUDE", max_length=40)
+    tipo_orgao_destino: str = Field(default="M", max_length=1)
+    cnes_sms_padrao: str = Field(default="2146479", max_length=7)
+    cnes_tfd_padrao: str = Field(default="2147092", max_length=7)
+    cns_responsavel_tfd: str = Field(default="703403201915616", max_length=15)
+    cbo_responsavel_tfd: str = Field(default="225142", max_length=6)
+    cns_responsavel_lab: str = Field(default="700508575563459", max_length=15)
+    cbo_responsavel_lab: str = Field(default="223415", max_length=6)
 
 
 def get_settings(db: Session) -> SystemSettings:
@@ -52,8 +78,24 @@ def get_settings(db: Session) -> SystemSettings:
 
 def to_out(s: SystemSettings) -> SettingsOut:
     return SettingsOut(
-        cidade=s.cidade, uf=s.uf, subtitulo=s.subtitulo,
-        brasao_url=s.brasao_url or "", icone_url=s.icone_url or "",
+        cidade=s.cidade,
+        uf=s.uf,
+        subtitulo=s.subtitulo,
+        brasao_url=s.brasao_url or "",
+        icone_url=s.icone_url or "",
+        codigo_ibge=getattr(s, "codigo_ibge", None) or "312810",
+        cep_padrao=getattr(s, "cep_padrao", None) or "37177000",
+        cnpj_orgao_gestor=getattr(s, "cnpj_orgao_gestor", None) or "18239616000185",
+        nome_orgao_gestor=getattr(s, "nome_orgao_gestor", None) or "SMS GUAPE",
+        sigla_orgao_gestor=getattr(s, "sigla_orgao_gestor", None) or "312810",
+        nome_orgao_destino=getattr(s, "nome_orgao_destino", None) or "SECRETARIA MUNICIPAL DE SAUDE",
+        tipo_orgao_destino=getattr(s, "tipo_orgao_destino", None) or "M",
+        cnes_sms_padrao=getattr(s, "cnes_sms_padrao", None) or "2146479",
+        cnes_tfd_padrao=getattr(s, "cnes_tfd_padrao", None) or "2147092",
+        cns_responsavel_tfd=getattr(s, "cns_responsavel_tfd", None) or "703403201915616",
+        cbo_responsavel_tfd=getattr(s, "cbo_responsavel_tfd", None) or "225142",
+        cns_responsavel_lab=getattr(s, "cns_responsavel_lab", None) or "700508575563459",
+        cbo_responsavel_lab=getattr(s, "cbo_responsavel_lab", None) or "223415",
     )
 
 
@@ -86,6 +128,25 @@ def salvar_settings(
         s.subtitulo = data.subtitulo.strip() or "Secretaria Municipal"
         s.brasao_url = validar_url_marca(data.brasao_url, "Brasão")
         s.icone_url = validar_url_marca(data.icone_url, "Ícone")
+
+        def so_nums(v: str) -> str:
+            return re.sub(r"\D", "", v or "")
+
+        s.codigo_ibge = so_nums(data.codigo_ibge)[:7] or "312810"
+        s.cep_padrao = so_nums(data.cep_padrao)[:8] or "37177000"
+        s.cnpj_orgao_gestor = so_nums(data.cnpj_orgao_gestor)[:14] or "18239616000185"
+        s.nome_orgao_gestor = (data.nome_orgao_gestor or "SMS GUAPE").strip().upper()[:30]
+        s.sigla_orgao_gestor = (data.sigla_orgao_gestor or s.codigo_ibge[:6]).strip().upper()[:6]
+        s.nome_orgao_destino = (data.nome_orgao_destino or "SECRETARIA MUNICIPAL DE SAUDE").strip().upper()[:40]
+        tipo_dst = (data.tipo_orgao_destino or "M").strip().upper()[:1]
+        s.tipo_orgao_destino = tipo_dst if tipo_dst in ("M", "E") else "M"
+        s.cnes_sms_padrao = so_nums(data.cnes_sms_padrao)[:7] or "2146479"
+        s.cnes_tfd_padrao = so_nums(data.cnes_tfd_padrao)[:7] or "2147092"
+        s.cns_responsavel_tfd = so_nums(data.cns_responsavel_tfd)[:15] or "703403201915616"
+        s.cbo_responsavel_tfd = so_nums(data.cbo_responsavel_tfd)[:6] or "225142"
+        s.cns_responsavel_lab = so_nums(data.cns_responsavel_lab)[:15] or "700508575563459"
+        s.cbo_responsavel_lab = so_nums(data.cbo_responsavel_lab)[:6] or "223415"
+
         if len(s.cidade) < 2:
             raise HTTPException(status_code=400, detail="Cidade inválida")
         db.add(s)

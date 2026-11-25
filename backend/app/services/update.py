@@ -78,7 +78,7 @@ def verificar_atualizacoes(forcar: bool = False) -> dict:
         "repo": f"{owner}/{repo}",
         "verificado_em": datetime.now(timezone.utc).isoformat(),
         "erro": erro,
-        "update_enabled": settings.UPDATE_ENABLED,
+        "update_enabled": False,
     }
     _CACHE["em"] = agora
     _CACHE["dados"] = out

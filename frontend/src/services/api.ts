@@ -299,7 +299,26 @@ export const primeiraTrocaSenha = (nova_senha: string, confirmar_senha: string, 
 export const resetSenhaUsuario = (id: number) =>
   api.post<{ ok: boolean; senha_temporaria: string; detail: string }>(`/api/usuarios/${id}/reset-senha`).then((r) => r.data);
 
-export type SystemSettings = { cidade: string; uf: string; subtitulo: string; brasao_url: string; icone_url: string };
+export type SystemSettings = {
+  cidade: string;
+  uf: string;
+  subtitulo: string;
+  brasao_url: string;
+  icone_url: string;
+  codigo_ibge?: string;
+  cep_padrao?: string;
+  cnpj_orgao_gestor?: string;
+  nome_orgao_gestor?: string;
+  sigla_orgao_gestor?: string;
+  nome_orgao_destino?: string;
+  tipo_orgao_destino?: string;
+  cnes_sms_padrao?: string;
+  cnes_tfd_padrao?: string;
+  cns_responsavel_tfd?: string;
+  cbo_responsavel_tfd?: string;
+  cns_responsavel_lab?: string;
+  cbo_responsavel_lab?: string;
+};
 export const fetchSettingsPublic = () =>
   api.get<SystemSettings>("/api/settings/public").then((r) => r.data);
 export const fetchSettings = () =>
@@ -582,10 +601,6 @@ export type UpdateStatus = {
 };
 export const updateStatus = (forcar = false) =>
   api.get<UpdateStatus>("/api/update/status", { params: { forcar } }).then((r) => r.data);
-export const updateExecutar = () =>
-  api.post<{ started: boolean; detail: string }>("/api/update/executar").then((r) => r.data);
-export const updateLog = (linhas = 200) =>
-  api.get<{ log: string }>("/api/update/log", { params: { linhas } }).then((r) => r.data);
 
 // ---------- Dashboard customizável ----------
 export type DashboardItem = {

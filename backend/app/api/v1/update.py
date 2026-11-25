@@ -1,11 +1,11 @@
-"""Status de versão + auto-update. Leitura e execução só p/ superuser."""
+"""Status de versão via GitHub (apenas consulta — atualizações via scripts no servidor)."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.core.deps import require_senha_ok, require_superuser
 from app.models.user import User
-from app.services.update import iniciar_atualizacao, ler_log, verificar_atualizacoes
+from app.services.update import verificar_atualizacoes
 
 router = APIRouter()
 
@@ -22,7 +22,7 @@ class UpdateStatusOut(BaseModel):
     repo: str = ""
     verificado_em: str = ""
     erro: str | None = None
-    update_enabled: bool = True
+    update_enabled: bool = False
 
 
 @router.get("/status", response_model=UpdateStatusOut)
@@ -39,16 +39,7 @@ def executar_update(
     admin: User = Depends(require_superuser),
     _=Depends(require_senha_ok),
 ):
-    try:
-        return iniciar_atualizacao()
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.get("/log")
-def log_update(
-    linhas: int = Query(default=200, ge=1, le=1000),
-    admin: User = Depends(require_superuser),
-    _=Depends(require_senha_ok),
-):
-    return {"log": ler_log(linhas)}
+    raise HTTPException(
+        status_code=403,
+        detail="Atualização via painel web desabilitada. Execute o script de atualização diretamente no terminal do servidor.",
+    )

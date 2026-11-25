@@ -30,6 +30,7 @@ from app.models.cadastros_saude import Medico, UnidadeSaude
 from app.models.lab_exames import SigtapProcedimento
 from app.models.lab_fase6 import ItemSolic, SolicitacaoMestre
 from app.models.producao_ambulatorial import ProducaoAmbulatorial
+from app.models.settings import SystemSettings
 from app.models.tfd import Paciente, Viagem, ViagemPaciente
 from app.services.cnes_criticas_service import auditar_criticas_bpa_competencia
 
@@ -44,6 +45,55 @@ CNS_PROFISSIONAL_TFD_PADRAO = "703403201915616"
 CBO_PROFISSIONAL_TFD_PADRAO = "225142"  # Médico Clínico / Regulador TFD
 CNS_PROFISSIONAL_LAB_PADRAO = "700508575563459"
 CBO_PROFISSIONAL_LAB_PADRAO = "223415"  # Farmacêutico-Bioquímico
+
+# Mapeamento preventivo de códigos municipais legados (ex: Vivver) com equivalência exata no SIGTAP oficial
+MAPEAMENTO_PROCEDIMENTOS_LEGADOS: dict[str, str] = {
+    "9999900270": "0202010473",  # DOSAGEM DE GLICOSE POS PRANDIAL -> DOSAGEM DE GLICOSE (02.02.01.047-3)
+    "9999900230": "0202060217",  # HCG QUANTITATIVO -> DOSAGEM DE GONADOTROFINA CORIONICA HUMANA (02.02.06.021-7)
+    "9999900217": "0202031411",  # TESTE FTA-ABS IGG -> TESTE FTA-ABS TOTAL PARA DIAGNOSTICO DA SIFILIS (02.02.03.141-1)
+    "9999900216": "0202031411",  # TESTE FTA-ABS IGM -> TESTE FTA-ABS TOTAL PARA DIAGNOSTICO DA SIFILIS (02.02.03.141-1)
+}
+
+
+def _carregar_parametros_institucionais_bpa(db: Session) -> dict[str, str]:
+    """Carrega os parâmetros institucionais do município/gestor salvos em Configurações Gerais."""
+    s = db.exec(select(SystemSettings).where(SystemSettings.id == 1)).first()
+    if not s:
+        return {
+            "cidade": "Guapé",
+            "uf": "MG",
+            "ibge": IBGE_GUAPE,
+            "cep_padrao": "37177000",
+            "cnpj": CNPJ_SMS_GUAPE,
+            "nome_orgao": NOME_SMS_GUAPE,
+            "sigla_orgao": IBGE_GUAPE,
+            "nome_destino": NOME_DESTINO_PADRAO,
+            "tipo_destino": "M",
+            "cnes_sms": CNES_SMS_PADRAO,
+            "cnes_tfd": CNES_TFD_PADRAO,
+            "cns_tfd": CNS_PROFISSIONAL_TFD_PADRAO,
+            "cbo_tfd": CBO_PROFISSIONAL_TFD_PADRAO,
+            "cns_lab": CNS_PROFISSIONAL_LAB_PADRAO,
+            "cbo_lab": CBO_PROFISSIONAL_LAB_PADRAO,
+        }
+    ibge_val = limpar_numeros(getattr(s, "codigo_ibge", None)) or IBGE_GUAPE
+    return {
+        "cidade": getattr(s, "cidade", None) or "Guapé",
+        "uf": getattr(s, "uf", None) or "MG",
+        "ibge": ibge_val,
+        "cep_padrao": limpar_numeros(getattr(s, "cep_padrao", None)) or "37177000",
+        "cnpj": limpar_numeros(getattr(s, "cnpj_orgao_gestor", None)) or CNPJ_SMS_GUAPE,
+        "nome_orgao": getattr(s, "nome_orgao_gestor", None) or NOME_SMS_GUAPE,
+        "sigla_orgao": (getattr(s, "sigla_orgao_gestor", None) or ibge_val)[:6],
+        "nome_destino": getattr(s, "nome_orgao_destino", None) or NOME_DESTINO_PADRAO,
+        "tipo_destino": getattr(s, "tipo_orgao_destino", None) or "M",
+        "cnes_sms": limpar_numeros(getattr(s, "cnes_sms_padrao", None)) or CNES_SMS_PADRAO,
+        "cnes_tfd": limpar_numeros(getattr(s, "cnes_tfd_padrao", None)) or CNES_TFD_PADRAO,
+        "cns_tfd": limpar_numeros(getattr(s, "cns_responsavel_tfd", None)) or CNS_PROFISSIONAL_TFD_PADRAO,
+        "cbo_tfd": limpar_numeros(getattr(s, "cbo_responsavel_tfd", None)) or CBO_PROFISSIONAL_TFD_PADRAO,
+        "cns_lab": limpar_numeros(getattr(s, "cns_responsavel_lab", None)) or CNS_PROFISSIONAL_LAB_PADRAO,
+        "cbo_lab": limpar_numeros(getattr(s, "cbo_responsavel_lab", None)) or CBO_PROFISSIONAL_LAB_PADRAO,
+    }
 
 # Tabela de frações de 50km por destino TFD (conforme portarias do SUS e sistema legado de Guapé)
 DESTINOS_TFD_QTD = {
@@ -261,6 +311,7 @@ def formatar_registro_03(
     telefone: str | None = None,
     email: str = "",
     cpf_paciente: str | None = None,
+    ine: str = "",
 ) -> str:
     """Gera o registro 03 (BPA-I: Individualizado) com exatamente 351 caracteres."""
     ident = "03"
@@ -278,7 +329,21 @@ def formatar_registro_03(
     linha_str = f"{linha_num:02d}"
     proc_str = limpar_numeros(procedimento)[:10].rjust(10, "0")
 
-    cns_pac_str = limpar_numeros(cns_paciente)[:15].ljust(15)
+    # Regra oficial DATASUS Layout v05.00 Obs 2:
+    # "Deve-se identificar o paciente por apenas um documento: ou o CPF ou o CNS.
+    # Sendo assim, se informado o CPF, não informar o CNS e vice-versa."
+    cpf_limpo = limpar_numeros(cpf_paciente)
+    cns_limpo = limpar_numeros(cns_paciente)
+    if cpf_limpo and len(cpf_limpo) == 11:
+        cpf_str = cpf_limpo.rjust(11, "0")
+        cns_pac_str = " " * 15
+    elif cns_limpo:
+        cpf_str = " " * 11
+        cns_pac_str = cns_limpo[:15].ljust(15)
+    else:
+        cpf_str = " " * 11
+        cns_pac_str = " " * 15
+
     sexo_str = (sexo or "I")[:1].upper()
     if sexo_str not in ("M", "F"):
         sexo_str = "M"
@@ -316,13 +381,9 @@ def formatar_registro_03(
 
     tel_limpo = limpar_numeros(telefone)
     tel_str = tel_limpo[:11].ljust(11)
-    email_str = " " * 50
-
-    cpf_limpo = limpar_numeros(cpf_paciente)
-    if cpf_limpo:
-        cpf_str = cpf_limpo[:11].rjust(11, "0")
-    else:
-        cpf_str = " " * 11
+    email_str = remover_acentos(email)[:40].ljust(40)
+    ine_limpo = limpar_numeros(ine) if ine else ""
+    ine_str = ine_limpo[:10].rjust(10, "0") if ine_limpo else " " * 10
 
     fim_registro = "NN"
 
@@ -360,6 +421,7 @@ def formatar_registro_03(
         f"{bairro_str}"
         f"{tel_str}"
         f"{email_str}"
+        f"{ine_str}"
         f"{cpf_str}"
         f"{fim_registro}"
     )
@@ -445,6 +507,7 @@ def gerar_bpa_completo_municipio(
     - verificar_criticas: Se True e forcar=False, bloqueia se houver críticas bloqueantes
     """
     aaaamm, yyyy_mm, dt_inicio, dt_fim = normalizar_competencia(competencia)
+    cfg = _carregar_parametros_institucionais_bpa(db)
 
     # 0. Verificação Prévia de Críticas Preventivas (Bloqueantes no SIA-SUS)
     if verificar_criticas and not forcar:
@@ -563,7 +626,7 @@ def gerar_bpa_completo_municipio(
                 cns=p_amb.paciente_cns or "",
                 nascimento=p_amb.paciente_data_nascimento or date(1980, 1, 1),
                 sexo=p_amb.paciente_sexo or "M",
-                municipio=p_amb.paciente_municipio_ibge or IBGE_GUAPE,
+                municipio=p_amb.paciente_municipio_ibge or cfg["ibge"],
             )
 
         med = get_medico(p_amb.medico_id) if p_amb.medico_id else None
@@ -572,11 +635,11 @@ def gerar_bpa_completo_municipio(
         cnes_exec = (
             limpar_numeros(getattr(u_exec, "cnes", ""))
             or cnes_filtro
-            or CNES_SMS_PADRAO
+            or cfg["cnes_sms"]
         )
         cns_prof = (
             limpar_numeros(getattr(med, "cns", ""))
-            or CNS_PROFISSIONAL_LAB_PADRAO
+            or cfg["cns_lab"]
         )
         cbo_prof = (
             limpar_numeros(p_amb.cbo_codigo)
@@ -589,6 +652,11 @@ def gerar_bpa_completo_municipio(
             proc = get_procedimento(p_amb.procedimento_id)
 
         cod_proc = limpar_numeros(p_amb.procedimento_codigo).rjust(10, "0")
+        if cod_proc in MAPEAMENTO_PROCEDIMENTOS_LEGADOS:
+            cod_proc = MAPEAMENTO_PROCEDIMENTOS_LEGADOS[cod_proc]
+        if cod_proc.startswith("99999"):
+            # Procedimento extra-tabela SUS sem código SIGTAP válido não pode constar no arquivo BPA
+            continue
         desc_proc = p_amb.procedimento_nome or (proc.descricao if proc else f"PROCEDIMENTO {cod_proc}")
         qtd = p_amb.quantidade or 1
         total_ambulatorial_count += qtd
@@ -663,7 +731,7 @@ def gerar_bpa_completo_municipio(
         cnes_lab = (
             limpar_numeros(getattr(u_solic, "cnes", ""))
             or cnes_filtro
-            or CNES_SMS_PADRAO
+            or cfg["cnes_sms"]
         )
 
         itens = list(db.exec(select(ItemSolic).where(ItemSolic.solicitacao_id == solic.id)).all())
@@ -673,9 +741,14 @@ def gerar_bpa_completo_municipio(
                 continue
 
             qtd = it.quantidade or 1
-            total_exames_count += qtd
             instrumento = (getattr(proc, "instrumento", "") or "BPA-C").upper()
             codigo_proc = proc.codigo.strip()
+            if codigo_proc in MAPEAMENTO_PROCEDIMENTOS_LEGADOS:
+                codigo_proc = MAPEAMENTO_PROCEDIMENTOS_LEGADOS[codigo_proc]
+            if codigo_proc.startswith("99999"):
+                # Exame extra-tabela SUS (ex: CA 15-3, D-Dímero) sem código SIGTAP não vai ao BPA/SIA
+                continue
+            total_exames_count += qtd
 
             vl_unit = float(
                 getattr(proc, "valor_combinado", 0.0)
@@ -689,8 +762,8 @@ def gerar_bpa_completo_municipio(
                 raw_bpai.append({
                     "origem_tipo": "Laboratório (BPA-I)",
                     "cnes": cnes_lab,
-                    "cns_profissional": CNS_PROFISSIONAL_LAB_PADRAO,
-                    "cbo_profissional": CBO_PROFISSIONAL_LAB_PADRAO,
+                    "cns_profissional": cfg["cns_lab"],
+                    "cbo_profissional": cfg["cbo_lab"],
                     "data_atendimento": solic.data_agendada,
                     "procedimento": codigo_proc,
                     "descricao_procedimento": proc.descricao,
@@ -703,7 +776,7 @@ def gerar_bpa_completo_municipio(
                     "servico_classificacao": "",
                 })
             else:
-                cbo = CBO_PROFISSIONAL_LAB_PADRAO
+                cbo = cfg["cbo_lab"]
                 chave = (cnes_lab, cbo, codigo_proc)
                 if chave not in raw_bpac:
                     raw_bpac[chave] = {
@@ -725,7 +798,7 @@ def gerar_bpa_completo_municipio(
     # =========================================================================
     deve_incluir_tfd = True
     if unidade_saude_id:
-        if cnes_filtro not in (CNES_TFD_PADRAO, CNES_SMS_PADRAO):
+        if cnes_filtro not in (cfg["cnes_tfd"], cfg["cnes_sms"]):
             deve_incluir_tfd = False
 
     if deve_incluir_tfd:
@@ -758,9 +831,9 @@ def gerar_bpa_completo_municipio(
                 if pac and not eh_paciente_teste(pac):
                     raw_bpai.append({
                         "origem_tipo": "TFD - Deslocamento Usuário",
-                        "cnes": CNES_TFD_PADRAO,
-                        "cns_profissional": CNS_PROFISSIONAL_TFD_PADRAO,
-                        "cbo_profissional": CBO_PROFISSIONAL_TFD_PADRAO,
+                        "cnes": cfg["cnes_tfd"],
+                        "cns_profissional": cfg["cns_tfd"],
+                        "cbo_profissional": cfg["cbo_tfd"],
                         "data_atendimento": v.data_viagem,
                         "procedimento": "0803010125",
                         "descricao_procedimento": "DESLOCAMENTO DE USUARIO",
@@ -789,15 +862,15 @@ def gerar_bpa_completo_municipio(
                             sexo="M",
                             endereco=pac.endereco if pac else "",
                             bairro=pac.bairro if pac else "",
-                            cep=pac.cep if pac else "37177000",
+                            cep=pac.cep if pac else cfg["cep_padrao"],
                             telefone=pac.telefone if pac else "",
                         )
 
                     raw_bpai.append({
                         "origem_tipo": "TFD - Deslocamento Acompanhante",
-                        "cnes": CNES_TFD_PADRAO,
-                        "cns_profissional": CNS_PROFISSIONAL_TFD_PADRAO,
-                        "cbo_profissional": CBO_PROFISSIONAL_TFD_PADRAO,
+                        "cnes": cfg["cnes_tfd"],
+                        "cns_profissional": cfg["cns_tfd"],
+                        "cbo_profissional": cfg["cbo_tfd"],
                         "data_atendimento": v.data_viagem,
                         "procedimento": "0803010109",
                         "descricao_procedimento": "DESLOCAMENTO DE ACOMPANHANTE",
@@ -885,7 +958,7 @@ def gerar_bpa_completo_municipio(
             procedimento=item["procedimento"],
             cns_paciente=getattr(p, "cns", None),
             sexo=getattr(p, "sexo", "M"),
-            codigo_ibge=getattr(p, "municipio", None),
+            codigo_ibge=getattr(p, "municipio", None) or cfg["ibge"],
             cid=item.get("cid"),
             idade=idade,
             quantidade=item["quantidade"],
@@ -894,7 +967,7 @@ def gerar_bpa_completo_municipio(
             nome_paciente=getattr(p, "nome", ""),
             data_nascimento=getattr(p, "nascimento", None),
             servico_classificacao=item.get("servico_classificacao", ""),
-            cep=getattr(p, "cep", None),
+            cep=getattr(p, "cep", None) or cfg["cep_padrao"],
             logradouro=getattr(p, "endereco", ""),
             complemento=getattr(p, "complemento", ""),
             numero=getattr(p, "endereco_numero", ""),
@@ -929,11 +1002,11 @@ def gerar_bpa_completo_municipio(
     controle_verificador = calcular_controle_bpa(lista_itens_bpac_resumo, lista_itens_bpai_resumo)
 
     # 6. Header 01 Oficial
-    cnes_header = cnes_filtro or CNES_SMS_PADRAO
+    cnes_header = cnes_filtro or cfg["cnes_sms"]
     nome_header = (
         remover_acentos(unidade_selecionada.nome)[:30]
         if (unidade_selecionada and unidade_selecionada.nome)
-        else NOME_SMS_GUAPE
+        else cfg["nome_orgao"]
     )
 
     header_str = formatar_header_01(
@@ -942,7 +1015,11 @@ def gerar_bpa_completo_municipio(
         total_folhas_arquivo=total_folhas_final,
         controle_verificador=controle_verificador,
         cnes_sms=cnes_header,
+        ibge=cfg["sigla_orgao"],
+        cnpj=cfg["cnpj"],
         nome_sms=nome_header,
+        destino=cfg["nome_destino"],
+        tipo_prestador=cfg["tipo_destino"],
     )
 
     todas_linhas = [header_str] + registros_02_formatados + registros_03_formatados
@@ -1046,7 +1123,7 @@ def gerar_bpa_completo_municipio(
         "conteudo_out_bytes": conteudo_out_bytes,
         "conteudo_csv": conteudo_csv_str,
         "conteudo_csv_bytes": conteudo_csv_bytes,
-        "arquivo_nome_out": f"PA312810{sufixo_arq}.OUT",
+        "arquivo_nome_out": f"PA{cfg['ibge'][:6]}{sufixo_arq}.OUT",
         "arquivo_nome_csv": f"bpa_conferencia_{aaaamm}{sufixo_arq}.csv",
     }
 
@@ -1063,6 +1140,7 @@ def obter_demonstrativo_faturamento(
     separados por Unidade/CNES e consolidado geral municipal.
     """
     aaaamm, yyyy_mm, dt_inicio, dt_fim = normalizar_competencia(competencia)
+    cfg = _carregar_parametros_institucionais_bpa(db)
 
     unidade_selecionada = db.get(UnidadeSaude, unidade_saude_id) if unidade_saude_id else None
     cnes_filtro = limpar_numeros(unidade_selecionada.cnes) if unidade_selecionada and unidade_selecionada.cnes else None
@@ -1080,9 +1158,9 @@ def obter_demonstrativo_faturamento(
         cnes_limpo = limpar_numeros(cnes_code)
         if cnes_limpo in unidades_por_cnes:
             return unidades_por_cnes[cnes_limpo]
-        if cnes_limpo == CNES_SMS_PADRAO:
-            return "SECRETARIA MUNICIPAL DE SAUDE DE GUAPE"
-        if cnes_limpo == CNES_TFD_PADRAO:
+        if cnes_limpo == cfg["cnes_sms"]:
+            return f"SECRETARIA MUNICIPAL DE SAUDE DE {remover_acentos(cfg['cidade'])}"
+        if cnes_limpo == cfg["cnes_tfd"]:
             return "CENTRAL DE REGULACAO E TRANSPORTE TFD"
         return f"UNIDADE CNES {cnes_code}"
 
@@ -1116,8 +1194,10 @@ def obter_demonstrativo_faturamento(
 
     for p in prods_amb:
         u = unidades_map.get(p.unidade_saude_id) if p.unidade_saude_id else None
-        cnes_u = limpar_numeros(getattr(u, "cnes", "")) or cnes_filtro or CNES_SMS_PADRAO
+        cnes_u = limpar_numeros(getattr(u, "cnes", "")) or cnes_filtro or cfg["cnes_sms"]
         cod = limpar_numeros(p.procedimento_codigo).zfill(10)
+        if cod in MAPEAMENTO_PROCEDIMENTOS_LEGADOS:
+            cod = MAPEAMENTO_PROCEDIMENTOS_LEGADOS[cod]
         proc = get_sigtap(cod)
 
         vl_sa = float(
@@ -1157,7 +1237,7 @@ def obter_demonstrativo_faturamento(
     solics_lab = list(db.exec(query_lab).all())
     for s in solics_lab:
         u = unidades_map.get(s.unidade_saude_id) if s.unidade_saude_id else None
-        cnes_u = limpar_numeros(getattr(u, "cnes", "")) or cnes_filtro or CNES_SMS_PADRAO
+        cnes_u = limpar_numeros(getattr(u, "cnes", "")) or cnes_filtro or cfg["cnes_sms"]
 
         itens = list(db.exec(select(ItemSolic).where(ItemSolic.solicitacao_id == s.id)).all())
         for it in itens:
@@ -1166,6 +1246,8 @@ def obter_demonstrativo_faturamento(
                 continue
 
             cod = limpar_numeros(proc.codigo).zfill(10)
+            if cod in MAPEAMENTO_PROCEDIMENTOS_LEGADOS:
+                cod = MAPEAMENTO_PROCEDIMENTOS_LEGADOS[cod]
             vl_sa = float(
                 getattr(proc, "valor_combinado", 0.0)
                 or getattr(proc, "valor_sa", 0.0)
@@ -1194,7 +1276,7 @@ def obter_demonstrativo_faturamento(
     # 3. Viagens TFD
     deve_incluir_tfd = True
     if unidade_saude_id:
-        if cnes_filtro not in (CNES_TFD_PADRAO, CNES_SMS_PADRAO):
+        if cnes_filtro not in (cfg["cnes_tfd"], cfg["cnes_sms"]):
             deve_incluir_tfd = False
 
     if deve_incluir_tfd:
@@ -1220,11 +1302,11 @@ def obter_demonstrativo_faturamento(
 
             for vp in passageiros:
                 # Paciente
-                chave_user = (CNES_TFD_PADRAO, "0803010125")
+                chave_user = (cfg["cnes_tfd"], "0803010125")
                 if chave_user not in agregado:
                     agregado[chave_user] = {
-                        "cnes": CNES_TFD_PADRAO,
-                        "unidade_nome": get_nome_unidade(CNES_TFD_PADRAO),
+                        "cnes": cfg["cnes_tfd"],
+                        "unidade_nome": get_nome_unidade(cfg["cnes_tfd"]),
                         "codigo": "0803010125",
                         "descricao": "DESLOCAMENTO DE USUARIO (TFD)",
                         "instrumento": "BPA-I",
@@ -1239,11 +1321,11 @@ def obter_demonstrativo_faturamento(
 
                 # Acompanhante
                 if vp.acompanhante or vp.acompanhante_id or vp.acompanhante_cpf:
-                    chave_acomp = (CNES_TFD_PADRAO, "0803010109")
+                    chave_acomp = (cfg["cnes_tfd"], "0803010109")
                     if chave_acomp not in agregado:
                         agregado[chave_acomp] = {
-                            "cnes": CNES_TFD_PADRAO,
-                            "unidade_nome": get_nome_unidade(CNES_TFD_PADRAO),
+                            "cnes": cfg["cnes_tfd"],
+                            "unidade_nome": get_nome_unidade(cfg["cnes_tfd"]),
                             "codigo": "0803010109",
                             "descricao": "DESLOCAMENTO DE ACOMPANHANTE (TFD)",
                             "instrumento": "BPA-I",
@@ -1299,10 +1381,10 @@ def obter_demonstrativo_faturamento(
         "competencia_aaaamm": aaaamm,
         "unidade_saude_id": unidade_saude_id,
         "unidade_nome": unidade_selecionada.nome if unidade_selecionada else "Todas as Unidades (Geral do Município)",
-        "cnes_filtro": cnes_filtro or CNES_SMS_PADRAO,
-        "municipio": "Guapé",
-        "uf": "MG",
-        "ibge": IBGE_GUAPE,
+        "cnes_filtro": cnes_filtro or cfg["cnes_sms"],
+        "municipio": cfg["cidade"],
+        "uf": cfg["uf"],
+        "ibge": cfg["ibge"],
         "data_emissao": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
         "total_procedimentos_distintos": total_procs_distintos,
         "total_linhas_demonstrativo": len(itens_lista),

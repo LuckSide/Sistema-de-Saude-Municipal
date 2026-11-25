@@ -317,3 +317,129 @@ def test_geracao_bpa_completo_integrando_lab_e_tfd(db_session: Session):
     assert "0202010473" in csv_str
     assert "TESTE DA SILVA" not in csv_str
     assert "99999999999" not in csv_str
+
+
+def test_regra_documento_unico_paciente_datasus():
+    """Valida Observação 2 do Layout DATASUS (ou CPF ou CNS, nunca ambos preenchidos simultaneamente)."""
+    # Caso 1: Paciente com CPF informado -> CPF preenchido, CNS em branco
+    reg_cpf = formatar_registro_03(
+        cnes="2146479",
+        competencia_aaaamm="202611",
+        cns_profissional="700508575563459",
+        cbo_profissional="223415",
+        data_atendimento=date(2026, 11, 23),
+        folha=1,
+        linha_num=1,
+        procedimento="0202010694",
+        cns_paciente="700507958321651",
+        sexo="F",
+        codigo_ibge="312810",
+        cid="",
+        idade=51,
+        quantidade=1,
+        nome_paciente="ADRIANA MARIA GARCIA ALCANTARA",
+        data_nascimento=date(1975, 6, 20),
+        cpf_paciente="03154787640",
+    )
+    assert len(reg_cpf) == 351
+    # CNS do paciente (pos 60-74, índice 59-74) deve estar em branco
+    assert reg_cpf[59:74] == " " * 15
+    # CPF do paciente (pos 339-349, índice 338-349) deve ter 11 dígitos
+    assert reg_cpf[338:349] == "03154787640"
+
+    # Caso 2: Paciente sem CPF -> CNS preenchido, CPF em branco
+    reg_cns = formatar_registro_03(
+        cnes="2146479",
+        competencia_aaaamm="202611",
+        cns_profissional="700508575563459",
+        cbo_profissional="223415",
+        data_atendimento=date(2026, 11, 23),
+        folha=1,
+        linha_num=2,
+        procedimento="0202010694",
+        cns_paciente="700507958321651",
+        sexo="F",
+        codigo_ibge="312810",
+        cid="",
+        idade=51,
+        quantidade=1,
+        nome_paciente="ADRIANA MARIA GARCIA ALCANTARA",
+        data_nascimento=date(1975, 6, 20),
+        cpf_paciente="",
+    )
+    assert len(reg_cns) == 351
+    # CNS do paciente preenchido com 15 dígitos
+    assert reg_cns[59:74] == "700507958321651"
+    # CPF do paciente em branco
+    assert reg_cns[338:349] == " " * 11
+
+
+def test_mapeamento_preventivo_codigos_legados(db_session):
+    """Garante que códigos legados com equivalência SIGTAP são convertidos e extra-SUS (99999...) são omitidos do .OUT."""
+    from app.models.cadastros_saude import UnidadeSaude
+
+    u = UnidadeSaude(nome="LABORATORIO MUNICIPAL", cnes="2147009", tipo="LABORATORIO")
+    lab = Laboratorio(nome="LABORATORIO CENTRAL", cnpj="18239616000185")
+    p = Paciente(nome="ADRIANA MARIA GARCIA ALCANTARA", cpf="03154787640", cns="700507958321651", nascimento=date(1975, 6, 20), eh_teste=False)
+    proc_mapeavel = SigtapProcedimento(codigo="9999900217", descricao="TESTE FTA-ABS IGG", instrumento="BPA-I")
+    proc_extra_sus = SigtapProcedimento(codigo="9999900275", descricao="DOSAGEM DO ANTÍGENO CA 15-3", instrumento="BPA-I")
+    db_session.add_all([u, lab, p, proc_mapeavel, proc_extra_sus])
+    db_session.commit()
+
+    solic = SolicitacaoMestre(paciente_id=p.id, laboratorio_id=lab.id, unidade_saude_id=u.id, data_agendada=date(2026, 11, 23), status="realizado")
+    db_session.add(solic)
+    db_session.commit()
+
+    item1 = ItemSolic(solicitacao_id=solic.id, sigtap_id=proc_mapeavel.id, quantidade=1)
+    item2 = ItemSolic(solicitacao_id=solic.id, sigtap_id=proc_extra_sus.id, quantidade=1)
+    db_session.add_all([item1, item2])
+    db_session.commit()
+
+    resultado = gerar_bpa_completo_municipio(db_session, "2026-11")
+    linhas = [l for l in resultado["conteudo_out"].split("\r\n") if l.startswith("03")]
+    assert len(linhas) == 1
+    procs = [l[49:59] for l in linhas]
+    # 9999900217 deve ser convertido para 0202031411 (FTA-ABS oficial)
+    assert "0202031411" in procs
+    # 9999900275 (CA 15-3 extra-tabela SUS) não deve vazar para o arquivo BPA oficial
+    assert "9999900275" not in procs
+
+
+def test_bpa_usa_configuracoes_institucionais_dinamicas(db_session):
+    """Garante que o cabeçalho BPA e o nome do arquivo respeitam os campos de SystemSettings."""
+    from app.models.settings import SystemSettings
+
+    cfg = SystemSettings(
+        id=1,
+        cidade="Capitolio",
+        uf="MG",
+        codigo_ibge="311280",
+        cnpj_orgao_gestor="11222333000144",
+        nome_orgao_gestor="SMS CAPITOLIO",
+        sigla_orgao_gestor="311280",
+        nome_orgao_destino="SECRETARIA DE SAUDE CAPITOLIO",
+        tipo_orgao_destino="M",
+        cnes_sms_padrao="2223334",
+        cnes_tfd_padrao="2223335",
+    )
+    db_session.add(cfg)
+    db_session.commit()
+
+    resultado = gerar_bpa_completo_municipio(db_session, "2026-11")
+    header = resultado["conteudo_out"].split("\r\n")[0]
+    assert len(header) == 130
+    assert "SMS CAPITOLIO" in header
+    assert "31128011222333000144" in header
+    assert "SECRETARIA DE SAUDE CAPITOLIO" in header
+    assert resultado["arquivo_nome_out"] == "PA311280.OUT"
+
+
+def test_auto_update_web_desabilitado():
+    """Garante que a execução de auto-update via endpoint web está desabilitada (apenas via script)."""
+    from fastapi import HTTPException
+    from app.api.v1.update import executar_update
+
+    with pytest.raises(HTTPException) as exc:
+        executar_update(admin=None, _=None)
+    assert exc.value.status_code == 403
+    assert "desabilitada" in exc.value.detail.lower()

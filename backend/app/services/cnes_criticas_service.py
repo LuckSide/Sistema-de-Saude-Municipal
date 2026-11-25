@@ -498,6 +498,21 @@ def auditar_criticas_bpa_competencia(
 
         nome_pac = p_amb.paciente_nome or (pac.nome if pac else "Paciente Não Identificado")
 
+        # 4.0 Código municipal legado (99999...) - Rejeitado pelo SIGTAP/BPA Mag
+        if cod_proc.startswith("99999"):
+            add_critica(
+                tipo="BLOQUEANTE",
+                modulo="PROCEDIMENTO",
+                mensagem=(
+                    f"Procedimento '{cod_proc} - {nome_proc}' possui código municipal legado que não existe na Tabela SIGTAP do SUS. "
+                    f"O BPA Mag rejeitará este procedimento na rotina de consistência. Mapeie para o código SIGTAP oficial de 10 dígitos."
+                ),
+                registro_id=p_amb.id,
+                registro_identificador=f"Produção #{p_amb.id} - Proc: {cod_proc}",
+                sugestao_correcao="Altere o lançamento para o código SIGTAP oficial correspondente.",
+                link_correcao="/faturamento/bpa",
+            )
+
         # 4.1 BPA-I sem CNS do paciente (Bloqueante)
         if instru == "BPA-I":
             cns_pac = so_digitos(p_amb.paciente_cns or (pac.cns if pac else ""))
@@ -625,6 +640,21 @@ def auditar_criticas_bpa_competencia(
             cod_proc = proc.codigo.strip()
             nome_proc = proc.descricao
             instru = (getattr(proc, "instrumento", "") or "BPA-C").upper()
+
+            # Checagem de código legado municipal 99999...
+            if cod_proc.startswith("99999"):
+                add_critica(
+                    tipo="BLOQUEANTE",
+                    modulo="PROCEDIMENTO",
+                    mensagem=(
+                        f"Exame '{nome_proc}' possui código municipal legado ({cod_proc}) que não existe na Tabela SIGTAP do SUS. "
+                        f"O BPA Mag rejeitará este procedimento na rotina de consistência. Mapeie para um código SIGTAP oficial de 10 dígitos."
+                    ),
+                    registro_id=s_lab.id,
+                    registro_identificador=f"Exame Solicitação #{s_lab.codigo_solicitacao or s_lab.id}",
+                    sugestao_correcao="Associe o exame ao código SIGTAP oficial correspondente.",
+                    link_correcao="/faturamento/bpa",
+                )
 
             # Checagem BPA-I
             if instru == "BPA-I":

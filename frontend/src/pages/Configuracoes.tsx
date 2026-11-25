@@ -23,7 +23,6 @@ import {
   Plus,
   RefreshCw,
   Save,
-  ScrollText,
   Send,
   Server,
   ShieldAlert,
@@ -63,8 +62,6 @@ import {
   saveSettings,
   sincronizarPecPacientes,
   testarPec,
-  updateExecutar,
-  updateLog,
   updateStatus,
   validarRnds,
   whatsappLogs,
@@ -193,22 +190,35 @@ export default function Configuracoes() {
   );
 }
 
-// ---------- Geral: município + marca + versão ----------
+// ---------- Geral: município + marca + BPA/SIA + versão ----------
 function AbaGeral() {
-  const { confirmar } = useConfirm();
   const [cidade, setCidade] = useState("Guapé");
   const [uf, setUf] = useState("MG");
   const [subtitulo, setSubtitulo] = useState("Secretaria Municipal");
   const [brasao, setBrasao] = useState("");
   const [icone, setIcone] = useState("");
+
+  // Parâmetros Institucionais BPA / SIA (DATASUS)
+  const [codigoIbge, setCodigoIbge] = useState("312810");
+  const [cepPadrao, setCepPadrao] = useState("37177000");
+  const [cnpjOrgaoGestor, setCnpjOrgaoGestor] = useState("18239616000185");
+  const [nomeOrgaoGestor, setNomeOrgaoGestor] = useState("SMS GUAPE");
+  const [siglaOrgaoGestor, setSiglaOrgaoGestor] = useState("312810");
+  const [nomeOrgaoDestino, setNomeOrgaoDestino] = useState("SECRETARIA MUNICIPAL DE SAUDE");
+  const [tipoOrgaoDestino, setTipoOrgaoDestino] = useState("M");
+  const [cnesSmsPadrao, setCnesSmsPadrao] = useState("2146479");
+  const [cnesTfdPadrao, setCnesTfdPadrao] = useState("2147092");
+  const [cnsResponsavelTfd, setCnsResponsavelTfd] = useState("703403201915616");
+  const [cboResponsavelTfd, setCboResponsavelTfd] = useState("225142");
+  const [cnsResponsavelLab, setCnsResponsavelLab] = useState("700508575563459");
+  const [cboResponsavelLab, setCboResponsavelLab] = useState("223415");
+
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [upd, setUpd] = useState<UpdateStatus | null>(null);
-  const [updMsg, setUpdMsg] = useState("");
-  const [updBusy, setUpdBusy] = useState(false);
-  const [log, setLog] = useState<string | null>(null);
+  const [updChecking, setUpdChecking] = useState(false);
 
   useEffect(() => {
     fetchSettings()
@@ -218,6 +228,19 @@ function AbaGeral() {
         setSubtitulo((s.subtitulo || "").trim() || "Secretaria Municipal");
         setBrasao((s.brasao_url || "").trim());
         setIcone((s.icone_url || "").trim());
+        setCodigoIbge((s.codigo_ibge || "").trim() || "312810");
+        setCepPadrao((s.cep_padrao || "").trim() || "37177000");
+        setCnpjOrgaoGestor((s.cnpj_orgao_gestor || "").trim() || "18239616000185");
+        setNomeOrgaoGestor((s.nome_orgao_gestor || "").trim() || "SMS GUAPE");
+        setSiglaOrgaoGestor((s.sigla_orgao_gestor || "").trim() || "312810");
+        setNomeOrgaoDestino((s.nome_orgao_destino || "").trim() || "SECRETARIA MUNICIPAL DE SAUDE");
+        setTipoOrgaoDestino((s.tipo_orgao_destino || "").trim().toUpperCase() || "M");
+        setCnesSmsPadrao((s.cnes_sms_padrao || "").trim() || "2146479");
+        setCnesTfdPadrao((s.cnes_tfd_padrao || "").trim() || "2147092");
+        setCnsResponsavelTfd((s.cns_responsavel_tfd || "").trim() || "703403201915616");
+        setCboResponsavelTfd((s.cbo_responsavel_tfd || "").trim() || "225142");
+        setCnsResponsavelLab((s.cns_responsavel_lab || "").trim() || "700508575563459");
+        setCboResponsavelLab((s.cbo_responsavel_lab || "").trim() || "223415");
       })
       .catch((e: unknown) => {
         const st = (e as { response?: { status?: number } }).response?.status;
@@ -244,13 +267,39 @@ function AbaGeral() {
         subtitulo: subtitulo.trim() || "Secretaria Municipal",
         brasao_url: brasao.trim(),
         icone_url: icone.trim(),
+        codigo_ibge: codigoIbge.replace(/\D/g, "").slice(0, 7) || "312810",
+        cep_padrao: cepPadrao.replace(/\D/g, "").slice(0, 8) || "37177000",
+        cnpj_orgao_gestor: cnpjOrgaoGestor.replace(/\D/g, "").slice(0, 14) || "18239616000185",
+        nome_orgao_gestor: nomeOrgaoGestor.trim().toUpperCase().slice(0, 30) || "SMS GUAPE",
+        sigla_orgao_gestor: siglaOrgaoGestor.trim().toUpperCase().slice(0, 6) || "312810",
+        nome_orgao_destino: nomeOrgaoDestino.trim().toUpperCase().slice(0, 40) || "SECRETARIA MUNICIPAL DE SAUDE",
+        tipo_orgao_destino: tipoOrgaoDestino === "E" ? "E" : "M",
+        cnes_sms_padrao: cnesSmsPadrao.replace(/\D/g, "").slice(0, 7) || "2146479",
+        cnes_tfd_padrao: cnesTfdPadrao.replace(/\D/g, "").slice(0, 7) || "2147092",
+        cns_responsavel_tfd: cnsResponsavelTfd.replace(/\D/g, "").slice(0, 15) || "703403201915616",
+        cbo_responsavel_tfd: cboResponsavelTfd.replace(/\D/g, "").slice(0, 6) || "225142",
+        cns_responsavel_lab: cnsResponsavelLab.replace(/\D/g, "").slice(0, 15) || "700508575563459",
+        cbo_responsavel_lab: cboResponsavelLab.replace(/\D/g, "").slice(0, 6) || "223415",
       });
       setCidade(s.cidade);
       setUf(s.uf);
       setSubtitulo(s.subtitulo);
       setBrasao(s.brasao_url || "");
       setIcone(s.icone_url || "");
-      setOk(`Cidade atualizada para ${s.cidade}. Título, marca e favicon atualizados.`);
+      setCodigoIbge(s.codigo_ibge || "312810");
+      setCepPadrao(s.cep_padrao || "37177000");
+      setCnpjOrgaoGestor(s.cnpj_orgao_gestor || "18239616000185");
+      setNomeOrgaoGestor(s.nome_orgao_gestor || "SMS GUAPE");
+      setSiglaOrgaoGestor(s.sigla_orgao_gestor || "312810");
+      setNomeOrgaoDestino(s.nome_orgao_destino || "SECRETARIA MUNICIPAL DE SAUDE");
+      setTipoOrgaoDestino(s.tipo_orgao_destino || "M");
+      setCnesSmsPadrao(s.cnes_sms_padrao || "2146479");
+      setCnesTfdPadrao(s.cnes_tfd_padrao || "2147092");
+      setCnsResponsavelTfd(s.cns_responsavel_tfd || "703403201915616");
+      setCboResponsavelTfd(s.cbo_responsavel_tfd || "225142");
+      setCnsResponsavelLab(s.cns_responsavel_lab || "700508575563459");
+      setCboResponsavelLab(s.cbo_responsavel_lab || "223415");
+      setOk(`Configurações de ${s.cidade} (${s.uf}) e parâmetros BPA/SIA atualizados com sucesso.`);
     } catch (e: unknown) {
       setErro(msgErro(e, "Erro ao salvar. Confira os campos e tente de novo."));
     } finally {
@@ -259,146 +308,205 @@ function AbaGeral() {
   }
 
   return (
-    <>
-      <Card className="max-w-xl p-6">
-        <p className="mb-4 flex items-center gap-2 font-display text-base font-bold text-sus-950">
-          <Building2 className="h-5 w-5" /> Município
-        </p>
-        {loading ? (
-          <p className="text-sm text-ink/50">Carregando…</p>
-        ) : (
-          <div className="space-y-3">
-            <div>
-              <Label>Nome da cidade *</Label>
-              <Input value={cidade} onChange={(e) => setCidade(e.target.value)} placeholder="Ex: Nome da cidade" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="space-y-4">
+        <Card className="p-6">
+          <p className="mb-4 flex items-center gap-2 font-display text-base font-bold text-sus-950">
+            <Building2 className="h-5 w-5" /> Município e Identidade Visual
+          </p>
+          {loading ? (
+            <p className="text-sm text-ink/50">Carregando…</p>
+          ) : (
+            <div className="space-y-3">
               <div>
-                <Label>UF</Label>
-                <Input value={uf} onChange={(e) => setUf(e.target.value.toUpperCase().slice(0, 2))} placeholder="MG" maxLength={2} />
+                <Label>Nome da cidade / município *</Label>
+                <Input value={cidade} onChange={(e) => setCidade(e.target.value)} placeholder="Ex: Guapé" />
               </div>
-              <div>
-                <Label>Subtítulo</Label>
-                <Input value={subtitulo} onChange={(e) => setSubtitulo(e.target.value)} placeholder="Secretaria Municipal" />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>UF</Label>
+                  <Input value={uf} onChange={(e) => setUf(e.target.value.toUpperCase().slice(0, 2))} placeholder="MG" maxLength={2} />
+                </div>
+                <div>
+                  <Label>Subtítulo</Label>
+                  <Input value={subtitulo} onChange={(e) => setSubtitulo(e.target.value)} placeholder="Secretaria Municipal" />
+                </div>
               </div>
-            </div>
-            {erro && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{erro}</p>}
-            {ok && <p className="rounded-xl bg-teal/10 px-3 py-2 text-sm font-medium text-teal">{ok}</p>}
-            <Button onClick={salvar} disabled={busy} className="w-full">
-              <Save className="h-4 w-4" /> {busy ? "Salvando…" : "Salvar cidade"}
-            </Button>
-          </div>
-        )}
-      </Card>
-
-      <Card className="mt-4 max-w-xl p-6">
-        <p className="mb-1 flex items-center gap-2 font-display text-base font-bold text-sus-950">
-          <ImagePlus className="h-5 w-5" /> Marca: brasão e ícone
-        </p>
-        <p className="mb-4 text-xs text-ink/55">
-          Brasão aparece no menu lateral e no login; ícone substitui o favicon gerado.
-          Use URL https://… ou data:image/…. Vazio mantém o padrão.
-        </p>
-        <div className="space-y-3">
-          <div>
-            <Label>URL do brasão / logo</Label>
-            <Input value={brasao} onChange={(e) => setBrasao(e.target.value)} placeholder="https://…" autoComplete="off" />
-          </div>
-          <div>
-            <Label>URL do ícone (favicon)</Label>
-            <Input value={icone} onChange={(e) => setIcone(e.target.value)} placeholder="https://… .png/.svg" autoComplete="off" />
-          </div>
-          {(brasao.trim() || icone.trim()) && (
-            <div className="flex items-center gap-3 rounded-xl bg-sand px-3 py-2">
-              {brasao.trim() && <img src={brasao.trim()} alt="Prévia do brasão" className="h-10 w-10 rounded-lg bg-white object-contain p-0.5" />}
-              {icone.trim() && <img src={icone.trim()} alt="Prévia do ícone" className="h-8 w-8 rounded-lg bg-white object-contain p-0.5" />}
-              <span className="text-xs text-ink/55">Prévia — salva junto com a cidade acima.</span>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Código IBGE (6 ou 7 dígitos)</Label>
+                  <Input value={codigoIbge} onChange={(e) => setCodigoIbge(e.target.value.replace(/\D/g, ""))} placeholder="312810" maxLength={7} />
+                </div>
+                <div>
+                  <Label>CEP Padrão</Label>
+                  <Input value={cepPadrao} onChange={(e) => setCepPadrao(e.target.value.replace(/\D/g, ""))} placeholder="37177000" maxLength={8} />
+                </div>
+              </div>
             </div>
           )}
-        </div>
-      </Card>
+        </Card>
 
-      <Card className="mt-4 max-w-xl p-6">
-        <p className="mb-1 flex items-center gap-2 font-display text-base font-bold text-sus-950">
-          <GitBranch className="h-5 w-5" /> Versão e atualizações
-        </p>
-        <p className="mb-4 text-xs text-ink/55">
-          Compara commit local com GitHub main. Update roda git pull + rebuild Docker em background.
-        </p>
-        {upd ? (
+        <Card className="p-6">
+          <p className="mb-1 flex items-center gap-2 font-display text-base font-bold text-sus-950">
+            <ImagePlus className="h-5 w-5" /> Marca: brasão e ícone
+          </p>
+          <p className="mb-4 text-xs text-ink/55">
+            Brasão aparece no menu lateral e no login; ícone substitui o favicon gerado.
+            Use URL https://… ou data:image/…. Vazio mantém o padrão.
+          </p>
           <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className={`rounded-full px-3 py-1 text-xs font-bold ${upd.atual ? "bg-teal/15 text-teal" : "bg-amber-100 text-amber-900"}`}>
-                {upd.atual ? "Atualizado" : "Desatualizado"}
-              </span>
-              <span className="font-mono text-xs text-ink/60">
-                v{upd.versao} · {upd.commit_local ?? "sem-git"} → {upd.commit_remoto ?? "?"}
-              </span>
+            <div>
+              <Label>URL do brasão / logo</Label>
+              <Input value={brasao} onChange={(e) => setBrasao(e.target.value)} placeholder="https://…" autoComplete="off" />
             </div>
-            <p className="text-xs text-ink/55">
-              {upd.repo}@{upd.branch}
-              {upd.release ? ` · release ${upd.release}` : ""}
-              {upd.erro ? ` · ${upd.erro}` : ""}
-            </p>
-            {updMsg && (
-              <p className="rounded-xl bg-teal/10 px-3 py-2 text-sm font-medium text-teal">{updMsg}</p>
-            )}
-            <div className="flex flex-wrap gap-2">
-              <Button
-                disabled={updBusy || !upd.tem_atualizacao}
-                onClick={async () => {
-                  const ok = await confirmar({
-                    titulo: "Atualizar sistema agora?",
-                    descricao: "Esta ação fará o rebuild dos containers Docker. O sistema terá uma indisponibilidade temporária estimada de 1 a 3 minutos.",
-                    textoConfirmar: "Sim, Atualizar Agora",
-                    variante: "warning",
-                  });
-                  if (!ok) return;
-                  setUpdBusy(true);
-                  setUpdMsg("");
-                  try {
-                    const r = await updateExecutar();
-                    setUpdMsg(r.detail);
-                  } catch (e: unknown) {
-                    const d = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Falha ao iniciar.";
-                    setUpdMsg(typeof d === "string" ? d : "Falha ao iniciar.");
-                  } finally {
-                    setUpdBusy(false);
-                  }
-                }}
-              >
-                <RefreshCw className="h-4 w-4" /> {updBusy ? "Iniciando…" : "Atualizar sistema"}
-              </Button>
-              <button
-                onClick={async () => {
-                  const s = await updateStatus(true).catch(() => null);
-                  if (s) setUpd(s);
-                }}
-                className="rounded-xl border border-sus-900/15 px-3 py-2 text-xs font-bold text-sus-900 hover:bg-sand"
-              >
-                Rechecar GitHub
-              </button>
-              <button
-                onClick={async () => {
-                  const l = await updateLog(200).catch(() => null);
-                  setLog(l ? l.log : "(falha ao ler log)");
-                }}
-                className="inline-flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-bold text-sus-800 hover:bg-sand"
-              >
-                <ScrollText className="h-4 w-4" /> Ver log
-              </button>
+            <div>
+              <Label>URL do ícone (favicon)</Label>
+              <Input value={icone} onChange={(e) => setIcone(e.target.value)} placeholder="https://… .png/.svg" autoComplete="off" />
             </div>
-            {log !== null && (
-              <pre className="max-h-56 overflow-auto rounded-xl bg-sus-950 p-3 font-mono text-[11px] leading-relaxed text-teal-100">
-                {log || "(log vazio)"}
-              </pre>
+            {(brasao.trim() || icone.trim()) && (
+              <div className="flex items-center gap-3 rounded-xl bg-sand px-3 py-2">
+                {brasao.trim() && <img src={brasao.trim()} alt="Prévia do brasão" className="h-10 w-10 rounded-lg bg-white object-contain p-0.5" />}
+                {icone.trim() && <img src={icone.trim()} alt="Prévia do ícone" className="h-8 w-8 rounded-lg bg-white object-contain p-0.5" />}
+                <span className="text-xs text-ink/55">Prévia — salva junto com as configurações abaixo.</span>
+              </div>
             )}
           </div>
-        ) : (
-          <p className="text-sm text-ink/50">Verificando versão…</p>
-        )}
-      </Card>
-    </>
+        </Card>
+
+        <Card className="p-6">
+          <p className="mb-1 flex items-center gap-2 font-display text-base font-bold text-sus-950">
+            <GitBranch className="h-5 w-5" /> Versão do Sistema e GitHub
+          </p>
+          <p className="mb-4 text-xs text-ink/55">
+            Verifica se há uma versão mais recente publicada no repositório oficial. As atualizações são executadas exclusivamente via script no terminal do servidor.
+          </p>
+          {upd ? (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className={`rounded-full px-3 py-1 text-xs font-bold ${upd.atual ? "bg-teal/15 text-teal" : "bg-amber-100 text-amber-900"}`}>
+                  {upd.atual ? "Atualizado" : "Nova atualização disponível no GitHub"}
+                </span>
+                <span className="font-mono text-xs text-ink/60">
+                  v{upd.versao} · local {upd.commit_local ?? "sem-git"} → remoto {upd.commit_remoto ?? "?"}
+                </span>
+              </div>
+              <p className="text-xs text-ink/55">
+                {upd.repo}@{upd.branch}
+                {upd.release ? ` · release ${upd.release}` : ""}
+                {upd.erro ? ` · ${upd.erro}` : ""}
+              </p>
+              {upd.tem_atualizacao && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                  <p className="font-bold flex items-center gap-1.5 mb-1">
+                    <Terminal className="h-4 w-4" /> Atualização disponível no GitHub
+                  </p>
+                  <p>
+                    Existe um commit mais recente no repositório remoto. Para aplicar a atualização com segurança, acesse o servidor via SSH/terminal e execute o script de atualização (ex: <code className="rounded bg-amber-100 px-1 py-0.5 font-mono">./deploy.sh</code>).
+                  </p>
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  disabled={updChecking}
+                  onClick={async () => {
+                    setUpdChecking(true);
+                    const s = await updateStatus(true).catch(() => null);
+                    if (s) setUpd(s);
+                    setUpdChecking(false);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-sus-900/15 px-3 py-2 text-xs font-bold text-sus-900 hover:bg-sand disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${updChecking ? "animate-spin" : ""}`} />
+                  {updChecking ? "Verificando…" : "Verificar atualizações no GitHub"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-ink/50">Verificando versão…</p>
+          )}
+        </Card>
+      </div>
+
+      <div className="space-y-4">
+        <Card className="p-6">
+          <p className="mb-1 flex items-center gap-2 font-display text-base font-bold text-sus-950">
+            <Coins className="h-5 w-5" /> Parâmetros Institucionais BPA / SIA-SUS (DATASUS)
+          </p>
+          <p className="mb-4 text-xs text-ink/55">
+            Estes dados preenchem o cabeçalho oficial (registro 01) do arquivo <code className="font-mono">.OUT</code> exportado para o BPA Mag e SIA/SUS.
+          </p>
+          {loading ? (
+            <p className="text-sm text-ink/50">Carregando…</p>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <Label>Órgão de Origem (máx 30 chars)</Label>
+                  <Input value={nomeOrgaoGestor} onChange={(e) => setNomeOrgaoGestor(e.target.value.toUpperCase())} maxLength={30} placeholder="SMS GUAPE" />
+                </div>
+                <div>
+                  <Label>Sigla / Cód. Origem (6 chars)</Label>
+                  <Input value={siglaOrgaoGestor} onChange={(e) => setSiglaOrgaoGestor(e.target.value.toUpperCase())} maxLength={6} placeholder="312810" />
+                </div>
+              </div>
+              <div>
+                <Label>CNPJ do Órgão Responsável (apenas números)</Label>
+                <Input value={cnpjOrgaoGestor} onChange={(e) => setCnpjOrgaoGestor(e.target.value.replace(/\D/g, ""))} maxLength={14} placeholder="18239616000185" />
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="sm:col-span-2">
+                  <Label>Órgão de Saúde Destino (máx 40 chars)</Label>
+                  <Input value={nomeOrgaoDestino} onChange={(e) => setNomeOrgaoDestino(e.target.value.toUpperCase())} maxLength={40} placeholder="SECRETARIA MUNICIPAL DE SAUDE" />
+                </div>
+                <div>
+                  <Label>Gestão Destino</Label>
+                  <Select value={tipoOrgaoDestino} onChange={(e) => setTipoOrgaoDestino(e.target.value)}>
+                    <option value="M">M - Municipal</option>
+                    <option value="E">E - Estadual</option>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="border-t border-sus-900/10 pt-3">
+                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink/60">Unidades e Responsáveis Técnicos Padrão (Fallback)</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label>CNES Padrão SMS</Label>
+                    <Input value={cnesSmsPadrao} onChange={(e) => setCnesSmsPadrao(e.target.value.replace(/\D/g, ""))} maxLength={7} placeholder="2146479" />
+                  </div>
+                  <div>
+                    <Label>CNES Padrão TFD</Label>
+                    <Input value={cnesTfdPadrao} onChange={(e) => setCnesTfdPadrao(e.target.value.replace(/\D/g, ""))} maxLength={7} placeholder="2147092" />
+                  </div>
+                  <div>
+                    <Label>CNS Responsável TFD (15 díg.)</Label>
+                    <Input value={cnsResponsavelTfd} onChange={(e) => setCnsResponsavelTfd(e.target.value.replace(/\D/g, ""))} maxLength={15} placeholder="703403201915616" />
+                  </div>
+                  <div>
+                    <Label>CBO Responsável TFD</Label>
+                    <Input value={cboResponsavelTfd} onChange={(e) => setCboResponsavelTfd(e.target.value.replace(/\D/g, ""))} maxLength={6} placeholder="225142" />
+                  </div>
+                  <div>
+                    <Label>CNS Responsável Lab (15 díg.)</Label>
+                    <Input value={cnsResponsavelLab} onChange={(e) => setCnsResponsavelLab(e.target.value.replace(/\D/g, ""))} maxLength={15} placeholder="700508575563459" />
+                  </div>
+                  <div>
+                    <Label>CBO Responsável Lab</Label>
+                    <Input value={cboResponsavelLab} onChange={(e) => setCboResponsavelLab(e.target.value.replace(/\D/g, ""))} maxLength={6} placeholder="223415" />
+                  </div>
+                </div>
+              </div>
+
+              {erro && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{erro}</p>}
+              {ok && <p className="rounded-xl bg-teal/10 px-3 py-2 text-sm font-medium text-teal">{ok}</p>}
+              <Button onClick={salvar} disabled={busy} className="w-full">
+                <Save className="h-4 w-4" /> {busy ? "Salvando…" : "Salvar Configurações Gerais e BPA"}
+              </Button>
+            </div>
+          )}
+        </Card>
+      </div>
+    </div>
   );
 }
 

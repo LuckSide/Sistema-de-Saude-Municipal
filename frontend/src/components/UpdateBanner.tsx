@@ -1,19 +1,14 @@
 import { useEffect, useState } from "react";
-import { ArrowUpCircle, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
+import { ArrowUpCircle, Terminal } from "lucide-react";
+import { Link } from "react-router-dom";
 import {
-  updateExecutar,
   updateStatus,
   type UpdateStatus,
 } from "../services/api";
-import { Button } from "../components/ui/primitives";
-import { useConfirm } from "./ConfirmDialog";
 
-/** Banner de update p/ admin — só versão. Detalhes GitHub ficam em Configurações. */
+/** Banner de aviso de nova versão no GitHub p/ admin. Atualização realizada via scripts no servidor. */
 export default function UpdateBanner() {
-  const { confirmar } = useConfirm();
   const [st, setSt] = useState<UpdateStatus | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
   const [dismiss, setDismiss] = useState(false);
 
   useEffect(() => {
@@ -30,28 +25,6 @@ export default function UpdateBanner() {
 
   if (dismiss || !st?.tem_atualizacao) return null;
 
-  async function atualizar() {
-    const ok = await confirmar({
-      titulo: "Atualizar sistema agora?",
-      descricao: "Esta ação fará download da nova versão e reiniciará os containers. O sistema terá uma indisponibilidade temporária de 1 a 3 minutos.",
-      textoConfirmar: "Sim, Atualizar Agora",
-      variante: "warning",
-    });
-    if (!ok) return;
-    setBusy(true);
-    setMsg("");
-    try {
-      const r = await updateExecutar();
-      setMsg(r.detail);
-      sessionStorage.removeItem("guape:update");
-    } catch (e: unknown) {
-      const d = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Falha ao iniciar atualização.";
-      setMsg(typeof d === "string" ? d : "Falha ao iniciar atualização.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <div className="rise mb-6 rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-card print:hidden">
       <div className="flex flex-wrap items-center gap-3">
@@ -60,27 +33,28 @@ export default function UpdateBanner() {
         </div>
         <div className="min-w-0 flex-1">
           <p className="font-display text-base font-bold text-amber-950">
-            Nova atualização disponível · v{st.versao}
+            Nova versão disponível no GitHub · v{st.versao} ({st.commit_remoto ?? "novo commit"})
           </p>
-          <p className="text-sm text-amber-900/70">
-            Veja detalhes e logs em Configurações → Geral.
+          <p className="text-sm text-amber-900/75">
+            Execute o script de atualização no servidor via terminal para aplicar. Detalhes em Configurações → Geral.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={atualizar} disabled={busy}>
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            {busy ? "Atualizando…" : "Atualizar sistema"}
-          </Button>
-          <button onClick={() => setDismiss(true)} className="grid min-h-[44px] min-w-[44px] place-items-center rounded-lg p-2 text-amber-700 hover:bg-amber-100" aria-label="Dispensar">
+          <Link
+            to="/configuracoes?aba=geral"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-amber-400 bg-white px-3 py-2 text-xs font-bold text-amber-900 hover:bg-amber-100"
+          >
+            <Terminal className="h-3.5 w-3.5" /> Ver versão
+          </Link>
+          <button
+            onClick={() => setDismiss(true)}
+            className="grid min-h-[44px] min-w-[44px] place-items-center rounded-lg p-2 text-amber-700 hover:bg-amber-100"
+            aria-label="Dispensar"
+          >
             ✕
           </button>
         </div>
       </div>
-      {msg && (
-        <p className="mt-3 flex items-center gap-2 rounded-xl bg-white/70 px-3 py-2 text-sm font-medium text-amber-900">
-          <CheckCircle2 className="h-4 w-4" /> {msg}
-        </p>
-      )}
     </div>
   );
 }
