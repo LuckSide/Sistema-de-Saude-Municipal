@@ -31,17 +31,38 @@ function aplicarVisual(s: SystemSettings) {
   link.href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
+let _settingsCache: SystemSettings | null = null;
+let _settingsPromise: Promise<SystemSettings> | null = null;
+
+function _carregarSettingsCompartilhado(): Promise<SystemSettings> {
+  if (_settingsCache) return Promise.resolve(_settingsCache);
+  if (!_settingsPromise) {
+    _settingsPromise = fetchSettingsPublic()
+      .then((s) => {
+        _settingsCache = s;
+        return s;
+      })
+      .catch((err) => {
+        _settingsPromise = null;
+        throw err;
+      });
+  }
+  return _settingsPromise;
+}
+
 export function useCidadeDinamica() {
-  const [settings, setSettings] = useState<SystemSettings>(DEFAULTS);
+  const [settings, setSettings] = useState<SystemSettings>(() => _settingsCache ?? DEFAULTS);
   useEffect(() => {
     let vivo = true;
-    fetchSettingsPublic()
+    _carregarSettingsCompartilhado()
       .then((s) => {
         if (!vivo) return;
         setSettings(s);
         aplicarVisual(s);
       })
-      .catch(() => aplicarVisual(DEFAULTS));
+      .catch(() => {
+        if (vivo) aplicarVisual(DEFAULTS);
+      });
     return () => {
       vivo = false;
     };

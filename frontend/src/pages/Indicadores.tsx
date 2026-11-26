@@ -244,26 +244,33 @@ export default function Indicadores() {
   }, [month, agenda]);
 
   function baixarCSV() {
+    const esc = (v: unknown) => {
+      const s = v === null || v === undefined ? "" : String(v);
+      const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
     const linhas = ["periodo;novos;realizados;agendados;urgentes"];
-    for (const p of pontos) linhas.push(`${p.label};${p.total};${p.realizados};${p.agendados};${p.urgentes}`);
+    for (const p of pontos) linhas.push(`${esc(p.label)};${p.total};${p.realizados};${p.agendados};${p.urgentes}`);
     linhas.push("");
     linhas.push("tipo_fila;total;perc;urgentes;agendados;aguardando");
-    for (const g of vol?.itens ?? []) linhas.push(`${g.tipo};${g.total};${g.perc};${g.urgentes};${g.agendados};${g.aguardando}`);
+    for (const g of vol?.itens ?? []) linhas.push(`${esc(g.tipo)};${g.total};${g.perc};${g.urgentes};${g.agendados};${g.aguardando}`);
     linhas.push("");
     linhas.push("procedimento;codigo;em_fila;aguardando;agendados;urgentes;novos;realizados;variacao_pct;tendencia");
     for (const p of procTop?.itens ?? [])
-      linhas.push(`${p.procedimento};${p.codigo};${p.total_fila};${p.aguardando};${p.agendados};${p.urgentes};${p.novos_periodo};${p.realizados_periodo};${p.variacao_pct};${p.tendencia}`);
+      linhas.push(`${esc(p.procedimento)};${esc(p.codigo)};${p.total_fila};${p.aguardando};${p.agendados};${p.urgentes};${p.novos_periodo};${p.realizados_periodo};${p.variacao_pct};${esc(p.tendencia)}`);
     linhas.push("");
-    linhas.push(["periodo", ...(procEvol?.series ?? [])].join(";"));
+    linhas.push(["periodo", ...(procEvol?.series ?? []).map(esc)].join(";"));
     for (const r of procEvol?.pontos ?? []) {
       const row = r as Record<string, string | number>;
-      linhas.push([String(row.label ?? row.periodo ?? ""), ...((procEvol?.series ?? []).map((s) => String(row[s] ?? 0)))].join(";"));
+      linhas.push([esc(row.label ?? row.periodo ?? ""), ...((procEvol?.series ?? []).map((s) => esc(row[s] ?? 0)))].join(";"));
     }
-    const blob = new Blob([linhas.join("\n")], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob(["\uFEFF" + linhas.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
+    a.href = url;
     a.download = `indicadores-filas-${de}_a_${ate}.csv`;
     a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
 
   const kpis = [

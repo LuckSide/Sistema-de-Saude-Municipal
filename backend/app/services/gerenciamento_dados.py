@@ -66,15 +66,6 @@ try:
     User.model_rebuild(force=True)
 except Exception:
     pass
-
-try:
-    for model_cls in (SolicitacaoMestre, Faturamento, ExameFila):
-        if hasattr(model_cls, "__table__"):
-            for col in model_cls.__table__.columns:
-                if not col.primary_key:
-                    col.nullable = True
-except Exception:
-    pass
 from app.schemas.gerenciamento_dados import (
     AuditoriaGerenciamentoResponse,
     DetalhesDiagnostico,
@@ -106,6 +97,30 @@ LOCK_DATA_CLEANUP = 847291993
 
 # Campos protegidos que nunca devem ser sobrescritos via campos_mesclar
 PROTECTED_FIELDS = frozenset({"id", "_sa_instance_state", "created_at"})
+
+_CAMPOS_MESCLAR_PACIENTE = frozenset({
+    "nome", "cpf", "cns", "nascimento", "sexo", "nome_mae", "nome_social",
+    "telefone", "endereco", "endereco_numero", "complemento", "bairro",
+    "municipio", "cep", "ponto_referencia", "unidade_saude_id", "unidade_cnes",
+    "unidade_nome", "equipe_esf", "equipe_ine", "microarea", "acs_nome",
+    "co_seq_cidadao_pec", "codigo_prontuario",
+})
+_CAMPOS_MESCLAR_MEDICO = frozenset({
+    "nome", "cpf", "crm", "cbo_codigo", "cbo_descricao", "especialidades",
+    "telefone", "email", "unidades_ids", "ativo",
+})
+_CAMPOS_MESCLAR_UNIDADE = frozenset({
+    "nome", "cnes", "endereco", "numero", "bairro", "municipio", "cep", "telefone", "ativo",
+})
+_CAMPOS_MESCLAR_LABORATORIO = frozenset({
+    "nome", "responsavel_tecnico", "horario_funcionamento", "cnpj", "cnes",
+    "telefone", "endereco", "ativo",
+})
+_CAMPOS_MESCLAR_PRESTADOR = frozenset({
+    "razao_social", "nome_fantasia", "cnpj", "cnes", "tipo_entidade",
+    "responsavel_nome", "responsavel_telefone", "email", "telefone",
+    "endereco", "municipio", "observacoes", "ativo",
+})
 
 
 # ==============================================================================
@@ -1724,7 +1739,7 @@ def _unificar_pacientes(
     # Aplicação de sobrescritas manuais fornecidas pelo usuário
     if campos_mesclar:
         for k, v in campos_mesclar.items():
-            if k not in PROTECTED_FIELDS and hasattr(master, k):
+            if k in _CAMPOS_MESCLAR_PACIENTE and hasattr(master, k):
                 setattr(master, k, v)
                 if k not in campos_enriquecidos:
                     campos_enriquecidos.append(k)
@@ -1867,7 +1882,7 @@ def _unificar_medicos(
 
     if campos_mesclar:
         for k, v in campos_mesclar.items():
-            if k not in PROTECTED_FIELDS and hasattr(master, k):
+            if k in _CAMPOS_MESCLAR_MEDICO and hasattr(master, k):
                 setattr(master, k, v)
 
     db.add(master)
@@ -2019,7 +2034,7 @@ def _unificar_unidades(
 
     if campos_mesclar:
         for k, v in campos_mesclar.items():
-            if k not in PROTECTED_FIELDS and hasattr(master, k):
+            if k in _CAMPOS_MESCLAR_UNIDADE and hasattr(master, k):
                 setattr(master, k, v)
 
     db.add(master)
@@ -2181,7 +2196,7 @@ def _unificar_laboratorios(
 
     if campos_mesclar:
         for k, v in campos_mesclar.items():
-            if k not in PROTECTED_FIELDS and hasattr(master, k):
+            if k in _CAMPOS_MESCLAR_LABORATORIO and hasattr(master, k):
                 setattr(master, k, v)
 
     db.add(master)
@@ -3620,7 +3635,7 @@ def _unificar_prestadores(
 
     if campos_mesclar:
         for k, v in campos_mesclar.items():
-            if k in PROTECTED_FIELDS or not hasattr(p_master, k):
+            if k not in _CAMPOS_MESCLAR_PRESTADOR or not hasattr(p_master, k):
                 continue
             setattr(p_master, k, v)
 

@@ -73,6 +73,11 @@ async def lifespan(app: FastAPI):
         parar_worker_pec()
         parar_worker_sigtap()
         parar_worker_lembretes_whatsapp()
+        try:
+            from app.services.pec_tunnel import parar_tunel
+            parar_tunel()
+        except Exception:
+            pass
 
 
 def _iniciar_higienizacao_startup() -> None:
@@ -152,7 +157,21 @@ def _iniciar_higienizacao_startup() -> None:
     threading.Thread(target=_run, daemon=True, name="startup_hygiene").start()
 
 
-app = FastAPI(title="Sistema de Saúde — API", version="1.0.0", lifespan=lifespan)
+import os as _os
+
+_IS_PROD_ENV = (
+    _os.getenv("ENV", "").lower() in ("production", "prod")
+    or _os.getenv("PRODUCAO", "").lower() in ("1", "true")
+)
+
+app = FastAPI(
+    title="Sistema de Saúde — API",
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url=None if _IS_PROD_ENV else "/docs",
+    redoc_url=None if _IS_PROD_ENV else "/redoc",
+    openapi_url=None if _IS_PROD_ENV else "/openapi.json",
+)
 
 app.add_middleware(
     CORSMiddleware,

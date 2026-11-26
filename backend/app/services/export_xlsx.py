@@ -8,6 +8,17 @@ CPF/códigos como texto p/ preservar zeros e pontuação).
 from datetime import date, datetime
 from io import BytesIO
 
+MAX_LINHAS = 20000
+
+
+def _sanitizar_celula_excel(texto: str) -> str:
+    """Neutraliza CSV/Formula Injection no Excel/LibreOffice mantendo visualização normal."""
+    if not texto:
+        return texto
+    if texto[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return f"'{texto}"
+    return texto
+
 try:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -95,7 +106,8 @@ def gerar_xlsx(
                 except (TypeError, ValueError):
                     cell.value = "" if v is None else str(v)
             else:  # texto: CPF, códigos e textos preservados
-                cell.value = "" if v is None else str(v)
+                raw_txt = "" if v is None else str(v)
+                cell.value = _sanitizar_celula_excel(raw_txt)
                 cell.number_format = "@"
             cell.font = Font(size=10)
             cell.border = BORDER_THIN
@@ -111,7 +123,13 @@ def gerar_xlsx(
     ws.page_setup.fitToHeight = 0
 
     buf = BytesIO()
-    wb.save(buf)
+    try:
+        wb.save(buf)
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
     return buf.getvalue()
 
 

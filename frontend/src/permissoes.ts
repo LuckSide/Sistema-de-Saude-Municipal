@@ -169,7 +169,7 @@ export const MODULOS: NoPermissao[] = [
     rota: "/configuracoes",
     filhos: [
       { codigo: "cfg_geral", rotulo: "Geral (município, marca, sistema)", icone: Settings, rota: "/configuracoes?aba=geral" },
-      { codigo: "cfg_filas", rotulo: "Importação de filas", icone: Upload, rota: "/configuracoes?aba=filas" },
+      { codigo: "cfg_filas", rotulo: "Importação de dados", icone: Upload, rota: "/configuracoes?aba=filas" },
       { codigo: "cfg_pec", rotulo: "Integração PEC / e-SUS APS", icone: Database, rota: "/configuracoes?aba=pec" },
       { codigo: "cfg_rnds", rotulo: "Integração RNDS", icone: Network, rota: "/configuracoes?aba=rnds" },
       { codigo: "cfg_whatsapp", rotulo: "WhatsApp / Notificações", icone: MessageCircle, rota: "/configuracoes?aba=whatsapp" },

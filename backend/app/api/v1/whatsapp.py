@@ -177,6 +177,11 @@ def enviar_mensagem_whatsapp(
     if not exame or not exame.ativo:
         raise HTTPException(404, "Solicitação não encontrada")
 
+    if not bool(getattr(ator, "is_superuser", False)) and getattr(ator, "unidade_saude_id", None):
+        if exame.unidade_saude_id and exame.unidade_saude_id != ator.unidade_saude_id:
+            if not tem_tela(ator, "tfd"):
+                raise HTTPException(403, "Sem permissão para enviar notificações de solicitações de outra unidade.")
+
     paciente = db.get(Paciente, exame.paciente_id)
     if not paciente:
         raise HTTPException(404, "Paciente não encontrado")
@@ -257,7 +262,16 @@ def salvar_configuracao_whatsapp(
 
     c.whatsapp_habilitado = data.whatsapp_habilitado
     c.whatsapp_provedor = data.whatsapp_provedor
-    c.whatsapp_api_url = data.whatsapp_api_url.strip()
+    url_limpa = data.whatsapp_api_url.strip()
+    if url_limpa:
+        import os
+        from app.core.security import validar_url_externa_segura
+        permitir_local = os.getenv("WHATSAPP_PERMITIR_REDE_LOCAL", "").strip().lower() in ("1", "true", "sim")
+        try:
+            url_limpa = validar_url_externa_segura(url_limpa, permitir_rede_privada=permitir_local)
+        except ValueError as e:
+            raise HTTPException(400, f"URL do gateway WhatsApp inválida: {e}")
+    c.whatsapp_api_url = url_limpa
     if data.whatsapp_api_token is not None and data.whatsapp_api_token.strip():
         c.whatsapp_api_token = data.whatsapp_api_token.strip()
     c.whatsapp_instancia_id = data.whatsapp_instancia_id.strip()

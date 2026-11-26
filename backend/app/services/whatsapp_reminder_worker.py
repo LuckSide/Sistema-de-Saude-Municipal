@@ -261,7 +261,12 @@ def _whatsapp_reminder_loop():
                         executar_disparo_lembretes_dia_anterior(db)
                 finally:
                     try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                    try:
                         db.execute(text(f"SELECT pg_advisory_unlock({LEMBRETE_LOCK_ID})"))
+                        db.commit()
                     except Exception:
                         pass
 

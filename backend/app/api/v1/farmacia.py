@@ -445,6 +445,33 @@ def cadastrar_medicamento(
     return enriquecer_medicamento(med)
 
 
+@router.get("/medicamentos/movimentacoes", response_model=List[MovimentacaoMedicamentoOut])
+def listar_movimentacoes_medicamento(
+    medicamento_id: Optional[int] = Query(None),
+    tipo: Optional[str] = Query(None),
+    termo_paciente: Optional[str] = Query(None),
+    limite: int = 100,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("farmacia_estoque", "farmacia", "usuarios")),
+):
+    query = select(MovimentacaoMedicamento)
+    if medicamento_id:
+        query = query.where(MovimentacaoMedicamento.medicamento_id == medicamento_id)
+    if tipo:
+        query = query.where(MovimentacaoMedicamento.tipo == tipo)
+    if termo_paciente and termo_paciente.strip():
+        tp = f"%{termo_paciente.strip().lower()}%"
+        query = query.where(
+            func.lower(MovimentacaoMedicamento.paciente_nome).like(tp) |
+            func.lower(MovimentacaoMedicamento.paciente_cpf).like(tp)
+        )
+
+    movs = db.exec(
+        query.order_by(MovimentacaoMedicamento.created_at.desc()).limit(limite)
+    ).all()
+    return movs
+
+
 @router.get("/medicamentos/{id}", response_model=MedicamentoOut)
 def obter_medicamento(
     id: int,
@@ -509,7 +536,9 @@ def registrar_movimentacao_medicamento(
     if dados.quantidade <= 0:
         raise HTTPException(status_code=400, detail="A quantidade movimentada deve ser maior que zero.")
 
-    med = db.get(Medicamento, dados.medicamento_id)
+    med = db.exec(
+        select(Medicamento).where(Medicamento.id == dados.medicamento_id).with_for_update()
+    ).first()
     if not med or not med.ativo:
         raise HTTPException(status_code=404, detail="Medicamento não encontrado ou inativo.")
 
@@ -557,33 +586,6 @@ def registrar_movimentacao_medicamento(
     db.refresh(mov)
 
     return mov
-
-
-@router.get("/medicamentos/movimentacoes", response_model=List[MovimentacaoMedicamentoOut])
-def listar_movimentacoes_medicamento(
-    medicamento_id: Optional[int] = Query(None),
-    tipo: Optional[str] = Query(None),
-    termo_paciente: Optional[str] = Query(None),
-    limite: int = 100,
-    db: Session = Depends(get_db),
-    ator: User = Depends(need_any_perm("farmacia_estoque", "farmacia", "usuarios")),
-):
-    query = select(MovimentacaoMedicamento)
-    if medicamento_id:
-        query = query.where(MovimentacaoMedicamento.medicamento_id == medicamento_id)
-    if tipo:
-        query = query.where(MovimentacaoMedicamento.tipo == tipo)
-    if termo_paciente and termo_paciente.strip():
-        tp = f"%{termo_paciente.strip().lower()}%"
-        query = query.where(
-            func.lower(MovimentacaoMedicamento.paciente_nome).like(tp) |
-            func.lower(MovimentacaoMedicamento.paciente_cpf).like(tp)
-        )
-
-    movs = db.exec(
-        query.order_by(MovimentacaoMedicamento.created_at.desc()).limit(limite)
-    ).all()
-    return movs
 
 
 # ==========================================
@@ -666,7 +668,7 @@ def exportar_validade_xlsx(
         usuario_nome=ator.nome,
         colunas=colunas,
         linhas=linhas,
-        nome_arquivo="farmacia_controle_validade",
+        arquivo_base="farmacia_controle_validade",
     )
 
 
@@ -719,106 +721,6 @@ def cadastrar_insumo(
     db.commit()
     db.refresh(ins)
     return enriquecer_insumo(ins)
-
-
-@router.get("/insumos/{id}", response_model=InsumoInternoOut)
-def obter_insumo(
-    id: int,
-    db: Session = Depends(get_db),
-    ator: User = Depends(need_any_perm("farmacia_insumos", "farmacia", "usuarios")),
-):
-    ins = db.get(InsumoInterno, id)
-    if not ins:
-        raise HTTPException(status_code=404, detail="Insumo não encontrado")
-    return enriquecer_insumo(ins)
-
-
-@router.put("/insumos/{id}", response_model=InsumoInternoOut)
-def atualizar_insumo(
-    id: int,
-    dados: InsumoInternoAtualizar,
-    db: Session = Depends(get_db),
-    ator: User = Depends(need_any_perm("farmacia_insumos", "farmacia", "usuarios")),
-):
-    ins = db.get(InsumoInterno, id)
-    if not ins:
-        raise HTTPException(status_code=404, detail="Insumo não encontrado")
-
-    campos = dados.model_dump(exclude_unset=True)
-    for chave, valor in campos.items():
-        setattr(ins, chave, valor)
-
-    ins.updated_at = datetime.utcnow()
-    db.add(ins)
-    db.commit()
-    db.refresh(ins)
-    return enriquecer_insumo(ins)
-
-
-@router.delete("/insumos/{id}")
-def excluir_insumo(
-    id: int,
-    db: Session = Depends(get_db),
-    ator: User = Depends(need_any_perm("farmacia_insumos", "farmacia", "usuarios")),
-):
-    ins = db.get(InsumoInterno, id)
-    if not ins:
-        raise HTTPException(status_code=404, detail="Insumo não encontrado")
-
-    ins.ativo = False
-    ins.updated_at = datetime.utcnow()
-    db.add(ins)
-    db.commit()
-    return {"sucesso": True, "mensagem": f"Insumo {ins.nome} inativado com sucesso."}
-
-
-@router.post("/insumos/movimentar", response_model=MovimentacaoInsumoOut)
-def registrar_movimentacao_insumo(
-    dados: MovimentacaoInsumoCriar,
-    db: Session = Depends(get_db),
-    ator: User = Depends(need_any_perm("farmacia_insumos", "farmacia", "usuarios")),
-):
-    if dados.quantidade <= 0:
-        raise HTTPException(status_code=400, detail="A quantidade movimentada deve ser maior que zero.")
-
-    ins = db.get(InsumoInterno, dados.insumo_id)
-    if not ins or not ins.ativo:
-        raise HTTPException(status_code=404, detail="Insumo não encontrado ou inativo.")
-
-    saldo_anterior = ins.estoque_atual
-
-    if dados.tipo.startswith("SAIDA"):
-        if ins.estoque_atual < dados.quantidade:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Saldo insuficiente de insumo. Saldo atual: {ins.estoque_atual} {ins.unidade_medida}(s), tentativa de saída: {dados.quantidade}."
-            )
-        saldo_posterior = ins.estoque_atual - dados.quantidade
-    else:  # ENTRADA
-        saldo_posterior = ins.estoque_atual + dados.quantidade
-
-    ins.estoque_atual = saldo_posterior
-    ins.updated_at = datetime.utcnow()
-    db.add(ins)
-
-    mov = MovimentacaoInsumo(
-        insumo_id=ins.id,
-        insumo_nome=ins.nome,
-        tipo=dados.tipo,
-        quantidade=dados.quantidade,
-        saldo_anterior=saldo_anterior,
-        saldo_posterior=saldo_posterior,
-        unidade_destino=dados.unidade_destino or "",
-        responsavel_recebimento=dados.responsavel_recebimento or "",
-        documento_referencia=dados.documento_referencia or "",
-        responsavel_usuario=ator.nome,
-        observacoes=dados.observacoes or "",
-    )
-    db.add(mov)
-    db.commit()
-    db.refresh(mov)
-
-    return mov
 
 
 @router.get("/insumos/movimentacoes", response_model=List[MovimentacaoInsumoOut])
@@ -888,8 +790,110 @@ def exportar_insumos_xlsx(
         usuario_nome=ator.nome,
         colunas=colunas,
         linhas=linhas,
-        nome_arquivo="farmacia_insumos_internos",
+        arquivo_base="farmacia_insumos_internos",
     )
+
+
+@router.get("/insumos/{id}", response_model=InsumoInternoOut)
+def obter_insumo(
+    id: int,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("farmacia_insumos", "farmacia", "usuarios")),
+):
+    ins = db.get(InsumoInterno, id)
+    if not ins:
+        raise HTTPException(status_code=404, detail="Insumo não encontrado")
+    return enriquecer_insumo(ins)
+
+
+@router.put("/insumos/{id}", response_model=InsumoInternoOut)
+def atualizar_insumo(
+    id: int,
+    dados: InsumoInternoAtualizar,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("farmacia_insumos", "farmacia", "usuarios")),
+):
+    ins = db.get(InsumoInterno, id)
+    if not ins:
+        raise HTTPException(status_code=404, detail="Insumo não encontrado")
+
+    campos = dados.model_dump(exclude_unset=True)
+    for chave, valor in campos.items():
+        setattr(ins, chave, valor)
+
+    ins.updated_at = datetime.utcnow()
+    db.add(ins)
+    db.commit()
+    db.refresh(ins)
+    return enriquecer_insumo(ins)
+
+
+@router.delete("/insumos/{id}")
+def excluir_insumo(
+    id: int,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("farmacia_insumos", "farmacia", "usuarios")),
+):
+    ins = db.get(InsumoInterno, id)
+    if not ins:
+        raise HTTPException(status_code=404, detail="Insumo não encontrado")
+
+    ins.ativo = False
+    ins.updated_at = datetime.utcnow()
+    db.add(ins)
+    db.commit()
+    return {"sucesso": True, "mensagem": f"Insumo {ins.nome} inativado com sucesso."}
+
+
+@router.post("/insumos/movimentar", response_model=MovimentacaoInsumoOut)
+def registrar_movimentacao_insumo(
+    dados: MovimentacaoInsumoCriar,
+    db: Session = Depends(get_db),
+    ator: User = Depends(need_any_perm("farmacia_insumos", "farmacia", "usuarios")),
+):
+    if dados.quantidade <= 0:
+        raise HTTPException(status_code=400, detail="A quantidade movimentada deve ser maior que zero.")
+
+    ins = db.exec(
+        select(InsumoInterno).where(InsumoInterno.id == dados.insumo_id).with_for_update()
+    ).first()
+    if not ins or not ins.ativo:
+        raise HTTPException(status_code=404, detail="Insumo não encontrado ou inativo.")
+
+    saldo_anterior = ins.estoque_atual
+
+    if dados.tipo.startswith("SAIDA"):
+        if ins.estoque_atual < dados.quantidade:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Saldo insuficiente de insumo. Saldo atual: {ins.estoque_atual} {ins.unidade_medida}(s), tentativa de saída: {dados.quantidade}."
+            )
+        saldo_posterior = ins.estoque_atual - dados.quantidade
+    else:  # ENTRADA
+        saldo_posterior = ins.estoque_atual + dados.quantidade
+
+    ins.estoque_atual = saldo_posterior
+    ins.updated_at = datetime.utcnow()
+    db.add(ins)
+
+    mov = MovimentacaoInsumo(
+        insumo_id=ins.id,
+        insumo_nome=ins.nome,
+        tipo=dados.tipo,
+        quantidade=dados.quantidade,
+        saldo_anterior=saldo_anterior,
+        saldo_posterior=saldo_posterior,
+        unidade_destino=dados.unidade_destino or "",
+        responsavel_recebimento=dados.responsavel_recebimento or "",
+        documento_referencia=dados.documento_referencia or "",
+        responsavel_usuario=ator.nome,
+        observacoes=dados.observacoes or "",
+    )
+    db.add(mov)
+    db.commit()
+    db.refresh(mov)
+
+    return mov
 
 
 # ==========================================

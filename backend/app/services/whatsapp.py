@@ -639,6 +639,12 @@ def disparar_whatsapp_gateway(
                 "data_hora": datetime.utcnow().isoformat(),
             }
 
+        if req_url:
+            import os
+            from app.core.security import validar_url_externa_segura
+            permitir_local = os.getenv("WHATSAPP_PERMITIR_REDE_LOCAL", "").strip().lower() in ("1", "true", "sim")
+            validar_url_externa_segura(req_url, permitir_rede_privada=permitir_local)
+
         data_bytes = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(req_url, data=data_bytes, headers=headers, method="POST")
 
@@ -716,7 +722,7 @@ def notificar_paciente_evento(
         if hasattr(exame, "laboratorio_id"):
             try:
                 from app.models.lab_fase6 import Laboratorio, ItemSolic
-                from app.models.cadastros_saude import SigtapProcedimento
+                from app.models.lab_exames import SigtapProcedimento
                 lab = db.get(Laboratorio, exame.laboratorio_id)
                 if lab:
                     local_nome = lab.nome

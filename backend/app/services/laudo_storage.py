@@ -102,10 +102,14 @@ def salvar_arquivo_laudo(
 
 
 def obter_caminho_arquivo_laudo(arquivo: LabResultadoArquivo) -> Optional[Path]:
-    """Retorna o caminho do arquivo no sistema de arquivos se existente."""
+    """Retorna o caminho do arquivo no sistema de arquivos se existente e contido no storage."""
     if not arquivo or not arquivo.caminho_storage:
         return None
-    p = Path(arquivo.caminho_storage)
+    base = STORAGE_BASE_DIR.resolve()
+    p = Path(arquivo.caminho_storage).resolve()
+    if not p.is_relative_to(base):
+        logger.warning("Tentativa de acesso fora do storage de laudos: %s", p)
+        return None
     if p.exists() and p.is_file():
         return p
     return None

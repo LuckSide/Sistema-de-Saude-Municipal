@@ -409,6 +409,75 @@ def criar_solicitacao(
     return _montar_detail_out(nova_sol, sec_adicionados, [])
 
 
+@router.get("/solicitacoes/exportar")
+def exportar_solicitacoes_excel(
+    status: str | None = None,
+    q: str | None = None,
+    tipo: str | None = None,
+    competencia: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(need_any_perm("apac_solicitacao", "apac_regulacao")),
+):
+    """Exportação de solicitações de APAC em XLSX padronizado."""
+    from app.services.export_xlsx import MAX_LINHAS, resposta_xlsx
+
+    query = select(SolicitacaoAPAC)
+    if status and status.upper() != "TODAS":
+        query = query.where(SolicitacaoAPAC.status == status.upper())
+    if tipo:
+        query = query.where(SolicitacaoAPAC.tipo_apac == tipo)
+    if competencia:
+        query = query.where(SolicitacaoAPAC.competencia == competencia)
+    if q and q.strip():
+        termo = f"%{q.strip()}%"
+        query = query.where(
+            or_(
+                SolicitacaoAPAC.paciente_nome.ilike(termo),
+                SolicitacaoAPAC.paciente_cpf.ilike(termo),
+                SolicitacaoAPAC.paciente_cns.ilike(termo),
+                SolicitacaoAPAC.numero_apac.ilike(termo),
+                SolicitacaoAPAC.procedimento_principal_codigo.ilike(termo),
+                SolicitacaoAPAC.procedimento_principal_nome.ilike(termo),
+            )
+        )
+
+    itens = list(db.exec(query.order_by(SolicitacaoAPAC.id.desc()).limit(MAX_LINHAS)).all())
+    linhas = [
+        {
+            "numero_apac": s.numero_apac or f"#{s.id}",
+            "status": s.status,
+            "competencia": s.competencia,
+            "paciente": s.paciente_nome,
+            "cpf": s.paciente_cpf,
+            "cns": s.paciente_cns,
+            "procedimento": f"{s.procedimento_principal_codigo} - {s.procedimento_principal_nome}",
+            "cid": f"{s.cid_principal_codigo} - {s.cid_principal_nome}",
+            "solicitante": s.medico_solicitante_nome,
+            "data_solicitacao": s.data_solicitacao,
+        }
+        for s in itens
+    ]
+    colunas = [
+        {"chave": "numero_apac", "rotulo": "Nº APAC", "largura": 18},
+        {"chave": "status", "rotulo": "Status", "largura": 14},
+        {"chave": "competencia", "rotulo": "Competência", "largura": 12},
+        {"chave": "paciente", "rotulo": "Paciente", "largura": 32},
+        {"chave": "cpf", "rotulo": "CPF", "largura": 15},
+        {"chave": "cns", "rotulo": "CNS", "largura": 18},
+        {"chave": "procedimento", "rotulo": "Procedimento SIGTAP", "largura": 38},
+        {"chave": "cid", "rotulo": "CID-10", "largura": 24},
+        {"chave": "solicitante", "rotulo": "Médico Solicitante", "largura": 24},
+        {"chave": "data_solicitacao", "rotulo": "Data Solicitação", "formato": "data", "largura": 16},
+    ]
+    return resposta_xlsx(
+        "Solicitações de APAC",
+        user.nome or user.username,
+        colunas,
+        linhas,
+        "solicitacoes_apac",
+    )
+
+
 @router.get("/solicitacoes/{id}", response_model=SolicitacaoAPACDetailOut)
 def detalhar_solicitacao(
     id: int,

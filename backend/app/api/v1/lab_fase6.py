@@ -1781,12 +1781,12 @@ def alterar_status_agendamento(
                 fila.status = "cancelado"
                 db.add(fila)
     elif data.status == "agendado" and status_antigo in ("cancelado", "desativado"):
-        vaga = db.exec(
-            select(VagaLab).where(VagaLab.laboratorio_id == mestre.laboratorio_id, VagaLab.data == mestre.data_agendada)
-        ).first()
-        if vaga:
-            vaga.vagas_ocupadas += 1
-            db.add(vaga)
+        db.exec(
+            text(
+                "UPDATE lab_vagas SET vagas_ocupadas = vagas_ocupadas + 1 "
+                "WHERE laboratorio_id = :lid AND data = :dt"
+            ).bindparams(lid=mestre.laboratorio_id, dt=mestre.data_agendada)
+        )
 
     mestre.status = data.status
     if data.motivo:

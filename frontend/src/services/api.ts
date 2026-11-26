@@ -584,6 +584,44 @@ export const importarFilas = (
     .then((r) => r.data);
 };
 
+export type ImportViagensCarroOut = {
+  simulacao: boolean;
+  arquivo: string;
+  lidas: number;
+  viagens_identificadas: number;
+  viagens_novas: number;
+  viagens_existentes: number;
+  passageiros_novos: number;
+  acompanhantes_novos: number;
+  passageiros_duplicados: number;
+  faturamentos_novos: number;
+  pacientes_vinculados: number;
+  pacientes_novos: number;
+  pacientes_nao_encontrados_ignorados: number;
+  aviso_criacao_pacientes?: string;
+  avisos_pacientes_novos?: AvisoPacienteNovoImport[];
+  erros: { linha: number; motivo: string }[];
+};
+
+export const importarViagensCarro = (
+  arquivo: File,
+  simular: boolean,
+  criarPacientesNovos = true,
+  gerarFaturamento = true
+) => {
+  const form = new FormData();
+  form.append("file", arquivo);
+  return api
+    .post<ImportViagensCarroOut>("/api/integracoes/viagens-carro/importar", form, {
+      params: {
+        simular,
+        criar_pacientes_novos: criarPacientesNovos,
+        gerar_faturamento: gerarFaturamento,
+      },
+    })
+    .then((r) => r.data);
+};
+
 // ---------- Versão / auto-update ----------
 export type UpdateStatus = {
   versao: string;
@@ -816,6 +854,7 @@ export type Passageiro = {
   acompanhante_id?: number | null;
   acompanhante_nome?: string;
   acompanhante_cpf?: string;
+  acompanhante_nascimento?: string | null;
   presente: boolean;
   paciente_nome: string;
   paciente_telefone?: string;
@@ -956,7 +995,9 @@ export const tfdSemana = (inicio: string) =>
 export const tfdFaturarDeslocamento = (id: number) =>
   api.post<{ criados: number; ignorados: number }>(`/api/tfd/viagens/${id}/faturar-deslocamento`).then((r) => r.data);
 export const tfdSugestao = (data: string, destino: string, viagemId?: number) =>
-  api.get<{ veiculo: FrotaDia | null; demanda: number; assentos: number; motivo: string }>("/api/tfd/viagens/sugestao", { params: { data, destino, viagem_id: viagemId ?? undefined } }).then((r) => r.data);
+  api.get<{ veiculo: FrotaDia | null; demanda: number; assentos: number; hora_saida?: string; hora_retorno?: string; motivo: string }>("/api/tfd/viagens/sugestao", { params: { data, destino, viagem_id: viagemId ?? undefined } }).then((r) => r.data);
+export const tfdGerarViagemAutomatica = (p: { data_viagem: string; destino: string; alocar_fila?: boolean }) =>
+  api.post<{ viagem_id: number; destino: string; data_viagem: string; hora_saida: string; hora_retorno: string; veiculo_id: number | null; alocados: number }>("/api/tfd/viagens/gerar-automatica", p).then((r) => r.data);
 export type Disponibilidade = {
   data: string;
   janela: { saida: string; retorno: string };
@@ -2875,10 +2916,22 @@ export const labJustificarInconsistencia = (
 ): Promise<{ ok: boolean; status: string; mensagem: string }> =>
   api.post(`/api/exames/solicitacoes/${mid}/justificar-inconsistencia`, payload).then((r) => r.data);
 
-export const labVisualizarLaudoPdfUrl = (mid: number): string => {
-  const token = typeof window !== "undefined" ? localStorage.getItem("guape:token") : null;
-  const baseUrl = `/api/exames/solicitacoes/${mid}/resultado-pdf`;
-  return token ? `${baseUrl}?token=${encodeURIComponent(token)}` : baseUrl;
+export const labFetchLaudoPdfBlob = (mid: number): Promise<Blob> =>
+  api.get<Blob>(`/api/exames/solicitacoes/${mid}/resultado-pdf`, { responseType: "blob" }).then((r) => r.data);
+
+export const labAbrirLaudoPdf = async (mid: number): Promise<void> => {
+  const blob = await labFetchLaudoPdfBlob(mid);
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, "_blank", "noopener,noreferrer");
+  if (!win) {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `laudo-${mid}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 };
 
 export const labAuditoriaLaudosListar = (params?: { q?: string; status?: string; limit?: number }): Promise<LabAuditoriaItem[]> =>
@@ -3241,12 +3294,12 @@ export async function atualizarApacSolicitacao(id: number, payload: any): Promis
 }
 
 export async function duplicarApacContinuidade(id: number, justificativa_atualizada: string): Promise<SolicitacaoApac> {
-  const { data } = await api.post<SolicitacaoApac>(`/api/apac/solicitacoes/${id}/continuidade`, { justificativa_atualizada });
+  const { data } = await api.post<SolicitacaoApac>(`/api/apac/solicitacoes/${id}/duplicar-continuidade`, { justificativa_atualizada });
   return data;
 }
 
-export async function cancelarApacSolicitacao(id: number, motivo?: string): Promise<any> {
-  const { data } = await api.post(`/api/apac/solicitacoes/${id}/cancelar`, { motivo });
+export async function cancelarApacSolicitacao(id: number): Promise<any> {
+  const { data } = await api.delete(`/api/apac/solicitacoes/${id}`);
   return data;
 }
 
@@ -3258,7 +3311,7 @@ export async function uploadAnexoApac(id: number, formData: FormData): Promise<A
 }
 
 export async function iniciarAnaliseApac(id: number): Promise<SolicitacaoApac> {
-  const { data } = await api.post<SolicitacaoApac>(`/api/apac/solicitacoes/${id}/iniciar-analise`);
+  const { data } = await api.post<SolicitacaoApac>(`/api/apac/regulacao/${id}/iniciar-analise`);
   return data;
 }
 
@@ -3266,17 +3319,17 @@ export async function autorizarApac(
   id: number,
   payload: { medico_autorizador_id: number; parecer?: string; meses_vigencia?: number }
 ): Promise<SolicitacaoApac> {
-  const { data } = await api.post<SolicitacaoApac>(`/api/apac/solicitacoes/${id}/autorizar`, payload);
+  const { data } = await api.post<SolicitacaoApac>(`/api/apac/regulacao/${id}/autorizar`, payload);
   return data;
 }
 
 export async function devolverApac(id: number, motivo: string): Promise<SolicitacaoApac> {
-  const { data } = await api.post<SolicitacaoApac>(`/api/apac/solicitacoes/${id}/devolver`, { motivo });
+  const { data } = await api.post<SolicitacaoApac>(`/api/apac/regulacao/${id}/devolver`, { motivo });
   return data;
 }
 
 export async function indeferirApac(id: number, motivo: string): Promise<SolicitacaoApac> {
-  const { data } = await api.post<SolicitacaoApac>(`/api/apac/solicitacoes/${id}/indeferir`, { motivo });
+  const { data } = await api.post<SolicitacaoApac>(`/api/apac/regulacao/${id}/indeferir`, { motivo });
   return data;
 }
 
@@ -3323,7 +3376,7 @@ export async function fetchApacFaturamentoResumo(competencia?: string): Promise<
 }
 
 export async function gerarRemessaApac(competencia: string, cnes_executante?: string): Promise<LoteFaturamentoApac> {
-  const { data } = await api.post<LoteFaturamentoApac>("/api/apac/faturamento/remessa", { competencia, cnes_executante });
+  const { data } = await api.post<LoteFaturamentoApac>("/api/apac/faturamento/gerar-remessa", { competencia, cnes_executante });
   return data;
 }
 
@@ -3355,10 +3408,10 @@ export async function downloadRemessaApac(loteId: number): Promise<Blob> {
 
 export async function fetchSigtapApac(q?: string): Promise<ItemSigtapApac[]> {
   try {
-    const { data } = await api.get<ItemSigtapApac[]>("/api/apac/sigtap", { params: { q } });
+    const { data } = await api.get<ItemSigtapApac[]>("/api/apac/sigtap-procedimentos", { params: { q } });
     if (Array.isArray(data) && data.length > 0) return data;
   } catch {
-    // fallback para /api/lab/sigtap ou lista interna
+    // fallback para /api/lab/sigtap
   }
   try {
     const { data } = await api.get<any>("/api/lab/sigtap", { params: { q, limit: 50, apenas_laboratoriais: false } });
@@ -4704,7 +4757,7 @@ export const labAlterarStatusSolicitacao = (
   },
 ) =>
   api
-    .patch<SolicMestre>(`/api/lab/exames/solicitacoes/${mid}/status`, payload)
+    .patch<SolicMestre>(`/api/exames/solicitacoes/${mid}/status`, payload)
     .then((r) => mapMestre(r.data));
 
 export const labEditarPedidoExames = (
@@ -4720,7 +4773,7 @@ export const labEditarPedidoExames = (
   },
 ) =>
   api
-    .put<SolicMestre>(`/api/lab/exames/solicitacoes/${mid}/editar`, payload)
+    .put<SolicMestre>(`/api/exames/solicitacoes/${mid}/editar`, payload)
     .then((r) => mapMestre(r.data));
 
 export const labRemoverItemExame = (
@@ -4729,7 +4782,7 @@ export const labRemoverItemExame = (
   justificativa: string,
 ) =>
   api
-    .post<SolicMestre>(`/api/lab/exames/solicitacoes/${mid}/itens/${itemId}/remover`, {
+    .post<SolicMestre>(`/api/exames/solicitacoes/${mid}/itens/${itemId}/remover`, {
       justificativa,
     })
     .then((r) => mapMestre(r.data));

@@ -113,13 +113,11 @@ SELECT ficha_uuid, motivo FROM pec_fichas WHERE inconsistente LIMIT 500;
 FN_CADSUS = """
 CREATE OR REPLACE FUNCTION cadsus_cns_valido(cns TEXT) RETURNS BOOLEAN
 LANGUAGE plpgsql IMMUTABLE AS $$
-DECLARE soma INT := 0; i INT; dv INT; resto INT;
+DECLARE soma INT := 0; i INT;
 BEGIN
-  IF cns IS NULL OR cns !~ '^\\d{15}$' THEN RETURN FALSE; END IF;
+  IF cns IS NULL OR cns !~ '^[12789]\\d{14}$' THEN RETURN FALSE; END IF;
   FOR i IN 1..15 LOOP soma := soma + (SUBSTRING(cns, i, 1)::INT * (16 - i)); END LOOP;
-  resto := soma % 11;
-  dv := CASE WHEN resto = 0 THEN 0 ELSE 11 - resto END;
-  RETURN dv = 10;
+  RETURN (soma % 11) = 0;
 END $$;
 
 CREATE OR REPLACE FUNCTION cadsus_cpf_valido(cpf TEXT) RETURNS BOOLEAN

@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ---------- Laboratórios ----------
@@ -71,6 +71,8 @@ class LabFeriadoBloqueioIn(BaseModel):
 
 
 class LabFeriadoBloqueioOut(LabFeriadoBloqueioIn):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     laboratorio_nome: str = ""
     created_at: datetime | None = None

@@ -3691,7 +3691,7 @@ export default function NovaSolicitacao() {
                                     {item.duplicadoInfo.link_visualizacao && (
                                       <button
                                         type="button"
-                                        onClick={() => window.open(item.duplicadoInfo!.link_visualizacao, "_blank")}
+                                        onClick={() => window.open(item.duplicadoInfo!.link_visualizacao, "_blank", "noopener,noreferrer")}
                                         className="ml-auto underline hover:text-amber-950 font-medium text-[10px]"
                                       >
                                         Visualizar Pedido

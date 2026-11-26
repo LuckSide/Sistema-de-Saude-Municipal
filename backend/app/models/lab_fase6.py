@@ -91,15 +91,15 @@ class SolicitacaoMestre(SQLModel, table=True):
     contrato_id: int | None = Field(default=None, foreign_key="lab_contratos.id", index=True)
     status: str = Field(default="agendado", max_length=40, index=True)
     agendado_por: str = Field(default="", max_length=120)
-    origem_fila_id: int | None = Field(default=None, foreign_key="lab_fila_psf.id")
+    origem_fila_id: int | None = Field(default=None, foreign_key="lab_fila_psf.id", index=True)
     lote_id: int | None = Field(default=None, foreign_key="lab_lotes_liberacao.id", index=True)
     status_auditoria: str = Field(
         default="pendente_conferencia", max_length=40, index=True
     )
     observacao_laboratorio: str = Field(default="", max_length=500)
-    medico_id: int | None = Field(default=None)
+    medico_id: int | None = Field(default=None, index=True)
     medico_solicitante: str = Field(default="", max_length=150)
-    unidade_saude_id: int | None = Field(default=None)
+    unidade_saude_id: int | None = Field(default=None, index=True)
     unidade_psf: str = Field(default="", max_length=150)
     justificativa: str = Field(default="", max_length=500)
     instrucoes_transporte: str = Field(default="", max_length=500)

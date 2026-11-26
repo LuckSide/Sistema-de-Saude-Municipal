@@ -66,7 +66,12 @@ def _pec_sync_loop():
                                 logger.warning(f"Erro ao atualizar cache de indicadores no worker: {ex_ind}")
                 finally:
                     try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                    try:
                         db.execute(text(f"SELECT pg_advisory_unlock({SCHEDULER_LEADER_LOCK})"))
+                        db.commit()
                     except Exception:
                         pass
 

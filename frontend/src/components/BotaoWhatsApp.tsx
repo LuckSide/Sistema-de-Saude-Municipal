@@ -160,7 +160,7 @@ export default function BotaoWhatsApp({
   function handleAbrirWhatsApp(e?: React.MouseEvent) {
     if (e) e.stopPropagation();
     if (preview?.link_whatsapp) {
-      window.open(preview.link_whatsapp, "_blank");
+      window.open(preview.link_whatsapp, "_blank", "noopener,noreferrer");
     } else {
       const texto = gerarTextoLocal();
       const rawTel = exame?.paciente_telefone || "";
@@ -169,7 +169,7 @@ export default function BotaoWhatsApp({
       const link = telWhats
         ? `https://wa.me/${telWhats}?text=${encodeURIComponent(texto)}`
         : `https://wa.me/?text=${encodeURIComponent(texto)}`;
-      window.open(link, "_blank");
+      window.open(link, "_blank", "noopener,noreferrer");
     }
   }
 

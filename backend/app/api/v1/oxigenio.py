@@ -1027,7 +1027,11 @@ def criar_emprestimo(
             if item_in.tipo_servico == "MAQUINA":
                 if not item_in.equipamento_id:
                     raise HTTPException(status_code=400, detail=f"Item #{idx+1}: selecione o equipamento a ser emprestado.")
-                item_eq = db.get(EquipamentoRespiratorio, item_in.equipamento_id)
+                item_eq = db.exec(
+                    select(EquipamentoRespiratorio)
+                    .where(EquipamentoRespiratorio.id == item_in.equipamento_id)
+                    .with_for_update()
+                ).first()
                 if not item_eq:
                     raise HTTPException(status_code=400, detail=f"Item #{idx+1}: Equipamento não encontrado.")
                 if item_eq.status == "EM_USO":
@@ -1089,7 +1093,11 @@ def criar_emprestimo(
         if data.tipo_servico == "MAQUINA":
             if not data.equipamento_id:
                 raise HTTPException(status_code=400, detail="Selecione o equipamento a ser emprestado.")
-            primeiro_eq = db.get(EquipamentoRespiratorio, data.equipamento_id)
+            primeiro_eq = db.exec(
+                select(EquipamentoRespiratorio)
+                .where(EquipamentoRespiratorio.id == data.equipamento_id)
+                .with_for_update()
+            ).first()
             if not primeiro_eq:
                 raise HTTPException(status_code=400, detail="Equipamento respiratório não encontrado.")
             if primeiro_eq.status == "EM_USO":
@@ -1185,16 +1193,16 @@ def criar_emprestimo(
     )
 
     db.add(emprestimo)
-    db.commit()
-    db.refresh(emprestimo)
+    db.flush()
 
-    # Grava itens individuais vinculados a este empréstimo
+    # Grava itens individuais vinculados a este empréstimo dentro da mesma transação atômica
     tem_concentrador_no_termo = any(
         (p["eq"] and "CONCENTRADOR" in (p["eq"].tipo or "").upper())
         or (p["in"].tipo_equipamento and "CONCENTRADOR" in p["in"].tipo_equipamento.upper())
         for p in itens_processados
     )
     itens_salvos: list[ItemEmprestimoOut] = []
+    sub_itens_objs: list[ItemEmprestimoOxigenio] = []
     for proc in itens_processados:
         it_in = proc["in"]
         eq_obj = proc["eq"]
@@ -1222,7 +1230,11 @@ def criar_emprestimo(
             observacoes=it_in.observacoes,
         )
         db.add(sub_item)
-        db.commit()
+        sub_itens_objs.append(sub_item)
+
+    db.commit()
+    db.refresh(emprestimo)
+    for sub_item in sub_itens_objs:
         db.refresh(sub_item)
         itens_salvos.append(ItemEmprestimoOut.model_validate(sub_item))
 

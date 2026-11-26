@@ -349,21 +349,33 @@ def ler_xlsx(conteudo: bytes) -> list[dict]:
         import openpyxl
     except ImportError:
         raise ValueError("Excel indisponível no servidor (openpyxl ausente) — envie CSV")
+    wb = None
     try:
         wb = openpyxl.load_workbook(io.BytesIO(conteudo), read_only=True, data_only=True)
         ws = wb.active
-        linhas = list(ws.iter_rows(values_only=True))
+        iterador = ws.iter_rows(values_only=True)
+        primeira = next(iterador, None)
+        if not primeira or not any(primeira):
+            raise ValueError("planilha sem cabeçalho")
+        headers = [(str(h).strip() if h is not None else "") for h in primeira]
+        out = []
+        for vals in iterador:
+            if not any(v not in (None, "") for v in vals):
+                continue
+            if len(out) >= MAX_LINHAS:
+                raise ValueError(f"Acima de {MAX_LINHAS} linhas — divida a planilha")
+            out.append({h: ("" if v is None else str(v)) for h, v in zip(headers, vals)})
+        return out
+    except ValueError:
+        raise
     except Exception:
         raise ValueError("planilha ilegível (use .xlsx com cabeçalho na 1ª linha)")
-    if not linhas or not any(linhas[0]):
-        raise ValueError("planilha sem cabeçalho")
-    headers = [(str(h).strip() if h is not None else "") for h in linhas[0]]
-    out = []
-    for vals in linhas[1:]:
-        if not any(v not in (None, "") for v in vals):
-            continue
-        out.append({h: ("" if v is None else str(v)) for h, v in zip(headers, vals)})
-    return out
+    finally:
+        if wb is not None:
+            try:
+                wb.close()
+            except Exception:
+                pass
 
 
 def _extrair_procedimentos_container(container_el) -> list[dict]:
@@ -431,7 +443,13 @@ def ler_xml(conteudo: bytes) -> list[dict]:
     2. Formato achatado/tabular (um nó <exame> por procedimento com <codigo_procedimento>/<nome_procedimento>);
     3. Lista delimitada em texto dentro de <exames_realizados> (separada por ';' ou '|').
     """
-    import xml.etree.ElementTree as ET
+    try:
+        import defusedxml.ElementTree as ET
+    except ImportError:
+        import xml.etree.ElementTree as ET
+    cab = conteudo[:8192].upper()
+    if b"<!DOCTYPE" in cab or b"<!ENTITY" in cab:
+        raise ValueError("XML com declarações DOCTYPE/ENTITY não permitido por segurança")
     try:
         root = ET.fromstring(conteudo)
     except Exception as e:

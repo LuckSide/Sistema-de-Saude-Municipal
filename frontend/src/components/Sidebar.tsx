@@ -141,7 +141,7 @@ const MODULOS_NAV: ModuloNav[] = [
       { to: "/lab/faturamento", label: "Faturamento Laboratório", icon: ReceiptText, tela: "lab_faturamento", ou: ["lab", "faturamento_bpa", "usuarios"] },
       { to: "/lab/orcamento", label: "Orçamento e Lotes de Exames", icon: Coins, tela: "lab_orcamento", ou: ["lab", "lab_marcacao", "usuarios"] },
       { to: "/tfd/faturamento", label: "Faturamento e Custos TFD", icon: Landmark, tela: "tfd_faturamento", ou: ["tfd", "usuarios"] },
-      { to: "/prestadores?aba=contratos", label: "Contratos de Prestadores", icon: Landmark, tela: "usuarios", ou: ["cfg_unidades", "cfg_laboratorios", "lab_vagas", "tfd", "lab", "cfg_geral"] },
+      { to: "/lab/faturamento?aba=contratos", label: "Contratos de Prestadores", icon: Landmark, tela: "lab_faturamento", ou: ["lab", "lab_orcamento", "faturamento_bpa", "usuarios"] },
       { to: "/apac/solicitacoes", label: "Laudos e Solicitações APAC", icon: FileCheck, tela: "apac_solicitacao", ou: ["tfd", "usuarios", "apac"] },
       { to: "/apac/regulacao", label: "Regulação e Autorização APAC", icon: Stethoscope, tela: "apac_regulacao", ou: ["usuarios", "apac"] },
     ],

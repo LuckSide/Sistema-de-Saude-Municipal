@@ -46,12 +46,7 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./backend/app:/code/app
-      # Repo raiz p/ auto-update (git pull + compose). Monta raiz p/ `git -C /repo` funcionar.
-      # Produção: garanta mesma pasta no host (ou ajuste REPO_DIR). Sem .:/app p/ não mascarar código.
-      # RISCO: docker.sock = controle total do host. Habilite só em servidor próprio
-      # com UPDATE_ENABLED=true + endpoint restrito a superuser, ou remova as 2 linhas.
-      - .:/repo
-      - /var/run/docker.sock:/var/run/docker.sock
+      - app_storage:/code/storage
 
   frontend:
     build: ./frontend
@@ -65,3 +60,4 @@ services:
 
 volumes:
   pgdata:
+  app_storage:

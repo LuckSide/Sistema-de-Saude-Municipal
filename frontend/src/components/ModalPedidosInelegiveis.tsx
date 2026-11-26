@@ -103,6 +103,7 @@ export default function ModalPedidosInelegiveis({
       onClose();
     } catch (e: any) {
       setErro(e?.response?.data?.detail || "Erro ao dar baixa nos pedidos selecionados.");
+    } finally {
       setSalvando(false);
     }
   }

@@ -19,7 +19,8 @@ import {
 import {
   labAuditoriaLaudosListar,
   labAuditoriaLaudoDecidir,
-  labVisualizarLaudoPdfUrl,
+  labAbrirLaudoPdf,
+  labFetchLaudoPdfBlob,
   type LabAuditoriaItem,
 } from "../../services/api";
 import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
@@ -38,8 +39,34 @@ export default function AuditoriaLaudos() {
 
   // Item selecionado para auditoria detalhada
   const [itemSelecionado, setItemSelecionado] = useState<LabAuditoriaItem | null>(null);
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string>("");
   const [parecerAuditor, setParecerAuditor] = useState("");
   const [processandoDecisao, setProcessandoDecisao] = useState(false);
+
+  useEffect(() => {
+    let ativo = true;
+    let urlCriada = "";
+    if (!itemSelecionado) {
+      setPdfBlobUrl("");
+      return;
+    }
+    labFetchLaudoPdfBlob(itemSelecionado.solicitacao_id)
+      .then((blob) => {
+        urlCriada = URL.createObjectURL(blob);
+        if (ativo) {
+          setPdfBlobUrl(urlCriada);
+        } else {
+          URL.revokeObjectURL(urlCriada);
+        }
+      })
+      .catch(() => {
+        if (ativo) setPdfBlobUrl("");
+      });
+    return () => {
+      ativo = false;
+      if (urlCriada) URL.revokeObjectURL(urlCriada);
+    };
+  }, [itemSelecionado?.solicitacao_id]);
 
   async function carregar() {
     setCarregando(true);
@@ -318,14 +345,13 @@ export default function AuditoriaLaudos() {
                       <Eye className="h-4 w-4" /> Auditar Laudo & Decidir
                     </Button>
 
-                    <a
-                      href={labVisualizarLaudoPdfUrl(item.solicitacao_id)}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <button
+                      type="button"
+                      onClick={() => void labAbrirLaudoPdf(item.solicitacao_id)}
                       className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-sus-900/15 bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:bg-sand w-full sm:w-auto"
                     >
                       <ExternalLink className="h-3.5 w-3.5" /> Abrir PDF Completo
-                    </a>
+                    </button>
                   </div>
                 </div>
               </Card>
@@ -502,20 +528,25 @@ export default function AuditoriaLaudos() {
                   <span className="flex items-center gap-1.5">
                     <FileText className="h-4 w-4 text-indigo-600" /> Laudo Original Enviado pelo Laboratório
                   </span>
-                  <a
-                    href={labVisualizarLaudoPdfUrl(itemSelecionado.solicitacao_id)}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => void labAbrirLaudoPdf(itemSelecionado.solicitacao_id)}
                     className="inline-flex items-center gap-1 text-[11px] text-indigo-700 hover:underline font-bold"
                   >
                     <ExternalLink className="h-3 w-3" /> Abrir em outra aba
-                  </a>
+                  </button>
                 </div>
-                <iframe
-                  src={labVisualizarLaudoPdfUrl(itemSelecionado.solicitacao_id)}
-                  title="Laudo PDF do Paciente"
-                  className="w-full flex-1 border-0"
-                />
+                {pdfBlobUrl ? (
+                  <iframe
+                    src={pdfBlobUrl}
+                    title="Laudo PDF do Paciente"
+                    className="w-full flex-1 border-0"
+                  />
+                ) : (
+                  <div className="flex-1 grid place-items-center text-xs text-ink/50">
+                    Carregando documento PDF autenticado…
+                  </div>
+                )}
               </div>
             </div>
           </div>

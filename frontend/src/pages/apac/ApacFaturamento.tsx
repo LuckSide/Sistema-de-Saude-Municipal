@@ -113,25 +113,13 @@ export default function ApacFaturamento() {
   // Ação: Download da Remessa (.TXT)
   const handleDownload = async (loteId: number) => {
     setBaixandoLoteId(loteId);
+    setMsgErro("");
     try {
       await downloadRemessaApac(loteId);
       setMsgSucesso("Download do arquivo magnético APAC concluído!");
-    } catch {
-      // Fallback para gerar o arquivo texto no navegador com formato DATASUS
-      const lote = lotes.find((l) => l.id === loteId);
-      const cabecalho = `01APAC-MAG${competencia.replace("-", "")}${lote?.cnes_executante?.padEnd(7, " ") || "2156828"}SECRETARIA MUNICIPAL DE SAUDE DE GUAPE         ${String(lote?.total_apacs || 14).padStart(6, "0")}${String(lote?.total_procedimentos || 84).padStart(8, "0")}\n`;
-      const corpo = `0231261000000010305010107000000000000001N18001012026102026010120260331\n0231261000000020304020222000000000000001C50901012026102026010120260331\n`;
-      const rodape = `99${String((lote?.total_apacs || 14) + 2).padStart(8, "0")}FINAL_ARQUIVO\n`;
-      const blob = new Blob([cabecalho + corpo + rodape], { type: "text/plain;charset=iso-8859-1" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = lote?.nome_arquivo || `APAC_REMESSA_${competencia.replace("-", "")}.TXT`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
-      setMsgSucesso("Arquivo de remessa magnética DATASUS exportado!");
+    } catch (e: unknown) {
+      const det = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setMsgErro(det || "Não foi possível baixar o arquivo de remessa APAC do servidor.");
     } finally {
       setBaixandoLoteId(null);
     }
@@ -157,9 +145,9 @@ export default function ApacFaturamento() {
 
         <div className="flex items-center gap-2">
           <ExportarExcel
-            url="/api/apac/faturamento/exportar"
+            url="/api/apac/faturamento/exportar-excel"
             arquivo={`faturamento_apac_${competencia}`}
-            params={{ competencia, cnes: cnesExecutante }}
+            params={{ competencia }}
             rotulo="Exportar Produção (Excel)"
           />
           <Button

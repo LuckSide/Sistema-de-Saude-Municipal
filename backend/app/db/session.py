@@ -1,7 +1,10 @@
+import logging
 from sqlalchemy import inspect, text
 from sqlmodel import SQLModel, create_engine
 
 from app.core.config import settings
+
+_session_log = logging.getLogger("db.session")
 
 pool_kwargs = {}
 if "postgresql" in settings.DATABASE_URL:
@@ -73,10 +76,10 @@ def _sincronizar_colunas_faltantes(target_engine) -> None:
                                         f"ON {table.name} ({col.name})"
                                     )
                                 )
-                    except Exception:
-                        pass
-    except Exception:
-        pass
+                    except Exception as exc_col:
+                        _session_log.warning("Aviso em _sincronizar_colunas_faltantes (%s.%s): %s", table.name, col.name, exc_col)
+    except Exception as exc_sync:
+        _session_log.warning("Aviso geral em _sincronizar_colunas_faltantes: %s", exc_sync)
 
 
 def init_db() -> None:
@@ -1541,8 +1544,14 @@ def _init_db_impl() -> None:
             try:
                 with conn.begin_nested():
                     conn.execute(text(ddl_tbl))
-            except Exception:
-                pass
+            except Exception as exc_ddl:
+                _session_log.warning("Aviso DDL em init_db: %s", exc_ddl)
+
+        try:
+            with conn.begin_nested():
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS unaccent"))
+        except Exception as exc_ext:
+            _session_log.warning("Aviso ao criar extensao unaccent: %s", exc_ext)
 
         for idx_lote in [
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_lab_orcamento_competencia ON lab_orcamentos_mensais (competencia)",
@@ -1794,145 +1803,31 @@ def _init_db_impl() -> None:
             SELECT 'Pró-Análises Laboratório', true
             WHERE NOT EXISTS (SELECT 1 FROM lab_laboratorios WHERE unaccent(nome) ILIKE '%PRO%ANALISE%' OR nome ILIKE '%PRO%AN%LISE%')
             """,
+            "ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 1",
             """
-            INSERT INTO lab_solic_mestre (
-                paciente_id, data_agendada, hora_agendada, laboratorio_id,
-                status, agendado_por, origem_fila_id, medico_solicitante,
-                unidade_psf, observacao_laboratorio, status_auditoria
-            )
-            SELECT 
-                lp.paciente_id,
-                COALESCE(lp.data_agendada, lp.data_solicitacao),
-                COALESCE(NULLIF(lp.hora_agendada, ''), '07:00'),
-                COALESCE(
-                    (
-                        SELECT id FROM lab_laboratorios
-                        WHERE (unaccent(nome) ILIKE '%MEDLABOR%' OR unaccent(nome) ILIKE '%MED LABOR%') AND ativo = true
-                          AND (unaccent(lp.observacoes) ILIKE '%MEDLABOR%' OR unaccent(lp.observacoes) ILIKE '%MED LABOR%')
-                        ORDER BY id ASC LIMIT 1
-                    ),
-                    (
-                        SELECT id FROM lab_laboratorios
-                        WHERE (unaccent(nome) ILIKE '%PRO%ANALISE%' OR nome ILIKE '%PRO%AN%LISE%') AND ativo = true
-                          AND (unaccent(lp.observacoes) ILIKE '%PRO%ANALISE%' OR lp.observacoes ILIKE '%PRO%AN%LISE%')
-                        ORDER BY id ASC LIMIT 1
-                    ),
-                    (
-                        SELECT id FROM lab_laboratorios
-                        WHERE unaccent(nome) ILIKE '%LABCON%' AND ativo = true
-                          AND unaccent(lp.observacoes) ILIKE '%LABCON%'
-                        ORDER BY id ASC LIMIT 1
-                    ),
-                    (SELECT id FROM lab_laboratorios WHERE ativo = true ORDER BY id ASC LIMIT 1)
-                ),
-                CASE WHEN COALESCE(lp.data_agendada, lp.data_solicitacao) < CURRENT_DATE THEN 'realizado' ELSE 'agendado' END,
-                'Sincronização Automática Fila',
-                lp.id,
-                lp.medico_solicitante,
-                lp.unidade_psf,
-                COALESCE(lp.observacoes, ''),
-                CASE WHEN COALESCE(lp.data_agendada, lp.data_solicitacao) < CURRENT_DATE THEN 'aprovado' ELSE 'pendente_conferencia' END
-            FROM lab_fila_psf lp
-            WHERE (lp.status = 'agendado' OR lp.data_agendada IS NOT NULL)
-              AND NOT EXISTS (
-                  SELECT 1 FROM lab_solic_mestre sm
-                  WHERE sm.paciente_id = lp.paciente_id
-                    AND sm.data_agendada = COALESCE(lp.data_agendada, lp.data_solicitacao)
-                    AND sm.status != 'cancelado'
-              )
+            DO $$
+            BEGIN
+              IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'tfd_pacientes'
+                  AND column_name = 'co_seq_cidadao_pec'
+                  AND data_type = 'integer'
+              ) THEN
+                ALTER TABLE tfd_pacientes ALTER COLUMN co_seq_cidadao_pec TYPE BIGINT;
+              END IF;
+            END $$;
             """,
-            """
-            UPDATE lab_solic_mestre s
-            SET laboratorio_id = (
-                SELECT id FROM lab_laboratorios
-                WHERE (unaccent(nome) ILIKE '%MEDLABOR%' OR unaccent(nome) ILIKE '%MED LABOR%') AND ativo = true
-                ORDER BY id ASC LIMIT 1
-            )
-            FROM lab_fila_psf f
-            WHERE f.id = s.origem_fila_id
-              AND (unaccent(f.observacoes) ILIKE '%MEDLABOR%' OR unaccent(f.observacoes) ILIKE '%MED LABOR%')
-              AND s.laboratorio_id != (
-                SELECT id FROM lab_laboratorios
-                WHERE (unaccent(nome) ILIKE '%MEDLABOR%' OR unaccent(nome) ILIKE '%MED LABOR%') AND ativo = true
-                ORDER BY id ASC LIMIT 1
-              )
-            """,
-            """
-            UPDATE lab_solic_mestre s
-            SET laboratorio_id = (
-                SELECT id FROM lab_laboratorios
-                WHERE (unaccent(nome) ILIKE '%PRO%ANALISE%' OR nome ILIKE '%PRO%AN%LISE%') AND ativo = true
-                ORDER BY id ASC LIMIT 1
-            )
-            FROM lab_fila_psf f
-            WHERE f.id = s.origem_fila_id
-              AND (unaccent(f.observacoes) ILIKE '%PRO%ANALISE%' OR f.observacoes ILIKE '%PRO%AN%LISE%')
-              AND s.laboratorio_id != (
-                SELECT id FROM lab_laboratorios
-                WHERE (unaccent(nome) ILIKE '%PRO%ANALISE%' OR nome ILIKE '%PRO%AN%LISE%') AND ativo = true
-                ORDER BY id ASC LIMIT 1
-              )
-            """,
-            """
-            UPDATE lab_solic_mestre s
-            SET laboratorio_id = (
-                SELECT id FROM lab_laboratorios
-                WHERE unaccent(nome) ILIKE '%LABCON%' AND ativo = true
-                ORDER BY id ASC LIMIT 1
-            )
-            FROM lab_fila_psf f
-            WHERE f.id = s.origem_fila_id
-              AND unaccent(f.observacoes) ILIKE '%LABCON%'
-              AND s.laboratorio_id != (
-                SELECT id FROM lab_laboratorios
-                WHERE unaccent(nome) ILIKE '%LABCON%' AND ativo = true
-                ORDER BY id ASC LIMIT 1
-              )
-            """,
-            """
-            UPDATE lab_fila_psf
-            SET status = 'realizado'
-            WHERE status IN ('na_fila', 'agendado')
-              AND data_agendada IS NOT NULL
-              AND data_agendada < CURRENT_DATE
-            """,
-            """
-            UPDATE lab_solic_mestre
-            SET status = 'realizado', status_auditoria = 'aprovado'
-            WHERE status = 'agendado'
-              AND data_agendada < CURRENT_DATE
-            """,
-            """
-            UPDATE lab_solic_itens
-            SET status_auditoria = 'aprovado'
-            WHERE solicitacao_id IN (
-                SELECT id FROM lab_solic_mestre WHERE status = 'realizado'
-            ) AND status_auditoria = 'pendente_conferencia'
-            """,
-            """
-            UPDATE lab_fila_psf
-            SET status = 'cancelado', observacoes = COALESCE(observacoes, '') || ' [Cancelado: Fila PSF inexistente no município]'
-            WHERE status = 'na_fila'
-              AND (
-                  especialidade ILIKE '%SECRETARIA%'
-                  OR tipo_fila ILIKE '%SECRETARIA%'
-                  OR unidade_psf ILIKE '%SECRETARIA%'
-                  OR especialidade ILIKE '%PEDIATRIA%'
-                  OR tipo_fila ILIKE '%PEDIATRIA%'
-                  OR especialidade ILIKE '%PRÉ-NATAL%'
-                  OR tipo_fila ILIKE '%PRÉ-NATAL%'
-                  OR especialidade ILIKE '%PRE-NATAL%'
-                  OR tipo_fila ILIKE '%PRE-NATAL%'
-                  OR especialidade ILIKE '%CAPS%'
-                  OR tipo_fila ILIKE '%CAPS%'
-              )
-            """,
+            "CREATE INDEX IF NOT EXISTS ix_tfd_exames_fila_data_agendada ON tfd_exames_fila (data_agendada)",
+            "CREATE INDEX IF NOT EXISTS ix_tfd_exames_fila_ativo_status_pedido ON tfd_exames_fila (ativo, status, data_pedido)",
+            "CREATE INDEX IF NOT EXISTS ix_tfd_viagem_fila_data_consulta ON tfd_viagem_fila (data_consulta)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_solic_mestre_lab_status_data ON lab_solic_mestre (laboratorio_id, status, data_agendada)",
+            "CREATE INDEX IF NOT EXISTS ix_audit_logs_entity_entity_id_ts ON audit_logs (entity, entity_id, timestamp)",
         ]:
             try:
                 with conn.begin_nested():
                     conn.execute(text(idx_lote))
-            except Exception:
-                pass
+            except Exception as exc_lote:
+                _session_log.warning("Aviso DDL/Seed em init_db: %s", exc_lote)
 
     # Garante extensão unaccent (quando o usuário do banco tem permissão) e índices únicos
     with engine.begin() as conn:

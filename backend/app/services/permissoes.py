@@ -93,9 +93,7 @@ def acoes_map(user) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for k, v in raw.items():
         if k in TODAS_TELAS and isinstance(v, list):
-            limpas = [a for a in v if a in ACOES_VALIDAS]
-            if limpas:
-                out[k] = limpas
+            out[k] = [a for a in v if a in ACOES_VALIDAS]
     return out
 
 
@@ -140,11 +138,9 @@ def validar_acoes(raw) -> dict[str, list[str]]:
     for k, v in raw.items():
         if k not in TODAS_TELAS:
             continue
-        if not isinstance(v, list) or not v:
+        if not isinstance(v, list):
             continue
-        limpas = [a for a in v if a in ACOES_VALIDAS]
-        if limpas:
-            out[k] = limpas
+        out[k] = [a for a in v if a in ACOES_VALIDAS]
     return out
 
 

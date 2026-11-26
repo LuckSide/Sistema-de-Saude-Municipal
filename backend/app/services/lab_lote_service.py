@@ -903,8 +903,8 @@ def consolidar_lote_atomico(
             db.flush()
 
             # Cria ItemSolic para cada SIGTAP com snapshot imutável de preço (zerado se paciente de testes)
-            val_un_item = 0.0 if (pac and pac.eh_teste) else float(p_info.valor_unitario or 0.0)
             for p_info in procs:
+                val_un_item = 0.0 if (pac and pac.eh_teste) else float(p_info.valor_unitario or 0.0)
                 db.add(
                     ItemSolic(
                         solicitacao_id=mestre.id,

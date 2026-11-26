@@ -39,13 +39,13 @@ const vazio = {
   destino: "",
   unidade: "",
   data_viagem: "",
-  hora_saida: "",
+  hora_saida: "05:00",
   veiculo_id: "",
   motorista: "",
   motorista_id: "",
   departamento: "",
   data_retorno: "",
-  hora_retorno: "",
+  hora_retorno: "14:00",
   km_inicial: "",
   km_final: "",
   adiantamento: "",
@@ -502,7 +502,7 @@ export default function TfdViagens() {
                     <button
                       onClick={async () => {
                         const res = await tfdEnviarWhatsAppConfirmacaoPassageiro(sel.id, p.id);
-                        if (res.whatsapp_link) window.open(res.whatsapp_link, "_blank");
+                        if (res.whatsapp_link) window.open(res.whatsapp_link, "_blank", "noopener,noreferrer");
                         setPass(await tfdPassageiros(sel.id));
                       }}
                       className="rounded-lg p-1.5 text-emerald-700 hover:bg-emerald-50"

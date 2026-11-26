@@ -26,7 +26,7 @@ import {
   labPedirAjuste,
   labUploadLaudo,
   labJustificarInconsistencia,
-  labVisualizarLaudoPdfUrl,
+  labAbrirLaudoPdf,
   labAlterarStatusSolicitacao,
   labRemoverItemExame,
   labsListar,
@@ -172,8 +172,13 @@ export default function RecepcaoLab() {
     carregar();
   }, [filtroStatus, dataFiltro, filtroLab]);
 
-  // Busca inteligente com debounce
+  // Busca inteligente com debounce (ignora montagem inicial para evitar requisição duplicada)
+  const termoMountRef = useRef(true);
   useEffect(() => {
+    if (termoMountRef.current) {
+      termoMountRef.current = false;
+      return;
+    }
     const t = setTimeout(() => {
       carregar();
     }, 300);
@@ -820,14 +825,13 @@ export default function RecepcaoLab() {
                         <CheckCircle2 className="h-4 w-4 text-emerald-700" />
                         <span>Laudo Oficial conferido e vinculado ao Prontuário PEC.</span>
                       </div>
-                      <a
-                        href={labVisualizarLaudoPdfUrl(item.id)}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => void labAbrirLaudoPdf(item.id)}
                         className="inline-flex items-center gap-1 rounded bg-white px-2 py-1 text-[11px] font-bold text-emerald-800 shadow-2xs hover:bg-emerald-50 border border-emerald-300"
                       >
                         <FileText className="h-3.5 w-3.5" /> Abrir PDF
-                      </a>
+                      </button>
                     </div>
                   )}
                 </div>
@@ -930,14 +934,13 @@ export default function RecepcaoLab() {
                   {/* Status 4: Em Revisão Secretaria */}
                   {isEmRevisao && (
                     <>
-                      <a
-                        href={labVisualizarLaudoPdfUrl(item.id)}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => void labAbrirLaudoPdf(item.id)}
                         className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-900 hover:bg-indigo-100"
                       >
                         <Eye className="h-3.5 w-3.5" /> Ver Laudo Enviado
-                      </a>
+                      </button>
 
                       <Button
                         type="button"
@@ -971,14 +974,13 @@ export default function RecepcaoLab() {
                         <RefreshCw className="h-3.5 w-3.5" /> Reenviar PDF Retificado
                       </Button>
 
-                      <a
-                        href={labVisualizarLaudoPdfUrl(item.id)}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => void labAbrirLaudoPdf(item.id)}
                         className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-900 hover:bg-emerald-100 shadow-2xs"
                       >
                         <FileCheck className="h-4 w-4 text-emerald-700" /> Visualizar Laudo Oficial (PDF)
-                      </a>
+                      </button>
                     </>
                   )}
                 </div>

@@ -4,6 +4,7 @@ import { labObterComprovante, tfdObterComprovante, tfdObterComprovantePorPedido,
 import { Button } from "./ui/primitives";
 import BotaoWhatsApp from "./BotaoWhatsApp";
 import { useBackdropClose } from "../hooks/useBackdropClose";
+import { gerarQrDataUri } from "../utils/qrSvg";
 
 interface ComprovanteExameModalProps {
   solicitacaoId?: number | null;
@@ -214,11 +215,11 @@ export default function ComprovanteExameModal({
                 </div>
               </div>
 
-              {/* QR Code de Identificação Exclusiva */}
+              {/* QR Code de Identificação Exclusiva (gerado localmente offline) */}
               {comprovante.qr_code_url && (
                 <div className="flex flex-col items-center justify-center p-2 print:p-1 rounded-xl bg-white border border-sus-900/15 shadow-sm text-center shrink-0">
                   <img
-                    src={comprovante.qr_code_url}
+                    src={gerarQrDataUri(comprovante.qr_code_url)}
                     alt="QR Code da Solicitação"
                     className="h-24 w-24 object-contain print:h-14 print:w-14"
                     loading="eager"

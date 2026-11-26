@@ -33,23 +33,26 @@ export function useConfirm(): ConfirmContextType {
 }
 
 export function ConfirmDialogProvider({ children }: { children: ReactNode }) {
-  const [dialogo, setDialogo] = useState<{
+  const [fila, setFila] = useState<Array<{
     opcoes: ConfirmOptions;
     resolve: (valor: boolean) => void;
-  } | null>(null);
+  }>>([]);
+  const dialogo = fila[0] ?? null;
 
   const confirmar = useCallback((opcoes: ConfirmOptions): Promise<boolean> => {
     return new Promise((resolve) => {
-      setDialogo({ opcoes, resolve });
+      setFila((prev) => [...prev, { opcoes, resolve }]);
     });
   }, []);
 
   const fechar = useCallback((resultado: boolean) => {
-    if (dialogo) {
-      dialogo.resolve(resultado);
-      setDialogo(null);
-    }
-  }, [dialogo]);
+    setFila((prev) => {
+      if (prev.length === 0) return prev;
+      const [atual, ...resto] = prev;
+      atual.resolve(resultado);
+      return resto;
+    });
+  }, []);
 
   const value = useMemo(() => ({ confirmar }), [confirmar]);
 

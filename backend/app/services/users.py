@@ -198,6 +198,24 @@ def get_by_username(db: Session, username: str) -> User | None:
     return db.exec(select(User).where(User.username == username)).first()
 
 
+def _bump_token_version(user: User) -> None:
+    user.token_version = int(getattr(user, "token_version", 1) or 1) + 1
+
+
+_DUMMY_PASSWORD_HASH: str | None = None
+
+
+def _dummy_verify(password: str) -> None:
+    """Consome tempo constante de bcrypt quando o usuário não existe ou está inativo."""
+    global _DUMMY_PASSWORD_HASH
+    if _DUMMY_PASSWORD_HASH is None:
+        _DUMMY_PASSWORD_HASH = hash_password("dummy-timing-guard-saude-guape-000")
+    try:
+        verify_password(password, _DUMMY_PASSWORD_HASH)
+    except Exception:
+        pass
+
+
 def authenticate(db: Session, username: str, password: str) -> User | None:
     u_clean = username.strip().lower()
     user = get_by_username(db, u_clean)
@@ -207,6 +225,7 @@ def authenticate(db: Session, username: str, password: str) -> User | None:
         if digits and len(digits) == 11:
             user = get_by_username(db, digits)
     if not user or not user.is_active:
+        _dummy_verify(password)
         return None
     if not verify_password(password, user.password_hash):
         return None
@@ -288,6 +307,8 @@ def update_user(db: Session, user: User, data: UserUpdate) -> User:
             setattr(user, k, v.strip() if isinstance(v, str) else v)
     if pac_vinculado and not (user.nome or "").strip():
         user.nome = pac_vinculado.nome
+    if "is_active" in patch and patch["is_active"] is False:
+        _bump_token_version(user)
     db.add(user)
     try:
         db.commit()
@@ -320,13 +341,14 @@ def trocar_senha(db: Session, user: User, senha_atual: str, nova_senha: str) -> 
     _validar_nova(senha_atual, nova_senha)
     user.password_hash = hash_password(nova_senha)
     user.must_change_password = False
+    _bump_token_version(user)
     db.add(user)
     db.commit()
 
 
 def primeira_troca(db: Session, user: User, senha_atual: str, nova: str, confirmar: str) -> None:
     """Troca do primeiro acesso: usuário autenticado define sua nova senha pessoal."""
-    if senha_atual and not verify_password(senha_atual, user.password_hash):
+    if not (senha_atual or "").strip() or not verify_password(senha_atual, user.password_hash):
         raise ValueError("Senha atual (temporária) incorreta")
     if len(nova) < SENHA_MIN:
         raise ValueError(f"Nova senha deve ter ao menos {SENHA_MIN} caracteres")
@@ -345,6 +367,7 @@ def reset_senha(db: Session, user: User) -> str:
     temporaria = gerar_temporaria()
     user.password_hash = hash_password(temporaria)
     user.must_change_password = True
+    _bump_token_version(user)
     db.add(user)
     db.commit()
     return temporaria

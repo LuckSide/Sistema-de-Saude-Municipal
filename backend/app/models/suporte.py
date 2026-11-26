@@ -36,5 +36,5 @@ class TicketSuporte(SQLModel, table=True):
     )
     criado_em: datetime = Field(
         default_factory=datetime.utcnow,
-        sa_column=Column(DateTime(timezone=False), nullable=False),
+        sa_column=Column(DateTime(timezone=False), nullable=False, index=True),
     )

@@ -1899,6 +1899,10 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
         log.detalhes = str(e)[:2000]
 
         try:
+            db.rollback()
+        except Exception:
+            pass
+        try:
             cfg = db.exec(select(IntegrationSettings).where(IntegrationSettings.id == 1)).first()
             if cfg:
                 cfg.pec_sync_ultima_execucao = datetime.utcnow()
@@ -1908,13 +1912,21 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
             db.commit()
             db.refresh(log)
         except Exception:
-            pass
+            try:
+                db.rollback()
+            except Exception:
+                pass
         return log
 
     finally:
         if is_pg_locked:
             try:
+                db.rollback()
+            except Exception:
+                pass
+            try:
                 db.execute(text(f"SELECT pg_advisory_unlock({ADVISORY_LOCK_SYNC})"))
+                db.commit()
             except Exception:
                 pass
         _SYNC_RUNNING = False
@@ -1932,11 +1944,13 @@ def atualizar_enderecos_pacientes_pec(db: Session) -> dict:
 
     from sqlalchemy import create_engine
     pec_engine = create_engine(dsn, pool_pre_ping=True, connect_args={"connect_timeout": 8})
-
-    with pec_engine.connect() as pec_conn:
-        cols_pec = _inspecionar_colunas_pec(pec_conn)
-        query = text(_construir_query_enderecos_pec(cols_pec))
-        pec_rows = pec_conn.execute(query).mappings().all()
+    try:
+        with pec_engine.connect() as pec_conn:
+            cols_pec = _inspecionar_colunas_pec(pec_conn)
+            query = text(_construir_query_enderecos_pec(cols_pec))
+            pec_rows = pec_conn.execute(query).mappings().all()
+    finally:
+        pec_engine.dispose()
 
     pec_by_co_seq: dict[int, dict] = {}
     pec_by_cpf: dict[str, dict] = {}

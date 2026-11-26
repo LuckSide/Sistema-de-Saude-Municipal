@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertTriangle,
@@ -49,8 +49,7 @@ function sanitizarAcoes(raw: unknown): Record<string, Acao[]> {
   const out: Record<string, Acao[]> = {};
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
     if (!Array.isArray(v)) continue;
-    const limpas = v.filter((a): a is Acao => typeof a === "string" && ACAO_SET.has(a as Acao));
-    if (limpas.length) out[k] = limpas;
+    out[k] = v.filter((a): a is Acao => typeof a === "string" && ACAO_SET.has(a as Acao));
   }
   return out;
 }
@@ -250,7 +249,12 @@ export default function Usuarios() {
   }, []);
 
   // Debounce na busca e filtros server-side
+  const buscaMountRef = useRef(true);
   useEffect(() => {
+    if (buscaMountRef.current) {
+      buscaMountRef.current = false;
+      return;
+    }
     const t = setTimeout(() => {
       carregar(1, pageSize, busca, filtroArea, filtroPerfil);
     }, 250);

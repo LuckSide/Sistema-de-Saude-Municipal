@@ -80,21 +80,53 @@ def iniciar_tunel(
 
     parar_tunel()
 
+    import re
+    from pathlib import Path
+
+    ssh_host_c = (ssh_host or "").strip()
+    ssh_user_c = (ssh_user or "").strip()
+    remote_host_c = (remote_host or "127.0.0.1").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,149}", ssh_host_c):
+        raise ValueError("Host SSH inválido")
+    if not re.fullmatch(r"[A-Za-z0-9._][A-Za-z0-9._-]{0,119}", ssh_user_c):
+        raise ValueError("Usuário SSH inválido")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,149}", remote_host_c):
+        raise ValueError("Host remoto do túnel inválido")
+    ssh_port_i = int(ssh_port)
+    local_port_i = int(local_port)
+    remote_port_i = int(remote_port)
+    if not (1 <= ssh_port_i <= 65535 and 1024 <= local_port_i <= 65535 and 1 <= remote_port_i <= 65535):
+        raise ValueError("Porta SSH ou porta local do túnel fora do intervalo permitido")
+
+    known_hosts_dir = Path(__file__).resolve().parent.parent.parent / "storage" / "ssh"
+    try:
+        known_hosts_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(known_hosts_dir, 0o700)
+        known_hosts_path = known_hosts_dir / "known_hosts"
+    except OSError:
+        known_hosts_path = Path(tempfile.gettempdir()) / "saude_pec_known_hosts"
+    known_hosts_path.touch(exist_ok=True)
+    try:
+        os.chmod(known_hosts_path, 0o600)
+    except OSError:
+        pass
+
     temp_files = []
     env = os.environ.copy()
+    err_tmp = None
 
     try:
         cmd = [
             "ssh",
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "StrictHostKeyChecking=accept-new",
+            "-o", f"UserKnownHostsFile={known_hosts_path}",
             "-o", "ExitOnForwardFailure=yes",
             "-o", "ServerAliveInterval=15",
             "-o", "ServerAliveCountMax=3",
-            "-o", f"ConnectTimeout={timeout}",
-            "-p", str(ssh_port),
+            "-o", f"ConnectTimeout={int(timeout)}",
+            "-p", str(ssh_port_i),
             "-N",
-            "-L", f"127.0.0.1:{local_port}:{remote_host}:{remote_port}",
+            "-L", f"127.0.0.1:{local_port_i}:{remote_host_c}:{remote_port_i}",
         ]
 
         if ssh_key.strip():
@@ -106,23 +138,25 @@ def iniciar_tunel(
             cmd.extend(["-i", key_file.name, "-o", "PreferredAuthentications=publickey"])
         elif ssh_pass:
             askpass = tempfile.NamedTemporaryFile("w", delete=False)
-            askpass.write(f"#!/bin/sh\necho \"{ssh_pass}\"\n")
+            askpass.write("#!/bin/sh\nexec printenv SAUDE_SSH_ASKPASS_SECRET\n")
             askpass.close()
-            os.chmod(askpass.name, 0o755)
+            os.chmod(askpass.name, 0o700)
             temp_files.append(askpass.name)
+            env["SAUDE_SSH_ASKPASS_SECRET"] = ssh_pass
             env["SSH_ASKPASS"] = askpass.name
             env["SSH_ASKPASS_REQUIRE"] = "force"
             env["DISPLAY"] = ":0"
             cmd.extend(["-o", "PreferredAuthentications=password,keyboard-interactive"])
 
-        cmd.append(f"{ssh_user}@{ssh_host}")
+        cmd.extend(["--", f"{ssh_user_c}@{ssh_host_c}"])
 
+        err_tmp = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
         _TUNNEL_PROC = subprocess.Popen(
             cmd,
             env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=err_tmp,
         )
 
         # Aguarda a porta abrir (até timeout segundos)
@@ -130,9 +164,10 @@ def iniciar_tunel(
         porta_abriu = False
         while time.monotonic() < t_fim:
             if _TUNNEL_PROC.poll() is not None:
-                _, err = _TUNNEL_PROC.communicate(timeout=1)
-                raise RuntimeError(f"SSH encerrou com erro: {err.strip()}")
-            if verificar_porta_aberta("127.0.0.1", local_port, timeout=0.3):
+                err_tmp.seek(0)
+                err = err_tmp.read().strip()
+                raise RuntimeError(f"SSH encerrou com erro: {err[:300]}")
+            if verificar_porta_aberta("127.0.0.1", local_port_i, timeout=0.3):
                 porta_abriu = True
                 break
             time.sleep(0.3)
@@ -200,7 +235,8 @@ def garantir_tunel_db(cfg=None) -> tuple[bool, str]:
                 remote_port=5432,
             )
             if res.get("ok"):
-                dsn = f"postgresql://{usuario}:{senha}@127.0.0.1:{porta_local}/{banco}"
+                from urllib.parse import quote_plus
+                dsn = f"postgresql://{quote_plus(usuario)}:{quote_plus(senha)}@127.0.0.1:{porta_local}/{quote_plus(banco)}"
                 return True, dsn
         except Exception as e:
             logger.warning("Erro ao inicializar túnel SSH PEC: %s", e)
@@ -210,8 +246,9 @@ def garantir_tunel_db(cfg=None) -> tuple[bool, str]:
     if getattr(cfg, "pec_database_url", ""):
         return True, cfg.pec_database_url
     elif usuario and senha and getattr(cfg, "pec_servidor_url", ""):
-        host = cfg.pec_servidor_url.replace("http://", "").replace("https://", "").split(":")[0]
-        dsn = f"postgresql://{usuario}:{senha}@{host}:5432/{banco}"
+        from urllib.parse import quote_plus
+        host = cfg.pec_servidor_url.replace("http://", "").replace("https://", "").split(":")[0].split("/")[0]
+        dsn = f"postgresql://{quote_plus(usuario)}:{quote_plus(senha)}@{host}:5432/{quote_plus(banco)}"
         return True, dsn
 
     return False, ""

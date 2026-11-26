@@ -14,14 +14,28 @@ from app.services.permissoes import need_any_perm, need_perm
 
 router = APIRouter()
 
-URL_MARCA_RE = re.compile(r"^(https?://|data:image/)")
+URL_MARCA_RE = re.compile(
+    r"^(https://[^\s\"'<>]+|data:image/(?:png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+)$",
+    re.IGNORECASE,
+)
 
 
 def validar_url_marca(v: str, campo: str) -> str:
     v = (v or "").strip()
     if v and not URL_MARCA_RE.match(v):
-        raise HTTPException(status_code=400, detail=f"{campo} deve ser https://… ou data:image/…")
+        raise HTTPException(
+            status_code=400,
+            detail=f"{campo} deve ser https://… ou imagem data:image/(png|jpeg|webp|gif);base64,…",
+        )
     return v
+
+
+class SettingsPublicOut(BaseModel):
+    cidade: str = "Guapé"
+    uf: str = "MG"
+    subtitulo: str = "Secretaria Municipal"
+    brasao_url: str = ""
+    icone_url: str = ""
 
 
 class SettingsOut(BaseModel):
@@ -104,13 +118,20 @@ def ler_settings(db: Session = Depends(get_db), _=Depends(get_user_ok)):
     return to_out(get_settings(db))
 
 
-@router.get("/settings/public", response_model=SettingsOut)
+@router.get("/settings/public", response_model=SettingsPublicOut)
 def ler_settings_public():
-    """Sem login: só nome cidade p/ título/login. Sem PII."""
+    """Sem login: apenas identidade visual pública (cidade/UF/brasão). Sem CNS, CNPJ ou CNES."""
     from sqlmodel import Session as S
 
     with S(engine) as db:
-        return to_out(get_settings(db))
+        s = get_settings(db)
+        return SettingsPublicOut(
+            cidade=s.cidade,
+            uf=s.uf,
+            subtitulo=s.subtitulo,
+            brasao_url=s.brasao_url or "",
+            icone_url=s.icone_url or "",
+        )
 
 
 @router.put("/settings", response_model=SettingsOut)

@@ -831,6 +831,41 @@ def listar_prestadores(
     return [PrestadorOut(**p.model_dump()) for p in itens]
 
 
+@router.get("/prestadores/exportar")
+def exportar_prestadores(
+    db: Session = Depends(_get_db),
+    ator=Depends(need_any_perm("usuarios", "cfg_unidades", "tfd", "lab")),
+):
+    from app.services.export_xlsx import resposta_xlsx
+
+    linhas = [{
+        "razao_social": p.razao_social,
+        "nome_fantasia": p.nome_fantasia or "",
+        "tipo": p.tipo_entidade or "",
+        "cnpj": p.cnpj or "",
+        "cnes": p.cnes or "",
+        "responsavel": p.responsavel_nome or "",
+        "contato": " ".join(x for x in [p.telefone or "", p.email or ""] if x),
+        "municipio": p.municipio or "",
+        "status": "ativo" if p.ativo else "inativo",
+    } for p in db.exec(select(Prestador).order_by(Prestador.razao_social)).all()]
+    return resposta_xlsx(
+        "Prestadores de Serviços", getattr(ator, "nome", "") or getattr(ator, "username", ""),
+        [
+            {"chave": "razao_social", "rotulo": "Razão Social", "largura": 35},
+            {"chave": "nome_fantasia", "rotulo": "Nome Fantasia", "largura": 25},
+            {"chave": "tipo", "rotulo": "Tipo", "largura": 16},
+            {"chave": "cnpj", "rotulo": "CNPJ", "largura": 20},
+            {"chave": "cnes", "rotulo": "CNES", "largura": 14},
+            {"chave": "responsavel", "rotulo": "Responsável", "largura": 25},
+            {"chave": "contato", "rotulo": "Contato", "largura": 30},
+            {"chave": "municipio", "rotulo": "Município", "largura": 20},
+            {"chave": "status", "rotulo": "Status", "largura": 12},
+        ],
+        linhas, "prestadores",
+    )
+
+
 @router.get("/prestadores/{pid}", response_model=PrestadorOut)
 def obter_prestador(
     pid: int,
@@ -893,38 +928,3 @@ def inativar_prestador(
     db.delete(obj)
     db.commit()
     return None
-
-
-@router.get("/prestadores/exportar")
-def exportar_prestadores(
-    db: Session = Depends(_get_db),
-    ator=Depends(need_any_perm("usuarios", "cfg_unidades", "tfd", "lab")),
-):
-    from app.services.export_xlsx import resposta_xlsx
-
-    linhas = [{
-        "razao_social": p.razao_social,
-        "nome_fantasia": p.nome_fantasia or "",
-        "tipo": p.tipo_entidade or "",
-        "cnpj": p.cnpj or "",
-        "cnes": p.cnes or "",
-        "responsavel": p.responsavel_nome or "",
-        "contato": " ".join(x for x in [p.telefone or "", p.email or ""] if x),
-        "municipio": p.municipio or "",
-        "status": "ativo" if p.ativo else "inativo",
-    } for p in db.exec(select(Prestador).order_by(Prestador.razao_social)).all()]
-    return resposta_xlsx(
-        "Prestadores de Serviços", getattr(ator, "nome", "") or getattr(ator, "username", ""),
-        [
-            {"chave": "razao_social", "rotulo": "Razão Social", "largura": 35},
-            {"chave": "nome_fantasia", "rotulo": "Nome Fantasia", "largura": 25},
-            {"chave": "tipo", "rotulo": "Tipo", "largura": 16},
-            {"chave": "cnpj", "rotulo": "CNPJ", "largura": 20},
-            {"chave": "cnes", "rotulo": "CNES", "largura": 14},
-            {"chave": "responsavel", "rotulo": "Responsável", "largura": 25},
-            {"chave": "contato", "rotulo": "Contato", "largura": 30},
-            {"chave": "municipio", "rotulo": "Município", "largura": 20},
-            {"chave": "status", "rotulo": "Status", "largura": 12},
-        ],
-        linhas, "prestadores",
-    )

@@ -4,16 +4,18 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-HEADER_MAGIC = b"SAUDE_BACKUP_V1\x00"  # 16 bytes
+HEADER_MAGIC = b"SAUDE_BACKUP_V1\x00"  # 16 bytes (legado 100k iteracoes)
+HEADER_MAGIC_V2 = b"SAUDE_BACKUP_V2\x00"  # 16 bytes (600k iteracoes OWASP)
 HEADER_LEN = 16
 SALT_LEN = 16
 NONCE_LEN = 12
 TAG_LEN = 16
 MIN_FILE_SIZE = HEADER_LEN + SALT_LEN + NONCE_LEN + TAG_LEN
 PBKDF2_ITERATIONS = 100_000
+PBKDF2_ITERATIONS_V2 = 600_000
 
 
-def _derivar_chave(senha: str, salt: bytes) -> bytes:
+def _derivar_chave(senha: str, salt: bytes, iterations: int = PBKDF2_ITERATIONS_V2) -> bytes:
     """Deriva chave de 256 bits (32 bytes) a partir da senha e salt via PBKDF2-HMAC-SHA256."""
     if not senha:
         raise ValueError("A senha não pode ser vazia.")
@@ -21,16 +23,16 @@ def _derivar_chave(senha: str, salt: bytes) -> bytes:
         algorithm=hashes.SHA256(),
         length=32,
         salt=salt,
-        iterations=PBKDF2_ITERATIONS,
+        iterations=iterations,
     )
     return kdf.derive(senha.encode("utf-8"))
 
 
 def criptografar_dados(dados_bytes: bytes, senha: str) -> bytes:
-    """Criptografa bytes de dados com AES-256-GCM derivando a chave da senha via PBKDF2.
+    """Criptografa bytes de dados com AES-256-GCM derivando a chave da senha via PBKDF2 (V2).
 
     Estrutura do arquivo binário (.bak):
-    - Cabeçalho mágico (16 bytes): b"SAUDE_BACKUP_V1\\x00"
+    - Cabeçalho mágico (16 bytes): b"SAUDE_BACKUP_V2\\x00"
     - Salt (16 bytes): os.urandom(16)
     - Nonce/IV (12 bytes): os.urandom(12)
     - Ciphertext com Tag GCM acoplada (retornada pelo AESGCM.encrypt).
@@ -40,16 +42,16 @@ def criptografar_dados(dados_bytes: bytes, senha: str) -> bytes:
 
     salt = os.urandom(SALT_LEN)
     nonce = os.urandom(NONCE_LEN)
-    chave = _derivar_chave(senha, salt)
+    chave = _derivar_chave(senha, salt, iterations=PBKDF2_ITERATIONS_V2)
 
     aesgcm = AESGCM(chave)
-    ciphertext = aesgcm.encrypt(nonce, dados_bytes, associated_data=HEADER_MAGIC)
+    ciphertext = aesgcm.encrypt(nonce, dados_bytes, associated_data=HEADER_MAGIC_V2)
 
-    return HEADER_MAGIC + salt + nonce + ciphertext
+    return HEADER_MAGIC_V2 + salt + nonce + ciphertext
 
 
 def descriptografar_dados(conteudo_arquivo: bytes, senha: str) -> bytes:
-    """Descriptografa arquivo de backup criptografado (.bak) com AES-256-GCM.
+    """Descriptografa arquivo de backup criptografado (.bak) V1/V2 com AES-256-GCM.
 
     Valida o cabeçalho e integridade via GCM tag autenticada.
     """
@@ -60,18 +62,22 @@ def descriptografar_dados(conteudo_arquivo: bytes, senha: str) -> bytes:
         raise ValueError("Arquivo de backup inválido ou formato incompatível.")
 
     cabecalho = conteudo_arquivo[:HEADER_LEN]
-    if cabecalho != HEADER_MAGIC:
+    if cabecalho == HEADER_MAGIC_V2:
+        iterations = PBKDF2_ITERATIONS_V2
+    elif cabecalho == HEADER_MAGIC:
+        iterations = PBKDF2_ITERATIONS
+    else:
         raise ValueError("Arquivo de backup inválido ou formato incompatível.")
 
     salt = conteudo_arquivo[HEADER_LEN : HEADER_LEN + SALT_LEN]
     nonce = conteudo_arquivo[HEADER_LEN + SALT_LEN : HEADER_LEN + SALT_LEN + NONCE_LEN]
     ciphertext = conteudo_arquivo[HEADER_LEN + SALT_LEN + NONCE_LEN :]
 
-    chave = _derivar_chave(senha, salt)
+    chave = _derivar_chave(senha, salt, iterations=iterations)
     aesgcm = AESGCM(chave)
 
     try:
-        dados_descriptografados = aesgcm.decrypt(nonce, ciphertext, associated_data=HEADER_MAGIC)
+        dados_descriptografados = aesgcm.decrypt(nonce, ciphertext, associated_data=cabecalho)
     except InvalidTag:
         raise ValueError("Senha incorreta ou arquivo de backup corrompido/adulterado.")
 

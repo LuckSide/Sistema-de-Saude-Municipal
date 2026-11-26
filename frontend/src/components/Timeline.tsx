@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Building2, CalendarClock, Filter, Stethoscope, User, FileCheck, FileText } from "lucide-react";
-import { fetchTimeline, type TimelineEvento, labVisualizarLaudoPdfUrl } from "../services/api";
+import { fetchTimeline, type TimelineEvento, labAbrirLaudoPdf } from "../services/api";
 import { cn } from "./ui/primitives";
 
 const COR_TIPO: Record<string, string> = {
@@ -139,15 +139,14 @@ export default function Timeline({
                     const solicId = match ? match[1] : null;
                     if (solicId) {
                       return (
-                        <a
-                          href={labVisualizarLaudoPdfUrl(Number(solicId))}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => void labAbrirLaudoPdf(Number(solicId))}
                           className="inline-flex items-center gap-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-[11px] font-bold shadow-2xs"
                         >
                           <FileText className="h-3 w-3" />
                           <span>Visualizar Laudo (PDF)</span>
-                        </a>
+                        </button>
                       );
                     }
                     return null;

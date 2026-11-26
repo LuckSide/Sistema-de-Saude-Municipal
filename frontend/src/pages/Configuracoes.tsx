@@ -51,6 +51,7 @@ import {
   fetchPecSyncStatus,
   fetchSettings,
   importarFilas,
+  importarViagensCarro,
   labSigtapCriar,
   limparDuplicadosPec,
   resetarERessincronizarPec,
@@ -70,6 +71,7 @@ import {
   whatsappTestar,
   type ExamePermitidoItem,
   type ImportFilasOut,
+  type ImportViagensCarroOut,
   type Integracoes,
   type PecResetPreview,
   type PecSyncLogItem,
@@ -83,7 +85,7 @@ type Aba = "geral" | "gestao_filas" | "filas" | "pec" | "rnds" | "whatsapp" | "e
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "geral", rotulo: "Geral" },
   { id: "gestao_filas", rotulo: "Tipos de Serviço & Regras CBO" },
-  { id: "filas", rotulo: "Importar filas" },
+  { id: "filas", rotulo: "Importar dados" },
   { id: "pec", rotulo: "PEC / e-SUS APS" },
   { id: "rnds", rotulo: "RNDS" },
   { id: "whatsapp", rotulo: "WhatsApp / Notificações" },
@@ -131,6 +133,7 @@ export default function Configuracoes() {
   const normalizarAbaParam = (raw: string | null): Aba => {
     if (!raw) return "geral";
     if (raw === "servicos" || raw === "tipos_servico") return "gestao_filas";
+    if (raw === "importar" || raw === "importar_dados" || raw === "dados_import") return "filas";
     return raw as Aba;
   };
   const pedida = normalizarAbaParam(params.get("aba"));
@@ -155,7 +158,7 @@ export default function Configuracoes() {
     <div>
       <h1 className="font-display text-2xl font-extrabold text-sus-950">Configurações do sistema</h1>
       <p className="mb-4 mt-1 text-sm text-ink/55">
-        Módulo administrativo único: município e marca, filas, PEC, RNDS e backup do sistema.
+        Módulo administrativo único: município e marca, importação de dados, PEC, RNDS e backup do sistema.
       </p>
       <div className="mb-4 flex flex-wrap gap-2">
         {abasVisiveis.map((a) => (
@@ -510,21 +513,65 @@ function AbaGeral() {
   );
 }
 
-// ---------- Filas: upload CSV/XLSX/XML ----------
+// ---------- Importar dados (filas + viagens de carro) ----------
 function AbaFilas() {
   const { confirmar } = useConfirm();
+  const [modo, setModo] = useState<"filas" | "viagens_carro">("filas");
   const [arq, setArq] = useState<File | null>(null);
   const [simular, setSimular] = useState(true);
   const [criarPacientesNovos, setCriarPacientesNovos] = useState(true);
+  const [gerarFaturamento, setGerarFaturamento] = useState(true);
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState("");
   const [res, setRes] = useState<ImportFilasOut | null>(null);
+  const [resViagens, setResViagens] = useState<ImportViagensCarroOut | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  function trocarModo(novo: "filas" | "viagens_carro") {
+    setModo(novo);
+    setArq(null);
+    setErro("");
+    setRes(null);
+    setResViagens(null);
+    if (inputRef.current) inputRef.current.value = "";
+  }
 
   async function enviar() {
     setErro("");
     if (!arq) {
-      setErro("Escolha um arquivo .csv, .xlsx ou .xml.");
+      setErro(
+        modo === "viagens_carro"
+          ? "Escolha um arquivo .csv ou .json de viagens de carro."
+          : "Escolha um arquivo .csv, .xlsx ou .xml.",
+      );
+      return;
+    }
+
+    if (modo === "viagens_carro") {
+      if (!simular && criarPacientesNovos) {
+        const qtdPrev =
+          resViagens && resViagens.simulacao && resViagens.arquivo === arq.name
+            ? resViagens.pacientes_novos
+            : null;
+        if (qtdPrev !== null && qtdPrev > 0) {
+          const ok = await confirmar({
+            titulo: `Cadastrar ${qtdPrev} paciente(s) novos?`,
+            descricao: `A simulação identificou ${qtdPrev} paciente(s)/acompanhante(s) que ainda não existem no cadastro local. Se continuar, eles serão cadastrados automaticamente para vincular às viagens.`,
+            textoConfirmar: "Sim, importar e cadastrar",
+            variante: "warning",
+          });
+          if (!ok) return;
+        }
+      }
+      setResViagens(null);
+      setBusy(true);
+      try {
+        setResViagens(await importarViagensCarro(arq, simular, criarPacientesNovos, gerarFaturamento));
+      } catch (e: unknown) {
+        setErro(msgErro(e, "Falha ao importar viagens de carro."));
+      } finally {
+        setBusy(false);
+      }
       return;
     }
 
@@ -556,28 +603,82 @@ function AbaFilas() {
     }
   }
 
-  const qtdSemPec = res?.pacientes_criados_sem_pec ?? 0;
-  const qtdIgnoradosSemPec = res?.pacientes_nao_encontrados_ignorados ?? 0;
-  const avisosPacientes = res?.avisos_pacientes_novos ?? [];
+  const qtdSemPec = modo === "viagens_carro"
+    ? (resViagens?.pacientes_novos ?? 0)
+    : (res?.pacientes_criados_sem_pec ?? 0);
+  const qtdIgnoradosSemPec = modo === "viagens_carro"
+    ? (resViagens?.pacientes_nao_encontrados_ignorados ?? 0)
+    : (res?.pacientes_nao_encontrados_ignorados ?? 0);
+  const avisosPacientes = modo === "viagens_carro"
+    ? (resViagens?.avisos_pacientes_novos ?? [])
+    : (res?.avisos_pacientes_novos ?? []);
+  const avisoCriacaoPac = modo === "viagens_carro"
+    ? resViagens?.aviso_criacao_pacientes
+    : res?.aviso_criacao_pacientes;
+  const simulacaoAtiva = modo === "viagens_carro" ? resViagens?.simulacao : res?.simulacao;
 
   return (
     <Card className="max-w-2xl p-6">
-      <p className="mb-1 font-display text-base font-bold text-sus-950">Carga massiva de fila de espera e exames</p>
-      <p className="mb-4 text-xs text-ink/55">
-        CSV, Excel (.xlsx) ou XML de exportação (Vivver / e-SUS).
-        O importador busca e vincula prioritariamente os pacientes já sincronizados do <strong>e-SUS PEC</strong> no banco local (por CPF, CNS, nome/nascimento e nome compatível).
-        Novos cadastros só são criados quando o paciente realmente não existir no banco e exibem aviso explícito. Máx 60MB / 200 mil linhas.
+      <p className="mb-1 font-display text-base font-bold text-sus-950">Importação de dados</p>
+      <p className="mb-3 text-xs text-ink/55">
+        Central única para carga de filas/exames (Vivver / e-SUS) e histórico/lote de viagens de carro TFD.
       </p>
+      <div className="mb-4 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => trocarModo("filas")}
+          className={`rounded-xl border px-3 py-2 text-left text-xs transition ${
+            modo === "filas"
+              ? "border-sus-900 bg-sus-900 text-white font-bold"
+              : "border-sus-900/15 bg-sand/50 text-sus-950 hover:bg-sand font-semibold"
+          }`}
+        >
+          <span className="block">Filas de espera e exames</span>
+          <span className={`block text-[10px] font-normal ${modo === "filas" ? "text-white/75" : "text-ink/55"}`}>
+            CSV, XLSX ou XML (Vivver / e-SUS)
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => trocarModo("viagens_carro")}
+          className={`rounded-xl border px-3 py-2 text-left text-xs transition ${
+            modo === "viagens_carro"
+              ? "border-teal bg-teal text-white font-bold"
+              : "border-sus-900/15 bg-sand/50 text-sus-950 hover:bg-sand font-semibold"
+          }`}
+        >
+          <span className="block">Viagens de carro (TFD)</span>
+          <span className={`block text-[10px] font-normal ${modo === "viagens_carro" ? "text-white/80" : "text-ink/55"}`}>
+            CSV convertido ou JSON (.doc extraído)
+          </span>
+        </button>
+      </div>
+      {modo === "filas" ? (
+        <p className="mb-4 text-xs text-ink/55">
+          O importador busca e vincula prioritariamente os pacientes já sincronizados do <strong>e-SUS PEC</strong> no banco local (por CPF, CNS, nome/nascimento e nome compatível).
+          Novos cadastros só são criados quando o paciente realmente não existir no banco e exibem aviso explícito. Máx 60MB / 200 mil linhas.
+        </p>
+      ) : (
+        <p className="mb-4 text-xs text-ink/55">
+          Aceita arquivos <strong>.csv</strong> (colunas <span className="font-mono">arquivo;arquivo_sha1;data;hora;destino;tipo;prontuario;nome;procedimento;quantidade;protocolo</span>) ou <strong>.json</strong> exportado das viagens de carro.
+          Cada linha gera 1 pessoa (paciente ou acompanhante) com deduplicação idempotente por viagem/SHA1 e protocolo.
+        </p>
+      )}
       <div className="space-y-3">
         <div>
-          <Label>Arquivo (.csv / .xlsx / .xml)</Label>
+          <Label>{modo === "viagens_carro" ? "Arquivo (.csv / .json)" : "Arquivo (.csv / .xlsx / .xml)"}</Label>
           <input
             ref={inputRef}
             type="file"
-            accept=".csv,.xlsx,.xlsm,.xml"
+            accept={modo === "viagens_carro" ? ".csv,.json" : ".csv,.xlsx,.xlsm,.xml"}
             onChange={(e) => {
-              setArq(e.target.files?.[0] ?? null);
+              const file = e.target.files?.[0] ?? null;
+              if (file && modo === "filas" && file.name.toLowerCase().endsWith(".json")) {
+                setModo("viagens_carro");
+              }
+              setArq(file);
               setRes(null);
+              setResViagens(null);
             }}
             className="w-full rounded-xl border border-sus-900/15 bg-white px-3.5 py-2.5 text-sm text-ink file:mr-3 file:rounded-lg file:border-0 file:bg-sus-900 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white"
           />
@@ -585,7 +686,9 @@ function AbaFilas() {
         </div>
         <label className="flex items-center gap-2 text-sm text-ink/70">
           <input type="checkbox" checked={simular} onChange={(e) => setSimular(e.target.checked)} className="h-4 w-4 accent-teal-700" />
-          Simular primeiro (não grava — mostra quais pacientes existem no PEC e se algum novo seria criado)
+          {modo === "viagens_carro"
+            ? "Simular primeiro (não grava — mostra quantas viagens, passageiros e faturamentos serão importados)"
+            : "Simular primeiro (não grava — mostra quais pacientes existem no PEC e se algum novo seria criado)"}
         </label>
         <label className="flex items-start gap-2 text-sm text-ink/70">
           <input
@@ -595,37 +698,51 @@ function AbaFilas() {
             className="mt-0.5 h-4 w-4 accent-teal-700"
           />
           <span>
-            Permitir cadastrar paciente novo somente se não existir no banco/PEC (com aviso)
+            {modo === "viagens_carro"
+              ? "Cadastrar paciente/acompanhante automaticamente caso não exista pelo prontuário/nome"
+              : "Permitir cadastrar paciente novo somente se não existir no banco/PEC (com aviso)"}
             <span className="block text-[11px] text-ink/50">
-              Desmarque para modo estrito: apenas vincula a pacientes já cadastrados (PEC/local) e ignora linhas de pacientes inexistentes.
+              {modo === "viagens_carro"
+                ? "Desmarque para vincular apenas a pacientes já existentes no cadastro."
+                : "Desmarque para modo estrito: apenas vincula a pacientes já cadastrados (PEC/local) e ignora linhas de pacientes inexistentes."}
             </span>
           </span>
         </label>
+        {modo === "viagens_carro" && (
+          <label className="flex items-center gap-2 text-sm text-ink/70">
+            <input
+              type="checkbox"
+              checked={gerarFaturamento}
+              onChange={(e) => setGerarFaturamento(e.target.checked)}
+              className="h-4 w-4 accent-teal-700"
+            />
+            Registrar também os códigos de deslocamento no Faturamento TFD (idempotente)
+          </label>
+        )}
         {erro && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{erro}</p>}
         <Button onClick={enviar} disabled={busy || !arq} className="w-full">
           {busy ? "Importando…" : simular ? "Simular importação" : "Importar e gravar"}
         </Button>
       </div>
-      {res && (
+      {(res || resViagens) && (
         <div className="mt-4 space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={res.simulacao ? "warning" : "success"}>{res.simulacao ? "SIMULAÇÃO — nada gravado" : "IMPORTADO"}</Badge>
-            <span className="font-mono text-xs text-ink/60">{res.arquivo}</span>
+            <Badge variant={simulacaoAtiva ? "warning" : "success"}>{simulacaoAtiva ? "SIMULAÇÃO — nada gravado" : "IMPORTADO"}</Badge>
+            <span className="font-mono text-xs text-ink/60">{modo === "viagens_carro" ? resViagens?.arquivo : res?.arquivo}</span>
           </div>
 
-          {/* Alerta explícito quando houver criação ou bloqueio de pacientes não encontrados no PEC */}
-          {(Boolean(res.aviso_criacao_pacientes) || qtdSemPec > 0 || qtdIgnoradosSemPec > 0) && (
+          {(Boolean(avisoCriacaoPac) || qtdSemPec > 0 || qtdIgnoradosSemPec > 0) && (
             <div className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-amber-950 space-y-2">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 shrink-0 text-amber-700 mt-0.5" />
                 <div className="text-xs leading-relaxed">
                   <p className="font-bold text-amber-900">
-                    {res.aviso_criacao_pacientes ||
-                      `Atenção: ${qtdSemPec} paciente(s) não foram encontrados na base do e-SUS PEC.`}
+                    {avisoCriacaoPac ||
+                      `Atenção: ${qtdSemPec} paciente(s) não foram encontrados na base local.`}
                   </p>
-                  {res.simulacao && qtdSemPec > 0 && (
+                  {simulacaoAtiva && qtdSemPec > 0 && (
                     <p className="mt-0.5 text-amber-800">
-                      Revise a lista abaixo antes de gravar. Se não quiser criar esses cadastros, desmarque a opção de criação automática acima ou sincronize o e-SUS PEC primeiro.
+                      Revise a lista abaixo antes de gravar. Se não quiser criar esses cadastros, desmarque a opção de criação automática acima.
                     </p>
                   )}
                 </div>
@@ -635,7 +752,7 @@ function AbaFilas() {
                   {avisosPacientes.map((a, idx) => (
                     <li key={idx}>
                       linha {a.linha}: <strong>{a.nome}</strong>
-                      {a.prontuario ? ` (pront. ${a.prontuario})` : ""} — {a.acao === "ignorado" ? "ignorado" : "novo cadastro sem PEC"}
+                      {a.prontuario ? ` (pront. ${a.prontuario})` : ""} — {a.acao === "ignorado" ? "ignorado" : "novo cadastro"}
                     </li>
                   ))}
                 </ul>
@@ -643,44 +760,85 @@ function AbaFilas() {
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
-            {[
-              ["Lidas", res.lidas, "bg-sand text-sus-950"],
-              ["Vinculados ao PEC", (res.pacientes_vinculados_pec ?? 0) + (res.pacientes_sincronizados_pec ?? 0), "bg-emerald-50 text-emerald-900"],
-              ["Pacientes novos (sem PEC)", qtdSemPec, qtdSemPec > 0 ? "bg-amber-50 text-amber-900" : "bg-sand text-sus-950"],
-              ["Exames/Pedidos novos", res.exames_novos, "bg-sand text-sus-950"],
-              ["Atualizados", res.atualizados, "bg-sand text-sus-950"],
-              ["Duplicados", res.duplicados, "bg-sand text-sus-950"],
-              ["Ignoradas", res.ignoradas, "bg-sand text-sus-950"],
-              ...(res.pedidos_fila_ativa !== undefined ? [["Fila de Espera Ativa", res.pedidos_fila_ativa, "bg-sky-50 text-sky-900"]] : []),
-              ...(res.pedidos_historico_prontuario !== undefined ? [["Histórico Prontuário", res.pedidos_historico_prontuario, "bg-blue-50 text-blue-900"]] : []),
-              ...(res.pedidos_historico_cancelados !== undefined ? [["Histórico Cancelados", res.pedidos_historico_cancelados, "bg-slate-100 text-slate-800"]] : []),
-              ...(res.itens_lab_novos ? [["Itens lab novos", res.itens_lab_novos, "bg-teal-50 text-teal-900"]] : []),
-            ].map(([k, v, cls]) => (
-              <div key={k as string} className={`rounded-xl px-3 py-2 ${cls}`}>
-                <p className="text-[11px] font-semibold uppercase tracking-wide opacity-65">{k}</p>
-                <p className="font-display text-lg font-extrabold">{v}</p>
-              </div>
-            ))}
-          </div>
-          <p className="text-xs text-ink/55">
-            Catálogo: +{res.catalogo.tipos_novos} tipos, +{res.catalogo.especialidades_novas} especialidades, +{res.catalogo.procedimentos_novos} procedimentos.
-          </p>
-          {res.simulacao && res.exames_novos + res.pacientes_novos > 0 && (
-            <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
-              Conferiu? Desmarque “Simular” e envie de novo para gravar.
-            </p>
-          )}
-          {res.erros.length > 0 && (
-            <div>
-              <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink/50">Linhas com problema (máx 25)</p>
-              <ul className="max-h-40 space-y-1 overflow-auto rounded-xl bg-sus-950 p-3 font-mono text-[11px] text-teal-100">
-                {res.erros.map((e, i) => (
-                  <li key={i}>linha {e.linha}: {e.motivo}</li>
+          {modo === "viagens_carro" && resViagens ? (
+            <>
+              <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+                {[
+                  ["Linhas lidas", resViagens.lidas, "bg-sand text-sus-950"],
+                  ["Viagens no arquivo", resViagens.viagens_identificadas, "bg-sky-50 text-sky-900"],
+                  ["Viagens novas", resViagens.viagens_novas, "bg-teal-50 text-teal-900"],
+                  ["Viagens já existentes", resViagens.viagens_existentes, "bg-slate-100 text-slate-800"],
+                  ["Passageiros novos", resViagens.passageiros_novos, "bg-emerald-50 text-emerald-900"],
+                  ["Acompanhantes novos", resViagens.acompanhantes_novos, "bg-emerald-50 text-emerald-900"],
+                  ["Duplicados (ignorados)", resViagens.passageiros_duplicados, "bg-sand text-sus-950"],
+                  ["Pacientes vinculados", resViagens.pacientes_vinculados, "bg-sand text-sus-950"],
+                  ["Pacientes novos", resViagens.pacientes_novos, resViagens.pacientes_novos > 0 ? "bg-amber-50 text-amber-900" : "bg-sand text-sus-950"],
+                  ...(resViagens.faturamentos_novos > 0 ? [["Faturamentos TFD", resViagens.faturamentos_novos, "bg-sky-50 text-sky-900"]] : []),
+                ].map(([k, v, cls]) => (
+                  <div key={k as string} className={`rounded-xl px-3 py-2 ${cls}`}>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide opacity-65">{k}</p>
+                    <p className="font-display text-lg font-extrabold">{v}</p>
+                  </div>
                 ))}
-              </ul>
-            </div>
-          )}
+              </div>
+              {resViagens.simulacao && (resViagens.viagens_novas + resViagens.passageiros_novos + resViagens.acompanhantes_novos) > 0 && (
+                <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
+                  Conferiu? Desmarque “Simular primeiro” e envie novamente para gravar as viagens de carro.
+                </p>
+              )}
+              {resViagens.erros.length > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink/50">Linhas com problema (máx 25)</p>
+                  <ul className="max-h-40 space-y-1 overflow-auto rounded-xl bg-sus-950 p-3 font-mono text-[11px] text-teal-100">
+                    {resViagens.erros.map((e, i) => (
+                      <li key={i}>linha {e.linha}: {e.motivo}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          ) : res ? (
+            <>
+              <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+                {[
+                  ["Lidas", res.lidas, "bg-sand text-sus-950"],
+                  ["Vinculados ao PEC", (res.pacientes_vinculados_pec ?? 0) + (res.pacientes_sincronizados_pec ?? 0), "bg-emerald-50 text-emerald-900"],
+                  ["Pacientes novos (sem PEC)", qtdSemPec, qtdSemPec > 0 ? "bg-amber-50 text-amber-900" : "bg-sand text-sus-950"],
+                  ["Exames/Pedidos novos", res.exames_novos, "bg-sand text-sus-950"],
+                  ["Atualizados", res.atualizados, "bg-sand text-sus-950"],
+                  ["Duplicados", res.duplicados, "bg-sand text-sus-950"],
+                  ["Ignoradas", res.ignoradas, "bg-sand text-sus-950"],
+                  ...(res.pedidos_fila_ativa !== undefined ? [["Fila de Espera Ativa", res.pedidos_fila_ativa, "bg-sky-50 text-sky-900"]] : []),
+                  ...(res.pedidos_historico_prontuario !== undefined ? [["Histórico Prontuário", res.pedidos_historico_prontuario, "bg-blue-50 text-blue-900"]] : []),
+                  ...(res.pedidos_historico_cancelados !== undefined ? [["Histórico Cancelados", res.pedidos_historico_cancelados, "bg-slate-100 text-slate-800"]] : []),
+                  ...(res.itens_lab_novos ? [["Itens lab novos", res.itens_lab_novos, "bg-teal-50 text-teal-900"]] : []),
+                ].map(([k, v, cls]) => (
+                  <div key={k as string} className={`rounded-xl px-3 py-2 ${cls}`}>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide opacity-65">{k}</p>
+                    <p className="font-display text-lg font-extrabold">{v}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-ink/55">
+                Catálogo: +{res.catalogo.tipos_novos} tipos, +{res.catalogo.especialidades_novas} especialidades, +{res.catalogo.procedimentos_novos} procedimentos.
+              </p>
+              {res.simulacao && res.exames_novos + res.pacientes_novos > 0 && (
+                <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
+                  Conferiu? Desmarque “Simular” e envie de novo para gravar.
+                </p>
+              )}
+              {res.erros.length > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink/50">Linhas com problema (máx 25)</p>
+                  <ul className="max-h-40 space-y-1 overflow-auto rounded-xl bg-sus-950 p-3 font-mono text-[11px] text-teal-100">
+                    {res.erros.map((e, i) => (
+                      <li key={i}>linha {e.linha}: {e.motivo}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          ) : null}
         </div>
       )}
     </Card>
@@ -850,13 +1008,15 @@ function AbaPec() {
     carregarLogsSync();
   }, []);
 
-  // Polling a cada 3s se a sincronização estiver em andamento
+  // Polling a cada 3s se a sincronização estiver em andamento (pausa quando aba oculta)
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | null = null;
     if (syncStatus?.em_execucao) {
       timer = setInterval(() => {
-        carregarSyncStatus();
-        carregarLogsSync();
+        if (document.visibilityState === "visible") {
+          carregarSyncStatus();
+          carregarLogsSync();
+        }
       }, 3000);
     }
     return () => {

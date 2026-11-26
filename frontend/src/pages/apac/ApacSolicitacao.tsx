@@ -450,7 +450,7 @@ export default function ApacSolicitacao() {
     });
     if (!ok) return;
     try {
-      await cancelarApacSolicitacao(id, "Cancelado pelo usuário solicitante");
+      await cancelarApacSolicitacao(id);
       setMensagemSucesso("Solicitação cancelada com sucesso.");
       carregarSolicitacoes(page);
     } catch (err: any) {

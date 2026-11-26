@@ -415,13 +415,22 @@ def exportar_logs_csv(
         _filtros_logs(db, data_de, data_ate, usuario, acao, entidade)
         .order_by(AuditLog.timestamp.desc())
     ).all())[:20000]
+    from app.services.export_xlsx import _sanitizar_celula_excel
     buf = _io.StringIO()
     w = _csv.writer(buf, delimiter=";", quoting=_csv.QUOTE_MINIMAL)
     w.writerow(["Data/hora", "Usuário", "Ação", "Registro (ID)", "Campo",
                 "Valor Anterior", "Valor Novo", "Raw Payload / Request Body"])
     for lin in _linhas_export(rows):
-        w.writerow([lin["quando"], lin["usuario"], lin["acao"], lin["registro"],
-                    lin["campo"], lin["de"], lin["para"], lin["raw"]])
+        w.writerow([
+            _sanitizar_celula_excel(str(lin["quando"])),
+            _sanitizar_celula_excel(str(lin["usuario"])),
+            _sanitizar_celula_excel(str(lin["acao"])),
+            _sanitizar_celula_excel(str(lin["registro"])),
+            _sanitizar_celula_excel(str(lin["campo"])),
+            _sanitizar_celula_excel(str(lin["de"])),
+            _sanitizar_celula_excel(str(lin["para"])),
+            _sanitizar_celula_excel(str(lin["raw"])),
+        ])
     return Response(
         content="\ufeff" + buf.getvalue(),
         media_type="text/csv; charset=utf-8",

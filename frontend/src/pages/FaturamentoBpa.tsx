@@ -182,15 +182,20 @@ export default function FaturamentoBpa() {
     setCompetencia(`${novoAno}-${novoMes}`);
   };
 
-  // Exportar Demonstrativo em CSV para Excel
+  // Exportar Demonstrativo em CSV para Excel (protegido contra Formula Injection)
   const exportarDemonstrativoExcel = () => {
     if (!demonstrativo || !demonstrativo.itens.length) return;
+    const esc = (v: unknown) => {
+      const s = v === null || v === undefined ? "" : String(v);
+      const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
     const linhas: string[] = [];
     linhas.push("CNES;Unidade_Saude;Codigo_SIGTAP;Descricao_Procedimento;Instrumento;Origem;Quantidade;Valor_SA_Unitario;Valor_SH_Unitario;Valor_Total");
 
     demonstrativo.itens.forEach((it) => {
       linhas.push(
-        `"${it.cnes}";"${it.unidade_nome}";"${it.codigo}";"${it.descricao}";"${it.instrumento}";"${it.origem}";${it.quantidade};${it.valor_ambulatorial.toFixed(2).replace(".", ",")};${it.valor_hospitalar.toFixed(2).replace(".", ",")};${it.valor_total.toFixed(2).replace(".", ",")}`
+        `${esc(it.cnes)};${esc(it.unidade_nome)};${esc(it.codigo)};${esc(it.descricao)};${esc(it.instrumento)};${esc(it.origem)};${it.quantidade};${it.valor_ambulatorial.toFixed(2).replace(".", ",")};${it.valor_hospitalar.toFixed(2).replace(".", ",")};${it.valor_total.toFixed(2).replace(".", ",")}`
       );
     });
 

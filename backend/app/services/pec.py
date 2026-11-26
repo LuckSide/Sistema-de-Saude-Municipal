@@ -8,6 +8,7 @@ import csv
 import json
 import os
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -423,16 +424,36 @@ def files_painel() -> dict | None:
     return {**json.loads(base.read_text(encoding="utf-8")), "fonte": "files"}
 
 
+_PEC_ENGINE = None
+_PEC_ENGINE_DSN = ""
+_PEC_ENGINE_LOCK = threading.Lock()
+
+
+def _obter_engine_pec(dsn: str):
+    global _PEC_ENGINE, _PEC_ENGINE_DSN
+    from sqlalchemy import create_engine
+
+    with _PEC_ENGINE_LOCK:
+        if _PEC_ENGINE is not None and _PEC_ENGINE_DSN == dsn:
+            return _PEC_ENGINE
+        if _PEC_ENGINE is not None:
+            try:
+                _PEC_ENGINE.dispose()
+            except Exception:
+                pass
+        _PEC_ENGINE = create_engine(dsn, pool_size=3, max_overflow=2, pool_pre_ping=True)
+        _PEC_ENGINE_DSN = dsn
+        return _PEC_ENGINE
+
+
 def _pg() -> tuple:
     """Pool readonly p/ PEC. DSN: banco (tela Integrações) > env. Retorna (connect, dsn) ou (None, '')."""
     try:
-        from sqlalchemy import create_engine
-
         _, dsn_db = _integracao_db()
         dsn = dsn_db or os.getenv("PEC_DATABASE_URL", "").strip()
         if not dsn:
             return None, ""
-        eng = create_engine(dsn, pool_size=3, max_overflow=2, pool_pre_ping=True)
+        eng = _obter_engine_pec(dsn)
         return eng.connect(), dsn
     except Exception:
         return None, ""

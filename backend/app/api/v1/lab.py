@@ -1132,7 +1132,7 @@ def api_definir_preco_contrato(
 
     if dados.contrato_id != contrato_id:
         dados.contrato_id = contrato_id
-    return definir_preco_customizado(db, dados)
+    return definir_preco_customizado(db, contrato_id, dados)
 
 
 @router.delete("/contratos/{contrato_id}/precos/{preco_id}", status_code=204)
@@ -1145,7 +1145,7 @@ def api_remover_preco_contrato(
     """Remove a personalização de preço de um procedimento (retorna ao SIGTAP oficial)."""
     from app.services.lab_contratos_service import remover_preco_customizado
 
-    remover_preco_customizado(db, preco_id)
+    remover_preco_customizado(db, contrato_id, preco_id)
     return None
 
 
@@ -1229,11 +1229,10 @@ def api_criar_fpo_competencia(
     ator=Depends(need_any_perm("lab_orcamento", "usuarios", acoes=("criar",))),
 ):
     """Cria ou atualiza a parametrização inicial da FPO para o prestador."""
-    from app.services.lab_faturamento_service import criar_ou_obter_fpo, formatar_fpo_out
+    from app.services.lab_faturamento_service import criar_ou_obter_fpo
 
     usuario_nome = getattr(ator, "nome", "") or getattr(ator, "username", "") or "Gestor SUS"
-    fpo = criar_ou_obter_fpo(db, dados, criado_por=usuario_nome)
-    return formatar_fpo_out(db, fpo)
+    return criar_ou_obter_fpo(db, dados, usuario_nome=usuario_nome)
 
 
 @router.post("/fpo/itens", response_model=LabFPOItemOut, status_code=201)
@@ -1258,7 +1257,9 @@ def api_exportar_fpo_sia(
     """Gera e exporta o arquivo de programação físico-orçamentária no layout do SIA/SUS."""
     from app.services.lab_faturamento_service import exportar_fpo_sia
 
-    conteudo, nome_arquivo = exportar_fpo_sia(db, fpo_id)
+    res = exportar_fpo_sia(db, fpo_id)
+    conteudo = res["conteudo_txt"]
+    nome_arquivo = res["nome_arquivo"]
     return Response(
         content=conteudo,
         media_type="text/plain; charset=iso-8859-1",

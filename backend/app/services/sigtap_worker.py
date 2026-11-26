@@ -155,7 +155,12 @@ def _sigtap_sync_loop():
                                         )
                     finally:
                         try:
+                            db.rollback()
+                        except Exception:
+                            pass
+                        try:
                             db.execute(text(f"SELECT pg_advisory_unlock({SIGTAP_LEADER_LOCK})"))
+                            db.commit()
                         except Exception:
                             pass
         except Exception as e:

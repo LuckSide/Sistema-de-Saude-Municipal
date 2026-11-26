@@ -23,7 +23,7 @@ import {
   type PacientePerfil,
   labBiGastosPaciente,
   type PacienteGastosResumo,
-  labVisualizarLaudoPdfUrl,
+  labAbrirLaudoPdf,
 } from "../services/api";
 import ExportarExcel from "./ExportarExcel";
 
@@ -616,17 +616,18 @@ export default function PerfilPaciente({
                                     </span>
                                   )}
                                   {((d.status || "").toLowerCase() === "realizado" || d.resultado) ? (
-                                    <a
-                                      href={labVisualizarLaudoPdfUrl(d.id)}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      onClick={(e) => e.stopPropagation()}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void labAbrirLaudoPdf(d.id);
+                                      }}
                                       className="inline-flex items-center gap-1 rounded bg-teal/10 hover:bg-teal/20 text-teal px-2 py-0.5 text-[11px] font-bold border border-teal/30"
                                       title="Abrir laudo oficial validado em PDF"
                                     >
                                       <FileText className="h-3 w-3" />
                                       <span>Laudo Oficial (PDF)</span>
-                                    </a>
+                                    </button>
                                   ) : (
                                     <span className="text-ink/40 text-[11px] italic">Sem laudo anexo</span>
                                   )}
@@ -721,15 +722,14 @@ export default function PerfilPaciente({
                     {isLaudoEv && h.exames_baixados_ids && (
                       <div className="mt-2.5 pt-2 border-t border-emerald-200/60 flex items-center justify-between">
                         <span className="text-[11px] text-emerald-800 font-medium">Documento anexado oficialmente ao histórico PEC</span>
-                        <a
-                          href={labVisualizarLaudoPdfUrl(Number(h.exames_baixados_ids))}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => void labAbrirLaudoPdf(Number(h.exames_baixados_ids))}
                           className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-[11px] font-bold shadow-2xs"
                         >
                           <FileText className="h-3.5 w-3.5" />
                           <span>Visualizar Laudo Oficial (PDF)</span>
-                        </a>
+                        </button>
                       </div>
                     )}
                   </div>

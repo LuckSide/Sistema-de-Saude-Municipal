@@ -67,7 +67,7 @@ VERBOS_ENTIDADE = {
 
 
 def mascarar_cpf(valor: str) -> str:
-    """Mascara CPF preservando os 3 dígitos iniciais e 2 finais para auditoria (LGPD)."""
+    """Mascara CPF (11 dígitos) ou CNS (15 dígitos) para auditoria (LGPD)."""
     if not isinstance(valor, str):
         return valor
     v_clean = valor.strip()
@@ -76,6 +76,8 @@ def mascarar_cpf(valor: str) -> str:
     digitos = re.sub(r"\D", "", v_clean)
     if len(digitos) == 11:
         return f"{digitos[:3]}******{digitos[-2:]}"
+    if len(digitos) == 15:
+        return f"{digitos[:3]}**********{digitos[-2:]}"
     return valor
 
 
@@ -95,7 +97,8 @@ def redigir(obj):
         return [redigir(v) for v in obj[:50]]
     if isinstance(obj, str):
         s_clean = obj.strip()
-        if re.match(r"^\d{3}\.\d{3}\.\d{3}-\d{2}$", s_clean) or (len(re.sub(r"\D", "", s_clean)) == 11 and s_clean.isdigit()):
+        digs = re.sub(r"\D", "", s_clean)
+        if re.match(r"^\d{3}\.\d{3}\.\d{3}-\d{2}$", s_clean) or (len(digs) in (11, 15) and s_clean.isdigit()):
             return mascarar_cpf(s_clean)
         if len(obj) > MAX_VALOR:
             return obj[:MAX_VALOR] + "…"
@@ -242,8 +245,9 @@ def registrar_log_pesquisa(
         from app.models.audit import AuditLog
 
         termo_limpo = termo.strip()
-        # Mascaramento de CPF em logs de busca (LGPD)
-        if re.match(r"^\d{3}\.\d{3}\.\d{3}-\d{2}$", termo_limpo) or (len(re.sub(r"\D", "", termo_limpo)) == 11 and termo_limpo.isdigit()):
+        # Mascaramento de CPF/CNS em logs de busca (LGPD)
+        digs_t = re.sub(r"\D", "", termo_limpo)
+        if re.match(r"^\d{3}\.\d{3}\.\d{3}-\d{2}$", termo_limpo) or (len(digs_t) in (11, 15) and termo_limpo.isdigit()):
             termo_limpo = mascarar_cpf(termo_limpo)
         device = parse_device_from_ua(user_agent)
         detalhes = {
@@ -288,7 +292,7 @@ def registrar_log_exportacao(
             "modulo": modulo,
             "titulo": titulo,
             "total_registros": total_linhas,
-            "filtros": filtros or {},
+            "filtros": redigir(filtros or {}),
             "device": device,
         }
         with Session(engine) as db:
@@ -353,6 +357,8 @@ def extrair_id(path: str, resp_body: bytes) -> int | None:
 
 
 class AuditMiddleware:
+    _MAX_AUDIT_BODY = 1024 * 1024  # 1 MB: evita bufferear uploads/arquivos grandes em RAM
+
     def __init__(self, app):
         self.app = app
 
@@ -370,30 +376,71 @@ class AuditMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # Estado anterior p/ diff amigável (PUT/PATCH/DELETE em registros;
-        # PATIENT fica de fora por PII mínima — só o id).
+        import asyncio
+
+        headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
+        ctype = headers.get("content-type", "")
+        try:
+            content_length = int(headers.get("content-length") or 0)
+        except ValueError:
+            content_length = 0
+        pular_buffer_req = ("multipart" in ctype) or (content_length > self._MAX_AUDIT_BODY)
+
+        # Estado anterior p/ diff amigável (em threadpool para não travar event loop).
         antes = None
         if metodo in ("PUT", "PATCH", "DELETE") and entidade != "PATIENT":
             try:
-                antes = _snapshot(entidade, extrair_id(path, b""))
+                antes = await asyncio.to_thread(_snapshot, entidade, extrair_id(path, b""))
             except Exception:
                 antes = None
 
-        # Lê corpo p/ log e reencaminha (replay) ao downstream.
         corpo = b""
-        while True:
-            try:
-                msg = await receive()
-            except Exception:
-                break
-            if msg.get("type") != "http.request":
-                break
-            corpo += msg.get("body", b"")
-            if not msg.get("more_body", False) or len(corpo) > MAX_REQ_BODY:
-                break
+        if pular_buffer_req:
+            recv_downstream = receive
+        else:
+            buf = bytearray()
+            overflow = False
+            while True:
+                try:
+                    msg = await receive()
+                except Exception:
+                    break
+                if msg.get("type") != "http.request":
+                    break
+                chunk = msg.get("body", b"")
+                if len(buf) + len(chunk) > self._MAX_AUDIT_BODY:
+                    overflow = True
+                    break
+                buf.extend(chunk)
+                if not msg.get("more_body", False):
+                    break
 
-        async def replay():
-            return {"type": "http.request", "body": corpo, "more_body": False}
+            if overflow:
+                # Reencaminha o que já foi lido + restante em streaming sem truncar nem abortar upload
+                prefixo = bytes(buf) + (msg.get("body", b"") if "msg" in locals() else b"")
+                prefixo_enviado = False
+
+                async def stream_restante():
+                    nonlocal prefixo_enviado
+                    if not prefixo_enviado:
+                        prefixo_enviado = True
+                        return {"type": "http.request", "body": prefixo, "more_body": bool(msg.get("more_body", False))}
+                    return await receive()
+
+                recv_downstream = stream_restante
+                corpo = b""
+            else:
+                corpo = bytes(buf)
+                sent_replay = False
+
+                async def replay():
+                    nonlocal sent_replay
+                    if not sent_replay:
+                        sent_replay = True
+                        return {"type": "http.request", "body": corpo, "more_body": False}
+                    return {"type": "http.disconnect"}
+
+                recv_downstream = replay
 
         status = 500
         resp_partes: list[bytes] = []
@@ -412,11 +459,21 @@ class AuditMiddleware:
             await send(message)
 
         try:
-            await self.app(scope, replay, send_wrap)
+            await self.app(scope, recv_downstream, send_wrap)
         finally:
             try:
-                headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
-                self._gravar(scope, headers, corpo, entidade, acao, status, b"".join(resp_partes), resp_cortada, antes)
+                await asyncio.to_thread(
+                    self._gravar,
+                    scope,
+                    headers,
+                    corpo,
+                    entidade,
+                    acao,
+                    status,
+                    b"".join(resp_partes),
+                    resp_cortada,
+                    antes,
+                )
             except Exception:
                 pass
 

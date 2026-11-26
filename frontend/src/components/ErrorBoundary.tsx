@@ -26,7 +26,7 @@ export default class ErrorBoundary extends Component<Props, State> {
           </p>
           <pre style={{ background: "#0f172a", color: "#f8fafc", padding: 12, borderRadius: 8, overflow: "auto", fontSize: 12, maxHeight: 220 }}>
             {String(erro?.message || erro)}
-            {erro?.stack ? `\n\n${erro.stack}` : ""}
+            {import.meta.env.DEV && erro?.stack ? `\n\n${erro.stack}` : ""}
           </pre>
           <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
             <button

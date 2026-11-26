@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertTriangle,
@@ -47,6 +47,7 @@ import {
   tfdDisponibilidade,
   tfdPuxarAgendados,
   tfdRemoverPassageiro,
+  tfdGerarViagemAutomatica,
   tfdSugestao,
   tfdSemana,
   tfdTrocarVeiculoViagem,
@@ -320,10 +321,13 @@ export default function QuadroViagens() {
   }
 
   useEffect(() => {
-    recarregar().catch(() => setErro("Falha ao carregar quadro."));
     tfdPacientes("").then((r) => setPacientes(pagData<Paciente>(r))).catch(() => {});
     tfdMotoristas({ limit: 200 }).then((r) => setMotoristas(pagData<Motorista>(r))).catch(() => {});
     tfdDestinos(1, 500).then((r) => setDestinos(pagData<Destino>(r))).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    recarregar().catch(() => setErro("Falha ao carregar quadro."));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dia]);
 
@@ -350,7 +354,12 @@ export default function QuadroViagens() {
     return () => clearTimeout(t);
   }, [filtroDia, buscaDestino, buscaPsf, agrupFila, prefsProntas]);
 
+  const filtroBuscaMountRef = useRef(true);
   useEffect(() => {
+    if (filtroBuscaMountRef.current) {
+      filtroBuscaMountRef.current = false;
+      return;
+    }
     const t = setTimeout(() => recarregar().catch(() => {}), 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -584,7 +593,7 @@ export default function QuadroViagens() {
       if (res.sucesso) {
         setOk(`Lembrete e link de confirmação enviados via WhatsApp para ${res.telefone || "o paciente"}!`);
       } else if (res.whatsapp_link) {
-        window.open(res.whatsapp_link, "_blank");
+        window.open(res.whatsapp_link, "_blank", "noopener,noreferrer");
         setOk("WhatsApp Web aberto com o link de confirmação.");
       } else {
         setOk(`Link gerado: ${res.link_confirmacao}`);
@@ -629,9 +638,47 @@ export default function QuadroViagens() {
     }
   }
 
+  function horarioAutomaticoLocal(dataRef: string, destRef: string): { hora: string; retorno: string } {
+    const destN = normDest(destRef);
+    const horasMin: number[] = [];
+    for (const f of filaAguardando) {
+      if (normDest(f.destino) !== destN) continue;
+      if ((f.data_consulta || "").slice(0, 10) !== dataRef) continue;
+      const m = /^(\d{1,2}):(\d{2})$/.exec((f.hora_consulta || "").trim());
+      if (m) {
+        const mn = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+        if (mn >= 0 && mn < 24 * 60) horasMin.push(mn);
+      }
+    }
+    if (horasMin.length > 0) {
+      const earliest = Math.min(...horasMin);
+      const saidaMin = earliest <= 7 * 60 ? Math.max(0, earliest - 120) : Math.max(5 * 60, earliest - 120);
+      const hora = `${String(Math.floor(saidaMin / 60)).padStart(2, "0")}:${String(saidaMin % 60).padStart(2, "0")}`;
+      return { hora, retorno: retornoAutomatico(hora) };
+    }
+    if (destN) {
+      for (const dSem of semana) {
+        for (const ddSem of dSem.destinos) {
+          if (normDest(ddSem.destino) !== destN) continue;
+          const comHora = ddSem.viagens.find((x) => /^\d{2}:\d{2}$/.test((x.hora_saida || "").trim()));
+          if (comHora?.hora_saida) {
+            return {
+              hora: comHora.hora_saida,
+              retorno: comHora.hora_retorno || retornoAutomatico(comHora.hora_saida),
+            };
+          }
+        }
+      }
+    }
+    return { hora: "05:00", retorno: retornoAutomatico("05:00") };
+  }
+
   async function sugerir(data: string, destino: string, viagemId?: number) {
     try {
       const r = await tfdSugestao(data, destino, viagemId);
+      const autoHor = horarioAutomaticoLocal(data, destino);
+      const horaCalc = r.hora_saida || autoHor.hora;
+      const retCalc = r.hora_retorno || retornoAutomatico(horaCalc);
       const chave = viagemId ? `viag:${viagemId}` : `${data}|${destino}`;
       setSugestao((s) => ({ ...s, [chave]: r.veiculo ? `${r.veiculo.modelo || r.veiculo.placa} (${r.veiculo.placa}) — ${r.motivo}` : r.motivo }));
       if (r.veiculo) {
@@ -641,11 +688,33 @@ export default function QuadroViagens() {
           await recarregar();
         } else {
           setAlocandoEm(`${data}|${destino}`);
-          setNovoVeiculo((n) => ({ ...n, veiculo_id: String(r.veiculo!.id) }));
+          setNovoVeiculo((n) => ({ ...n, veiculo_id: String(r.veiculo!.id), hora: horaCalc, retorno: retCalc }));
         }
+      } else if (!viagemId) {
+        setAlocandoEm(`${data}|${destino}`);
+        setNovoVeiculo((n) => ({ ...n, hora: horaCalc, retorno: retCalc }));
       }
     } catch {
       setErro("Falha ao sugerir veículo.");
+    }
+  }
+
+  async function gerarViagemAuto(data: string, destino: string) {
+    if (data < hoje && !podeEditarPassadas) {
+      setErro(PASSADA_MSG);
+      return;
+    }
+    setErro("");
+    try {
+      const res = await tfdGerarViagemAutomatica({ data_viagem: data, destino, alocar_fila: true });
+      setOk(
+        `Viagem para ${res.destino} gerada automaticamente às ${res.hora_saida}` +
+          (res.alocados > 0 ? ` com ${res.alocados} passageiro(s) alocado(s).` : "."),
+      );
+      await recarregar();
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Falha ao gerar viagem automaticamente.";
+      setErro(msg);
     }
   }
 
@@ -1433,7 +1502,14 @@ export default function QuadroViagens() {
                       <Label>Cidade de destino *</Label>
                       <Select
                         value={destinos.some((d) => d.nome_destino === novoDestino) ? novoDestino : ""}
-                        onChange={(e) => setNovoDestino(e.target.value.toUpperCase())}
+                        onChange={(e) => {
+                          const val = e.target.value.toUpperCase();
+                          setNovoDestino(val);
+                          if (val) {
+                            const hAuto = horarioAutomaticoLocal(data, val);
+                            setNovoVeiculo((nv) => ({ ...nv, hora: hAuto.hora, retorno: hAuto.retorno }));
+                          }
+                        }}
                         className="!h-9 !py-1 text-xs"
                       >
                         <option value="">Selecionar destino cadastrado…</option>
@@ -1533,8 +1609,17 @@ export default function QuadroViagens() {
                     <div key={dd.destino} className="mb-2.5 rounded-xl bg-sand/50 p-2.5">
                       <div className="mb-1.5 flex items-center gap-1.5">
                         <p className="truncate text-xs font-extrabold text-sus-950">{dd.destino}</p>
+                        {podeGerirFrota && podeEditar && dd.viagens.length === 0 && (data >= hoje || podeEditarPassadas) && (
+                          <button
+                            onClick={() => gerarViagemAuto(data, dd.destino)}
+                            className="ml-auto inline-flex items-center gap-1 rounded-lg bg-teal px-2 py-1 text-[10px] font-bold text-white hover:brightness-110"
+                            title="Gerar viagem automaticamente com horário e veículo sugeridos"
+                          >
+                            <Sparkles className="h-3 w-3" /> Gerar viagem
+                          </button>
+                        )}
                         {podeGerirFrota && (data >= hoje || podeEditarPassadas) && (
-                          <button onClick={() => sugerir(data, dd.destino)} className="ml-auto rounded-lg bg-teal/10 p-1.5 text-teal hover:bg-teal/20" title="Sugerir veículo">
+                          <button onClick={() => sugerir(data, dd.destino)} className={`${dd.viagens.length === 0 && podeEditar ? "" : "ml-auto "}rounded-lg bg-teal/10 p-1.5 text-teal hover:bg-teal/20`} title="Sugerir veículo e horário">
                             <Sparkles className="h-4 w-4" />
                           </button>
                         )}
@@ -1861,7 +1946,14 @@ export default function QuadroViagens() {
                             </div>
                           </div>
                         ) : (
-                          <button onClick={() => { setAlocandoEm(`${data}|${dd.destino}`); setNovoVeiculo({ veiculo_id: "", motorista: "", motorista_id: "", hora: "05:00", retorno: retornoAutomatico("05:00") }); }} className="w-full rounded-xl border border-dashed border-sus-900/25 px-2 py-2 text-xs font-bold text-sus-900/70 hover:border-teal hover:text-teal">
+                          <button
+                            onClick={() => {
+                              const hAuto = horarioAutomaticoLocal(data, dd.destino);
+                              setAlocandoEm(`${data}|${dd.destino}`);
+                              setNovoVeiculo({ veiculo_id: "", motorista: "", motorista_id: "", hora: hAuto.hora, retorno: hAuto.retorno });
+                            }}
+                            className="w-full rounded-xl border border-dashed border-sus-900/25 px-2 py-2 text-xs font-bold text-sus-900/70 hover:border-teal hover:text-teal"
+                          >
                             + Veículo
                           </button>
                         )
@@ -2739,78 +2831,106 @@ export default function QuadroViagens() {
               {/* Quebra de página no documento oficial caso necessário */}
               <div className="ordem-quebra-pagina my-3 border-t-2 border-dashed border-gray-300 print:border-none"></div>
 
-              {/* Relação de Passageiros */}
-              <div className="text-center mb-2">
-                <h3 className="text-xs md:text-sm font-extrabold uppercase tracking-tight">
-                  Relação de Passageiros
-                </h3>
-                <p className="text-[10px] text-gray-600">
-                  {visualizarOrdem.passageiros?.length || 0} passageiro(s) agendado(s) · {visualizarOrdem.destino}
-                </p>
-              </div>
+              {/* Relação de Passageiros — estritamente 1 pessoa por linha; acompanhantes descem para a linha seguinte */}
+              {(() => {
+                type LinhaFicha = {
+                  nome: string;
+                  nascimento: string | null;
+                  tratamento: string;
+                  observacoes: string;
+                  unidade: string;
+                  hora_consulta: string;
+                };
+                const linhasFicha: LinhaFicha[] = [];
+                for (const p of visualizarOrdem.passageiros ?? []) {
+                  const pacNome = (p.paciente_nome || "").trim() || "Paciente";
+                  linhasFicha.push({
+                    nome: pacNome,
+                    nascimento: p.paciente_nascimento ?? null,
+                    tratamento: p.tratamento || "",
+                    observacoes: p.observacoes || "",
+                    unidade: p.unidade || "",
+                    hora_consulta: p.hora_consulta || "",
+                  });
+                  const acomp = (p.acompanhante_nome || p.acompanhante || "").trim();
+                  if (acomp) {
+                    linhasFicha.push({
+                      nome: acomp,
+                      nascimento: p.acompanhante_nascimento ?? null,
+                      tratamento: "Acompanhante",
+                      observacoes: `Acompanhante de ${pacNome}`,
+                      unidade: p.unidade || "",
+                      hora_consulta: p.hora_consulta || "",
+                    });
+                  }
+                }
+                return (
+                  <>
+                    <div className="text-center mb-2">
+                      <h3 className="text-xs md:text-sm font-extrabold uppercase tracking-tight">
+                        Relação de Passageiros
+                      </h3>
+                      <p className="text-[10px] text-gray-600">
+                        {linhasFicha.length} pessoa(s) na relação · {visualizarOrdem.destino}
+                      </p>
+                    </div>
 
-              {/* Tabela de Passageiros Centralizada na Página */}
-              <div className="w-full flex justify-center">
-                <table
-                  className="w-full border-collapse border border-black text-[10px] md:text-[11px] leading-tight"
-                  style={{ margin: "0 auto" }}
-                >
-                  <thead>
-                    <tr className="border-b border-black bg-gray-100 font-bold text-center">
-                      <th className="border-r border-black p-1 w-8">Nº</th>
-                      <th className="border-r border-black p-1 text-left">Passageiro</th>
-                      <th className="border-r border-black p-1 w-20">Data Nasc.</th>
-                      <th className="border-r border-black p-1 text-left">Tratamento / Observação</th>
-                      <th className="border-r border-black p-1 text-left w-28">Unidade</th>
-                      <th className="border-r border-black p-1 w-16">Horário</th>
-                      <th className="p-1 text-left w-24">Cidade</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {/* Linhas preenchidas + completadas até 15 para impressão equilibrada */}
-                    {Array.from({ length: Math.max(15, visualizarOrdem.passageiros?.length || 0) }).map((_, idx) => {
-                      const p = visualizarOrdem.passageiros?.[idx];
-                      const tratObs = p
-                        ? [p.tratamento, p.observacoes ? `Obs.: ${p.observacoes}` : ""].filter(Boolean).join(" - ")
-                        : "";
-                      return (
-                        <tr key={idx} className="border-b border-black h-6">
-                          <td className="border-r border-black p-1 text-center font-bold">
-                            {String(idx + 1).padStart(2, "0")}
-                          </td>
-                          <td className="border-r border-black px-1.5 py-0.5 truncate max-w-[180px]">
-                            {p?.paciente_nome ? (
-                              <div>
-                                <span className="font-semibold">{p.paciente_nome}</span>
-                                {p.acompanhante_nome && (
-                                  <span className="block text-[9px] text-gray-600">
-                                    Acomp: {p.acompanhante_nome}
-                                  </span>
-                                )}
-                              </div>
-                            ) : ""}
-                          </td>
-                          <td className="border-r border-black p-1 text-center">
-                            {p ? fmtNasc(p.paciente_nascimento) : ""}
-                          </td>
-                          <td className="border-r border-black px-1.5 py-0.5 truncate max-w-[160px]">
-                            {tratObs}
-                          </td>
-                          <td className="border-r border-black px-1.5 py-0.5 truncate max-w-[120px]">
-                            {p?.unidade || ""}
-                          </td>
-                          <td className="border-r border-black p-1 text-center font-semibold">
-                            {p?.hora_consulta || ""}
-                          </td>
-                          <td className="px-1.5 py-0.5 truncate max-w-[100px]">
-                            {p ? (visualizarOrdem.destino || "") : ""}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                    {/* Tabela de Passageiros Centralizada na Página */}
+                    <div className="w-full flex justify-center">
+                      <table
+                        className="w-full border-collapse border border-black text-[10px] md:text-[11px] leading-tight"
+                        style={{ margin: "0 auto" }}
+                      >
+                        <thead>
+                          <tr className="border-b border-black bg-gray-100 font-bold text-center">
+                            <th className="border-r border-black p-1 w-8">Nº</th>
+                            <th className="border-r border-black p-1 text-left">Passageiro</th>
+                            <th className="border-r border-black p-1 w-20">Data Nasc.</th>
+                            <th className="border-r border-black p-1 text-left">Tratamento / Observação</th>
+                            <th className="border-r border-black p-1 text-left w-28">Unidade</th>
+                            <th className="border-r border-black p-1 w-16">Horário</th>
+                            <th className="p-1 text-left w-24">Cidade</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {/* Linhas preenchidas (1 pessoa por linha) + completadas até 15 para impressão equilibrada */}
+                          {Array.from({ length: Math.max(15, linhasFicha.length) }).map((_, idx) => {
+                            const linha = linhasFicha[idx];
+                            const tratObs = linha
+                              ? [linha.tratamento, linha.observacoes ? `Obs.: ${linha.observacoes}` : ""].filter(Boolean).join(" - ")
+                              : "";
+                            return (
+                              <tr key={idx} className="border-b border-black h-6">
+                                <td className="border-r border-black p-1 text-center font-bold">
+                                  {String(idx + 1).padStart(2, "0")}
+                                </td>
+                                <td className="border-r border-black px-1.5 py-0.5 truncate max-w-[180px]">
+                                  {linha ? <span className="font-semibold">{linha.nome}</span> : ""}
+                                </td>
+                                <td className="border-r border-black p-1 text-center">
+                                  {linha ? fmtNasc(linha.nascimento) : ""}
+                                </td>
+                                <td className="border-r border-black px-1.5 py-0.5 truncate max-w-[160px]">
+                                  {tratObs}
+                                </td>
+                                <td className="border-r border-black px-1.5 py-0.5 truncate max-w-[120px]">
+                                  {linha?.unidade || ""}
+                                </td>
+                                <td className="border-r border-black p-1 text-center font-semibold">
+                                  {linha?.hora_consulta || ""}
+                                </td>
+                                <td className="px-1.5 py-0.5 truncate max-w-[100px]">
+                                  {linha ? (visualizarOrdem.destino || "") : ""}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>,

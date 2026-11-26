@@ -414,7 +414,7 @@ class EmprestimoOxigenioOut(BaseModel):
 
     observacoes: str
     created_at: datetime
-    updated_at: datetime
+    updated_at: datetime | None = None
 
     # Indicador de prazo de troca
     dias_para_troca: int | None = None

@@ -26,7 +26,7 @@ class Medicamento(SQLModel, table=True):
     ativo: bool = Field(default=True, index=True)
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
-        sa_column=Column(DateTime(timezone=False)),
+        sa_column=Column(DateTime(timezone=False), index=True),
     )
     updated_at: datetime | None = Field(
         default=None,
@@ -57,7 +57,7 @@ class MovimentacaoMedicamento(SQLModel, table=True):
     observacoes: str = Field(default="", sa_column=Column(Text))
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
-        sa_column=Column(DateTime(timezone=False)),
+        sa_column=Column(DateTime(timezone=False), index=True),
     )
 
 
@@ -103,7 +103,7 @@ class MovimentacaoInsumo(SQLModel, table=True):
     observacoes: str = Field(default="", sa_column=Column(Text))
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
-        sa_column=Column(DateTime(timezone=False)),
+        sa_column=Column(DateTime(timezone=False), index=True),
     )
 
 

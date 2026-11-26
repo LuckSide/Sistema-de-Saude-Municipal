@@ -295,6 +295,10 @@ def executar_sync_automatica_sigtap(
     except Exception as e:
         logger.warning(f"Erro na sincronização automática SIGTAP/DATASUS: {e}")
         try:
+            db.rollback()
+        except Exception:
+            pass
+        try:
             cfg = db.exec(select(IntegrationSettings).where(IntegrationSettings.id == 1)).first()
             if cfg:
                 cfg.sigtap_sync_ultima_execucao = datetime.utcnow()
@@ -303,12 +307,20 @@ def executar_sync_automatica_sigtap(
                 db.add(cfg)
                 db.commit()
         except Exception:
-            pass
+            try:
+                db.rollback()
+            except Exception:
+                pass
         return {"ok": False, "status": "ERRO", "mensagem": str(e)[:500], "link_oficial": PORTAL_SIGTAP_URL}
     finally:
         if is_pg_locked:
             try:
+                db.rollback()
+            except Exception:
+                pass
+            try:
                 db.execute(text(f"SELECT pg_advisory_unlock({ADVISORY_LOCK_SIGTAP})"))
+                db.commit()
             except Exception:
                 pass
         _SIGTAP_RUNNING = False

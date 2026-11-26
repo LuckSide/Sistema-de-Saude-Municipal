@@ -17,7 +17,14 @@ from app.models.apac import (  # noqa: F401
     SolicitacaoAPAC,
 )
 from app.models.audit import AuditLog
-from app.models.cadastros_saude import Medico, UnidadeSaude
+from app.models.cadastros_saude import (
+    EquipeProfissional,
+    EquipeSaude,
+    Medico,
+    Prestador,
+    UnidadeSaude,
+    UnidadeServicoEspecializado,
+)
 from app.models.dashboard_prefs import UserDashboardPrefs
 from app.models.farmacia import (  # noqa: F401
     FarmaciaLinkPublico,
@@ -46,12 +53,21 @@ from app.models.lab_exames import (
 from app.models.lab_fase6 import (
     FilaPsf,
     ItemSolic,
-    Laboratorio,
+    LabConferenciaAutomatica,
+    LabContrato,
+    LabContratoPrecoCustomizado,
+    LabFechamentoFaturamento,
+    LabFeriadoBloqueio,
+    LabFPOCompetencia,
+    LabFPOItem,
+    LabInconsistenciaJustificativa,
     LabLoteArtefato,
     LabLoteItem,
     LabLoteLiberacao,
     LabOrcamentoMensal,
     LabPedidoAjuste,
+    LabResultadoArquivo,
+    Laboratorio,
     SolicitacaoMestre,
     VagaLab,
 )
@@ -66,7 +82,9 @@ from app.models.oxigenio import (  # noqa: F401
     LicitacaoContratoOxigenio,
     TrocaCilindroHistorico,
 )
+from app.models.producao_ambulatorial import ProducaoAmbulatorial
 from app.models.settings import SystemSettings
+from app.models.suporte import TicketSuporte
 from app.models.tfd import (
     Destino,
     Especialidade,
@@ -169,6 +187,21 @@ TODOS_MODELOS: list[type[SQLModel]] = [
     LabLoteLiberacao,
     LabLoteItem,
     LabLoteArtefato,
+    UnidadeServicoEspecializado,
+    EquipeSaude,
+    EquipeProfissional,
+    Prestador,
+    ProducaoAmbulatorial,
+    TicketSuporte,
+    LabFeriadoBloqueio,
+    LabContrato,
+    LabContratoPrecoCustomizado,
+    LabFPOCompetencia,
+    LabFPOItem,
+    LabFechamentoFaturamento,
+    LabResultadoArquivo,
+    LabConferenciaAutomatica,
+    LabInconsistenciaJustificativa,
 ]
 
 MODELO_POR_TABELA: dict[str, type[SQLModel]] = {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { gerarQrDataUri } from "../../utils/qrSvg";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Building2, Bus, Calendar, CheckCircle2, ClipboardList, Copy, Download, Eye, Layers, MapPin, MessageSquare, Pencil, Plus, Printer, QrCode, RefreshCw, Search, Stethoscope, Trash2, UserX, X } from "lucide-react";
 import {
@@ -234,7 +235,7 @@ function baseAcompanhar(): string {
 }
 
 function qrUrl(link: string): string {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(link)}`;
+  return gerarQrDataUri(link);
 }
 
 export default function FilaExames() {

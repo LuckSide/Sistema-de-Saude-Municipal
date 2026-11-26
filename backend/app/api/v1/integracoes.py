@@ -87,9 +87,10 @@ def pec_efetivo(db: Session | None = None) -> tuple[str, str]:
             elif (c.pec_database_url or "").strip():
                 dsn = c.pec_database_url.strip()
             elif (c.pec_usuario or "").strip() and (c.pec_senha or "").strip() and (c.pec_servidor_url or "").strip():
-                host = c.pec_servidor_url.replace("http://", "").replace("https://", "").split(":")[0]
+                from urllib.parse import quote_plus
+                host = c.pec_servidor_url.replace("http://", "").replace("https://", "").split(":")[0].split("/")[0]
                 banco = c.pec_banco_nome or "esus"
-                dsn = f"postgresql://{c.pec_usuario}:{c.pec_senha}@{host}:5432/{banco}"
+                dsn = f"postgresql://{quote_plus(c.pec_usuario)}:{quote_plus(c.pec_senha)}@{host}:5432/{quote_plus(banco)}"
     except Exception:
         pass
     if fonte not in FONTES_PEC:
@@ -232,6 +233,12 @@ def salvar_pec(data: PecIn, db: Session = Depends(get_db), user: User = Depends(
         url = data.pec_servidor_url.strip()
         if url and not URL_RE.match(url):
             raise HTTPException(status_code=400, detail="URL do servidor PEC inválida (use http(s)://...)")
+        if url:
+            from app.core.security import validar_url_externa_segura
+            try:
+                url = validar_url_externa_segura(url, permitir_rede_privada=True)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=f"URL do servidor PEC bloqueada: {e}")
         c.pec_servidor_url = url
     if data.pec_banco_nome is not None:
         c.pec_banco_nome = data.pec_banco_nome.strip()
@@ -325,27 +332,30 @@ def testar_pec(db: Session = Depends(get_db), user: User = Depends(need_perm("cf
         from sqlalchemy import create_engine, text
 
         eng = create_engine(dsn, pool_pre_ping=True, connect_args={"connect_timeout": 6})
-        with eng.connect() as conn:
-            row_db = conn.execute(text("SELECT current_database(), current_user, version()")).first()
-            total_cid = 0
-            total_cid_ativos = 0
-            try:
-                row_cid = conn.execute(text("SELECT count(*) FROM tb_cidadao")).scalar()
-                total_cid = int(row_cid or 0)
-            except Exception:
-                pass
-            try:
-                row_at = conn.execute(
-                    text(
-                        "SELECT count(*) FROM tb_cidadao "
-                        "WHERE COALESCE(st_ativo::text, '1') IN ('1', 'true', 't', 'TRUE') "
-                        "AND COALESCE(st_faleceu::text, '0') NOT IN ('1', 'true', 't', 'TRUE') "
-                        "AND dt_obito IS NULL"
-                    )
-                ).scalar()
-                total_cid_ativos = int(row_at or 0)
-            except Exception:
-                total_cid_ativos = total_cid
+        try:
+            with eng.connect() as conn:
+                row_db = conn.execute(text("SELECT current_database(), current_user, version()")).first()
+                total_cid = 0
+                total_cid_ativos = 0
+                try:
+                    row_cid = conn.execute(text("SELECT count(*) FROM tb_cidadao")).scalar()
+                    total_cid = int(row_cid or 0)
+                except Exception:
+                    pass
+                try:
+                    row_at = conn.execute(
+                        text(
+                            "SELECT count(*) FROM tb_cidadao "
+                            "WHERE COALESCE(st_ativo::text, '1') IN ('1', 'true', 't', 'TRUE') "
+                            "AND COALESCE(st_faleceu::text, '0') NOT IN ('1', 'true', 't', 'TRUE') "
+                            "AND dt_obito IS NULL"
+                        )
+                    ).scalar()
+                    total_cid_ativos = int(row_at or 0)
+                except Exception:
+                    total_cid_ativos = total_cid
+        finally:
+            eng.dispose()
         from app.models.tfd import Paciente as _Pac
         total_locais_ativos = len(
             db.exec(select(_Pac.id).where(_Pac.situacao_cadastral == "ativo")).all()
@@ -677,4 +687,71 @@ def importar_filas(
         except Exception:
             pass
         raise HTTPException(status_code=500, detail=f"Falha ao importar: {str(e)}")
+    return {"simulacao": simular, "arquivo": nome[:120], **resumo}
+
+
+@router.post("/integracoes/viagens-carro/importar")
+def importar_viagens_carro(
+    file: UploadFile = File(...),
+    simular: bool = Query(default=False),
+    criar_pacientes_novos: bool = Query(default=True),
+    gerar_faturamento: bool = Query(default=True),
+    db: Session = Depends(get_db),
+    user: User = Depends(need_perm("cfg_filas", "criar")),
+):
+    """Carga em lote de viagens de carro TFD (.csv ou .json). `simular=true` não grava."""
+    from app.services.importacao_viagens_carro import (
+        MAX_BYTES_VIAGENS,
+        MAX_LINHAS_VIAGENS,
+        ler_viagens_carro,
+        processar_viagens_carro,
+    )
+
+    nome = (file.filename or "").strip()
+    ext = nome.rsplit(".", 1)[-1].lower() if "." in nome else ""
+    if ext not in ("csv", "json"):
+        raise HTTPException(status_code=400, detail="Envie um arquivo .csv ou .json")
+    conteudo = file.file.read(MAX_BYTES_VIAGENS + 1)
+    if not conteudo:
+        raise HTTPException(status_code=400, detail="Arquivo vazio")
+    if len(conteudo) > MAX_BYTES_VIAGENS:
+        raise HTTPException(status_code=400, detail="Arquivo acima do limite de tamanho permitido")
+    try:
+        linhas = ler_viagens_carro(conteudo, ext)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not linhas:
+        raise HTTPException(status_code=400, detail="Nenhuma linha de dados")
+    if len(linhas) > MAX_LINHAS_VIAGENS:
+        raise HTTPException(status_code=400, detail=f"Acima de {MAX_LINHAS_VIAGENS} linhas — divida o arquivo")
+
+    ator_nome = (user.nome or user.username or "").strip()
+    try:
+        resumo = processar_viagens_carro(
+            linhas,
+            db,
+            simular=simular,
+            criar_pacientes_novos=criar_pacientes_novos,
+            gerar_faturamento=gerar_faturamento,
+            ator_nome=ator_nome,
+        )
+        if simular:
+            db.rollback()
+        else:
+            db.commit()
+    except HTTPException:
+        raise
+    except ValueError as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Erro durante importação de viagens de carro: %s", e)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"Falha ao importar viagens de carro: {str(e)}")
     return {"simulacao": simular, "arquivo": nome[:120], **resumo}

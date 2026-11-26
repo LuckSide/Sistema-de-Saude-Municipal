@@ -75,24 +75,27 @@ export default function FarmaciaPainelPublico() {
     carregarPainel();
   }, [token]);
 
-  // Contagem regressiva e auto-refresh
+  // Contagem regressiva e auto-refresh sem side-effect dentro de setState e respeitando visibilidade
+  const refreshTotal = painel?.tempo_atualizacao_segundos || 30;
   useEffect(() => {
     if (!painel) return;
 
     timerRef.current = window.setInterval(() => {
-      setSegundosParaRefresh((prev) => {
-        if (prev <= 1) {
-          carregarPainel(true);
-          return painel.tempo_atualizacao_segundos || 30;
-        }
-        return prev - 1;
-      });
+      if (document.visibilityState !== "visible") return;
+      setSegundosParaRefresh((prev) => (prev <= 1 ? 0 : prev - 1));
     }, 1000);
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [painel?.tempo_atualizacao_segundos, token]);
+  }, [refreshTotal, token, Boolean(painel)]);
+
+  useEffect(() => {
+    if (painel && segundosParaRefresh === 0) {
+      setSegundosParaRefresh(refreshTotal);
+      void carregarPainel(true);
+    }
+  }, [segundosParaRefresh, refreshTotal, Boolean(painel)]);
 
   // Fullscreen toggle
   function toggleFullscreen() {

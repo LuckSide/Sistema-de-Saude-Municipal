@@ -22,12 +22,12 @@ export default function Paginacao({
   onPageSize,
   opcoesPageSize = OPCOES_PADRAO,
 }: PaginacaoProps) {
-  if (total <= 0) return null;
-
   const opcoesFiltradas = useMemo(
     () => calcularOpcoesPageSize(opcoesPageSize, total),
     [opcoesPageSize, total]
   );
+
+  if (total <= 0) return null;
 
   const totalPages = Math.max(1, pages);
   const isTodos =

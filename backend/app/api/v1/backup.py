@@ -2,6 +2,7 @@ from datetime import datetime
 import gzip
 import json
 import logging
+import zlib
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel, Field
@@ -14,6 +15,28 @@ from app.services.backup_service import gerar_dump_dados, restaurar_dump_dados
 
 logger = logging.getLogger("backup")
 router = APIRouter()
+
+MAX_BACKUP_UPLOAD_BYTES = 64 * 1024 * 1024
+MAX_BACKUP_DECOMPRESSED_BYTES = 256 * 1024 * 1024
+
+
+def _descomprimir_gzip_limitado(dados: bytes, limite: int = MAX_BACKUP_DECOMPRESSED_BYTES) -> bytes:
+    """Descomprime payload gzip em blocos limitando o tamanho final contra zip/gzip bombs."""
+    decomp = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    partes: list[bytes] = []
+    total = 0
+    for i in range(0, len(dados), 65536):
+        chunk = decomp.decompress(dados[i : i + 65536], limite - total + 1)
+        total += len(chunk)
+        if total > limite:
+            raise ValueError("Arquivo de backup excede o limite seguro após descompressão.")
+        partes.append(chunk)
+    resto = decomp.flush(limite - total + 1)
+    total += len(resto)
+    if total > limite:
+        raise ValueError("Arquivo de backup excede o limite seguro após descompressão.")
+    partes.append(resto)
+    return b"".join(partes)
 
 
 class ExportarBackupIn(BaseModel):
@@ -85,20 +108,27 @@ async def restaurar_backup(
             detail="A senha de descriptografia é obrigatória.",
         )
 
-    conteudo_arquivo = await arquivo.read()
+    conteudo_arquivo = await arquivo.read(MAX_BACKUP_UPLOAD_BYTES + 1)
     if not conteudo_arquivo:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="O arquivo enviado está vazio.",
+        )
+    if len(conteudo_arquivo) > MAX_BACKUP_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Arquivo de backup excede o limite máximo de 64 MB.",
         )
 
     try:
         # 1. Descriptografa com AES-256-GCM
         dados_descriptografados = descriptografar_dados(conteudo_arquivo, senha.strip())
 
-        # 2. Descomprime se for gzip (ou usa direto se JSON puro)
+        # 2. Descomprime com proteção contra gzip bomb (ou usa direto se JSON puro)
         if dados_descriptografados.startswith(b"\x1f\x8b"):
-            dados_descriptografados = gzip.decompress(dados_descriptografados)
+            dados_descriptografados = _descomprimir_gzip_limitado(dados_descriptografados)
+        elif len(dados_descriptografados) > MAX_BACKUP_DECOMPRESSED_BYTES:
+            raise ValueError("Arquivo de backup excede o limite seguro de tamanho.")
 
         dump = json.loads(dados_descriptografados.decode("utf-8"))
 
