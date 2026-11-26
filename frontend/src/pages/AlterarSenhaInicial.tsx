@@ -8,8 +8,10 @@ import { Button, Input, Label } from "../components/ui/primitives";
 export default function AlterarSenhaInicial() {
   const { user, refreshMe, logout } = useAuth();
   const nav = useNavigate();
+  const [atual, setAtual] = useState("");
   const [nova, setNova] = useState("");
   const [confirma, setConfirma] = useState("");
+  const [mostrarAtual, setMostrarAtual] = useState(false);
   const [mostrarNova, setMostrarNova] = useState(false);
   const [mostrarConfirma, setMostrarConfirma] = useState(false);
   const [erro, setErro] = useState("");
@@ -18,6 +20,10 @@ export default function AlterarSenhaInicial() {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setErro("");
+    if (!atual.trim()) {
+      setErro("Informe a senha atual (temporária) utilizada para entrar.");
+      return;
+    }
     if (nova !== confirma) {
       setErro("Nova senha e confirmação não conferem.");
       return;
@@ -26,9 +32,13 @@ export default function AlterarSenhaInicial() {
       setErro("Nova senha precisa de ao menos 6 caracteres.");
       return;
     }
+    if (nova === atual) {
+      setErro("A nova senha deve ser diferente da senha atual temporária.");
+      return;
+    }
     setBusy(true);
     try {
-      await primeiraTrocaSenha(nova, confirma);
+      await primeiraTrocaSenha(nova, confirma, atual);
       const me = await refreshMe();
       if (me.must_change_password) {
         setErro("Troca registrada, mas flag segue ativa. Tente de novo.");
@@ -63,6 +73,29 @@ export default function AlterarSenhaInicial() {
           <ShieldCheck className="h-4 w-4 shrink-0" /> Crie sua senha pessoal definitiva para liberar o acesso ao sistema.
         </p>
         <div className="space-y-3">
+          <div>
+            <Label>Senha atual (temporária)</Label>
+            <div className="relative mt-1">
+              <Input
+                type={mostrarAtual ? "text" : "password"}
+                value={atual}
+                onChange={(e) => setAtual(e.target.value)}
+                autoComplete="current-password"
+                placeholder="Digite a senha temporária recebida"
+                required
+                className="pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setMostrarAtual((v) => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition"
+                tabIndex={-1}
+                aria-label={mostrarAtual ? "Ocultar senha" : "Ver senha"}
+              >
+                {mostrarAtual ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
           <div>
             <Label>Nova senha pessoal (mín. 6)</Label>
             <div className="relative mt-1">

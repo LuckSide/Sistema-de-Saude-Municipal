@@ -68,6 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     localStorage.removeItem("guape:token");
     setUser(null);
+    window.location.href = "/login";
   }, []);
 
   const can = useCallback(
