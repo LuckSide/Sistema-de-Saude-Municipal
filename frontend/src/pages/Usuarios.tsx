@@ -77,7 +77,7 @@ function resumirModulos(telas: string[]): { rotulo: string; qtd: number }[] {
       continue;
     }
     const marcadas = filhos.filter((f) => concedida(telas, f.codigo)).length;
-    if (marcadas > 0 || telas.includes(m.codigo)) {
+    if (marcadas > 0 || (!m.apenasGrupo && telas.includes(m.codigo))) {
       resumo.push({ rotulo: m.rotulo, qtd: marcadas || 1 });
     }
   }

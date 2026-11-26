@@ -253,7 +253,7 @@ export default function Dashboard() {
 
   // Lista enriquecida de atalhos disponíveis
   const listaNosPermitidos = [
-    ...MODULOS.flatMap((m) => [m, ...(m.filhos ?? [])]),
+    ...MODULOS.flatMap((m) => (m.apenasGrupo ? (m.filhos ?? []) : [m, ...(m.filhos ?? [])])),
     ...Object.entries(ATALHOS_EXTRAS).map(([codigo, val]) => ({
       codigo,
       rotulo: val.rotulo,
