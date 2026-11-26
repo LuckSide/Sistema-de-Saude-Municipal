@@ -276,3 +276,74 @@ def test_api_lab_sia_endpoints(session, monkeypatch):
     assert res_exec["ok"] is True
     assert res_exec["status"] == "SUCESSO"
 
+
+def test_sia_sync_sexo_respeita_limite_varchar10(session):
+    """Garante que valores não-M/F em PA_SEXO (ex: 'I', '', 'N') respeitam VARCHAR(10) no PostgreSQL."""
+    fields_proced = [
+        ("PA_ID", "C", 9, 0),
+        ("PA_DV", "C", 1, 0),
+        ("PA_DC", "C", 40, 0),
+        ("PA_CPX", "C", 1, 0),
+        ("PA_TPREG", "C", 4, 0),
+        ("PA_SEXO", "C", 1, 0),
+        ("PA_IDADEMN", "N", 3, 0),
+        ("PA_IDADEMX", "N", 3, 0),
+        ("PA_QTDMAX", "N", 3, 0),
+        ("PA_SA", "N", 8, 2),
+        ("PA_SP", "N", 8, 2),
+        ("PA_SH", "N", 8, 2),
+        ("PA_CMP", "C", 6, 0),
+    ]
+    rows_proced = [
+        {
+            "PA_ID": "030101007",
+            "PA_DV": "2",
+            "PA_DC": "CONSULTA MEDICA EM ATENCAO ESPECIALIZADA",
+            "PA_CPX": "2",
+            "PA_TPREG": "02",
+            "PA_SEXO": "I",
+            "PA_IDADEMN": "0",
+            "PA_IDADEMX": "130",
+            "PA_QTDMAX": "10",
+            "PA_SA": "10.00",
+            "PA_SP": "0.00",
+            "PA_SH": "0.00",
+            "PA_CMP": "202611",
+        },
+        {
+            "PA_ID": "020201029",
+            "PA_DV": "5",
+            "PA_DC": "DOSAGEM DE CREATININA",
+            "PA_CPX": "2",
+            "PA_TPREG": "01",
+            "PA_SEXO": "",
+            "PA_IDADEMN": "0",
+            "PA_IDADEMX": "130",
+            "PA_QTDMAX": "99",
+            "PA_SA": "1.85",
+            "PA_SP": "0.00",
+            "PA_SH": "0.00",
+            "PA_CMP": "202611",
+        },
+    ]
+    proced_bytes = _create_dbf(fields_proced, rows_proced)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        proced_path = os.path.join(tmp_dir, "S_PROCED.DBF")
+        with open(proced_path, "wb") as f:
+            f.write(proced_bytes)
+        stats = importar_tabela_sia(
+            db=session,
+            proced_dbf_path=proced_path,
+            pa_dbf_path=None,
+            competencia="2026-11",
+            nome_arquivo="BDSIA202611a.exe",
+            usuario="Teste",
+            simular=False,
+        )
+        assert stats["total"] == 2
+        for p in session.exec(select(SigtapProcedimento)).all():
+            assert len(p.sexo) <= 10
+            assert len(p.instrumento) <= 10
+            assert len(p.competencia) <= 7
+            assert p.sexo == "Ambos"
+

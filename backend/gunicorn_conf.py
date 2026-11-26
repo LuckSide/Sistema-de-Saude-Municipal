@@ -36,12 +36,10 @@ errorlog = "-"
 loglevel = os.environ.get("GUNICORN_LOG_LEVEL", "info")
 access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %(L)ss'
 
-# Headers e segurança de proxy reverso (Nginx em redes Docker/privadas)
-forwarded_allow_ips = os.environ.get(
-    "GUNICORN_FORWARDED_ALLOW_IPS",
-    "127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
-)
-proxy_allow_ips = forwarded_allow_ips
+# Headers e segurança de proxy reverso (Nginx interno na rede Docker app-network;
+# Gunicorn 23.0.0 não suporta blocos CIDR em proxy_allow_ips/forwarded_allow_ips)
+forwarded_allow_ips = os.environ.get("GUNICORN_FORWARDED_ALLOW_IPS", "*")
+proxy_allow_ips = os.environ.get("GUNICORN_PROXY_ALLOW_IPS", "*")
 secure_scheme_headers = {
     "X-FORWARDED-PROTOCOL": "ssl",
     "X-FORWARDED-PROTO": "https",

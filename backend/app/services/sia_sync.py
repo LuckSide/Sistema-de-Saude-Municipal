@@ -321,12 +321,11 @@ def importar_tabela_sia(
         exige_cid = (cod[:9] in cids_pa9) if cids_pa9 else False
 
         raw_sexo = r_proc.get("PA_SEXO", "").strip().upper()
-        if raw_sexo == "A":
-            sexo = "Ambos"
-        elif raw_sexo in ("M", "F"):
+        if raw_sexo in ("M", "F"):
             sexo = raw_sexo
         else:
-            sexo = "Indiferente"
+            # Coluna sigtap_procedimentos.sexo é VARCHAR(10); "Indiferente" (11 chars) truncava no PostgreSQL
+            sexo = "Ambos"
 
         try:
             idade_min = int(r_proc.get("PA_IDADEMN", 0) or 0)
@@ -361,12 +360,12 @@ def importar_tabela_sia(
         hier = decompor_codigo_sigtap(cod)
 
         pend_proc[cod] = {
-            "codigo": cod,
+            "codigo": cod[:20],
             "descricao": desc,
-            "complexidade": complexidade,
-            "instrumento": inst,
+            "complexidade": complexidade[:20],
+            "instrumento": inst[:10],
             "instrumentos_permitidos": ",".join(regs_sia)[:60],
-            "sexo": sexo,
+            "sexo": sexo[:10],
             "idade_min": idade_min,
             "idade_max": idade_max,
             "qtd_maxima": qtd_maxima,
@@ -374,10 +373,10 @@ def importar_tabela_sia(
             "valor_sa": round(valor_sa, 2),
             "valor_sp": round(valor_sp, 2),
             "valor_sh": round(valor_sh, 2),
-            "competencia": competencia,
-            "grupo_codigo": hier["grupo_codigo"],
+            "competencia": competencia[:7],
+            "grupo_codigo": hier["grupo_codigo"][:2],
             "grupo_nome": hier["grupo_nome"][:150],
-            "subgrupo_codigo": hier["subgrupo_codigo"],
+            "subgrupo_codigo": hier["subgrupo_codigo"][:4],
             "subgrupo_nome": hier["subgrupo_nome"][:180],
             "forma_organizacao_codigo": hier["forma_organizacao"][:6],
             "exige_cpf": exige_cpf,
@@ -435,13 +434,13 @@ def importar_tabela_sia(
     if not simular:
         db.commit()
         versao = SigtapVersao(
-            competencia=competencia,
+            competencia=competencia[:7],
             origem="sia_ftp",
-            arquivo=nome_arquivo or f"BDSIA_{competencia}.exe",
+            arquivo=(nome_arquivo or f"BDSIA_{competencia}.exe")[:255],
             total_proc=stats["inseridos"] + stats["atualizados"],
             inseridos=stats["inseridos"],
             atualizados=stats["atualizados"],
-            usuario=usuario,
+            usuario=(usuario or "")[:120],
         )
         db.add(versao)
         db.commit()

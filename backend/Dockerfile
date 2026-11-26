@@ -39,7 +39,8 @@ RUN rm -rf /usr/local/lib/python3.13/site-packages/pip \
 COPY app ./app
 COPY gunicorn_conf.py ./gunicorn_conf.py
 
-RUN chown -R appuser:appgroup /code
+RUN mkdir -p /code/storage /code/app/data/logs_archive \
+    && chown -R appuser:appgroup /code
 
 USER appuser
 
