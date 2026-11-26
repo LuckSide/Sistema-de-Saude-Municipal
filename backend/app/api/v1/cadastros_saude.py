@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import case
 from sqlmodel import Session, select
 
@@ -403,7 +404,7 @@ def atualizar_unidade(
 class UnidadeRtLoteIn(BaseModel):
     unidade_ids: list[int] = Field(min_length=1)
     responsavel_tecnico_nome: str = Field(min_length=2, max_length=150)
-    responsavel_tecnico_cns: str = Field(min_length=15, max_length=15)
+    responsavel_tecnico_cns: str = Field(min_length=15, max_length=25)
     responsavel_tecnico_conselho: str = Field(default="", max_length=50)
 
 
@@ -414,7 +415,7 @@ def atualizar_rt_unidades_lote(
     _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", acoes=("editar",))),
 ):
     """Atualiza Responsável Técnico e CNS em lote para múltiplas Unidades/PSFs."""
-    from app.core.validators import so_digitos, valida_cns
+    from app.services.validacoes import so_digitos, valida_cns
 
     cns_limpo = so_digitos(data.responsavel_tecnico_cns)
     ok_cns, motivo = valida_cns(cns_limpo)
