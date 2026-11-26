@@ -169,6 +169,12 @@ export const fetchUnidadesSaude = (params?: { q?: string; somente_ativas?: boole
 export const fetchMe = () => api.get<Usuario>("/api/me").then((r) => r.data);
 export const createUnidadeSaude = (payload: Record<string, unknown>) => api.post<UnidadeSaude>("/api/unidades-saude", payload).then((r) => r.data);
 export const updateUnidadeSaude = (id: number, payload: Record<string, unknown>) => api.put<UnidadeSaude>(`/api/unidades-saude/${id}`, payload).then((r) => r.data);
+export const atualizarRtUnidadesLote = (payload: {
+  unidade_ids: number[];
+  responsavel_tecnico_nome: string;
+  responsavel_tecnico_cns: string;
+  responsavel_tecnico_conselho?: string;
+}) => api.post<{ ok: boolean; atualizadas: number }>("/api/unidades-saude/atualizar-rt-lote", payload).then((r) => r.data);
 export const deleteUnidadeSaude = (id: number) => api.delete(`/api/unidades-saude/${id}`).then((r) => r.data);
 export const listarMedicos = fetchMedicos;
 export const listarUnidades = fetchUnidadesSaude;

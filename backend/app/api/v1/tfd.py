@@ -5991,12 +5991,11 @@ def atualizar_procedimento(pid: int, data: ProcedimentoIn, db: Session = Depends
     obj.ativo = data.ativo
     db.add(obj)
 
-    # Se o procedimento foi corrigido de um código legado (99999...) para um código SIGTAP oficial,
-    # sincroniza os itens de solicitação que ainda apontam para o SIGTAP legado.
+    # Se o procedimento possui código SIGTAP oficial, sincroniza eventuais itens de solicitação
+    # que ainda apontam para o SIGTAP legado (99999...) pelo código antigo ou pelo mesmo nome.
     codigo_efetivo = obj.codigo_faturamento_sigtap or obj.codigo
     if (
-        codigo_antigo.startswith("99999")
-        and len(codigo_efetivo) == 10
+        len(codigo_efetivo) == 10
         and codigo_efetivo.isdigit()
         and not codigo_efetivo.startswith("99999")
     ):
@@ -6005,18 +6004,35 @@ def atualizar_procedimento(pid: int, data: ProcedimentoIn, db: Session = Depends
         sigtap_oficial = db.exec(
             select(SigtapProcedimento).where(SigtapProcedimento.codigo == codigo_efetivo)
         ).first()
-        sigtap_legado = db.exec(
-            select(SigtapProcedimento).where(SigtapProcedimento.codigo == codigo_antigo)
-        ).first()
-        if sigtap_legado and sigtap_oficial and sigtap_legado.id != sigtap_oficial.id:
-            sigtap_legado.codigo_faturamento_sigtap = codigo_efetivo
-            db.add(sigtap_legado)
-            itens_legados = db.exec(
-                select(ItemSolic).where(ItemSolic.sigtap_id == sigtap_legado.id)
-            ).all()
-            for it in itens_legados:
-                it.sigtap_id = sigtap_oficial.id
-                db.add(it)
+        if sigtap_oficial:
+            legados: list[SigtapProcedimento] = []
+            if codigo_antigo.startswith("99999"):
+                sp_cod = db.exec(
+                    select(SigtapProcedimento).where(SigtapProcedimento.codigo == codigo_antigo)
+                ).first()
+                if sp_cod:
+                    legados.append(sp_cod)
+            if obj.nome:
+                sps_nome = db.exec(
+                    select(SigtapProcedimento).where(
+                        SigtapProcedimento.codigo.like("99999%"),
+                        func.upper(SigtapProcedimento.descricao) == obj.nome.upper(),
+                    )
+                ).all()
+                for sp_n in sps_nome:
+                    if sp_n.id not in {x.id for x in legados}:
+                        legados.append(sp_n)
+
+            for sigtap_legado in legados:
+                if sigtap_legado.id != sigtap_oficial.id:
+                    sigtap_legado.codigo_faturamento_sigtap = codigo_efetivo
+                    db.add(sigtap_legado)
+                    itens_legados = db.exec(
+                        select(ItemSolic).where(ItemSolic.sigtap_id == sigtap_legado.id)
+                    ).all()
+                    for it in itens_legados:
+                        it.sigtap_id = sigtap_oficial.id
+                        db.add(it)
 
     db.commit()
     db.refresh(obj)

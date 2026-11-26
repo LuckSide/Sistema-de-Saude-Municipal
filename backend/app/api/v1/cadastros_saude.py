@@ -400,6 +400,45 @@ def atualizar_unidade(
     return UnidadeOut(**obj.model_dump())
 
 
+class UnidadeRtLoteIn(BaseModel):
+    unidade_ids: list[int] = Field(min_length=1)
+    responsavel_tecnico_nome: str = Field(min_length=2, max_length=150)
+    responsavel_tecnico_cns: str = Field(min_length=15, max_length=15)
+    responsavel_tecnico_conselho: str = Field(default="", max_length=50)
+
+
+@router.post("/unidades-saude/atualizar-rt-lote")
+def atualizar_rt_unidades_lote(
+    data: UnidadeRtLoteIn,
+    db: Session = Depends(_get_db),
+    _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", acoes=("editar",))),
+):
+    """Atualiza Responsável Técnico e CNS em lote para múltiplas Unidades/PSFs."""
+    from app.core.validators import so_digitos, valida_cns
+
+    cns_limpo = so_digitos(data.responsavel_tecnico_cns)
+    ok_cns, motivo = valida_cns(cns_limpo)
+    if not ok_cns:
+        raise HTTPException(422, f"CNS do Responsável Técnico inválido: {motivo}")
+
+    nome_limpo = data.responsavel_tecnico_nome.strip()
+    conselho_limpo = (data.responsavel_tecnico_conselho or "").strip()
+    unidades = db.exec(
+        select(UnidadeSaude).where(UnidadeSaude.id.in_(data.unidade_ids))
+    ).all()
+    if not unidades:
+        raise HTTPException(404, "Nenhuma unidade encontrada para atualização.")
+
+    for u in unidades:
+        u.responsavel_tecnico_nome = nome_limpo
+        u.responsavel_tecnico_cns = cns_limpo
+        if conselho_limpo:
+            u.responsavel_tecnico_conselho = conselho_limpo
+        db.add(u)
+    db.commit()
+    return {"ok": True, "atualizadas": len(unidades)}
+
+
 @router.delete("/unidades-saude/{uid}", status_code=204)
 @router.delete("/unidades/{uid}", status_code=204, include_in_schema=False)
 def inativar_unidade(

@@ -1431,16 +1431,15 @@ def listar_mestre(
                 select(Paciente.id).where(or_(*condicoes_pac))
             ).all()
         )
-        condicoes = []
+        condicoes = [
+            SolicitacaoMestre.codigo_solicitacao.ilike(f"%{q_clean}%"),
+        ]
         if pacs_matching:
             condicoes.append(SolicitacaoMestre.paciente_id.in_(pacs_matching))
         if q_clean.isdigit():
             condicoes.append(SolicitacaoMestre.id == int(q_clean))
             condicoes.append(SolicitacaoMestre.paciente_id == int(q_clean))
-        if condicoes:
-            filtros.append(or_(*condicoes))
-        else:
-            filtros.append(SolicitacaoMestre.id == -1)
+        filtros.append(or_(*condicoes))
 
     base = select(SolicitacaoMestre).order_by(SolicitacaoMestre.data_agendada.desc())
     if filtros:

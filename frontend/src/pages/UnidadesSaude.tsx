@@ -20,6 +20,7 @@ import {
   deleteUnidadeSaude,
   fetchUnidadesSaude,
   updateUnidadeSaude,
+  atualizarRtUnidadesLote,
   fetchServicosUnidade,
   createServicoUnidade,
   deleteServicoUnidade,
@@ -137,6 +138,61 @@ export default function UnidadesSaude() {
   const [erroModal, setErroModal] = useState("");
   const [erros, setErros] = useState<Record<string, string>>({});
   const [ok, setOk] = useState("");
+
+  // Modal de Atualização em Lote de Responsável Técnico / CNS
+  const [modalLote, setModalLote] = useState(false);
+  const [loteIds, setLoteIds] = useState<number[]>([]);
+  const [loteRtNome, setLoteRtNome] = useState("");
+  const [loteRtCns, setLoteRtCns] = useState("");
+  const [loteRtConselho, setLoteRtConselho] = useState("");
+  const [salvandoLote, setSalvandoLote] = useState(false);
+  const [erroLote, setErroLote] = useState("");
+
+  function abrirModalLote() {
+    const semCns = lista
+      .filter((u) => u.ativo !== false && !(u.responsavel_tecnico_cns || "").trim())
+      .map((u) => u.id);
+    setLoteIds(semCns);
+    setLoteRtNome("");
+    setLoteRtCns("");
+    setLoteRtConselho("");
+    setErroLote("");
+    setModalLote(true);
+  }
+
+  async function salvarLoteRt() {
+    setErroLote("");
+    if (loteIds.length === 0) {
+      setErroLote("Selecione ao menos uma unidade para atualizar.");
+      return;
+    }
+    if (loteRtNome.trim().length < 2) {
+      setErroLote("Informe o nome do Responsável Técnico.");
+      return;
+    }
+    const cnsErr = validaCns(loteRtCns);
+    if (cnsErr) {
+      setErroLote(cnsErr);
+      return;
+    }
+    setSalvandoLote(true);
+    try {
+      const res = await atualizarRtUnidadesLote({
+        unidade_ids: loteIds,
+        responsavel_tecnico_nome: loteRtNome.trim(),
+        responsavel_tecnico_cns: loteRtCns.replace(/\D/g, ""),
+        responsavel_tecnico_conselho: loteRtConselho.trim(),
+      });
+      setModalLote(false);
+      setOk(`Responsável Técnico e CNS atualizados em ${res.atualizadas} unidade(s).`);
+      await carregar();
+    } catch (e: any) {
+      const det = e?.response?.data?.detail;
+      setErroLote(typeof det === "string" ? det : "Falha ao atualizar unidades em lote.");
+    } finally {
+      setSalvandoLote(false);
+    }
+  }
 
   // Submódulos: Serviços Especializados e Equipes da Unidade aberta
   const [servicos, setServicos] = useState<UnidadeServicoEspecializado[]>([]);
@@ -464,9 +520,14 @@ export default function UnidadesSaude() {
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <h1 className="font-display text-2xl font-extrabold text-sus-950">PSFs / Unidades de saúde (CNES)</h1>
         <ExportarExcel url="/api/unidades-saude/exportar" arquivo="unidades_saude" />
-        <Button onClick={() => abrir()} className="ml-auto">
-          <Plus className="h-4 w-4" /> Nova unidade
-        </Button>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={abrirModalLote}>
+            <Users className="h-4 w-4" /> Atualizar RT / CNS em Lote
+          </Button>
+          <Button onClick={() => abrir()}>
+            <Plus className="h-4 w-4" /> Nova unidade
+          </Button>
+        </div>
       </div>
       <p className="mb-4 mt-1 text-sm text-ink/55">
         Adequação estrutural oficial do CNES: Unidades, Serviços Especializados e Equipes de Saúde da Família (Código INE).
@@ -1267,6 +1328,154 @@ export default function UnidadesSaude() {
                   </Button>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modalLote && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4 overflow-y-auto"
+          onClick={() => !salvandoLote && setModalLote(false)}
+        >
+          <div
+            className="w-full max-w-2xl rounded-2xl bg-white shadow-card overflow-hidden flex flex-col max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-sus-900/10 px-6 py-4 bg-sand/30">
+              <div>
+                <h2 className="font-display text-lg font-bold text-sus-950">
+                  Atualizar Responsável Técnico e CNS em Lote
+                </h2>
+                <p className="text-xs text-ink/55">
+                  Aplique os dados do Responsável Técnico de uma só vez em múltiplos PSFs/Unidades sem CNS.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !salvandoLote && setModalLote(false)}
+                className="rounded-lg p-1.5 text-ink/50 hover:bg-sus-900/10"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-6 space-y-4">
+              {erroLote && (
+                <div className="rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-xs font-medium text-red-700">
+                  {erroLote}
+                </div>
+              )}
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="sm:col-span-2">
+                  <Label>Nome do Responsável Técnico *</Label>
+                  <Input
+                    value={loteRtNome}
+                    onChange={(e) => setLoteRtNome(e.target.value)}
+                    placeholder="Ex: Dr. João da Silva / Enf. Maria"
+                  />
+                </div>
+                <div>
+                  <Label>Conselho (CRM/COREN)</Label>
+                  <Input
+                    value={loteRtConselho}
+                    onChange={(e) => setLoteRtConselho(e.target.value)}
+                    placeholder="Ex: COREN-MG 12345"
+                  />
+                </div>
+                <div className="sm:col-span-3">
+                  <Label>Cartão SUS (CNS - 15 dígitos) do Responsável Técnico *</Label>
+                  <Input
+                    value={loteRtCns}
+                    onChange={(e) => setLoteRtCns(e.target.value.replace(/\D/g, "").slice(0, 15))}
+                    placeholder="Digite os 15 dígitos do CNS"
+                    className="font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <Label className="!mb-0">
+                    Unidades selecionadas ({loteIds.length} de {lista.filter((u) => u.ativo !== false).length})
+                  </Label>
+                  <div className="flex gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setLoteIds(
+                          lista
+                            .filter((u) => u.ativo !== false && !(u.responsavel_tecnico_cns || "").trim())
+                            .map((u) => u.id)
+                        )
+                      }
+                      className="font-semibold text-teal hover:underline"
+                    >
+                      Apenas sem CNS
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLoteIds(lista.filter((u) => u.ativo !== false).map((u) => u.id))}
+                      className="font-semibold text-sus-950 hover:underline"
+                    >
+                      Todas
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLoteIds([])}
+                      className="font-semibold text-ink/55 hover:underline"
+                    >
+                      Limpar
+                    </button>
+                  </div>
+                </div>
+                <div className="max-h-56 overflow-y-auto rounded-xl border border-sus-900/15 divide-y divide-sus-900/10">
+                  {lista
+                    .filter((u) => u.ativo !== false)
+                    .map((u) => {
+                      const marcado = loteIds.includes(u.id);
+                      const semCns = !(u.responsavel_tecnico_cns || "").trim();
+                      return (
+                        <label
+                          key={u.id}
+                          className="flex items-center justify-between gap-3 px-3 py-2 text-xs hover:bg-sand/30 cursor-pointer"
+                        >
+                          <span className="flex items-center gap-2 font-medium text-sus-950">
+                            <input
+                              type="checkbox"
+                              checked={marcado}
+                              onChange={(e) => {
+                                if (e.target.checked) setLoteIds((prev) => [...prev, u.id]);
+                                else setLoteIds((prev) => prev.filter((id) => id !== u.id));
+                              }}
+                              className="rounded border-sus-900/30"
+                            />
+                            {u.nome}
+                          </span>
+                          <span className={`font-mono text-[11px] ${semCns ? "text-amber-700 font-semibold" : "text-ink/50"}`}>
+                            {semCns ? "Sem CNS" : `CNS: ${formataCns(u.responsavel_tecnico_cns || "")}`}
+                          </span>
+                        </label>
+                      );
+                    })}
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t border-sus-900/10 px-6 py-3.5 bg-sand/20 flex items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setModalLote(false)}
+                disabled={salvandoLote}
+                className="!py-1.5 text-xs"
+              >
+                Cancelar
+              </Button>
+              <Button type="button" onClick={salvarLoteRt} disabled={salvandoLote} className="!py-1.5 text-xs">
+                {salvandoLote ? "Aplicando…" : `Aplicar em ${loteIds.length} unidade(s)`}
+              </Button>
             </div>
           </div>
         </div>
