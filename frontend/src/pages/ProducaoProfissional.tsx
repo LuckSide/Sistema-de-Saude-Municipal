@@ -665,7 +665,7 @@ export default function ProducaoProfissional() {
             </div>
             <div>
               <h1 className="text-xl md:text-2xl font-bold text-sus-950 tracking-tight">
-                Lançamento de Produção Ambulatorial
+                Lançamento da Produção
               </h1>
               <p className="text-xs md:text-sm text-sus-900/60 font-medium">
                 Digitação e validação de procedimentos dos profissionais de saúde (BPA-C e BPA-I / SIA-SUS)

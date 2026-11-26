@@ -57,6 +57,7 @@ export default function LabSigtap() {
   const [lista, setLista] = useState<SigtapProc[]>([]);
   const [erro, setErro] = useState("");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
 
@@ -172,12 +173,13 @@ export default function LabSigtap() {
     }
   }
 
-  function buscar(p = 1) {
+  function buscar(p = 1, limite = pageSize) {
+    const limitParam = limite >= 5000 ? 5000 : limite;
     labSigtap(
       q || undefined,
       inst || undefined,
       p,
-      100,
+      limitParam,
       apenasLab,
       grupoCodigo || undefined,
       subgrupoCodigo || undefined,
@@ -221,11 +223,11 @@ export default function LabSigtap() {
   useEffect(() => {
     const t = setTimeout(() => {
       setPage(1);
-      buscar(1);
+      buscar(1, pageSize);
     }, 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, inst, apenasLab, grupoCodigo, subgrupoCodigo, cboCodigo]);
+  }, [q, inst, apenasLab, grupoCodigo, subgrupoCodigo, cboCodigo, pageSize]);
 
   useEffect(() => {
     carregarVersoes();
@@ -574,7 +576,18 @@ export default function LabSigtap() {
           </tbody>
         </table>
         </div>
-        <Paginacao page={page} pages={pages} total={total} onPage={(p) => buscar(p)} />
+        <Paginacao
+          page={page}
+          pages={pages}
+          total={total}
+          pageSize={pageSize}
+          onPageSize={(sz) => {
+            const novoLimite = typeof sz === "number" ? sz : 5000;
+            setPageSize(novoLimite);
+            buscar(1, novoLimite);
+          }}
+          onPage={(p) => buscar(p, pageSize)}
+        />
       </Card>
 
       <Card className="mb-4 p-5 space-y-5">
