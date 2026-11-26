@@ -638,6 +638,9 @@ def auditar_criticas_bpa_competencia(
                 continue
 
             cod_proc = proc.codigo.strip()
+            cod_fat = (getattr(proc, "codigo_faturamento_sigtap", "") or "").strip()
+            if cod_proc.startswith("99999") and len(cod_fat) == 10 and cod_fat.isdigit() and not cod_fat.startswith("99999"):
+                cod_proc = cod_fat
             nome_proc = proc.descricao
             instru = (getattr(proc, "instrumento", "") or "BPA-C").upper()
 
@@ -652,8 +655,8 @@ def auditar_criticas_bpa_competencia(
                     ),
                     registro_id=s_lab.id,
                     registro_identificador=f"Exame Solicitação #{s_lab.codigo_solicitacao or s_lab.id}",
-                    sugestao_correcao="Associe o exame ao código SIGTAP oficial correspondente.",
-                    link_correcao="/producao-ambulatorial",
+                    sugestao_correcao="Localize o pedido na Recepção do Laboratório ou associe o exame ao código SIGTAP oficial no Catálogo de Procedimentos.",
+                    link_correcao=f"/lab?q={s_lab.codigo_solicitacao or s_lab.id}",
                 )
 
             # Checagem BPA-I

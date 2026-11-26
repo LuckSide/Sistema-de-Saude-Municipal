@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
   AlertTriangle,
@@ -49,6 +50,8 @@ function hojeISO() {
 export default function RecepcaoLab() {
   const { confirmar } = useConfirm();
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  const qInicial = (searchParams.get("q") || "").trim();
   const [lista, setLista] = useState<SolicMestre[]>([]);
   const [total, setTotal] = useState(0);
   const [carregando, setCarregando] = useState(false);
@@ -62,8 +65,8 @@ export default function RecepcaoLab() {
 
   // Filtros
   const [filtroStatus, setFiltroStatus] = useState<string>("todos");
-  const [dataFiltro, setDataFiltro] = useState<string>(hojeISO());
-  const [termoBusca, setTermoBusca] = useState("");
+  const [dataFiltro, setDataFiltro] = useState<string>(qInicial ? "" : hojeISO());
+  const [termoBusca, setTermoBusca] = useState(qInicial);
 
   // Carrega lista de laboratórios caso seja administrador
   useEffect(() => {

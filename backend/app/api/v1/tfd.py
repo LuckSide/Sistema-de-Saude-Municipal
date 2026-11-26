@@ -5979,6 +5979,7 @@ def atualizar_procedimento(pid: int, data: ProcedimentoIn, db: Session = Depends
     obj = db.get(ProcedimentoCatalogo, pid)
     if not obj:
         raise HTTPException(404, "Procedimento não encontrado")
+    codigo_antigo = (obj.codigo or "").strip()
     obj.codigo = data.codigo.strip()
     obj.nome = data.nome.strip().upper()
     obj.tipo_fila = data.tipo_fila.strip().upper()
@@ -5989,6 +5990,34 @@ def atualizar_procedimento(pid: int, data: ProcedimentoIn, db: Session = Depends
     obj.codigo_faturamento_sigtap = (data.codigo_faturamento_sigtap or "").strip()
     obj.ativo = data.ativo
     db.add(obj)
+
+    # Se o procedimento foi corrigido de um código legado (99999...) para um código SIGTAP oficial,
+    # sincroniza os itens de solicitação que ainda apontam para o SIGTAP legado.
+    codigo_efetivo = obj.codigo_faturamento_sigtap or obj.codigo
+    if (
+        codigo_antigo.startswith("99999")
+        and len(codigo_efetivo) == 10
+        and codigo_efetivo.isdigit()
+        and not codigo_efetivo.startswith("99999")
+    ):
+        from app.models.lab import ItemSolic, SigtapProcedimento
+
+        sigtap_oficial = db.exec(
+            select(SigtapProcedimento).where(SigtapProcedimento.codigo == codigo_efetivo)
+        ).first()
+        sigtap_legado = db.exec(
+            select(SigtapProcedimento).where(SigtapProcedimento.codigo == codigo_antigo)
+        ).first()
+        if sigtap_legado and sigtap_oficial and sigtap_legado.id != sigtap_oficial.id:
+            sigtap_legado.codigo_faturamento_sigtap = codigo_efetivo
+            db.add(sigtap_legado)
+            itens_legados = db.exec(
+                select(ItemSolic).where(ItemSolic.sigtap_id == sigtap_legado.id)
+            ).all()
+            for it in itens_legados:
+                it.sigtap_id = sigtap_oficial.id
+                db.add(it)
+
     db.commit()
     db.refresh(obj)
     return obj
