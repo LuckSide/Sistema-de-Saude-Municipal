@@ -72,7 +72,9 @@ from app.services.lab_fase6 import (
     editar_pedido_exames,
     enriquecer_mestre,
     enriquecer_mestre_lote,
+    gerar_codigo_fila_psf_unico,
     gerar_comprovante_agendamento,
+    gerar_comprovante_fila_psf,
     pedir_ajuste_laboratorio,
     recepcionar_coleta,
     remover_item_solicitacao,
@@ -842,8 +844,12 @@ def _formatar_fila_out(
         else:
             alerta_sit = "Inelegível"
 
+    cod_solic = (getattr(o, "codigo_solicitacao", "") or "").strip()
+
     return FilaPsfOut(
         id=o.id,
+        codigo_solicitacao=cod_solic,
+        numero_pedido=cod_solic,
         paciente_id=o.paciente_id,
         especialidade=getattr(o, "especialidade", "") or "",
         unidade_psf=o.unidade_psf or "PSF",
@@ -860,6 +866,10 @@ def _formatar_fila_out(
         paciente_cpf=getattr(pac, "cpf", "") or "",
         paciente_cns=getattr(pac, "cns", "") or "",
         paciente_prontuario=prontuario,
+        paciente_endereco=getattr(pac, "endereco", "") or "",
+        paciente_numero=getattr(pac, "endereco_numero", "") or "",
+        paciente_bairro=getattr(pac, "bairro", "") or "",
+        paciente_municipio=getattr(pac, "municipio", "") or "",
         paciente_situacao_cadastral=sit_cad,
         paciente_motivo_situacao=mot_cad,
         paciente_obito_ou_mudanca=eh_obito_ou_mudanca,
@@ -882,6 +892,7 @@ def _filtro_busca_fila_psf(db: Session, q_raw: str):
     conds = [
         Paciente.nome.ilike(f"%{q_clean}%"),
         coluna_sem_acento(db, Paciente.nome).ilike(f"%{q_norm}%"),
+        FilaPsf.codigo_solicitacao.ilike(f"%{q_clean}%"),
         FilaPsf.unidade_psf.ilike(f"%{q_clean}%"),
         FilaPsf.medico_solicitante.ilike(f"%{q_clean}%"),
         FilaPsf.observacoes.ilike(f"%{q_clean}%"),
@@ -903,6 +914,7 @@ def listar_fila(
     status_: str | None = Query(default=None, alias="status"),
     especialidade: str = "",
     unidade: str = "",
+    prioridade: str = Query(default=""),
     data_de: str | None = None,
     data_ate: str | None = None,
     q: str = "",
@@ -917,6 +929,8 @@ def listar_fila(
         status_ = getattr(status_, "default", None)
     if not isinstance(especialidade, str):
         especialidade = getattr(especialidade, "default", "") or ""
+    if not isinstance(prioridade, str):
+        prioridade = getattr(prioridade, "default", "") or ""
     if not isinstance(page, int):
         page = getattr(page, "default", 1)
     if not isinstance(limit, int):
@@ -970,6 +984,8 @@ def listar_fila(
         filtros.append(FilaPsf.especialidade.ilike(f"%{especialidade.strip()}%"))
     if unidade and unidade.strip() and unidade != "todas":
         filtros.append(FilaPsf.unidade_psf.ilike(f"%{unidade.strip()}%"))
+    if prioridade and prioridade.strip() and prioridade.strip().lower() != "todos":
+        filtros.append(FilaPsf.prioridade == prioridade.strip().lower())
     if data_de and str(data_de).strip():
         try:
             d_de = date.fromisoformat(str(data_de).strip())
@@ -1023,9 +1039,11 @@ def criar_fila(
         raise HTTPException(404, "Paciente não encontrado")
 
     obs_final = (data.observacoes or "").strip()
+    sigtap_nomes_map: dict[int, str] = {}
     if data.sigtap_ids:
         procs = db.exec(select(SigtapProcedimento).where(SigtapProcedimento.id.in_(data.sigtap_ids))).all()
-        nomes_exames = [p.descricao for p in procs]
+        sigtap_nomes_map = {p.id: (p.descricao or "") for p in procs if p.id is not None}
+        nomes_exames = [sigtap_nomes_map[sid] for sid in data.sigtap_ids if sid in sigtap_nomes_map] or [p.descricao for p in procs]
         import json
         trecho_ids = json.dumps(data.sigtap_ids)
         trecho_nomes = ", ".join(nomes_exames)
@@ -1038,9 +1056,9 @@ def criar_fila(
 
     d_solic = data.data_solicitacao or date.today()
     d_ped = data.data_pedido or d_solic
-    from app.services.geradores import gerar_protocolo_lab_aleatorio
+    cod_solic = gerar_codigo_fila_psf_unico(db, d_ped)
     obj = FilaPsf(
-        codigo_solicitacao=gerar_protocolo_lab_aleatorio(d_solic, db=db),
+        codigo_solicitacao=cod_solic,
         paciente_id=data.paciente_id,
         especialidade=data.especialidade.strip(),
         unidade_psf=data.unidade_psf,
@@ -1065,7 +1083,45 @@ def criar_fila(
         notificar_paciente_evento(db, "entrada_fila", obj, pac)
     except Exception:
         pass
-    return _formatar_fila_out(obj, pac)
+    return _formatar_fila_out(obj, pac, sigtap_nomes_map)
+
+
+@router.get("/exames/fila-psf/{fid}/comprovante", response_model=ComprovanteExameOut)
+def emitir_comprovante_fila_psf(
+    fid: int,
+    db: Session = Depends(get_db),
+    _=Depends(need_any_perm("lab_fila", "lab_agenda", "lab_marcacao", "lab_recepcao")),
+):
+    """Emite o comprovante de inclusão na fila de espera de exames de sangue."""
+    return gerar_comprovante_fila_psf(db, fid)
+
+
+def _finalizar_retorno_fila_psf(db: Session, obj: FilaPsf) -> FilaPsfOut:
+    """Persiste alterações em FilaPsf garantindo código de solicitação, notificação e mapa SIGTAP."""
+    if not (obj.codigo_solicitacao or "").strip():
+        obj.codigo_solicitacao = gerar_codigo_fila_psf_unico(db, obj.data_pedido or obj.data_solicitacao)
+
+    sigtap_nomes_map: dict[int, str] = {}
+    sids_atuais = _extrair_sigtap_ids_fila(obj)
+    if sids_atuais:
+        for sp_id, sp_desc in db.exec(
+            select(SigtapProcedimento.id, SigtapProcedimento.descricao).where(
+                SigtapProcedimento.id.in_(sids_atuais)
+            )
+        ).all():
+            if sp_id is not None:
+                sigtap_nomes_map[int(sp_id)] = sp_desc or ""
+
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    pac = db.get(Paciente, obj.paciente_id)
+    try:
+        from app.services.whatsapp import notificar_paciente_evento
+        notificar_paciente_evento(db, "entrada_fila", obj, pac)
+    except Exception:
+        pass
+    return _formatar_fila_out(obj, pac, sigtap_nomes_map)
 
 
 @router.patch("/exames/fila-psf/{fid}", response_model=FilaPsfOut)
@@ -1083,16 +1139,7 @@ def atualizar_status_fila(
     if data.status == "agendado":
         raise HTTPException(400, "Use a agenda p/ agendar a fila")
     obj.status = data.status
-    db.add(obj)
-    db.commit()
-    db.refresh(obj)
-    pac = db.get(Paciente, obj.paciente_id)
-    try:
-        from app.services.whatsapp import notificar_paciente_evento
-        notificar_paciente_evento(db, "entrada_fila", obj, pac)
-    except Exception:
-        pass
-    return _formatar_fila_out(obj, pac)
+    return _finalizar_retorno_fila_psf(db, obj)
 
 
 @router.put("/exames/fila-psf/{fid}", response_model=FilaPsfOut)
@@ -1147,16 +1194,7 @@ def atualizar_fila(
     if data.unidade_saude_id is not None:
         obj.unidade_saude_id = data.unidade_saude_id
 
-    db.add(obj)
-    db.commit()
-    db.refresh(obj)
-    pac = db.get(Paciente, obj.paciente_id)
-    try:
-        from app.services.whatsapp import notificar_paciente_evento
-        notificar_paciente_evento(db, "entrada_fila", obj, pac)
-    except Exception:
-        pass
-    return _formatar_fila_out(obj, pac)
+    return _finalizar_retorno_fila_psf(db, obj)
 
 
 @router.post("/exames/fila-psf/agendar-lote", response_model=dict)
@@ -2116,6 +2154,7 @@ def solicitar_autorizacao(
 def exportar_fila_psf(
     status_: str | None = Query(default=None, alias="status"),
     unidade: str = "",
+    prioridade: str = Query(default=""),
     data_de: str | None = None,
     data_ate: str | None = None,
     q: str = "",
@@ -2131,12 +2170,15 @@ def exportar_fila_psf(
     filtros = []
     st_val = status_ if isinstance(status_, str) else None
     unid_val = unidade.strip() if isinstance(unidade, str) else ""
+    prio_val = prioridade.strip().lower() if isinstance(prioridade, str) else ""
     ids_str = ids if isinstance(ids, str) else None
 
     if st_val and st_val.strip() and st_val != "todos":
         filtros.append(FilaPsf.status == st_val.strip())
     if unid_val and unid_val != "todas":
         filtros.append(FilaPsf.unidade_psf.ilike(f"%{unid_val}%"))
+    if prio_val and prio_val != "todos":
+        filtros.append(FilaPsf.prioridade == prio_val)
     if data_de and str(data_de).strip():
         try:
             d_de = date.fromisoformat(str(data_de).strip())
@@ -2453,12 +2495,9 @@ def listar_auditoria_laudos(
     q: str = Query(default="", max_length=100),
     status: str = Query(default="em_revisao_secretaria"),
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(need_any_perm("lab_auditoria_laudos", "lab_audit", "lab", "lab_orcamento", "lab_faturamento")),
 ):
     """Fila de Auditoria da Secretaria: lista pedidos retidos por inconsistências aguardando parecer da pasta."""
-    telas_user = (getattr(user, "telas", "") or "").split(",")
-    if not bool(getattr(user, "is_superuser", False)) and not any(t in telas_user for t in ["lab", "lab_orcamento", "lab_faturamento", "usuarios"]):
-        raise HTTPException(403, "Acesso restrito aos auditores da Secretaria de Saúde.")
 
     stmt = (
         select(SolicitacaoMestre)
@@ -2584,14 +2623,11 @@ def decidir_auditoria_laudo(
     mid: int,
     dados: LabDecisaoSecretariaIn,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(need_any_perm("lab_auditoria_laudos", "lab_audit", "lab", "lab_orcamento", acoes=("editar",))),
 ):
     """Decisão do auditor da Secretaria: Aprovar laudo (avança para REALIZADO e anexa ao Prontuário)
     ou Rejeitar laudo com parecer (retorna para o laboratório corrigir e reenviar).
     """
-    telas_user = (getattr(user, "telas", "") or "").split(",")
-    if not bool(getattr(user, "is_superuser", False)) and not any(t in telas_user for t in ["lab", "lab_orcamento", "usuarios"]):
-        raise HTTPException(403, "Acesso restrito aos auditores da Secretaria de Saúde.")
 
     m = db.get(SolicitacaoMestre, mid)
     if not m:

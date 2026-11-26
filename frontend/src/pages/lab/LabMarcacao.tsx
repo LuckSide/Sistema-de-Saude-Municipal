@@ -69,6 +69,7 @@ export default function LabMarcacao() {
   const [medicoId, setMedicoId] = useState("");
   const [justificativa, setJustificativa] = useState("");
   const [buscaSig, setBuscaSig] = useState("");
+  const [feedbackExame, setFeedbackExame] = useState("");
   const [sigtap, setSigtap] = useState<SigtapProc[]>([]);
   const [itens, setItens] = useState<ItemLote[]>([]);
   // Calendário integrado: mês + laboratório + grade de vagas
@@ -94,6 +95,7 @@ export default function LabMarcacao() {
   const [unidadeIdEdicao, setUnidadeIdEdicao] = useState("");
   const [justificativaEdicao, setJustificativaEdicao] = useState("");
   const [buscaSigEdicao, setBuscaSigEdicao] = useState("");
+  const [feedbackExameEdicao, setFeedbackExameEdicao] = useState("");
   const [sigtapEdicao, setSigtapEdicao] = useState<SigtapProc[]>([]);
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
   const [erroEdicao, setErroEdicao] = useState("");
@@ -316,6 +318,18 @@ export default function LabMarcacao() {
     setErro("");
   }
 
+  useEffect(() => {
+    if (!feedbackExame) return;
+    const t = window.setTimeout(() => setFeedbackExame(""), 2500);
+    return () => window.clearTimeout(t);
+  }, [feedbackExame]);
+
+  useEffect(() => {
+    if (!feedbackExameEdicao) return;
+    const t = window.setTimeout(() => setFeedbackExameEdicao(""), 2500);
+    return () => window.clearTimeout(t);
+  }, [feedbackExameEdicao]);
+
   function adicionarSig(s: SigtapProc) {
     setItens((atual) => {
       const ex = atual.find((i) => i.sigtap.id === s.id);
@@ -326,6 +340,8 @@ export default function LabMarcacao() {
       }
       return [...atual, { sigtap: s, quantidade: 1 }];
     });
+    setBuscaSig("");
+    setFeedbackExame(`Exame "${s.descricao}" adicionado ao pedido!`);
   }
 
   function setQtd(id: number, qtd: number) {
@@ -487,6 +503,8 @@ export default function LabMarcacao() {
       }
       return [...prev, { sigtap: proc, quantidade: 1 }];
     });
+    setBuscaSigEdicao("");
+    setFeedbackExameEdicao(`Exame "${proc.descricao}" adicionado ao pedido!`);
   }
 
   function removerItemEdicao(sigtapId: number) {
@@ -938,6 +956,13 @@ export default function LabMarcacao() {
                     onChange={(e) => setBuscaSig(e.target.value)}
                   />
 
+                  {feedbackExame && (
+                    <div className="flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                      <span className="truncate">{feedbackExame}</span>
+                    </div>
+                  )}
+
                   {/* Resultados da busca */}
                   <div className="max-h-36 space-y-1 overflow-auto rounded-xl border border-sus-900/10 p-2 bg-sand/30">
                     {sigtap.slice(0, 30).map((s) => (
@@ -1334,6 +1359,13 @@ export default function LabMarcacao() {
                     placeholder="Digite o código ou nome do exame (ex: Hemograma, Glicose, Ureia)..."
                     className="text-xs bg-white"
                   />
+
+                  {feedbackExameEdicao && (
+                    <div className="flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                      <span className="truncate">{feedbackExameEdicao}</span>
+                    </div>
+                  )}
 
                   <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
                     {sigtapEdicao.slice(0, 6).map((proc) => {

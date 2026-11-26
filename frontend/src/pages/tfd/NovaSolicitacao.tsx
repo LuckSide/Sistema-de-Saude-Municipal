@@ -17,6 +17,7 @@ import {
   FlaskConical,
   Layers,
   ListOrdered,
+  MapPin,
   Plus,
   Printer,
   RotateCcw,
@@ -30,6 +31,7 @@ import {
   X,
 } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
+import { acoesEfetivas, type Acao } from "../../permissoes";
 import {
   fetchMedicos,
   fetchUnidadesSaude,
@@ -80,13 +82,86 @@ function normalizarTexto(texto: string): string {
     .toLowerCase();
 }
 
+type PacienteComUnidade = Paciente & {
+  unidade_nome?: string;
+  unidade_cnes?: string;
+};
+
+function ehFilaLaboratorio(tf: TipoFila): boolean {
+  if ((tf.tipo_fila || "").trim().toUpperCase() === "EXAME_LABORATORIAL") return true;
+  const nomeNorm = normalizarTexto(tf.nome || "").trim().toUpperCase();
+  return (
+    nomeNorm.startsWith("EX. LAB.") ||
+    nomeNorm.startsWith("EX.LAB.") ||
+    nomeNorm.startsWith("EX LAB") ||
+    nomeNorm.startsWith("LABORATORIO")
+  );
+}
+
+function encontrarUnidadeDoPaciente(
+  p: PacienteComUnidade,
+  listaUnidades: UnidadeSaude[],
+): UnidadeSaude | undefined {
+  if (!listaUnidades.length) return undefined;
+  if (p.unidade_saude_id) {
+    const porId = listaUnidades.find((u) => u.id === p.unidade_saude_id);
+    if (porId) return porId;
+  }
+  const cnesPac = (p.unidade_cnes || "").trim();
+  if (cnesPac) {
+    const porCnes = listaUnidades.find((u) => (u.cnes || "").trim() === cnesPac);
+    if (porCnes) return porCnes;
+  }
+  const nomePac = normalizarTexto(p.unidade_nome || "").trim();
+  if (nomePac) {
+    const porNomeExato = listaUnidades.find(
+      (u) => normalizarTexto(u.nome || "").trim() === nomePac,
+    );
+    if (porNomeExato) return porNomeExato;
+    const porNomeParcial = listaUnidades.find((u) => {
+      const nU = normalizarTexto(u.nome || "").trim();
+      return Boolean(nU && (nU.includes(nomePac) || nomePac.includes(nU)));
+    });
+    if (porNomeParcial) return porNomeParcial;
+  }
+  return undefined;
+}
+
+function formatarEnderecoCompleto(p: Paciente): string {
+  const logradouro = p.endereco
+    ? p.endereco_numero
+      ? `${p.endereco}, nº ${p.endereco_numero}`
+      : p.endereco
+    : "";
+  const partes = [
+    logradouro,
+    p.complemento ? `(${p.complemento})` : "",
+    p.bairro ? `Bairro ${p.bairro}` : "",
+    p.municipio || "",
+    p.cep ? `CEP ${p.cep}` : "",
+  ].filter((x) => Boolean(x && x.trim()));
+  return partes.join(" · ");
+}
+
 const JUST_MIN = 12;
 const MEDICO_GENERICO = "Médico da Unidade / Responsável Técnico";
 
 export default function NovaSolicitacao() {
   const navigate = useNavigate();
-  const { user, isTfdCentral, isLancamentoRestrito, retroativoBloqueado } = useAuth();
+  const { user, can, isTfdCentral, isLancamentoRestrito, retroativoBloqueado } = useAuth();
   const podeDataRetroativa = isTfdCentral && !retroativoBloqueado;
+  /** Apenas médicos (ou superuser) podem classificar prioridade urgente na tela de lançamento. */
+  const podeDefinirPrioridade = Boolean(
+    user?.is_superuser || (user?.medico_id && !isLancamentoRestrito),
+  );
+  /** Agendamento direto exige permissão RBAC de Agenda TFD (tfd_agenda:criar). */
+  const podeAgendarDireto = useMemo(() => {
+    if (!user || !isTfdCentral) return false;
+    if (user.is_superuser) return true;
+    if (!can("tfd_agenda")) return false;
+    const acoes = acoesEfetivas((user.acoes ?? {}) as Record<string, Acao[]>, "tfd_agenda");
+    return acoes.includes("criar");
+  }, [user, isTfdCentral, can]);
 
   // Estados dos Catálogos
   const [tiposFila, setTiposFila] = useState<TipoFila[]>([]);
@@ -332,6 +407,22 @@ export default function NovaSolicitacao() {
     return () => clearTimeout(t);
   }, [medicoId, tipoServico, codigoProcedimento, procedimentoSel, medicos]);
 
+  function aplicarUnidadeDoPaciente(p: Paciente | null) {
+    if (!p || unidades.length === 0) return;
+    if (!isTfdCentral && user?.unidade_saude_id) return;
+    const match = encontrarUnidadeDoPaciente(p as PacienteComUnidade, unidades);
+    if (match) {
+      setUnidadeId(String(match.id));
+    }
+  }
+
+  function selecionarPacienteIndividual(p: Paciente | null) {
+    setPacienteSelecionado(p);
+    if (p) {
+      aplicarUnidadeDoPaciente(p);
+    }
+  }
+
   async function adicionarPacienteAoLote(pac: Paciente | null) {
     if (!pac?.id) return;
     if (pacientesLote.some((p) => p.paciente.id === pac.id)) {
@@ -339,6 +430,9 @@ export default function NovaSolicitacao() {
       return;
     }
     setErro("");
+    if (pacientesLote.length === 0) {
+      aplicarUnidadeDoPaciente(pac);
+    }
 
     const codProc = (codigoProcedimento || procedimentoSel?.codigo_procedimento || "").trim();
     const nomeProc = (procTexto || procedimentoSel?.exame || "").trim();
@@ -479,7 +573,7 @@ export default function NovaSolicitacao() {
       }
     }
 
-    if (agendamentoDiretoLote && isTfdCentral) {
+    if (agendamentoDiretoLote && podeAgendarDireto) {
       if (!dataAgendadaLote) {
         setErro("Para agendamento direto em lote, informe a Data do Agendamento.");
         return;
@@ -494,6 +588,7 @@ export default function NovaSolicitacao() {
     setErro("");
     try {
       const nomeProcAtual = procTexto.trim() || procedimentoSel?.exame || "";
+      const podeAgendarEfetivo = agendamentoDiretoLote && podeAgendarDireto;
       const res = await tfdCriarExamesLote({
         tipo_fila: tipoServico,
         exame: codigoProcedimento ? `${codigoProcedimento} · ${nomeProcAtual}` : nomeProcAtual,
@@ -502,15 +597,15 @@ export default function NovaSolicitacao() {
         codigo_especialidade: codigoEspecialidade.trim() || undefined,
         unidade_saude_id: unidadeId ? Number(unidadeId) : undefined,
         medico_id: medicoId ? Number(medicoId) : undefined,
-        prioridade: isLancamentoRestrito ? "rotina" : prioridade,
+        prioridade: podeDefinirPrioridade ? prioridade : "rotina",
         data_pedido: isTfdCentral ? dataPedido : hojeISO(),
         justificativa_padrao: justificativaLotePadrao.trim(),
         cid_codigo_padrao: cidCodigoLotePadrao.trim() || undefined,
         cid_descricao_padrao: cidDescricaoLotePadrao.trim() || undefined,
         observacoes_padrao: observacoesLotePadrao.trim() || undefined,
-        agendamento_direto: agendamentoDiretoLote && isTfdCentral,
-        data_agendada: agendamentoDiretoLote && isTfdCentral ? dataAgendadaLote : undefined,
-        hora_agendada: agendamentoDiretoLote && isTfdCentral ? horaAgendadaLote : undefined,
+        agendamento_direto: podeAgendarEfetivo,
+        data_agendada: podeAgendarEfetivo ? dataAgendadaLote : undefined,
+        hora_agendada: podeAgendarEfetivo ? horaAgendadaLote : undefined,
         itens: pacientesLote.map((item) => ({
           paciente_id: item.paciente.id,
           paciente_nome: item.paciente.nome,
@@ -540,7 +635,7 @@ export default function NovaSolicitacao() {
   useEffect(() => {
     let cancelado = false;
     Promise.all([
-      tfdTipos().catch(() => []),
+      tfdTipos({ ativos: true, limit: 500 }).catch(() => []),
       tfdCatalogoExames()
         .then((res) => {
           if (!cancelado) setErroCatalogo("");
@@ -597,8 +692,28 @@ export default function NovaSolicitacao() {
         setUnidadeId(String(user.unidade_saude_id));
       }
       setAgendamentoDireto(false);
+      setAgendamentoDiretoLote(false);
     }
   }, [isTfdCentral, user]);
+
+  // Travas RBAC: garante rotina para não-médicos e desativa agendamento direto sem permissão
+  useEffect(() => {
+    if (!podeDefinirPrioridade && prioridade !== "rotina") {
+      setPrioridade("rotina");
+    }
+  }, [podeDefinirPrioridade, prioridade]);
+
+  useEffect(() => {
+    if (!podeAgendarDireto) {
+      if (agendamentoDireto) setAgendamentoDireto(false);
+      if (agendamentoDiretoLote) setAgendamentoDiretoLote(false);
+    }
+  }, [podeAgendarDireto, agendamentoDireto, agendamentoDiretoLote]);
+
+  const tiposServicoDisponiveis = useMemo(
+    () => tiposFila.filter((tf) => tf.ativo && !ehFilaLaboratorio(tf)),
+    [tiposFila],
+  );
 
   // Carrega Árvore SIGTAP completa em cascata: Área (Grupo) -> Subgrupo -> CBO
   useEffect(() => {
@@ -1228,7 +1343,7 @@ export default function NovaSolicitacao() {
       return;
     }
 
-    if (agendamentoDireto && (!dataAgendada || !unidadeId || !medicoId)) {
+    if (agendamentoDireto && podeAgendarDireto && (!dataAgendada || !unidadeId || !medicoId)) {
       setErro("Para agendamento direto, informe a data agendada, unidade e médico.");
       return;
     }
@@ -1260,7 +1375,7 @@ export default function NovaSolicitacao() {
           unidade_saude_id: unidadeId ? Number(unidadeId) : undefined,
           medico_id: medicoId ? Number(medicoId) : undefined,
           data_pedido: isTfdCentral ? dataPedido : hojeISO(),
-          prioridade: isLancamentoRestrito ? "rotina" : prioridade,
+          prioridade: podeDefinirPrioridade ? prioridade : "rotina",
           justificativa: justificativa.trim(),
           cid_codigo: cidCodigo || undefined,
           cid_descricao: cidDescricao || undefined,
@@ -1268,7 +1383,7 @@ export default function NovaSolicitacao() {
           numero_pedido: numPedidoEfetivo,
         };
 
-        if (agendamentoDireto && isTfdCentral) {
+        if (agendamentoDireto && podeAgendarDireto) {
           payload.data_agendada = dataAgendada;
           payload.hora_agendada = horaAgendada;
           payload.status = "agendado";
@@ -1518,13 +1633,15 @@ export default function NovaSolicitacao() {
             </button>
           )}
         </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3 items-start">
           <div>
-            <Label className="text-[11px] font-bold text-sus-950">Área (Grupo SIGTAP)</Label>
+            <div className="min-h-[22px] flex items-center mb-1">
+              <Label className="!mb-0 text-[11px] font-bold text-sus-950">Área (Grupo SIGTAP)</Label>
+            </div>
             <Select
               value={grupoSig}
               onChange={(e) => aoSelecionarGrupoSig(e.target.value)}
-              className="mt-1 h-9 text-xs font-medium"
+              className="h-11 text-xs font-medium"
             >
               <option value="">Todas as áreas SIGTAP…</option>
               {grupos.map((g) => (
@@ -1535,11 +1652,13 @@ export default function NovaSolicitacao() {
             </Select>
           </div>
           <div>
-            <Label className="text-[11px] font-bold text-sus-950">Subgrupo SIGTAP</Label>
+            <div className="min-h-[22px] flex items-center mb-1">
+              <Label className="!mb-0 text-[11px] font-bold text-sus-950">Subgrupo SIGTAP</Label>
+            </div>
             <Select
               value={subgrupoSig}
               onChange={(e) => aoSelecionarSubgrupoSig(e.target.value)}
-              className="mt-1 h-9 text-xs font-medium"
+              className="h-11 text-xs font-medium"
             >
               <option value="">
                 {grupoSig ? `Todos os subgrupos do Grupo ${grupoSig}…` : "Todos os subgrupos SIGTAP…"}
@@ -1552,24 +1671,24 @@ export default function NovaSolicitacao() {
             </Select>
           </div>
           <div>
-            <Label className="text-[11px] font-bold text-sus-950">
-              CBO (Ocupação SIGTAP)
-            </Label>
-            <div className="mt-1">
-              <Combobox
-                value={cboFiltroSig}
-                onChange={(v) => aoSelecionarCboFiltro(v)}
-                options={opcoesCboArvore}
-                placeholder={
-                  contexto === "lote"
-                    ? "Selecione o CBO para filtrar especialidades e procedimentos…"
-                    : "Selecione o CBO (ex: 225120 Cardiologista)…"
-                }
-                searchPlaceholder="Digite o código CBO ou nome da ocupação…"
-                emptyText="Nenhum CBO encontrado nessa área/subgrupo"
-                showAll={true}
-              />
+            <div className="min-h-[22px] flex items-center mb-1">
+              <Label className="!mb-0 text-[11px] font-bold text-sus-950">
+                CBO (Ocupação SIGTAP)
+              </Label>
             </div>
+            <Combobox
+              value={cboFiltroSig}
+              onChange={(v) => aoSelecionarCboFiltro(v)}
+              options={opcoesCboArvore}
+              placeholder={
+                contexto === "lote"
+                  ? "Selecione o CBO para filtrar…"
+                  : "Selecione o CBO…"
+              }
+              searchPlaceholder="Digite o código CBO ou nome da ocupação…"
+              emptyText="Nenhum CBO encontrado nessa área/subgrupo"
+              showAll={true}
+            />
           </div>
         </div>
       </div>
@@ -1579,8 +1698,8 @@ export default function NovaSolicitacao() {
   function renderCampoCboEspecialidade(contexto: "individual" | "lote") {
     return (
       <div>
-        <div className="flex items-center justify-between gap-2">
-          <Label className="text-xs font-bold text-sus-950">
+        <div className="min-h-[22px] flex items-center justify-between gap-2 mb-1">
+          <Label className="!mb-0 text-xs font-bold text-sus-950">
             {isConsulta ? "Especialidade Médica *" : "Especialidade Autorizada"}
           </Label>
           <div className="flex items-center gap-2">
@@ -1797,7 +1916,7 @@ export default function NovaSolicitacao() {
   }, [medicos, medicoId]);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 pb-16">
+    <div className="mx-auto max-w-7xl space-y-6 pb-16">
       {/* Breadcrumb e Cabeçalho */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -1813,7 +1932,7 @@ export default function NovaSolicitacao() {
             Lançamento de Nova Solicitação
           </h1>
           <p className="text-xs text-ink/60">
-            Cadastre novos pedidos regulados para a fila de espera ou agendamento direto com validação instantânea.
+            Cadastre novos pedidos regulados para a fila de espera{podeAgendarDireto ? " ou agendamento direto" : ""} com validação instantânea.
           </p>
         </div>
 
@@ -1823,11 +1942,13 @@ export default function NovaSolicitacao() {
               <ListOrdered className="h-4 w-4" /> Ver Fila de Espera
             </Button>
           </Link>
-          <Link to="/tfd/agendamentos">
-            <Button variant="outline" className="text-xs">
-              <Calendar className="h-4 w-4" /> Agenda e Recepção
-            </Button>
-          </Link>
+          {can("tfd_agenda") && (
+            <Link to="/tfd/agendamentos">
+              <Button variant="outline" className="text-xs">
+                <Calendar className="h-4 w-4" /> Agenda e Recepção
+              </Button>
+            </Link>
+          )}
         </div>
       </div>
 
@@ -1958,816 +2079,901 @@ export default function NovaSolicitacao() {
                 e.preventDefault();
               }
             }}
-            className="space-y-6"
           >
-        {/* Bloco 1: Identificação do Paciente (Primeiro Campo) */}
-        <Card className="p-5 shadow-xs">
-          <div className="flex items-center justify-between border-b border-sus-900/10 pb-3 mb-4">
-            <div className="flex items-center gap-2">
-              <User className="h-4 w-4 text-teal" />
-              <h2 className="font-display text-sm font-bold text-sus-950">
-                1. Identificação do Paciente
-              </h2>
-            </div>
-            <span className="text-[11px] font-semibold text-teal bg-teal/10 px-2.5 py-0.5 rounded-full">
-              Primeiro Passo Obrigatório
-            </span>
-          </div>
-
-          <BuscaPacienteAutocomplete
-            pacienteId={pacienteSelecionado?.id || ""}
-            pacienteInicial={pacienteSelecionado}
-            onSelect={(p) => setPacienteSelecionado(p)}
-            label="Paciente Solicitante"
-            placeholder="Digite o nome, CPF, CNS ou número do prontuário para pesquisar…"
-            obrigatorio
-          />
-
-          {pacienteSelecionado && (
-            <div className="mt-3 rounded-xl border border-sus-900/10 bg-sand/30 p-3 text-xs flex flex-wrap gap-x-6 gap-y-1">
-              <div>
-                <span className="text-ink/60">CPF:</span>{" "}
-                <strong className="text-sus-950 font-mono">
-                  {pacienteSelecionado.cpf || "Não informado"}
-                </strong>
-              </div>
-              <div>
-                <span className="text-ink/60">Cartão SUS (CNS):</span>{" "}
-                <strong className="text-sus-950 font-mono">
-                  {pacienteSelecionado.cns || "Não informado"}
-                </strong>
-              </div>
-              <div>
-                <span className="text-ink/60">Prontuário:</span>{" "}
-                <strong className="text-sus-950 font-mono">
-                  {pacienteSelecionado.codigo_prontuario?.replace(/^PR-0*/, "") || pacienteSelecionado.id || "—"}
-                </strong>
-              </div>
-              {pacienteSelecionado.municipio && (
-                <div>
-                  <span className="text-ink/60">Município:</span>{" "}
-                  <strong className="text-sus-950">{pacienteSelecionado.municipio}</strong>
-                </div>
-              )}
-            </div>
-          )}
-        </Card>
-
-        {/* Bloco 2: Data do Pedido, Procedimento Correspondente e Especialidade */}
-        <Card className="p-5 shadow-xs">
-          <div className="flex items-center justify-between border-b border-sus-900/10 pb-3 mb-4">
-            <div className="flex items-center gap-2">
-              <Calendar className="h-4 w-4 text-teal" />
-              <h2 className="font-display text-sm font-bold text-sus-950">
-                2. Data do Pedido, Procedimento Correspondente e Especialidade
-              </h2>
-            </div>
-          </div>
-
-          {/* 2.1 Data do Pedido */}
-          <div className="mb-4 rounded-xl border border-sus-900/10 bg-sand/20 p-3.5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
-                <Label className="text-xs font-bold text-sus-950">
-                  Data do Pedido / Solicitação <span className="text-red-500">*</span>
-                </Label>
-                <p className="text-[11px] text-ink/60">
-                  Data constante no pedido médico ou encaminhamento do paciente.
-                </p>
-              </div>
-              <div className="w-full sm:w-64">
-                {isTfdCentral ? (
-                  <div>
-                    <Input
-                      type="date"
-                      value={dataPedido}
-                      min={retroativoBloqueado ? hojeISO() : undefined}
-                      onChange={(e) => setDataPedido(e.target.value)}
-                      className="h-10 text-xs font-semibold"
-                      required
-                    />
-                    <span className="block mt-0.5 text-[10px] text-ink/60 font-medium">
-                      {podeDataRetroativa
-                        ? "Lançamentos retroativos liberados para este perfil."
-                        : "Perfil sem permissão para datas retroativas."}
-                    </span>
-                  </div>
-                ) : (
-                  <div>
-                    <Input
-                      type="date"
-                      value={hojeISO()}
-                      disabled
-                      className="h-10 bg-sand/40 font-semibold text-sus-950 cursor-not-allowed text-xs"
-                    />
-                    <span className="block mt-0.5 text-[10px] text-amber-800 font-medium">
-                      Operadores de PSF: lançamento para a data atual.
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* 2.2 Seleção de Serviço e Especialidade */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Passo 1: Tipo de Serviço */}
-            <div>
-              <Label className="text-xs font-bold text-sus-950">
-                Tipo de Serviço <span className="text-red-500">*</span>
-              </Label>
-              <Select
-                value={tipoServico}
-                onChange={(e) => aoMudarTipoServico(e.target.value)}
-                className="mt-1 text-xs font-semibold text-sus-950"
-                required
-              >
-                <option value="">Selecione o Tipo de Serviço…</option>
-                <optgroup label="Categorias Principais">
-                  <option value="EXAMES ESPECIALIZADOS">EXAMES ESPECIALIZADOS</option>
-                  <option value="CIRURGIAS ESPECIALIZADAS">CIRURGIAS ESPECIALIZADAS</option>
-                  <option value="CONSULTAS ESPECIALIZADAS">CONSULTAS ESPECIALIZADAS</option>
-                </optgroup>
-                <optgroup label="Filas Específicas Cadastradas">
-                  {tiposFila
-                    .filter(
-                      (tf) =>
-                        !["EXAMES ESPECIALIZADOS", "CIRURGIAS ESPECIALIZADAS", "CONSULTAS ESPECIALIZADAS"].includes(
-                          tf.nome.trim().toUpperCase(),
-                        ),
-                    )
-                    .map((tf) => (
-                      <option key={tf.id} value={tf.nome}>
-                        {tf.nome}
-                      </option>
-                    ))}
-                </optgroup>
-              </Select>
-              <p className="mt-1 text-[11px] text-ink/60">
-                {isConsulta
-                  ? "Consulta médica especializada: requer apenas a definição do CBO/especialidade."
-                  : "Filtra automaticamente o catálogo de procedimentos e exames correspondentes."}
-              </p>
-              {renderBannerRegrasServico()}
-            </div>
-
-            {/* Especialidade Médica / CBO */}
-            {renderCampoCboEspecialidade("individual")}
-          </div>
-
-          {renderPainelHierarquiaSigtap("individual")}
-
-          {/* Se for Consulta Especializada: exibe o banner de procedimento padrão SUS 0301010072 */}
-          {isConsulta ? (
-            <div className="mt-4 rounded-xl border border-teal/20 bg-teal/5 p-4 flex items-start gap-3">
-              <CheckCircle2 className="h-5 w-5 text-teal shrink-0 mt-0.5" />
-              <div className="text-xs">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-bold text-sm text-sus-950 font-mono">0301010072</span>
-                  <span className="font-bold text-sus-950">CONSULTA MEDICA EM ATENCAO ESPECIALIZADA</span>
-                  <span className="rounded bg-teal/15 px-2 py-0.5 text-[10px] font-bold text-teal uppercase">
-                    Padrão SUS / Vivver
-                  </span>
-                </div>
-                <p className="mt-1 text-ink/65 text-[11px]">
-                  No SUS e Vivver, consultas médicas especializadas utilizam o procedimento padronizado <strong>0301010072</strong>. O direcionamento clínico é definido exclusivamente pelo <strong>CBO da especialidade</strong> selecionado acima.
-                </p>
-                {especialidade ? (
-                  <p className="mt-1.5 font-bold text-teal-900">
-                    ✓ Especialidade vinculada: {especialidade} {codigoEspecialidade ? `(CBO: ${codigoEspecialidade})` : ""}
-                  </p>
-                ) : (
-                  <p className="mt-1.5 font-medium text-amber-700">
-                    Aguardando a seleção do CBO / Especialidade Médica acima.
-                  </p>
-                )}
-              </div>
-            </div>
-          ) : (
-          /* Passo 2: Procedimento Correspondente com Busca Inteligente (Exames e Cirurgias) */
-          <div className="mt-4 pt-4 border-t border-sus-900/10">
-            <Label className="text-xs font-bold text-sus-950 flex items-center justify-between">
-              <span>Procedimento Correspondente <span className="text-red-500">*</span></span>
-              {isLaboratorial && (
-                <span className="text-[10px] text-teal font-semibold flex items-center gap-1">
-                  <FlaskConical className="h-3 w-3" /> Tabela SIGTAP Laboratorial
-                </span>
-              )}
-            </Label>
-
-            {isLaboratorial ? (
-              <div className="mt-1 space-y-2">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-ink/40" />
-                  <Input
-                    placeholder="Buscar exame laboratorial (ex: hemograma, glicose, EAS)..."
-                    value={buscaSig}
-                    onChange={(e) => setBuscaSig(e.target.value)}
-                    className="pl-9 text-xs"
-                  />
-                </div>
-                <div className="max-h-36 space-y-1 overflow-auto rounded-xl border border-sus-900/10 p-2 bg-sand/30">
-                  {sigtapResultados.slice(0, 30).map((s) => (
-                    <button
-                      key={s.id}
-                      type="button"
-                      onClick={() => adicionarSigtapItem(s)}
-                      className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-white transition"
-                    >
-                      <Plus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-teal" />
-                      <span>
-                        <b>{s.codigo}</b> · {s.descricao}
-                      </span>
-                    </button>
-                  ))}
-                  {buscaSig.trim() && sigtapResultados.length === 0 && (
-                    <p className="py-2 text-center text-xs text-ink/45">
-                      Nenhum exame laboratorial encontrado para "{buscaSig}".
-                    </p>
-                  )}
-                  {!buscaSig.trim() && sigtapResultados.length === 0 && !buscandoSig && (
-                    <p className="py-2 text-center text-xs text-ink/45">
-                      Digite para consultar exames laboratoriais na tabela SIGTAP.
-                    </p>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="relative mt-1">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-ink/40 pointer-events-none" />
-                  <Input
-                    placeholder={
-                      tipoServico
-                        ? `Buscar procedimento em ${tipoServico} por nome, código SIGTAP ou sigla…`
-                        : "Buscar procedimento por código SIGTAP, sigla ou nome…"
-                    }
-                    value={buscaProc}
-                    onChange={(e) => {
-                      setBuscaProc(e.target.value);
-                      setProcFoco(true);
-                    }}
-                    onFocus={() => setProcFoco(true)}
-                    onBlur={() => setTimeout(() => setProcFoco(false), 250)}
-                    className="pl-9 pr-9 text-xs"
-                    autoComplete="off"
-                  />
-                  {(buscaProc || procedimentoSel || procTexto) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setBuscaProc("");
-                        handleSelecionarProcedimento(null);
-                        setProcFoco(false);
-                      }}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink transition"
-                      title="Limpar procedimento"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-
-                {/* Procedimento Selecionado Badge */}
-                {(procedimentoSel || procTexto) && (
-                  <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1.5 rounded-xl border border-teal/20 bg-teal/5 px-3 py-2 text-xs">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* COLUNA ESQUERDA: Paciente, Serviço/Origem, Dados Clínicos e Agendamento */}
+              <div className="lg:col-span-7 space-y-6">
+                {/* Bloco 1: Identificação do Paciente (Primeiro Campo) */}
+                <Card className="p-5 shadow-xs">
+                  <div className="flex items-center justify-between border-b border-sus-900/10 pb-3 mb-4">
                     <div className="flex items-center gap-2">
-                      <Check className="h-4 w-4 text-teal shrink-0" />
-                      <div>
-                        <p className="font-bold text-sus-950">
-                          {codigoProcedimento ? `${codigoProcedimento} · ` : ""}
-                          {procTexto || procedimentoSel?.exame}
-                        </p>
-                        <p className="text-[11px] text-ink/60">
-                          {tipoServico ? `${tipoServico} · ` : ""}
-                          {especialidade ? `Especialidade: ${especialidade}` : ""}
-                        </p>
-                      </div>
+                      <User className="h-4 w-4 text-teal" />
+                      <h2 className="font-display text-sm font-bold text-sus-950">
+                        1. Identificação do Paciente
+                      </h2>
                     </div>
-                    <span className="rounded bg-teal/15 px-2 py-0.5 text-[10px] font-bold text-teal">
-                      Selecionado
+                    <span className="text-[11px] font-semibold text-teal bg-teal/10 px-2.5 py-0.5 rounded-full">
+                      Primeiro Passo Obrigatório
                     </span>
                   </div>
-                )}
 
-                {/* Dropdown com Busca Inteligente */}
-                {procFoco && (
-                  <div className="absolute left-0 right-0 z-30 mt-1 max-h-56 overflow-y-auto rounded-xl border border-sus-900/10 bg-white shadow-card">
-                    <p className="sticky top-0 border-b border-sus-900/5 bg-sand/80 px-3 py-1.5 text-[11px] font-semibold text-sus-900/60 flex items-center justify-between">
-                      <span className={erroCatalogo && opcoesProcFiltradas.length === 0 ? "text-red-700" : ""}>
-                        {opcoesProcFiltradas.length > 0
-                          ? `${opcoesProcFiltradas.length} procedimento(s) encontrado(s) — clique para selecionar`
-                          : buscandoProc
-                          ? "Pesquisando no catálogo..."
-                          : erroCatalogo
-                          ? `Falha ao carregar catálogo: ${erroCatalogo}`
-                          : "Nenhum procedimento encontrado"}
-                      </span>
-                      {buscandoProc && (
-                        <span className="text-[10px] text-teal font-bold flex items-center gap-1">
-                          <span className="h-1.5 w-1.5 rounded-full bg-teal animate-ping" />
-                          Buscando no SIGTAP...
-                        </span>
-                      )}
-                    </p>
-                    {erroCatalogo && opcoesProcFiltradas.length > 0 && (
-                      <p className="border-b border-amber-200 bg-amber-50 px-3 py-1 text-[11px] text-amber-800">
-                        Aviso da consulta ao catálogo: {erroCatalogo}
-                      </p>
-                    )}
-                    {opcoesProcFiltradas.map((p, idx) => (
-                      <button
-                        key={`${p.codigo_curto || p.codigo_procedimento || idx}-${p.exame}`}
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => escolherProcedimento(p)}
-                        className="flex w-full items-start justify-between gap-2 border-b border-sus-900/5 px-3 py-2 text-left text-xs last:border-0 hover:bg-teal/5 transition"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            {p.codigo_curto && (
-                              <span className="rounded bg-teal/15 px-1.5 py-0.5 text-[9px] font-bold text-teal uppercase shrink-0">
-                                {p.codigo_curto}
-                              </span>
-                            )}
-                            <span className="font-bold text-sus-950 truncate">
-                              {p.exame || p.nome_procedimento}
-                            </span>
+                  <BuscaPacienteAutocomplete
+                    pacienteId={pacienteSelecionado?.id || ""}
+                    pacienteInicial={pacienteSelecionado}
+                    onSelect={selecionarPacienteIndividual}
+                    label="Paciente Solicitante"
+                    placeholder="Buscar paciente por nome, CPF, CNS, prontuário ou nascimento (DD/MM/AAAA)…"
+                    obrigatorio
+                  />
+
+                  {pacienteSelecionado && (() => {
+                    const pacExt = pacienteSelecionado as PacienteComUnidade;
+                    const unidadePac = encontrarUnidadeDoPaciente(pacExt, unidades);
+                    const unidadePacNome = pacExt.unidade_nome || unidadePac?.nome || "";
+                    const unidadePacCnes = pacExt.unidade_cnes || unidadePac?.cnes || "";
+                    const endCompleto = formatarEnderecoCompleto(pacienteSelecionado);
+                    return (
+                      <div className="mt-3 rounded-xl border border-sus-900/10 bg-sand/30 p-3.5 text-xs space-y-2">
+                        <div className="flex flex-wrap gap-x-6 gap-y-1">
+                          <div>
+                            <span className="text-ink/60">CPF:</span>{" "}
+                            <strong className="text-sus-950 font-mono">
+                              {pacienteSelecionado.cpf || "Não informado"}
+                            </strong>
                           </div>
-                          <div className="mt-1 flex items-center gap-1.5 flex-wrap text-[11px] text-ink/60">
-                            {p.codigo_procedimento && (
-                              <span className="inline-flex items-center gap-0.5 rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-800 border border-emerald-200">
-                                ✓ SIGTAP {p.codigo_procedimento}
-                              </span>
-                            )}
-                            {p.instrumento && (
-                              <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[9px] font-medium text-sky-800 border border-sky-200">
-                                {p.instrumento}
-                              </span>
-                            )}
-                            {p.complexidade && (
-                              <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-medium text-amber-800 border border-amber-200">
-                                {p.complexidade}
-                              </span>
-                            )}
-                            {p.tipo_fila && <span>{p.tipo_fila}</span>}
-                            {p.especialidade && <span>· {p.especialidade}</span>}
+                          <div>
+                            <span className="text-ink/60">Cartão SUS (CNS):</span>{" "}
+                            <strong className="text-sus-950 font-mono">
+                              {pacienteSelecionado.cns || "Não informado"}
+                            </strong>
+                          </div>
+                          <div>
+                            <span className="text-ink/60">Prontuário:</span>{" "}
+                            <strong className="text-sus-950 font-mono">
+                              {pacienteSelecionado.codigo_prontuario?.replace(/^PR-0*/, "") || pacienteSelecionado.id || "—"}
+                            </strong>
+                          </div>
+                          {pacienteSelecionado.nascimento && (
+                            <div>
+                              <span className="text-ink/60">Nascimento:</span>{" "}
+                              <strong className="text-sus-950 font-mono">
+                                {pacienteSelecionado.nascimento.slice(0, 10).split("-").reverse().join("/")}
+                              </strong>
+                            </div>
+                          )}
+                        </div>
+                        <div className="border-t border-sus-900/10 pt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 items-start">
+                          <div className="flex items-start gap-1.5">
+                            <Building2 className="h-3.5 w-3.5 text-teal shrink-0 mt-0.5" />
+                            <div>
+                              <span className="text-ink/60 block text-[11px]">Unidade de Saúde (Cadastro):</span>
+                              <strong className="text-sus-950">
+                                {unidadePacNome || "Não vinculada"}
+                                {unidadePacCnes ? ` (CNES ${unidadePacCnes})` : ""}
+                              </strong>
+                            </div>
+                          </div>
+                          <div className="flex items-start gap-1.5">
+                            <MapPin className="h-3.5 w-3.5 text-teal shrink-0 mt-0.5" />
+                            <div>
+                              <span className="text-ink/60 block text-[11px]">Endereço Completo:</span>
+                              <strong className="text-sus-950">
+                                {endCompleto || "Endereço não informado"}
+                              </strong>
+                            </div>
                           </div>
                         </div>
-                        <Plus className="h-4 w-4 shrink-0 text-teal mt-0.5" />
-                      </button>
-                    ))}
-                    {buscaProc.trim().length >= 2 && (
-                      <button
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => {
-                          setProcTexto(buscaProc.trim());
-                          setProcedimentoSel(null);
-                          setBuscaProc("");
-                          setProcFoco(false);
-                        }}
-                        className="flex w-full items-center gap-2 border-t border-sus-900/10 bg-sand/30 px-3 py-2 text-left text-xs font-semibold text-teal hover:bg-teal/10 transition"
+                      </div>
+                    );
+                  })()}
+                </Card>
+
+                {/* Bloco 2: Data do Pedido, Tipo de Serviço e Especialidade */}
+                <Card className="p-5 shadow-xs">
+                  <div className="flex items-center justify-between border-b border-sus-900/10 pb-3 mb-4">
+                    <div className="flex items-center gap-2">
+                      <Calendar className="h-4 w-4 text-teal" />
+                      <h2 className="font-display text-sm font-bold text-sus-950">
+                        2. Data do Pedido, Tipo de Serviço e Especialidade
+                      </h2>
+                    </div>
+                  </div>
+
+                  {/* 2.1 Data do Pedido */}
+                  <div className="mb-4 rounded-xl border border-sus-900/10 bg-sand/20 p-3.5">
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                      <div>
+                        <Label className="!mb-0.5 text-xs font-bold text-sus-950">
+                          Data do Pedido / Solicitação <span className="text-red-500">*</span>
+                        </Label>
+                        <p className="text-[11px] text-ink/60">
+                          Data constante no pedido médico ou encaminhamento do paciente.
+                        </p>
+                      </div>
+                      <div className="w-full sm:w-64 shrink-0">
+                        {isTfdCentral ? (
+                          <div>
+                            <Input
+                              type="date"
+                              value={dataPedido}
+                              min={retroativoBloqueado ? hojeISO() : undefined}
+                              onChange={(e) => setDataPedido(e.target.value)}
+                              className="h-11 text-xs font-semibold"
+                              required
+                            />
+                            <span className="block mt-1 text-[10px] text-ink/60 font-medium">
+                              {podeDataRetroativa
+                                ? "Lançamentos retroativos liberados para este perfil."
+                                : "Perfil sem permissão para datas retroativas."}
+                            </span>
+                          </div>
+                        ) : (
+                          <div>
+                            <Input
+                              type="date"
+                              value={hojeISO()}
+                              disabled
+                              className="h-11 bg-sand/40 font-semibold text-sus-950 cursor-not-allowed text-xs"
+                            />
+                            <span className="block mt-1 text-[10px] text-amber-800 font-medium">
+                              Operadores de PSF: lançamento para a data atual.
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 2.2 Seleção de Serviço e Especialidade */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                    {/* Passo 1: Tipo de Serviço (Dinâmico do Banco, sem filas de sangue) */}
+                    <div>
+                      <div className="min-h-[22px] flex items-center mb-1">
+                        <Label className="!mb-0 text-xs font-bold text-sus-950">
+                          Tipo de Serviço <span className="text-red-500">*</span>
+                        </Label>
+                      </div>
+                      <Select
+                        value={tipoServico}
+                        onChange={(e) => aoMudarTipoServico(e.target.value)}
+                        className="text-xs font-semibold text-sus-950"
+                        required
                       >
-                        <Plus className="h-3.5 w-3.5" /> Usar texto digitado: “{buscaProc.trim()}”
-                      </button>
+                        <option value="">Selecione o Tipo de Serviço…</option>
+                        {tiposServicoDisponiveis.map((tf) => (
+                          <option key={tf.id} value={tf.nome}>
+                            {tf.nome}
+                          </option>
+                        ))}
+                      </Select>
+                      <p className="mt-1 text-[11px] text-ink/60">
+                        {isConsulta
+                          ? "Consulta médica especializada: requer apenas a definição do CBO/especialidade."
+                          : "Filtra automaticamente o catálogo de procedimentos ao lado."}
+                      </p>
+                      {renderBannerRegrasServico()}
+                    </div>
+
+                    {/* Especialidade Médica / CBO */}
+                    {renderCampoCboEspecialidade("individual")}
+                  </div>
+
+                  {renderPainelHierarquiaSigtap("individual")}
+                </Card>
+
+                {/* Bloco 3: Origem do Pedido, Unidade e Médico */}
+                <Card className="p-5 shadow-xs">
+                  <div className="flex items-center justify-between border-b border-sus-900/10 pb-3 mb-4">
+                    <div className="flex items-center gap-2">
+                      <Building2 className="h-4 w-4 text-teal" />
+                      <h2 className="font-display text-sm font-bold text-sus-950">
+                        3. Origem e Profissional Solicitante
+                      </h2>
+                    </div>
+                    {!isTfdCentral && (
+                      <span className="text-[11px] font-semibold text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3" /> Restrito à Unidade do Operador
+                      </span>
                     )}
                   </div>
-                )}
-              </div>
-            )}
 
-            <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={adicionarProcedimentoLista}
-                disabled={!tipoServico || (!procTexto.trim() && !procedimentoSel)}
-                className="inline-flex items-center gap-1.5 text-xs font-bold text-teal hover:text-teal-700 disabled:opacity-40 transition"
-              >
-                <Plus className="h-3.5 w-3.5" /> Adicionar outro exame a este pedido
-              </button>
-              {procedimentosAdicionados.length > 0 && (
-                <span className="text-xs font-semibold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                  {procedimentosAdicionados.length} exame(s) agrupado(s) neste pedido
-                </span>
-              )}
-            </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                    {/* Unidade Solicitante com busca inteligente Combobox */}
+                    <div>
+                      <div className="min-h-[22px] flex items-center justify-between mb-1">
+                        <Label className="!mb-0 text-xs font-bold text-sus-950">
+                          PSF / Unidade Solicitante <span className="text-red-500">*</span>
+                        </Label>
+                      </div>
+                      {isTfdCentral ? (
+                        <div>
+                          <Combobox
+                            value={unidadeId}
+                            onChange={(v) => setUnidadeId(v)}
+                            options={opcoesUnidades}
+                            placeholder="Buscar PSF / Unidade Solicitante…"
+                            searchPlaceholder="Digite o nome do PSF ou CNES…"
+                            emptyText="Nenhuma unidade encontrada"
+                            showAll={false}
+                          />
+                          {pacienteSelecionado && (
+                            <p className="mt-1 text-[11px] text-ink/60">
+                              Preenchida automaticamente pelo cadastro do paciente (editável se necessário).
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <div>
+                          <Input
+                            value={unidNomeAtual}
+                            disabled
+                            className="bg-sand/40 font-semibold text-sus-950 cursor-not-allowed text-xs"
+                          />
+                          <p className="mt-1 text-[11px] text-ink/60">
+                            Usuários de PSF só podem lançar pedidos vinculados à sua própria unidade.
+                          </p>
+                        </div>
+                      )}
+                    </div>
 
-            {procedimentosAdicionados.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2 rounded-xl bg-sand/40 p-3 border border-sus-900/10">
-                <p className="w-full text-[11px] font-bold uppercase tracking-wider text-sus-900/60 mb-0.5">
-                  Exames que farão parte deste mesmo pedido unificado:
-                </p>
-                {procedimentosAdicionados.map((it, idx) => (
-                  <span
-                    key={idx}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-sus-950 border border-sus-900/15 shadow-2xs"
-                  >
-                    {it.codigo ? <strong className="font-mono text-teal">{it.codigo} · </strong> : null}
-                    <span>{it.nome}</span>
-                    <button
-                      type="button"
-                      onClick={() => removerProcedimentoLista(idx)}
-                      className="text-red-500 hover:text-red-700 ml-1.5 p-0.5"
-                      title="Remover este exame"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-          )}
-
-          {/* Dados Complementares do Procedimento */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4 pt-3 border-t border-sus-900/10">
-            <div>
-              <div className="flex items-center justify-between">
-                <Label className="text-[11px] text-ink/70">Código SIGTAP</Label>
-                {isConsulta && (
-                  <span className="text-[10px] text-teal font-semibold font-mono">
-                    Fixado pelo SUS
-                  </span>
-                )}
-              </div>
-              <Input
-                value={codigoProcedimento}
-                disabled={isConsulta}
-                onChange={(e) => setCodigoProcedimento(e.target.value)}
-                placeholder="Ex: 0205020186"
-                className={`mt-1 text-xs font-mono ${isConsulta ? "bg-sand/40 font-bold text-teal" : ""}`}
-              />
-            </div>
-            <div>
-              <Label className="text-[11px] text-ink/70">
-                Nº do Pedido / Guia <span className="text-ink/40">(Gerado automaticamente se vazio)</span>
-              </Label>
-              <Input
-                value={numeroPedido}
-                onChange={(e) => setNumeroPedido(e.target.value)}
-                placeholder="Automático (ex: PED-20261027-123456)"
-                className="mt-1 text-xs font-mono uppercase"
-              />
-            </div>
-          </div>
-
-          {/* ALERTA DE DUPLICIDADE EM TEMPO REAL */}
-          {duplicidadeAtiva && !ignorarDuplicidade && (
-            <div className="mt-4 pt-3 border-t border-sus-900/10">
-              <AlertaPedidoDuplicado
-                pedido={duplicidadeAtiva}
-                tipoModulo="tfd"
-                onProsseguir={() => setIgnorarDuplicidade(true)}
-                onCancelar={() => {
-                  setProcedimentoSel(null);
-                  setProcTexto("");
-                  setCodigoProcedimento("");
-                  setEspecialidade("");
-                  setCodigoEspecialidade("");
-                  setDuplicidadeAtiva(null);
-                }}
-              />
-            </div>
-          )}
-        </Card>
-
-        {/* Bloco 3: Origem do Pedido, Unidade e Médico */}
-        <Card className="p-5 shadow-xs">
-          <div className="flex items-center justify-between border-b border-sus-900/10 pb-3 mb-4">
-            <div className="flex items-center gap-2">
-              <Building2 className="h-4 w-4 text-teal" />
-              <h2 className="font-display text-sm font-bold text-sus-950">
-                3. Origem e Profissional Solicitante
-              </h2>
-            </div>
-            {!isTfdCentral && (
-              <span className="text-[11px] font-semibold text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-full flex items-center gap-1">
-                <AlertTriangle className="h-3 w-3" /> Restrito à Unidade do Operador
-              </span>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Unidade Solicitante com busca inteligente Combobox */}
-            <div>
-              <Label className="text-xs font-bold text-sus-950">
-                PSF / Unidade Solicitante <span className="text-red-500">*</span>
-              </Label>
-              {isTfdCentral ? (
-                <div className="mt-1">
-                  <Combobox
-                    value={unidadeId}
-                    onChange={(v) => setUnidadeId(v)}
-                    options={opcoesUnidades}
-                    placeholder="Buscar PSF / Unidade Solicitante…"
-                    searchPlaceholder="Digite o nome do PSF ou CNES…"
-                    emptyText="Nenhuma unidade encontrada"
-                    showAll={false}
-                  />
-                </div>
-              ) : (
-                <div className="mt-1">
-                  <Input
-                    value={unidNomeAtual}
-                    disabled
-                    className="bg-sand/40 font-semibold text-sus-950 cursor-not-allowed text-xs"
-                  />
-                  <p className="mt-1 text-[11px] text-ink/60">
-                    Usuários de PSF só podem lançar pedidos vinculados à sua própria unidade.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Médico Requisitante com busca inteligente Combobox */}
-            <div>
-              <div className="flex items-center justify-between">
-                <Label className="text-xs font-bold text-sus-950">
-                  Médico(a) Requisitante <span className="text-red-500">*</span>
-                </Label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const mGen = medicos.find((m) =>
-                      m.nome.includes("Responsável Técnico") || m.nome.includes("Médico da Unidade"),
-                    );
-                    if (mGen) setMedicoId(String(mGen.id));
-                  }}
-                  className="text-[10px] font-bold text-teal hover:underline"
-                >
-                  Usar Médico da Unidade
-                </button>
-              </div>
-              <div className="mt-1">
-                <Combobox
-                  value={medicoId}
-                  onChange={(v) => setMedicoId(v)}
-                  options={opcoesMedicos}
-                  placeholder="Buscar Médico(a) Requisitante…"
-                  searchPlaceholder="Digite o nome do médico ou CRM…"
-                  emptyText="Nenhum médico encontrado"
-                  showAll={false}
-                />
-              </div>
-              {renderAlertaCboMedico()}
-            </div>
-          </div>
-        </Card>
-
-        {/* Bloco 4: Dados Clínicos e Prioridade */}
-        <Card className="p-5 shadow-xs">
-          <div className="flex items-center gap-2 border-b border-sus-900/10 pb-3 mb-4">
-            <Stethoscope className="h-4 w-4 text-teal" />
-            <h2 className="font-display text-sm font-bold text-sus-950">
-              4. Dados Clínicos e Prioridade
-            </h2>
-          </div>
-
-          <div className="space-y-4">
-            {/* Classificação de Prioridade */}
-            <div>
-              <Label className="text-xs font-bold text-sus-950">Classificação de Prioridade</Label>
-              <div className="mt-1.5 flex flex-wrap gap-3">
-                <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
-                  <input
-                    type="radio"
-                    name="prio"
-                    value="rotina"
-                    checked={prioridade === "rotina"}
-                    onChange={() => setPrioridade("rotina")}
-                    className="accent-teal h-4 w-4"
-                  />
-                  <span className="rounded-md bg-sus-900/10 px-2 py-0.5 text-sus-900 font-bold">
-                    Eletivo / Rotina (Fila normal regulada)
-                  </span>
-                </label>
-                <label
-                  className={`flex items-center gap-2 text-xs font-medium ${
-                    isLancamentoRestrito ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="prio"
-                    value="urgente"
-                    disabled={isLancamentoRestrito}
-                    checked={prioridade === "urgente"}
-                    onChange={() => setPrioridade("urgente")}
-                    className="accent-red-600 h-4 w-4"
-                  />
-                  <span className="rounded-md bg-red-100 px-2 py-0.5 text-red-700 font-bold">
-                    Prioridade Urgente
-                  </span>
-                </label>
-              </div>
-              {isLancamentoRestrito && (
-                <p className="mt-1 text-[11px] text-ink/60">
-                  Seu perfil de lançamento restrito permite cadastros em fila na prioridade de rotina.
-                </p>
-              )}
-            </div>
-
-            {/* Campo CID-10 com busca inteligente */}
-            <div>
-              <div className="flex items-center justify-between">
-                <Label className="text-xs font-bold text-sus-950 flex items-center gap-1.5">
-                  <ClipboardList className="h-3.5 w-3.5 text-teal" /> Diagnóstico / CID-10 (opcional)
-                </Label>
-                {cidCodigo && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCidCodigo("");
-                      setCidDescricao("");
-                      setBuscaCid("");
-                    }}
-                    className="text-[11px] font-bold text-red-600 hover:underline"
-                  >
-                    Remover CID
-                  </button>
-                )}
-              </div>
-              {cidCodigo ? (
-                <div className="mt-1 flex items-center justify-between rounded-xl border border-teal/40 bg-teal/10 px-3 py-2 text-xs">
-                  <div>
-                    <span className="font-mono font-bold text-teal">{cidCodigo}</span>
-                    <span className="ml-2 font-medium text-sus-950">{cidDescricao}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCidCodigo("");
-                      setCidDescricao("");
-                      setBuscaCid("");
-                    }}
-                    className="rounded p-1 text-ink/40 hover:text-red-600"
-                    title="Remover CID"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-              ) : (
-                <div className="relative mt-1">
-                  <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/40" />
-                  <Input
-                    value={buscaCid}
-                    onChange={(e) => setBuscaCid(e.target.value)}
-                    placeholder="Pesquise por código ou nome do CID-10 (ex: J06, cefaleia, diabetes)…"
-                    className="pl-9 text-xs"
-                  />
-                  {buscandoCid && (
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-ink/45">
-                      Buscando…
-                    </span>
-                  )}
-                  {cidsSugeridos.length > 0 && (
-                    <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-y-auto rounded-xl border border-sus-900/15 bg-white shadow-lg">
-                      {cidsSugeridos.map((c) => (
+                    {/* Médico Requisitante com busca inteligente Combobox */}
+                    <div>
+                      <div className="min-h-[22px] flex items-center justify-between mb-1">
+                        <Label className="!mb-0 text-xs font-bold text-sus-950">
+                          Médico(a) Requisitante <span className="text-red-500">*</span>
+                        </Label>
                         <button
-                          key={c.codigo}
                           type="button"
                           onClick={() => {
-                            setCidCodigo(c.codigo);
-                            setCidDescricao(c.descricao);
-                            setBuscaCid("");
-                            setCidsSugeridos([]);
+                            const mGen = medicos.find((m) =>
+                              m.nome.includes("Responsável Técnico") || m.nome.includes("Médico da Unidade"),
+                            );
+                            if (mGen) setMedicoId(String(mGen.id));
                           }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-teal/10 transition"
+                          className="text-[10px] font-bold text-teal hover:underline"
                         >
-                          <span className="rounded bg-teal/15 px-1.5 py-0.5 font-mono font-bold text-teal">
-                            {c.codigo}
-                          </span>
-                          <span className="truncate text-ink/80">{c.descricao}</span>
+                          Usar Médico da Unidade
                         </button>
-                      ))}
+                      </div>
+                      <Combobox
+                        value={medicoId}
+                        onChange={(v) => setMedicoId(v)}
+                        options={opcoesMedicos}
+                        placeholder="Buscar Médico(a) Requisitante…"
+                        searchPlaceholder="Digite o nome do médico ou CRM…"
+                        emptyText="Nenhum médico encontrado"
+                        showAll={false}
+                      />
+                      {renderAlertaCboMedico()}
+                    </div>
+                  </div>
+                </Card>
+
+                {/* Bloco 4: Dados Clínicos e Prioridade */}
+                <Card className="p-5 shadow-xs">
+                  <div className="flex items-center gap-2 border-b border-sus-900/10 pb-3 mb-4">
+                    <Stethoscope className="h-4 w-4 text-teal" />
+                    <h2 className="font-display text-sm font-bold text-sus-950">
+                      {podeDefinirPrioridade ? "4. Dados Clínicos e Prioridade" : "4. Dados Clínicos"}
+                    </h2>
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* Classificação de Prioridade (visível apenas para Médicos / Superuser) */}
+                    {podeDefinirPrioridade && (
+                      <div>
+                        <Label className="text-xs font-bold text-sus-950">Classificação de Prioridade</Label>
+                        <div className="mt-1.5 flex flex-wrap gap-3">
+                          <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
+                            <input
+                              type="radio"
+                              name="prio"
+                              value="rotina"
+                              checked={prioridade === "rotina"}
+                              onChange={() => setPrioridade("rotina")}
+                              className="accent-teal h-4 w-4"
+                            />
+                            <span className="rounded-md bg-sus-900/10 px-2 py-0.5 text-sus-900 font-bold">
+                              Eletivo / Rotina (Fila normal regulada)
+                            </span>
+                          </label>
+                          <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
+                            <input
+                              type="radio"
+                              name="prio"
+                              value="urgente"
+                              checked={prioridade === "urgente"}
+                              onChange={() => setPrioridade("urgente")}
+                              className="accent-red-600 h-4 w-4"
+                            />
+                            <span className="rounded-md bg-red-100 px-2 py-0.5 text-red-700 font-bold">
+                              Prioridade Urgente
+                            </span>
+                          </label>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Campo CID-10 com busca inteligente */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <Label className="!mb-0 text-xs font-bold text-sus-950 flex items-center gap-1.5">
+                          <ClipboardList className="h-3.5 w-3.5 text-teal" /> Diagnóstico / CID-10 (opcional)
+                        </Label>
+                        {cidCodigo && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCidCodigo("");
+                              setCidDescricao("");
+                              setBuscaCid("");
+                            }}
+                            className="text-[11px] font-bold text-red-600 hover:underline"
+                          >
+                            Remover CID
+                          </button>
+                        )}
+                      </div>
+                      {cidCodigo ? (
+                        <div className="flex items-center justify-between rounded-xl border border-teal/40 bg-teal/10 px-3 py-2 text-xs">
+                          <div>
+                            <span className="font-mono font-bold text-teal">{cidCodigo}</span>
+                            <span className="ml-2 font-medium text-sus-950">{cidDescricao}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCidCodigo("");
+                              setCidDescricao("");
+                              setBuscaCid("");
+                            }}
+                            className="rounded p-1 text-ink/40 hover:text-red-600"
+                            title="Remover CID"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="relative">
+                          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/40" />
+                          <Input
+                            value={buscaCid}
+                            onChange={(e) => setBuscaCid(e.target.value)}
+                            placeholder="Pesquise por código ou nome do CID-10 (ex: J06, cefaleia, diabetes)…"
+                            className="pl-9 text-xs"
+                          />
+                          {buscandoCid && (
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-ink/45">
+                              Buscando…
+                            </span>
+                          )}
+                          {cidsSugeridos.length > 0 && (
+                            <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-y-auto rounded-xl border border-sus-900/15 bg-white shadow-lg">
+                              {cidsSugeridos.map((c) => (
+                                <button
+                                  key={c.codigo}
+                                  type="button"
+                                  onClick={() => {
+                                    setCidCodigo(c.codigo);
+                                    setCidDescricao(c.descricao);
+                                    setBuscaCid("");
+                                    setCidsSugeridos([]);
+                                  }}
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-teal/10 transition"
+                                >
+                                  <span className="rounded bg-teal/15 px-1.5 py-0.5 font-mono font-bold text-teal">
+                                    {c.codigo}
+                                  </span>
+                                  <span className="truncate text-ink/80">{c.descricao}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Justificativa Clínica Obrigatória */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <Label className="!mb-0 text-xs font-bold text-sus-950">
+                          Justificativa Clínica e Hipótese Diagnóstica <span className="text-red-500">*</span> (mínimo {JUST_MIN} caracteres)
+                        </Label>
+                        <span className={`text-[11px] font-semibold ${justificativa.trim().length >= JUST_MIN ? "text-emerald-700" : "text-amber-800"}`}>
+                          {justificativa.trim().length} / {JUST_MIN} caracteres {justificativa.trim().length >= JUST_MIN ? "✓" : `(faltam ${JUST_MIN - justificativa.trim().length})`}
+                        </span>
+                      </div>
+                      <textarea
+                        value={justificativa}
+                        onChange={(e) => setJustificativa(e.target.value)}
+                        rows={3}
+                        placeholder="Descreva a indicação clínica, sintomas ou observações do médico solicitante (obrigatório, mínimo 12 caracteres)…"
+                        className={`w-full rounded-xl border p-3 text-xs outline-none transition focus:ring-2 ${
+                          justificativa.trim().length > 0 && justificativa.trim().length < JUST_MIN
+                            ? "border-amber-400 focus:border-amber-500 focus:ring-amber-200"
+                            : "border-sus-900/15 focus:border-teal focus:ring-teal/20"
+                        }`}
+                        required
+                      />
+                    </div>
+
+                    {/* Observações Gerais */}
+                    <div>
+                      <Label className="text-[11px] text-ink/70">Observações adicionais (opcional)</Label>
+                      <textarea
+                        value={observacoes}
+                        onChange={(e) => setObservacoes(e.target.value)}
+                        rows={2}
+                        placeholder="Ex: Paciente necessita de cadeira de rodas, jejum especial ou contato com acompanhante…"
+                        className="w-full rounded-xl border border-sus-900/15 bg-white p-2.5 text-xs outline-none transition focus:border-teal"
+                      />
+                    </div>
+                  </div>
+                </Card>
+
+                {/* Bloco 5: Opção de Agendamento Direto (Requer RBAC tfd_agenda:criar) */}
+                {podeAgendarDireto && (
+                  <Card className="p-5 shadow-xs border-dashed border-sus-900/20">
+                    <div className="flex items-center justify-between border-b border-sus-900/10 pb-3 mb-3">
+                      <div className="flex items-center gap-2">
+                        <Clock className="h-4 w-4 text-teal" />
+                        <h2 className="font-display text-sm font-bold text-sus-950">
+                          5. Modo de Inclusão: Fila vs. Agendamento Direto
+                        </h2>
+                      </div>
+                      <span className="text-[11px] text-teal font-semibold">Permissão Agenda TFD</span>
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer text-sus-950">
+                        <input
+                          type="checkbox"
+                          checked={agendamentoDireto}
+                          onChange={(e) => setAgendamentoDireto(e.target.checked)}
+                          className="accent-teal h-4 w-4"
+                        />
+                        Marcar data de agendamento diretamente (ignorar espera na fila)
+                      </label>
+
+                      {agendamentoDireto && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 items-start">
+                          <div>
+                            <Label className="text-xs font-bold text-sus-950">Data do Atendimento</Label>
+                            <Input
+                              type="date"
+                              value={dataAgendada}
+                              onChange={(e) => setDataAgendada(e.target.value)}
+                              className="text-xs"
+                              required={agendamentoDireto}
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs font-bold text-sus-950">Horário</Label>
+                            <Input
+                              type="time"
+                              value={horaAgendada}
+                              onChange={(e) => setHoraAgendada(e.target.value)}
+                              className="text-xs"
+                              required={agendamentoDireto}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </Card>
+                )}
+              </div>
+
+              {/* COLUNA DIREITA (STICKY): Seleção de Procedimentos, Lista de Exames e Resumo */}
+              <div className="lg:col-span-5 space-y-6 lg:sticky lg:top-6">
+                <Card className="p-5 shadow-xs">
+                  <div className="flex items-center justify-between border-b border-sus-900/10 pb-3 mb-4">
+                    <div className="flex items-center gap-2">
+                      <ClipboardList className="h-4 w-4 text-teal" />
+                      <h2 className="font-display text-sm font-bold text-sus-950">
+                        Procedimentos e Exames do Pedido
+                      </h2>
+                    </div>
+                    {procedimentosAdicionados.length > 0 && (
+                      <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                        {procedimentosAdicionados.length} agrupado(s)
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Se for Consulta Especializada: banner SUS 0301010072 */}
+                  {isConsulta ? (
+                    <div className="rounded-xl border border-teal/20 bg-teal/5 p-4 flex items-start gap-3">
+                      <CheckCircle2 className="h-5 w-5 text-teal shrink-0 mt-0.5" />
+                      <div className="text-xs">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-bold text-sm text-sus-950 font-mono">0301010072</span>
+                          <span className="font-bold text-sus-950">CONSULTA MEDICA EM ATENCAO ESPECIALIZADA</span>
+                          <span className="rounded bg-teal/15 px-2 py-0.5 text-[10px] font-bold text-teal uppercase">
+                            Padrão SUS / Vivver
+                          </span>
+                        </div>
+                        <p className="mt-1 text-ink/65 text-[11px]">
+                          Consultas médicas especializadas utilizam o procedimento padronizado <strong>0301010072</strong>. O direcionamento clínico é definido pelo <strong>CBO da especialidade</strong> selecionado à esquerda.
+                        </p>
+                        {especialidade ? (
+                          <p className="mt-1.5 font-bold text-teal-900">
+                            ✓ Especialidade vinculada: {especialidade} {codigoEspecialidade ? `(CBO: ${codigoEspecialidade})` : ""}
+                          </p>
+                        ) : (
+                          <p className="mt-1.5 font-medium text-amber-700">
+                            Aguardando a seleção do CBO / Especialidade Médica ao lado.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <Label className="text-xs font-bold text-sus-950 flex items-center justify-between">
+                        <span>Procedimento Correspondente <span className="text-red-500">*</span></span>
+                        {isLaboratorial && (
+                          <span className="text-[10px] text-teal font-semibold flex items-center gap-1">
+                            <FlaskConical className="h-3 w-3" /> Tabela SIGTAP Laboratorial
+                          </span>
+                        )}
+                      </Label>
+
+                      {isLaboratorial ? (
+                        <div className="mt-1 space-y-2">
+                          <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-ink/40" />
+                            <Input
+                              placeholder="Buscar exame laboratorial (ex: hemograma, glicose, EAS)..."
+                              value={buscaSig}
+                              onChange={(e) => setBuscaSig(e.target.value)}
+                              className="pl-9 text-xs"
+                            />
+                          </div>
+                          <div className="max-h-44 space-y-1 overflow-auto rounded-xl border border-sus-900/10 p-2 bg-sand/30">
+                            {sigtapResultados.slice(0, 30).map((s) => (
+                              <button
+                                key={s.id}
+                                type="button"
+                                onClick={() => adicionarSigtapItem(s)}
+                                className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-white transition"
+                              >
+                                <Plus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-teal" />
+                                <span>
+                                  <b>{s.codigo}</b> · {s.descricao}
+                                </span>
+                              </button>
+                            ))}
+                            {buscaSig.trim() && sigtapResultados.length === 0 && (
+                              <p className="py-2 text-center text-xs text-ink/45">
+                                Nenhum exame laboratorial encontrado para "{buscaSig}".
+                              </p>
+                            )}
+                            {!buscaSig.trim() && sigtapResultados.length === 0 && !buscandoSig && (
+                              <p className="py-2 text-center text-xs text-ink/45">
+                                Digite para consultar exames laboratoriais na tabela SIGTAP.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="relative mt-1">
+                          <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-ink/40 pointer-events-none" />
+                            <Input
+                              placeholder={
+                                tipoServico
+                                  ? `Buscar em ${tipoServico} por nome, SIGTAP ou sigla…`
+                                  : "Buscar procedimento por código SIGTAP, sigla ou nome…"
+                              }
+                              value={buscaProc}
+                              onChange={(e) => {
+                                setBuscaProc(e.target.value);
+                                setProcFoco(true);
+                              }}
+                              onFocus={() => setProcFoco(true)}
+                              onBlur={() => setTimeout(() => setProcFoco(false), 250)}
+                              className="pl-9 pr-9 text-xs"
+                              autoComplete="off"
+                            />
+                            {(buscaProc || procedimentoSel || procTexto) && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setBuscaProc("");
+                                  handleSelecionarProcedimento(null);
+                                  setProcFoco(false);
+                                }}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink transition"
+                                title="Limpar procedimento"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Procedimento Selecionado Badge */}
+                          {(procedimentoSel || procTexto) && (
+                            <div className="mt-2 flex flex-wrap items-center justify-between gap-1.5 rounded-xl border border-teal/20 bg-teal/5 px-3 py-2 text-xs">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <Check className="h-4 w-4 text-teal shrink-0" />
+                                <div className="min-w-0">
+                                  <p className="font-bold text-sus-950 break-words">
+                                    {codigoProcedimento ? `${codigoProcedimento} · ` : ""}
+                                    {procTexto || procedimentoSel?.exame}
+                                  </p>
+                                  <p className="text-[11px] text-ink/60">
+                                    {tipoServico ? `${tipoServico} · ` : ""}
+                                    {especialidade ? `Especialidade: ${especialidade}` : ""}
+                                  </p>
+                                </div>
+                              </div>
+                              <span className="rounded bg-teal/15 px-2 py-0.5 text-[10px] font-bold text-teal shrink-0">
+                                Selecionado
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Dropdown com Busca Inteligente */}
+                          {procFoco && (
+                            <div className="absolute left-0 right-0 z-30 mt-1 max-h-60 overflow-y-auto rounded-xl border border-sus-900/10 bg-white shadow-card">
+                              <p className="sticky top-0 border-b border-sus-900/5 bg-sand/80 px-3 py-1.5 text-[11px] font-semibold text-sus-900/60 flex items-center justify-between">
+                                <span className={erroCatalogo && opcoesProcFiltradas.length === 0 ? "text-red-700" : ""}>
+                                  {opcoesProcFiltradas.length > 0
+                                    ? `${opcoesProcFiltradas.length} procedimento(s) — clique para selecionar`
+                                    : buscandoProc
+                                    ? "Pesquisando no catálogo..."
+                                    : erroCatalogo
+                                    ? `Falha ao carregar catálogo: ${erroCatalogo}`
+                                    : "Nenhum procedimento encontrado"}
+                                </span>
+                                {buscandoProc && (
+                                  <span className="text-[10px] text-teal font-bold flex items-center gap-1">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-teal animate-ping" />
+                                    SIGTAP...
+                                  </span>
+                                )}
+                              </p>
+                              {erroCatalogo && opcoesProcFiltradas.length > 0 && (
+                                <p className="border-b border-amber-200 bg-amber-50 px-3 py-1 text-[11px] text-amber-800">
+                                  Aviso da consulta ao catálogo: {erroCatalogo}
+                                </p>
+                              )}
+                              {opcoesProcFiltradas.map((p, idx) => (
+                                <button
+                                  key={`${p.codigo_curto || p.codigo_procedimento || idx}-${p.exame}`}
+                                  type="button"
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() => escolherProcedimento(p)}
+                                  className="flex w-full items-start justify-between gap-2 border-b border-sus-900/5 px-3 py-2 text-left text-xs last:border-0 hover:bg-teal/5 transition"
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      {p.codigo_curto && (
+                                        <span className="rounded bg-teal/15 px-1.5 py-0.5 text-[9px] font-bold text-teal uppercase shrink-0">
+                                          {p.codigo_curto}
+                                        </span>
+                                      )}
+                                      <span className="font-bold text-sus-950 truncate">
+                                        {p.exame || p.nome_procedimento}
+                                      </span>
+                                    </div>
+                                    <div className="mt-1 flex items-center gap-1.5 flex-wrap text-[11px] text-ink/60">
+                                      {p.codigo_procedimento && (
+                                        <span className="inline-flex items-center gap-0.5 rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-800 border border-emerald-200">
+                                          ✓ SIGTAP {p.codigo_procedimento}
+                                        </span>
+                                      )}
+                                      {p.instrumento && (
+                                        <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[9px] font-medium text-sky-800 border border-sky-200">
+                                          {p.instrumento}
+                                        </span>
+                                      )}
+                                      {p.complexidade && (
+                                        <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-medium text-amber-800 border border-amber-200">
+                                          {p.complexidade}
+                                        </span>
+                                      )}
+                                      {p.tipo_fila && <span>{p.tipo_fila}</span>}
+                                      {p.especialidade && <span>· {p.especialidade}</span>}
+                                    </div>
+                                  </div>
+                                  <Plus className="h-4 w-4 shrink-0 text-teal mt-0.5" />
+                                </button>
+                              ))}
+                              {buscaProc.trim().length >= 2 && (
+                                <button
+                                  type="button"
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() => {
+                                    setProcTexto(buscaProc.trim());
+                                    setProcedimentoSel(null);
+                                    setBuscaProc("");
+                                    setProcFoco(false);
+                                  }}
+                                  className="flex w-full items-center gap-2 border-t border-sus-900/10 bg-sand/30 px-3 py-2 text-left text-xs font-semibold text-teal hover:bg-teal/10 transition"
+                                >
+                                  <Plus className="h-3.5 w-3.5" /> Usar texto digitado: “{buscaProc.trim()}”
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={adicionarProcedimentoLista}
+                          disabled={!tipoServico || (!procTexto.trim() && !procedimentoSel)}
+                          className="border-teal/40 text-teal hover:bg-teal/10 text-xs font-bold"
+                        >
+                          <Plus className="h-3.5 w-3.5" /> Adicionar exame à lista do pedido
+                        </Button>
+                      </div>
+
+                      {procedimentosAdicionados.length > 0 && (
+                        <div className="mt-3 space-y-2 rounded-xl bg-sand/40 p-3 border border-sus-900/10">
+                          <p className="text-[11px] font-bold uppercase tracking-wider text-sus-900/60">
+                            Exames agrupados neste pedido ({procedimentosAdicionados.length}):
+                          </p>
+                          <div className="space-y-1.5">
+                            {procedimentosAdicionados.map((it, idx) => (
+                              <div
+                                key={idx}
+                                className="flex items-center justify-between gap-2 rounded-lg bg-white px-3 py-2 text-xs font-medium text-sus-950 border border-sus-900/15 shadow-2xs"
+                              >
+                                <div className="min-w-0">
+                                  <p className="truncate font-semibold">
+                                    {it.codigo ? <strong className="font-mono text-teal mr-1">{it.codigo} ·</strong> : null}
+                                    {it.nome}
+                                  </p>
+                                  {it.tipo_fila && (
+                                    <span className="text-[10px] text-ink/55">{it.tipo_fila}</span>
+                                  )}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => removerProcedimentoLista(idx)}
+                                  className="text-red-500 hover:text-red-700 p-1 shrink-0"
+                                  title="Remover este exame"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
-              )}
-            </div>
 
-            {/* Justificativa Clínica Obrigatória */}
-            <div>
-              <div className="flex items-center justify-between">
-                <Label className="text-xs font-bold text-sus-950">
-                  Justificativa Clínica e Hipótese Diagnóstica <span className="text-red-500">*</span> (mínimo {JUST_MIN} caracteres)
-                </Label>
-                <span className={`text-[11px] font-semibold ${justificativa.trim().length >= JUST_MIN ? "text-emerald-700" : "text-amber-800"}`}>
-                  {justificativa.trim().length} / {JUST_MIN} caracteres {justificativa.trim().length >= JUST_MIN ? "✓" : `(faltam ${JUST_MIN - justificativa.trim().length})`}
-                </span>
-              </div>
-              <textarea
-                value={justificativa}
-                onChange={(e) => setJustificativa(e.target.value)}
-                rows={3}
-                placeholder="Descreva a indicação clínica, sintomas ou observações do médico solicitante (obrigatório, mínimo 12 caracteres)…"
-                className={`mt-1 w-full rounded-xl border p-3 text-xs outline-none transition focus:ring-2 ${
-                  justificativa.trim().length > 0 && justificativa.trim().length < JUST_MIN
-                    ? "border-amber-400 focus:border-amber-500 focus:ring-amber-200"
-                    : "border-sus-900/15 focus:border-teal focus:ring-teal/20"
-                }`}
-                required
-              />
-            </div>
-
-            {/* Observações Gerais */}
-            <div>
-              <Label className="text-[11px] text-ink/70">Observações adicionais (opcional)</Label>
-              <textarea
-                value={observacoes}
-                onChange={(e) => setObservacoes(e.target.value)}
-                rows={2}
-                placeholder="Ex: Paciente necessita de cadeira de rodas, jejum especial ou contato com acompanhante…"
-                className="mt-1 w-full rounded-xl border border-sus-900/15 bg-white p-2.5 text-xs outline-none transition focus:border-teal"
-              />
-            </div>
-          </div>
-        </Card>
-
-        {/* Bloco 5: Opção de Agendamento Direto (Apenas TFD Central) */}
-        {isTfdCentral && (
-          <Card className="p-5 shadow-xs border-dashed border-sus-900/20">
-            <div className="flex items-center justify-between border-b border-sus-900/10 pb-3 mb-3">
-              <div className="flex items-center gap-2">
-                <Clock className="h-4 w-4 text-teal" />
-                <h2 className="font-display text-sm font-bold text-sus-950">
-                  5. Modo de Inclusão: Fila vs. Agendamento Direto
-                </h2>
-              </div>
-              <span className="text-[11px] text-teal font-semibold">Exclusivo Central TFD</span>
-            </div>
-
-            <div className="space-y-3">
-              <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer text-sus-950">
-                <input
-                  type="checkbox"
-                  checked={agendamentoDireto}
-                  onChange={(e) => setAgendamentoDireto(e.target.checked)}
-                  className="accent-teal h-4 w-4"
-                />
-                Marcar data de agendamento diretamente (ignorar espera na fila)
-              </label>
-
-              {agendamentoDireto && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                  <div>
-                    <Label className="text-xs font-bold text-sus-950">Data do Atendimento</Label>
-                    <Input
-                      type="date"
-                      value={dataAgendada}
-                      onChange={(e) => setDataAgendada(e.target.value)}
-                      className="mt-1 text-xs"
-                      required={agendamentoDireto}
-                    />
+                  {/* Dados Complementares do Procedimento */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4 pt-4 border-t border-sus-900/10 items-start">
+                    <div>
+                      <div className="min-h-[20px] flex items-center justify-between mb-1">
+                        <Label className="!mb-0 text-[11px] text-ink/70">Código SIGTAP</Label>
+                        {isConsulta && (
+                          <span className="text-[10px] text-teal font-semibold font-mono">
+                            Fixado pelo SUS
+                          </span>
+                        )}
+                      </div>
+                      <Input
+                        value={codigoProcedimento}
+                        disabled={isConsulta}
+                        onChange={(e) => setCodigoProcedimento(e.target.value)}
+                        placeholder="Ex: 0205020186"
+                        className={`text-xs font-mono ${isConsulta ? "bg-sand/40 font-bold text-teal" : ""}`}
+                      />
+                    </div>
+                    <div>
+                      <div className="min-h-[20px] flex items-center mb-1">
+                        <Label className="!mb-0 text-[11px] text-ink/70">Nº do Pedido / Guia</Label>
+                      </div>
+                      <Input
+                        value={numeroPedido}
+                        onChange={(e) => setNumeroPedido(e.target.value)}
+                        placeholder="Automático se vazio"
+                        className="text-xs font-mono uppercase"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <Label className="text-xs font-bold text-sus-950">Horário</Label>
-                    <Input
-                      type="time"
-                      value={horaAgendada}
-                      onChange={(e) => setHoraAgendada(e.target.value)}
-                      className="mt-1 text-xs"
-                      required={agendamentoDireto}
-                    />
+
+                  {/* ALERTA DE DUPLICIDADE EM TEMPO REAL */}
+                  {duplicidadeAtiva && !ignorarDuplicidade && (
+                    <div className="mt-4 pt-3 border-t border-sus-900/10">
+                      <AlertaPedidoDuplicado
+                        pedido={duplicidadeAtiva}
+                        tipoModulo="tfd"
+                        onProsseguir={() => setIgnorarDuplicidade(true)}
+                        onCancelar={() => {
+                          setProcedimentoSel(null);
+                          setProcTexto("");
+                          setCodigoProcedimento("");
+                          setEspecialidade("");
+                          setCodigoEspecialidade("");
+                          setDuplicidadeAtiva(null);
+                        }}
+                      />
+                    </div>
+                  )}
+                </Card>
+
+                {/* Resumo do Pedido e Botões de Ação */}
+                <Card className="p-5 shadow-xs bg-sand/20 border-sus-900/15 space-y-4">
+                  <div className="flex items-center justify-between border-b border-sus-900/10 pb-2.5">
+                    <h3 className="font-display text-sm font-bold text-sus-950">Resumo da Solicitação</h3>
+                    <span className="text-[11px] font-semibold text-teal">
+                      {agendamentoDireto && podeAgendarDireto ? "Agendamento Direto" : "Fila de Espera"}
+                    </span>
                   </div>
-                </div>
-              )}
+
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex justify-between gap-2">
+                      <span className="text-ink/60">Paciente:</span>
+                      <span className="font-semibold text-sus-950 text-right truncate">
+                        {pacienteSelecionado?.nome || "Não selecionado"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-ink/60">Tipo de Serviço:</span>
+                      <span className="font-semibold text-teal text-right truncate">
+                        {tipoServico || "Não selecionado"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-ink/60">Procedimento(s):</span>
+                      <span className="font-semibold text-sus-950 text-right">
+                        {obterListaFinalProcs().length > 0
+                          ? `${obterListaFinalProcs().length} item(ns)`
+                          : "Nenhum selecionado"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-ink/60">PSF / Unidade:</span>
+                      <span className="font-medium text-sus-950 text-right truncate">{unidNomeAtual}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-ink/60">Profissional:</span>
+                      <span className="font-medium text-sus-950 text-right truncate">{medNomeAtual}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 pt-2 border-t border-sus-900/10">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={limparFormulario}
+                      disabled={salvando}
+                      className="text-xs"
+                    >
+                      <RotateCcw className="h-4 w-4" /> Limpar Campos
+                    </Button>
+
+                    <Button
+                      type="submit"
+                      disabled={salvando}
+                      className="bg-teal text-white hover:brightness-110 shadow-sm text-xs font-bold px-5"
+                    >
+                      {salvando ? (
+                        "Processando…"
+                      ) : agendamentoDireto && podeAgendarDireto ? (
+                        <>
+                          <Calendar className="h-4 w-4" /> Confirmar e Agendar Direto
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-4 w-4" /> Incluir Solicitação na Fila
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </Card>
+              </div>
             </div>
-          </Card>
-        )}
-
-        {/* Botões de Ação Finais */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={limparFormulario}
-            disabled={salvando}
-            className="text-xs"
-          >
-            <RotateCcw className="h-4 w-4" /> Limpar Campos
-          </Button>
-
-          <Button
-            type="submit"
-            disabled={salvando}
-            className="bg-teal text-white hover:brightness-110 shadow-sm text-xs font-bold px-6 py-2.5"
-          >
-            {salvando ? (
-              "Processando…"
-            ) : agendamentoDireto ? (
-              <>
-                <Calendar className="h-4 w-4" /> Confirmar e Agendar Direto
-              </>
-            ) : (
-              <>
-                <Plus className="h-4 w-4" /> Incluir Solicitação na Fila
-              </>
-            )}
-          </Button>
-        </div>
-      </form>
+          </form>
 
       {/* Modal de Confirmação antes de Gravar Definitivamente no Banco */}
       {modalConfirmacao && (
@@ -2839,12 +3045,14 @@ export default function NovaSolicitacao() {
                 <span className="text-ink/60 font-medium">Médico(a):</span>
                 <span className="font-medium text-sus-950 text-right">{medNomeAtual}</span>
               </div>
-              <div className="flex justify-between border-b border-sus-900/5 pb-2">
-                <span className="text-ink/60 font-medium">Prioridade:</span>
-                <span className={`rounded px-2 py-0.5 font-bold uppercase text-[10px] ${prioridade === "urgente" ? "bg-red-100 text-red-800" : "bg-teal/15 text-teal"}`}>
-                  {prioridade === "urgente" ? "Prioridade Urgente" : "Rotina / Eletivo"}
-                </span>
-              </div>
+              {podeDefinirPrioridade && (
+                <div className="flex justify-between border-b border-sus-900/5 pb-2">
+                  <span className="text-ink/60 font-medium">Prioridade:</span>
+                  <span className={`rounded px-2 py-0.5 font-bold uppercase text-[10px] ${prioridade === "urgente" ? "bg-red-100 text-red-800" : "bg-teal/15 text-teal"}`}>
+                    {prioridade === "urgente" ? "Prioridade Urgente" : "Rotina / Eletivo"}
+                  </span>
+                </div>
+              )}
               {cidCodigo && (
                 <div className="flex justify-between border-b border-sus-900/5 pb-2">
                   <span className="text-ink/60 font-medium">Diagnóstico / CID:</span>
@@ -2863,7 +3071,7 @@ export default function NovaSolicitacao() {
                   {numeroPedido.trim() || "Gerado automaticamente em segundo plano"}
                 </span>
               </div>
-              {agendamentoDireto && (
+              {agendamentoDireto && podeAgendarDireto && (
                 <div className="flex justify-between pt-1 text-teal font-semibold">
                   <span>Agendamento Direto:</span>
                   <span>{dataAgendada.split("-").reverse().join("/")} às {horaAgendada}</span>
@@ -2938,7 +3146,7 @@ export default function NovaSolicitacao() {
                     <p className="text-xs text-emerald-700 mt-1">
                       Status das solicitações:{" "}
                       <span className="font-bold uppercase tracking-wider text-[11px] bg-white px-2 py-0.5 rounded border border-emerald-300">
-                        {agendamentoDiretoLote && isTfdCentral
+                        {agendamentoDiretoLote && podeAgendarDireto
                           ? `📅 Agendados Direto (${dataAgendadaLote.split("-").reverse().join("/")} às ${horaAgendadaLote})`
                           : "⏳ Inseridos na Fila de Espera"}
                       </span>
@@ -3051,38 +3259,26 @@ export default function NovaSolicitacao() {
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Tipo de Serviço */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                {/* Tipo de Serviço (Dinâmico do Banco, sem filas de sangue) */}
                 <div>
-                  <Label className="text-xs font-bold text-sus-950">
-                    Tipo de Serviço <span className="text-red-500">*</span>
-                  </Label>
+                  <div className="min-h-[22px] flex items-center mb-1">
+                    <Label className="!mb-0 text-xs font-bold text-sus-950">
+                      Tipo de Serviço <span className="text-red-500">*</span>
+                    </Label>
+                  </div>
                   <Select
                     value={tipoServico}
                     onChange={(e) => aoMudarTipoServico(e.target.value)}
-                    className="mt-1 text-xs font-semibold text-sus-950"
+                    className="text-xs font-semibold text-sus-950"
                     required
                   >
                     <option value="">Selecione o Tipo de Serviço…</option>
-                    <optgroup label="Categorias Principais">
-                      <option value="EXAMES ESPECIALIZADOS">EXAMES ESPECIALIZADOS</option>
-                      <option value="CIRURGIAS ESPECIALIZADAS">CIRURGIAS ESPECIALIZADAS</option>
-                      <option value="CONSULTAS ESPECIALIZADAS">CONSULTAS ESPECIALIZADAS</option>
-                    </optgroup>
-                    <optgroup label="Filas Específicas Cadastradas">
-                      {tiposFila
-                        .filter(
-                          (tf) =>
-                            !["EXAMES ESPECIALIZADOS", "CIRURGIAS ESPECIALIZADAS", "CONSULTAS ESPECIALIZADAS"].includes(
-                              tf.nome.trim().toUpperCase(),
-                            ),
-                        )
-                        .map((tf) => (
-                          <option key={tf.id} value={tf.nome}>
-                            {tf.nome}
-                          </option>
-                        ))}
-                    </optgroup>
+                    {tiposServicoDisponiveis.map((tf) => (
+                      <option key={tf.id} value={tf.nome}>
+                        {tf.nome}
+                      </option>
+                    ))}
                   </Select>
                   <p className="mt-1 text-[11px] text-ink/60">
                     {isConsulta
@@ -3335,7 +3531,7 @@ export default function NovaSolicitacao() {
               </div>
 
               {/* Data do Pedido e Prioridade */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-sus-900/10">
+              <div className={`grid grid-cols-1 ${podeDefinirPrioridade ? "md:grid-cols-2" : ""} gap-4 mt-4 pt-4 border-t border-sus-900/10 items-start`}>
                 <div>
                   <Label className="text-xs font-bold text-sus-950">
                     Data do Pedido
@@ -3358,25 +3554,24 @@ export default function NovaSolicitacao() {
                   </p>
                 </div>
 
-                <div>
-                  <Label className="text-xs font-bold text-sus-950">
-                    Classificação de Prioridade
-                  </Label>
-                  <Select
-                    value={prioridade}
-                    onChange={(e) => setPrioridade(e.target.value as "rotina" | "urgente")}
-                    disabled={isLancamentoRestrito}
-                    className="mt-1 text-xs font-semibold"
-                  >
-                    <option value="rotina">Rotina / Eletivo (Padrão)</option>
-                    <option value="urgente">Urgência / Prioritário</option>
-                  </Select>
-                  <p className="mt-1 text-[11px] text-ink/60">
-                    {isLancamentoRestrito
-                      ? "Apenas a Central de Regulação pode classificar diretamente como urgente."
-                      : "Define a ordenação na fila de regulação para o lote."}
-                  </p>
-                </div>
+                {podeDefinirPrioridade && (
+                  <div>
+                    <Label className="text-xs font-bold text-sus-950">
+                      Classificação de Prioridade
+                    </Label>
+                    <Select
+                      value={prioridade}
+                      onChange={(e) => setPrioridade(e.target.value as "rotina" | "urgente")}
+                      className="mt-1 text-xs font-semibold"
+                    >
+                      <option value="rotina">Rotina / Eletivo (Padrão)</option>
+                      <option value="urgente">Urgência / Prioritário</option>
+                    </Select>
+                    <p className="mt-1 text-[11px] text-ink/60">
+                      Define a ordenação na fila de regulação para o lote.
+                    </p>
+                  </div>
+                )}
               </div>
             </Card>
 
@@ -3506,21 +3701,21 @@ export default function NovaSolicitacao() {
               </div>
             </Card>
 
-            {/* Bloco 3: Opção de Agendamento Direto em Lote */}
-            <Card className="p-5 shadow-xs border-l-4 border-l-teal">
-              <div className="flex items-center justify-between border-b border-sus-900/10 pb-3 mb-4">
-                <div className="flex items-center gap-2">
-                  <Calendar className="h-4 w-4 text-teal" />
-                  <h2 className="font-display text-sm font-bold text-sus-950">
-                    3. Agendamento Direto em Lote
-                  </h2>
+            {/* Bloco 3: Opção de Agendamento Direto em Lote (Requer RBAC tfd_agenda:criar) */}
+            {podeAgendarDireto && (
+              <Card className="p-5 shadow-xs border-l-4 border-l-teal">
+                <div className="flex items-center justify-between border-b border-sus-900/10 pb-3 mb-4">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="h-4 w-4 text-teal" />
+                    <h2 className="font-display text-sm font-bold text-sus-950">
+                      3. Agendamento Direto em Lote
+                    </h2>
+                  </div>
+                  <span className="text-[11px] font-semibold text-teal bg-teal/10 px-2.5 py-0.5 rounded-full">
+                    Permissão Agenda TFD
+                  </span>
                 </div>
-                <span className="text-[11px] font-semibold text-teal bg-teal/10 px-2.5 py-0.5 rounded-full">
-                  Central de Regulação
-                </span>
-              </div>
 
-              {isTfdCentral ? (
                 <div className="space-y-4">
                   <div className="rounded-xl border border-sus-900/10 bg-sand/30 p-4">
                     <label className="flex items-start gap-3 cursor-pointer select-none">
@@ -3570,15 +3765,8 @@ export default function NovaSolicitacao() {
                     </div>
                   )}
                 </div>
-              ) : (
-                <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 text-amber-700 shrink-0" />
-                  <span>
-                    O agendamento direto é restrito à Central Municipal de Regulação. Os pedidos incluídos por unidades solicitantes entrarão na <strong>Fila de Espera</strong> para regulação e agendamento.
-                  </span>
-                </div>
-              )}
-            </Card>
+              </Card>
+            )}
 
             {/* Bloco 4: Pacientes do Lote (Lista Dinâmica) */}
             <Card className="p-5 shadow-xs">
@@ -3586,7 +3774,7 @@ export default function NovaSolicitacao() {
                 <div className="flex items-center gap-2">
                   <Users className="h-4 w-4 text-teal" />
                   <h2 className="font-display text-sm font-bold text-sus-950">
-                    4. Pacientes do Lote ({pacientesLote.length} adicionado{pacientesLote.length === 1 ? "" : "s"})
+                    {podeAgendarDireto ? "4" : "3"}. Pacientes do Lote ({pacientesLote.length} adicionado{pacientesLote.length === 1 ? "" : "s"})
                   </h2>
                 </div>
                 <span className="text-[11px] font-bold text-teal bg-teal/10 px-2.5 py-0.5 rounded-full self-start sm:self-auto">
@@ -3607,7 +3795,7 @@ export default function NovaSolicitacao() {
                     }
                   }}
                   label="Adicionar Paciente ao Lote"
-                  placeholder="Pesquise por nome, CPF, CNS ou prontuário e selecione para adicionar imediatamente…"
+                  placeholder="Buscar paciente por nome, CPF, CNS, prontuário ou nascimento (DD/MM/AAAA)…"
                 />
                 <p className="mt-2 text-[11px] text-ink/60">
                   Dica: basta pesquisar e clicar no paciente para inseri-lo instantaneamente na lista abaixo. Você pode adicionar quantos pacientes precisar.
@@ -3680,6 +3868,19 @@ export default function NovaSolicitacao() {
                                     <span>Pront: {item.paciente.codigo_prontuario}</span>
                                   )}
                                 </div>
+                                {(() => {
+                                  const pacExt = item.paciente as PacienteComUnidade;
+                                  const endRes = formatarEnderecoCompleto(item.paciente);
+                                  if (!pacExt.unidade_nome && !endRes) return null;
+                                  return (
+                                    <div className="mt-0.5 text-[10px] text-ink/65 space-y-0.5">
+                                      {pacExt.unidade_nome && (
+                                        <p className="text-teal-900 font-medium">{pacExt.unidade_nome}</p>
+                                      )}
+                                      {endRes && <p className="truncate max-w-[260px]">{endRes}</p>}
+                                    </div>
+                                  );
+                                })()}
                                 {item.duplicadoInfo && (
                                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5 rounded-md bg-amber-500/10 border border-amber-500/30 px-2 py-1 text-[11px] text-amber-900">
                                     <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
@@ -3809,7 +4010,7 @@ export default function NovaSolicitacao() {
                 >
                   {salvandoLote ? (
                     "Processando Lote…"
-                  ) : agendamentoDiretoLote && isTfdCentral ? (
+                  ) : agendamentoDiretoLote && podeAgendarDireto ? (
                     <>
                       <Calendar className="h-4 w-4" /> Confirmar e Agendar Lote ({pacientesLote.length})
                     </>
@@ -3879,7 +4080,7 @@ export default function NovaSolicitacao() {
                   <div className="flex justify-between border-b border-sus-900/5 pb-2">
                     <span className="text-ink/60 font-medium">Ação / Destino:</span>
                     <span className="font-bold text-teal">
-                      {agendamentoDiretoLote && isTfdCentral
+                      {agendamentoDiretoLote && podeAgendarDireto
                         ? `📅 Agendamento Direto para ${dataAgendadaLote.split("-").reverse().join("/")} às ${horaAgendadaLote}`
                         : "⏳ Inclusão na Fila de Espera"}
                     </span>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { AlertCircle, Bus, Calendar, Clock, FileText, FlaskConical, MapPin, Printer, QrCode, User, X } from "lucide-react";
-import { labObterComprovante, tfdObterComprovante, tfdObterComprovantePorPedido, type ComprovanteExame } from "../services/api";
+import { labObterComprovante, labObterComprovanteFilaPsf, tfdObterComprovante, tfdObterComprovantePorPedido, type ComprovanteExame } from "../services/api";
 import { Button } from "./ui/primitives";
 import BotaoWhatsApp from "./BotaoWhatsApp";
 import { useBackdropClose } from "../hooks/useBackdropClose";
@@ -8,6 +8,7 @@ import { gerarQrDataUri } from "../utils/qrSvg";
 
 interface ComprovanteExameModalProps {
   solicitacaoId?: number | null;
+  filaPsfId?: number | null;
   exameId?: number | null;
   numeroPedido?: string | null;
   comprovanteInicial?: ComprovanteExame | null;
@@ -16,13 +17,16 @@ interface ComprovanteExameModalProps {
 
 export default function ComprovanteExameModal({
   solicitacaoId,
+  filaPsfId,
   exameId,
   numeroPedido,
   comprovanteInicial,
   onClose,
 }: ComprovanteExameModalProps) {
   const [comprovante, setComprovante] = useState<ComprovanteExame | null>(comprovanteInicial || null);
-  const [loading, setLoading] = useState<boolean>(!comprovanteInicial && Boolean(solicitacaoId || exameId || numeroPedido));
+  const [loading, setLoading] = useState<boolean>(
+    !comprovanteInicial && Boolean(solicitacaoId || filaPsfId || exameId || numeroPedido)
+  );
   const [erro, setErro] = useState<string>("");
 
   useEffect(() => {
@@ -31,12 +35,14 @@ export default function ComprovanteExameModal({
       setLoading(false);
       return;
     }
-    if (!solicitacaoId && !exameId && !numeroPedido) return;
+    if (!solicitacaoId && !filaPsfId && !exameId && !numeroPedido) return;
 
     setLoading(true);
     setErro("");
 
-    const prom = exameId
+    const prom = filaPsfId
+      ? labObterComprovanteFilaPsf(filaPsfId)
+      : exameId
       ? tfdObterComprovante(exameId)
       : numeroPedido
       ? tfdObterComprovantePorPedido(numeroPedido)
@@ -52,7 +58,14 @@ export default function ComprovanteExameModal({
       .finally(() => {
         setLoading(false);
       });
-  }, [solicitacaoId, exameId, numeroPedido, comprovanteInicial]);
+  }, [solicitacaoId, filaPsfId, exameId, numeroPedido, comprovanteInicial]);
+
+  const isInclusaoFila = Boolean(
+    comprovante &&
+      (comprovante.tipo_comprovante === "inclusao_fila" ||
+        (!comprovante.data_agendada &&
+          (comprovante.status === "na_fila" || comprovante.status === "aguardando")))
+  );
 
   const imprimir = () => {
     window.print();
@@ -119,11 +132,11 @@ export default function ComprovanteExameModal({
               <FileText className="h-5 w-5" />
             </span>
             <span className="font-display text-base font-bold text-sus-950">
-              Comprovante de Agendamento
+              {isInclusaoFila ? "Comprovante de Inclusão na Fila" : "Comprovante de Agendamento"}
             </span>
           </div>
           <div className="flex items-center gap-2">
-            {(exameId || (comprovante && comprovante.id)) && (
+            {!filaPsfId && (exameId || (comprovante && comprovante.id)) && (
               <BotaoWhatsApp
                 exameId={exameId || (comprovante ? comprovante.id : 0)}
                 exame={comprovante}
@@ -180,7 +193,9 @@ export default function ComprovanteExameModal({
                 Secretaria Municipal de Saúde · Setor de Regulação e Exames
               </h2>
               <div className="mt-2 print:mt-1 inline-block rounded-md border border-sus-900/20 bg-sand/50 px-3 py-1 print:px-2 print:py-0.5 text-xs print:text-[10px] font-semibold">
-                {comprovante.exige_preparo
+                {isInclusaoFila
+                  ? "COMPROVANTE DE INCLUSÃO NA FILA DE EXAMES DE SANGUE"
+                  : comprovante.exige_preparo
                   ? "COMPROVANTE OFICIAL DE AGENDAMENTO DE EXAMES DE SANGUE"
                   : "COMPROVANTE OFICIAL DE AGENDAMENTO"}
               </div>
@@ -192,7 +207,7 @@ export default function ComprovanteExameModal({
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-ink/60">Protocolo da Solicitação: </span>
                   <span className="font-mono font-bold text-sm print:text-xs text-sus-950">
-                    {comprovante.numero_pedido || comprovante.protocolo || `#${comprovante.id}`}
+                    {comprovante.codigo_solicitacao || comprovante.numero_pedido || comprovante.protocolo || `#${comprovante.id}`}
                   </span>
                 </div>
                 {comprovante.codigo_curto && comprovante.codigo_curto !== comprovante.protocolo && (
@@ -205,7 +220,9 @@ export default function ComprovanteExameModal({
                   <div>
                     <span className="text-ink/60">Status: </span>
                     <span className="rounded bg-teal/15 px-2 py-0.5 font-bold uppercase text-teal text-[11px] print:text-[10px]">
-                      {comprovante.status}
+                      {isInclusaoFila && comprovante.status === "na_fila"
+                        ? "Na Fila (Aguardando)"
+                        : comprovante.status}
                     </span>
                   </div>
                   <div>
@@ -267,40 +284,85 @@ export default function ComprovanteExameModal({
               </div>
             </div>
 
-            {/* Dados do Agendamento e Laboratório */}
-            <div className="mt-4 print:mt-2 rounded-xl border border-teal/20 bg-teal/5 p-3.5 print:p-2 text-xs print:text-[11px]">
-              <h3 className="mb-2 print:mb-1 flex items-center gap-1.5 text-xs print:text-[10px] font-bold uppercase text-teal">
-                <FlaskConical className="h-3.5 w-3.5 print:h-3 print:w-3" /> Local e Data da Coleta
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 print:gap-1 text-xs print:text-[11px]">
-                <div>
-                  <p className="text-[10px] print:text-[9px] text-ink/60 flex items-center gap-1">
-                    <Calendar className="h-3 w-3 print:h-2.5 print:w-2.5 text-teal" /> Data do Exame
-                  </p>
-                  <p className="text-sm print:text-xs font-bold text-sus-950">
-                    {comprovante.data_agendada
-                      ? comprovante.data_agendada.split("-").reverse().join("/")
-                      : "—"}
-                  </p>
+            {/* Dados do Agendamento / Situação na Fila */}
+            {isInclusaoFila ? (
+              <div className="mt-4 print:mt-2 rounded-xl border border-amber-300/70 bg-amber-50/40 p-3.5 print:p-2 text-xs print:text-[11px]">
+                <h3 className="mb-2 print:mb-1 flex items-center gap-1.5 text-xs print:text-[10px] font-bold uppercase text-amber-900">
+                  <FlaskConical className="h-3.5 w-3.5 print:h-3 print:w-3 text-amber-700" /> Situação na Fila e Dados do Pedido
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 print:gap-1 text-xs print:text-[11px]">
+                  <div>
+                    <p className="text-[10px] print:text-[9px] text-ink/60 flex items-center gap-1">
+                      <Calendar className="h-3 w-3 print:h-2.5 print:w-2.5 text-amber-700" /> Data do Pedido
+                    </p>
+                    <p className="text-sm print:text-xs font-bold text-sus-950">
+                      {(comprovante.data_pedido || comprovante.data_solicitacao)
+                        ? (comprovante.data_pedido || comprovante.data_solicitacao || "").slice(0, 10).split("-").reverse().join("/")
+                        : "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] print:text-[9px] text-ink/60 flex items-center gap-1">
+                      <Clock className="h-3 w-3 print:h-2.5 print:w-2.5 text-amber-700" /> Situação
+                    </p>
+                    <p className="text-xs sm:text-sm print:text-xs font-bold text-amber-900">
+                      Aguardando agendamento em lote na Fila Municipal
+                    </p>
+                    {comprovante.fila_nome && (
+                      <p className="text-[10px] text-ink/70 font-medium mt-0.5">Fila: {comprovante.fila_nome}</p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-[10px] print:text-[9px] text-ink/60 flex items-center gap-1">
+                      <MapPin className="h-3 w-3 print:h-2.5 print:w-2.5 text-amber-700" /> Laboratório / Destino
+                    </p>
+                    <p className="text-xs sm:text-sm print:text-xs font-bold text-sus-950">
+                      {comprovante.laboratorio_nome || "A definir no agendamento / Fila Municipal"}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-[10px] print:text-[9px] text-ink/60 flex items-center gap-1">
-                    <Clock className="h-3 w-3 print:h-2.5 print:w-2.5 text-teal" /> Horário de Coleta
-                  </p>
-                  <p className="text-sm print:text-xs font-bold text-sus-950">
-                    {comprovante.hora_agendada || "07:00 às 09:00"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[10px] print:text-[9px] text-ink/60 flex items-center gap-1">
-                    <MapPin className="h-3 w-3 print:h-2.5 print:w-2.5 text-teal" /> Laboratório Conveniado
-                  </p>
-                  <p className="text-sm print:text-xs font-bold text-teal">
-                    {comprovante.laboratorio_nome || "Laboratório Municipal"}
-                  </p>
+                {comprovante.justificativa && (
+                  <div className="mt-2.5 pt-2 border-t border-amber-300/50 text-xs print:text-[10px]">
+                    <span className="text-[10px] text-ink/60 font-semibold block">Justificativa Clínica:</span>
+                    <p className="text-sus-950 font-medium">{comprovante.justificativa}</p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="mt-4 print:mt-2 rounded-xl border border-teal/20 bg-teal/5 p-3.5 print:p-2 text-xs print:text-[11px]">
+                <h3 className="mb-2 print:mb-1 flex items-center gap-1.5 text-xs print:text-[10px] font-bold uppercase text-teal">
+                  <FlaskConical className="h-3.5 w-3.5 print:h-3 print:w-3" /> Local e Data da Coleta
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 print:gap-1 text-xs print:text-[11px]">
+                  <div>
+                    <p className="text-[10px] print:text-[9px] text-ink/60 flex items-center gap-1">
+                      <Calendar className="h-3 w-3 print:h-2.5 print:w-2.5 text-teal" /> Data do Exame
+                    </p>
+                    <p className="text-sm print:text-xs font-bold text-sus-950">
+                      {comprovante.data_agendada
+                        ? comprovante.data_agendada.split("-").reverse().join("/")
+                        : "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] print:text-[9px] text-ink/60 flex items-center gap-1">
+                      <Clock className="h-3 w-3 print:h-2.5 print:w-2.5 text-teal" /> Horário de Coleta
+                    </p>
+                    <p className="text-sm print:text-xs font-bold text-sus-950">
+                      {comprovante.hora_agendada || "07:00 às 09:00"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] print:text-[9px] text-ink/60 flex items-center gap-1">
+                      <MapPin className="h-3 w-3 print:h-2.5 print:w-2.5 text-teal" /> Laboratório Conveniado
+                    </p>
+                    <p className="text-sm print:text-xs font-bold text-teal">
+                      {comprovante.laboratorio_nome || "Laboratório Municipal"}
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* Transporte Municipal Vinculado (Oculto se sem viagem vinculada) */}
             {comprovante.transporte && comprovante.transporte.possui_viagem && (
@@ -410,8 +472,22 @@ export default function ComprovanteExameModal({
               );
             })()}
 
-            {/* Orientações Clínicas e Preparo (Apenas para Exames de Sangue / Laboratoriais) */}
-            {comprovante.exige_preparo && (comprovante.jejum_horas || (comprovante.preparo_instrucoes && comprovante.preparo_instrucoes.length > 0)) && (
+            {/* Orientações de Acompanhamento na Fila OU Instruções de Preparo */}
+            {isInclusaoFila && comprovante.orientacoes_gerais && comprovante.orientacoes_gerais.length > 0 && (
+              <div className="mt-4 print:mt-2 rounded-xl border-2 border-teal/30 bg-teal/5 p-3.5 print:p-2 text-xs print:text-[11px] text-sus-950">
+                <div className="flex items-center gap-1.5 font-bold text-teal mb-2 print:mb-1">
+                  <AlertCircle className="h-4 w-4 print:h-3.5 print:w-3.5 text-teal" />
+                  <span>ORIENTAÇÕES DE ACOMPANHAMENTO NA FILA:</span>
+                </div>
+                <ul className="list-disc pl-5 space-y-1 print:space-y-0.5 text-xs print:text-[10px] text-sus-900">
+                  {comprovante.orientacoes_gerais.map((ori, i) => (
+                    <li key={`fila-ori-${i}`}>{ori}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {!isInclusaoFila && comprovante.exige_preparo && (comprovante.jejum_horas || (comprovante.preparo_instrucoes && comprovante.preparo_instrucoes.length > 0)) && (
               <div className="mt-4 print:mt-2 rounded-xl border-2 border-amber-300 bg-amber-50/70 p-3.5 print:p-2 text-xs print:text-[11px] text-amber-950">
                 <div className="flex items-center gap-1.5 font-bold text-amber-900 mb-2 print:mb-1">
                   <AlertCircle className="h-4 w-4 print:h-3.5 print:w-3.5 text-amber-600" />

@@ -71,7 +71,7 @@ export const WIDGETS: WidgetDef[] = [
     tipoGrafico: "barras",
     categoria: "filas",
     configuravel: true,
-    telas: ["tfd_exames", "tfd_medico", "tfd", "dashboard", "dash_indicadores"],
+    telas: ["tfd_exames", "tfd_medico", "tfd", "dash_indicadores"],
   },
   {
     id: "resumo-tfd",
@@ -80,7 +80,7 @@ export const WIDGETS: WidgetDef[] = [
     icone: Ambulance,
     tipoGrafico: "kpi",
     categoria: "tfd",
-    telas: ["tfd_resumo", "tfd"],
+    telas: ["tfd_viagens", "tfd_exames", "tfd"],
   },
   {
     id: "fila-prioridades",
@@ -110,7 +110,7 @@ export const WIDGETS: WidgetDef[] = [
     tipoGrafico: "kpi",
     categoria: "filas",
     configuravel: true,
-    telas: ["dash_indicadores", "dashboard", "tfd", "tfd_exames"],
+    telas: ["dash_indicadores", "tfd", "tfd_exames"],
   },
   {
     id: "oxigenio-resumo",
@@ -120,7 +120,7 @@ export const WIDGETS: WidgetDef[] = [
     tipoGrafico: "kpi",
     categoria: "oxigenio",
     configuravel: true,
-    telas: ["oxigenio", "oxigenio_painel", "oxigenio_emprestimos"],
+    telas: ["oxigenio", "oxigenio_estoque", "oxigenio_emprestimos"],
   },
   {
     id: "oxigenio-trocas",
@@ -138,7 +138,7 @@ export const WIDGETS: WidgetDef[] = [
     icone: FileCheck2,
     tipoGrafico: "kpi",
     categoria: "lab",
-    telas: ["lab_faturamento", "lab", "bpa"],
+    telas: ["lab_faturamento", "lab", "faturamento_bpa"],
   },
   {
     id: "agenda-semana",
@@ -156,7 +156,7 @@ export const WIDGETS: WidgetDef[] = [
     icone: Building2,
     tipoGrafico: "progresso",
     categoria: "lab",
-    telas: ["tfd_faturamento", "tfd", "prestadores"],
+    telas: ["tfd_faturamento", "tfd", "cfg_laboratorios"],
   },
   {
     id: "apac-resumo",

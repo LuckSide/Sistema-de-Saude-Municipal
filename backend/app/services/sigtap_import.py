@@ -165,21 +165,21 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                             gc = gline[0:2].strip()
                             gn = gline[2:102].strip()
                             if gc.isdigit() and gn:
-                                grupos_zip[gc] = gn[:150]
+                                grupos_zip[gc] = gn
                 if "tb_sub_grupo.txt" in zfiles:
                     for sline in zfiles["tb_sub_grupo.txt"].decode("latin-1", "ignore").splitlines():
                         if len(sline) >= 5:
                             sc = sline[0:4].strip()
                             sn = sline[4:104].strip()
                             if sc.isdigit() and sn:
-                                subgrupos_zip[sc] = sn[:180]
+                                subgrupos_zip[sc] = sn
                 if "tb_forma_organizacao.txt" in zfiles:
                     for fline in zfiles["tb_forma_organizacao.txt"].decode("latin-1", "ignore").splitlines():
                         if len(fline) >= 7:
                             fc = fline[0:6].strip()
                             fn = fline[6:106].strip()
                             if fc.isdigit() and fn:
-                                formas_zip[fc] = fn[:180]
+                                formas_zip[fc] = fn
                 # descrições auxiliares
                 ocorrencias = {}
                 cids = {}
@@ -248,7 +248,7 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                                 servicos_por_proc.setdefault(pc, []).append({
                                     "servico": sv,
                                     "classificacao": cl,
-                                    "descricao": desc_sv[:120],
+                                    "descricao": desc_sv,
                                 })
 
                 procs_com_cid: set[str] = set()
@@ -271,7 +271,7 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                     cod = line[0:10].strip()
                     if not re.fullmatch(r"\d{10}", cod):
                         continue
-                    desc = line[10:260].strip().upper()[:255]
+                    desc = line[10:260].strip().upper()
                     if len(desc) < 2:
                         continue
                     comp = COMPLEXIDADE_MAP.get(line[260], (line[260].strip().upper()[:20] or "MC"))
@@ -315,11 +315,11 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                         "valor_sh": round(valor_sh, 2),
                         "competencia": competencia,
                         "grupo_codigo": g_cod,
-                        "grupo_nome": (grupos_zip.get(g_cod) or GRUPOS_SIGTAP.get(g_cod, hier["grupo_nome"]))[:150],
+                        "grupo_nome": (grupos_zip.get(g_cod) or GRUPOS_SIGTAP.get(g_cod, hier["grupo_nome"])),
                         "subgrupo_codigo": sg_cod,
-                        "subgrupo_nome": (subgrupos_zip.get(sg_cod) or SUBGRUPOS_SIGTAP.get(sg_cod, hier["subgrupo_nome"]))[:180],
+                        "subgrupo_nome": (subgrupos_zip.get(sg_cod) or SUBGRUPOS_SIGTAP.get(sg_cod, hier["subgrupo_nome"])),
                         "forma_organizacao_codigo": f_cod,
-                        "forma_organizacao_nome": formas_zip.get(f_cod, "")[:180],
+                        "forma_organizacao_nome": formas_zip.get(f_cod, ""),
                         "exige_cns": "BPA-I" in regs_cod,
                         "exige_cid": cod in procs_com_cid,
                         "exige_servico": len(srvs_cod) > 0,
@@ -339,7 +339,7 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                         if chave in vistos:
                             continue
                         vistos.add(chave)
-                        pend_cbo.append({"procedimento_codigo": cod, "cbo": cbo, "descricao": ocorrencias.get(cbo, "")[:120]})
+                        pend_cbo.append({"procedimento_codigo": cod, "cbo": cbo, "descricao": ocorrencias.get(cbo, "")})
                         stats["cbo_total"] += 1
                 # CID compatível
                 if "rl_procedimento_cid.txt" in zfiles:
@@ -355,7 +355,7 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                         if chave in vistos:
                             continue
                         vistos.add(chave)
-                        pend_cid.append({"procedimento_codigo": cod, "cid": cid, "descricao": cids.get(cid, "")[:255]})
+                        pend_cid.append({"procedimento_codigo": cod, "cid": cid, "descricao": cids.get(cid, "")})
                         stats["cid_total"] += 1
                 stats["simulacao"] = simular
                 stats["ignorados"] = 0
@@ -395,7 +395,7 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                     if not cbo:
                         erro(i, "CBO ausente", membro_nome)
                         continue
-                    pend_cbo.append({"procedimento_codigo": cod, "cbo": cbo, "descricao": get(lin, "cbo_desc")[:120]})
+                    pend_cbo.append({"procedimento_codigo": cod, "cbo": cbo, "descricao": get(lin, "cbo_desc")})
                     stats["cbo_total"] += 1
                     continue
                 if tipo_compat == "cid":
@@ -406,14 +406,14 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                     if not cid:
                         erro(i, "CID ausente", membro_nome)
                         continue
-                    pend_cid.append({"procedimento_codigo": cod, "cid": cid, "descricao": get(lin, "cid_desc")[:255]})
+                    pend_cid.append({"procedimento_codigo": cod, "cid": cid, "descricao": get(lin, "cid_desc")})
                     stats["cid_total"] += 1
                     continue
                 # procedimento
                 if not re.fullmatch(r"\d{10}", cod):
                     erro(i, "código deve ter 10 dígitos", membro_nome)
                     continue
-                desc = get(lin, "descricao").upper()[:255]
+                desc = get(lin, "descricao").upper()
                 if len(desc) < 2:
                     erro(i, "descrição ausente", membro_nome)
                     continue
@@ -441,11 +441,11 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
                     "valor_sh": _num(get(lin, "valor_sh")),
                     "competencia": competencia,
                     "grupo_codigo": g_cod_csv,
-                    "grupo_nome": GRUPOS_SIGTAP.get(g_cod_csv, hier_csv["grupo_nome"])[:150],
+                    "grupo_nome": GRUPOS_SIGTAP.get(g_cod_csv, hier_csv["grupo_nome"]),
                     "subgrupo_codigo": sg_cod_csv,
-                    "subgrupo_nome": SUBGRUPOS_SIGTAP.get(sg_cod_csv, hier_csv["subgrupo_nome"])[:180],
+                    "subgrupo_nome": SUBGRUPOS_SIGTAP.get(sg_cod_csv, hier_csv["subgrupo_nome"]),
                     "forma_organizacao_codigo": f_cod_csv,
-                    "forma_organizacao_nome": formas_zip.get(f_cod_csv, "")[:180],
+                    "forma_organizacao_nome": formas_zip.get(f_cod_csv, ""),
                 }
 
     if not simular:
@@ -453,30 +453,30 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
         grupos_db = {g.codigo: g for g in db.exec(_select(SigtapGrupo)).all()}
         for gc, gn in ({**GRUPOS_SIGTAP, **grupos_zip}).items():
             if gc not in grupos_db:
-                g_obj = SigtapGrupo(codigo=gc, nome=gn[:150])
+                g_obj = SigtapGrupo(codigo=gc, nome=gn)
                 db.add(g_obj)
                 grupos_db[gc] = g_obj
-            elif grupos_zip.get(gc) and grupos_db[gc].nome != grupos_zip[gc][:150]:
-                grupos_db[gc].nome = grupos_zip[gc][:150]
+            elif grupos_zip.get(gc) and grupos_db[gc].nome != grupos_zip[gc]:
+                grupos_db[gc].nome = grupos_zip[gc]
                 db.add(grupos_db[gc])
 
         subgrupos_db = {s.codigo: s for s in db.exec(_select(SigtapSubgrupo)).all()}
         for sc, sn in ({**SUBGRUPOS_SIGTAP, **subgrupos_zip}).items():
             if sc not in subgrupos_db:
-                sg_obj = SigtapSubgrupo(codigo=sc, grupo_codigo=sc[:2], nome=sn[:180])
+                sg_obj = SigtapSubgrupo(codigo=sc, grupo_codigo=sc[:2], nome=sn)
                 db.add(sg_obj)
                 subgrupos_db[sc] = sg_obj
-            elif subgrupos_zip.get(sc) and subgrupos_db[sc].nome != subgrupos_zip[sc][:180]:
-                subgrupos_db[sc].nome = subgrupos_zip[sc][:180]
+            elif subgrupos_zip.get(sc) and subgrupos_db[sc].nome != subgrupos_zip[sc]:
+                subgrupos_db[sc].nome = subgrupos_zip[sc]
                 db.add(subgrupos_db[sc])
 
         if formas_zip:
             formas_db = {f.codigo: f for f in db.exec(_select(SigtapFormaOrganizacao)).all()}
             for fc, fn in formas_zip.items():
                 if fc not in formas_db:
-                    db.add(SigtapFormaOrganizacao(codigo=fc, grupo_codigo=fc[:2], subgrupo_codigo=fc[:4], nome=fn[:180]))
-                elif formas_db[fc].nome != fn[:180]:
-                    formas_db[fc].nome = fn[:180]
+                    db.add(SigtapFormaOrganizacao(codigo=fc, grupo_codigo=fc[:2], subgrupo_codigo=fc[:4], nome=fn))
+                elif formas_db[fc].nome != fn:
+                    formas_db[fc].nome = fn
                     db.add(formas_db[fc])
 
         ocup_db = {
@@ -487,12 +487,12 @@ def importar_sigtap(db, arquivos: list[tuple[str, bytes]], competencia: str, usu
         for cbo_k, desc_k in ocorrencias_zip.items():
             if cbo_k and desc_k:
                 if cbo_k not in ocup_db:
-                    oc = SigtapOcupacao(cbo=cbo_k, descricao=desc_k[:150], descricao_normalizada=sanitizar_texto_cbo(desc_k)[:150], ativo=True)
+                    oc = SigtapOcupacao(cbo=cbo_k, descricao=desc_k, descricao_normalizada=sanitizar_texto_cbo(desc_k), ativo=True)
                     db.add(oc)
                     ocup_db[cbo_k] = oc
-                elif desc_k[:150] != ocup_db[cbo_k].descricao:
-                    ocup_db[cbo_k].descricao = desc_k[:150]
-                    ocup_db[cbo_k].descricao_normalizada = sanitizar_texto_cbo(desc_k)[:150]
+                elif desc_k != ocup_db[cbo_k].descricao:
+                    ocup_db[cbo_k].descricao = desc_k
+                    ocup_db[cbo_k].descricao_normalizada = sanitizar_texto_cbo(desc_k)
                     db.add(ocup_db[cbo_k])
 
         existentes = {p.codigo: p for p in db.exec(

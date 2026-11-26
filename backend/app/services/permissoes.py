@@ -17,7 +17,7 @@ ACOES_VALIDAS = ("ver", "criar", "editar", "excluir")
 
 # subtela -> módulo pai (pai implica filhas)
 PAI_DE: dict[str, str] = {
-    "dash_indicadores": "dashboard",
+    "dash_indicadores": "tfd",
     "tfd_resumo": "tfd",
     "tfd_viagens": "tfd",
     "tfd_viagens_passadas": "tfd",
@@ -39,6 +39,7 @@ PAI_DE: dict[str, str] = {
     "lab_agenda": "lab",
     "lab_vagas": "lab",
     "lab_audit": "lab",
+    "lab_auditoria_laudos": "lab",
     "lab_portal": "lab",
     "lab_faturamento": "lab",
     "lab_sigtap": "lab",
@@ -46,6 +47,7 @@ PAI_DE: dict[str, str] = {
     "lab_orcamento": "lab",
     "cfg_geral": "integracoes",
     "cfg_filas": "integracoes",
+    "cfg_importar": "integracoes",
     "cfg_pec": "integracoes",
     "cfg_rnds": "integracoes",
     "cfg_whatsapp": "integracoes",
@@ -55,7 +57,6 @@ PAI_DE: dict[str, str] = {
     "cfg_laboratorios": "integracoes",
     "cfg_dados": "integracoes",
     "cfg_backup": "integracoes",
-    "auditoria": "usuarios",
     "faturamento_bpa": "apac",
     "producao_ambulatorial": "apac",
     "apac_solicitacao": "apac",
@@ -72,13 +73,23 @@ PAI_DE: dict[str, str] = {
     "farmacia_insumos": "farmacia",
 }
 
-PAIS = ("dashboard", "tfd", "lab", "apac", "aps", "oxigenio", "farmacia", "usuarios", "integracoes")
+PAIS = ("dashboard", "tfd", "lab", "apac", "aps", "oxigenio", "farmacia", "usuarios", "auditoria", "admin_tickets", "integracoes")
 
 TODAS_TELAS = frozenset(list(PAI_DE) + list(PAI_DE.values()) + list(PAIS))
 
 # Telas exclusivas: o pai NÃO implica a filha (ex: perfil Médico e Lançamento Restrito
 # exigem concessão explícita).
-EXCLUSIVAS = frozenset({"tfd_medico", "tfd_fila_lancamento", "tfd_viagens_passadas", "apac_regulacao", "lab_recepcao"})
+EXCLUSIVAS = frozenset({
+    "tfd_medico",
+    "tfd_fila_lancamento",
+    "tfd_viagens_passadas",
+    "apac_regulacao",
+    "lab_recepcao",
+    "auditoria",
+    "cfg_backup",
+    "cfg_geral",
+    "admin_tickets",
+})
 
 
 def telas_list(user) -> list[str]:
@@ -111,8 +122,6 @@ def tem_tela(user, codigo: str) -> bool:
     pai = PAI_DE.get(codigo)
     if bool(pai) and pai in proprias:
         return True
-    if codigo.startswith("apac_") and "tfd" in proprias:
-        return True
     return False
 
 
@@ -124,8 +133,6 @@ def tem_acao(user, codigo: str, acao: str) -> bool:
     if atual is None and codigo not in EXCLUSIVAS:
         pai = PAI_DE.get(codigo)
         atual = mapa.get(pai) if pai else None
-        if atual is None and codigo.startswith("apac_"):
-            atual = mapa.get("tfd")
     if atual is None:
         return True  # sem registro = tudo permitido (compat)
     return acao in atual

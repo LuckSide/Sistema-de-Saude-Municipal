@@ -21,22 +21,22 @@ from app.services.dashboard_default import criar_dashboard_padrao_se_ausente
 
 # Widgets fixos do catálogo (espelha frontend/src/widgets.tsx)
 WIDGETS: dict[str, list[str]] = {
-    "resumo-tfd": ["tfd_resumo", "tfd"],
+    "resumo-tfd": ["tfd_viagens", "tfd_exames", "tfd"],
     "fila-especialidade": ["tfd_exames", "tfd_medico", "tfd"],
     "fila-prioridades": ["tfd_exames", "tfd_medico", "tfd"],
-    "fila-personalizada": ["tfd_exames", "tfd_medico", "tfd", "dashboard", "dash_indicadores"],
+    "fila-personalizada": ["tfd_exames", "tfd_medico", "tfd", "dash_indicadores"],
     "agenda-semana": ["lab_agenda", "lab_vagas", "lab"],
     "painel-aps": ["aps"],
     "frota-status": ["tfd_frota", "tfd_frota_gestao", "tfd"],
     "viagens-proximas": ["tfd_viagens", "tfd_frota_gestao", "tfd"],
-    "tempo-fila-indicadores": ["dash_indicadores", "dashboard", "tfd", "tfd_exames"],
+    "tempo-fila-indicadores": ["dash_indicadores", "tfd", "tfd_exames"],
     "faturamento-resumo": ["tfd_faturamento", "tfd"],
-    "oxigenio-resumo": ["oxigenio", "oxigenio_painel", "oxigenio_emprestimos"],
+    "oxigenio-resumo": ["oxigenio", "oxigenio_estoque", "oxigenio_emprestimos"],
     "oxigenio-trocas": ["oxigenio", "oxigenio_emprestimos", "oxigenio_equipamentos"],
-    "lab-faturamento": ["lab_faturamento", "lab", "bpa"],
+    "lab-faturamento": ["lab_faturamento", "lab", "faturamento_bpa"],
     "apac-resumo": ["apac", "apac_regulacao", "apac_solicitacao"],
     "farmacia-validade": ["farmacia", "farmacia_estoque", "farmacia_insumos"],
-    "prestadores-contratos": ["tfd_faturamento", "tfd", "prestadores"],
+    "prestadores-contratos": ["tfd_faturamento", "tfd", "cfg_laboratorios"],
 }
 
 

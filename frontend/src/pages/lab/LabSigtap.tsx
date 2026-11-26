@@ -9,6 +9,7 @@ import {
   Layers,
   Plus,
   RefreshCw,
+  Search,
   Sparkles,
   Upload,
   X,
@@ -94,7 +95,60 @@ export default function LabSigtap() {
   const [manualCodigoFat, setManualCodigoFat] = useState("");
   const [nomeProcFat, setNomeProcFat] = useState("");
   const [buscandoProcFat, setBuscandoProcFat] = useState(false);
+  const [buscaSigtapRef, setBuscaSigtapRef] = useState("");
+  const [resultadosSigtapRef, setResultadosSigtapRef] = useState<SigtapProc[]>([]);
+  const [buscandoSigtapRef, setBuscandoSigtapRef] = useState(false);
+  const [procSigtapRefSel, setProcSigtapRefSel] = useState<SigtapProc | null>(null);
   const [salvandoManual, setSalvandoManual] = useState(false);
+
+  useEffect(() => {
+    const termo = buscaSigtapRef.trim();
+    if (!modalManual || !manualSemCodigo || termo.length < 2) {
+      setResultadosSigtapRef([]);
+      setBuscandoSigtapRef(false);
+      return;
+    }
+    let cancelado = false;
+    const timer = setTimeout(async () => {
+      setBuscandoSigtapRef(true);
+      try {
+        const resp = await labSigtap(termo, undefined, 1, 15, false);
+        if (!cancelado) {
+          setResultadosSigtapRef(pagData<SigtapProc>(resp));
+        }
+      } catch {
+        if (!cancelado) setResultadosSigtapRef([]);
+      } finally {
+        if (!cancelado) setBuscandoSigtapRef(false);
+      }
+    }, 250);
+    return () => {
+      cancelado = true;
+      clearTimeout(timer);
+    };
+  }, [buscaSigtapRef, modalManual, manualSemCodigo]);
+
+  function selecionarProcedimentoSigtapRef(proc: SigtapProc) {
+    setProcSigtapRefSel(proc);
+    setManualCodigoFat(proc.codigo);
+    setNomeProcFat(proc.descricao);
+    setManualValorSa(String(proc.valor_sa || 0));
+    setManualValorSp(String(proc.valor_sp || 0));
+    setManualValorSh(String(proc.valor_sh || 0));
+    if (proc.complexidade) setManualComplexidade(proc.complexidade);
+    if (proc.instrumento) setManualInstrumento(proc.instrumento);
+    if (!manualDescricao.trim()) {
+      setManualDescricao(proc.descricao);
+    }
+    setBuscaSigtapRef("");
+    setResultadosSigtapRef([]);
+  }
+
+  function limparBuscaSigtapRef() {
+    setBuscaSigtapRef("");
+    setResultadosSigtapRef([]);
+    setProcSigtapRefSel(null);
+  }
 
   // Busca automática da descrição e valores do exame SIGTAP de faturamento
   async function buscarExameFaturamento(cod: string) {
@@ -165,6 +219,7 @@ export default function LabSigtap() {
       setManualSemCodigo(false);
       setManualCodigoFat("");
       setNomeProcFat("");
+      limparBuscaSigtapRef();
       buscar(1);
     } catch (e: any) {
       setErro(msgErro(e, "Erro ao cadastrar procedimento manual."));
@@ -554,7 +609,7 @@ export default function LabSigtap() {
                   ) : null}
                 </td>
                 <td className="px-4 py-3">
-                  <p className="font-medium text-sus-950">{s.descricao}</p>
+                  <p className="font-medium text-sus-950" title={s.descricao}>{s.descricao}</p>
                   {s.codigo_faturamento_sigtap && (
                     <p className="mt-0.5 text-[11px] font-bold text-teal">
                       Faturamento SUS: SIGTAP {s.codigo_faturamento_sigtap}
@@ -906,31 +961,94 @@ export default function LabSigtap() {
               </div>
 
               {manualSemCodigo && (
-                <div className="rounded-xl border border-teal/20 bg-teal/5 p-3.5 space-y-2">
+                <div className="rounded-xl border border-teal/20 bg-teal/5 p-3.5 space-y-2.5">
                   <Label className="text-xs font-bold text-teal-950">
-                    Código de Outro Exame para Faturamento (SIGTAP / BPA) *
+                    Buscar Procedimento Existente na Tabela SIGTAP (Faturamento SUS) *
                   </Label>
                   <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-teal-700/60" />
                     <Input
-                      placeholder="Ex: 0202010183 (10 dígitos)"
-                      maxLength={10}
-                      value={manualCodigoFat}
-                      onChange={(e) => {
-                        const v = e.target.value.replace(/\D/g, "");
-                        setManualCodigoFat(v);
-                        if (v.length === 10) {
-                          buscarExameFaturamento(v);
-                        } else {
-                          setNomeProcFat("");
-                        }
-                      }}
-                      className="font-mono font-bold text-xs"
+                      placeholder="Buscar na tabela SIGTAP por código ou descrição..."
+                      value={buscaSigtapRef}
+                      onChange={(e) => setBuscaSigtapRef(e.target.value)}
+                      className="pl-8 text-xs bg-white"
                     />
-                    {buscandoProcFat && (
-                      <span className="absolute right-3 top-2.5 text-[11px] text-teal">Buscando…</span>
+                    {buscandoSigtapRef && (
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-teal">Buscando…</span>
+                    )}
+                    {resultadosSigtapRef.length > 0 && (
+                      <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-52 overflow-y-auto rounded-xl border border-sus-900/15 bg-white shadow-lg">
+                        {resultadosSigtapRef.map((pr) => {
+                          const valRef = Number(pr.valor_sa || 0) + Number(pr.valor_sp || 0);
+                          return (
+                            <button
+                              key={pr.id ?? pr.codigo}
+                              type="button"
+                              onClick={() => selecionarProcedimentoSigtapRef(pr)}
+                              className="w-full border-b border-sus-900/5 px-3 py-2 text-left text-xs hover:bg-sand/70 last:border-0"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-mono font-bold text-teal">{pr.codigo}</span>
+                                <span className="font-mono text-[11px] text-ink/60">
+                                  {pr.instrumento} · {pr.complexidade} · Valor SIGTAP/SUS: {brl(valRef)}
+                                </span>
+                              </div>
+                              <p className="mt-0.5 font-medium text-sus-950">{pr.descricao}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
                     )}
                   </div>
-                  {nomeProcFat && (
+                  {procSigtapRefSel && (
+                    <div className="flex items-start justify-between gap-2 rounded-lg border border-teal/25 bg-white/90 px-3 py-2 text-[11px]">
+                      <div>
+                        <p className="font-bold text-teal-950">
+                          Selecionado: <span className="font-mono">{procSigtapRefSel.codigo}</span> — {procSigtapRefSel.descricao}
+                        </p>
+                        <p className="text-ink/65 mt-0.5">
+                          Valor SIGTAP/SUS: <strong>{brl((procSigtapRefSel.valor_sa || 0) + (procSigtapRefSel.valor_sp || 0))}</strong> · Instrumento: <strong>{procSigtapRefSel.instrumento}</strong> · Complexidade: <strong>{procSigtapRefSel.complexidade}</strong>
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={limparBuscaSigtapRef}
+                        className="text-ink/40 hover:text-ink"
+                        title="Limpar seleção"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+                  <div>
+                    <Label className="text-[11px] font-semibold text-teal-950">
+                      Código de Outro Exame para Faturamento (SIGTAP / BPA) *
+                    </Label>
+                    <div className="relative mt-1">
+                      <Input
+                        placeholder="Ex: 0202010183 (10 dígitos)"
+                        maxLength={10}
+                        value={manualCodigoFat}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(/\D/g, "");
+                          setManualCodigoFat(v);
+                          if (procSigtapRefSel && v !== procSigtapRefSel.codigo) {
+                            setProcSigtapRefSel(null);
+                          }
+                          if (v.length === 10) {
+                            buscarExameFaturamento(v);
+                          } else {
+                            setNomeProcFat("");
+                          }
+                        }}
+                        className="font-mono font-bold text-xs bg-white"
+                      />
+                      {buscandoProcFat && (
+                        <span className="absolute right-3 top-2.5 text-[11px] text-teal">Buscando…</span>
+                      )}
+                    </div>
+                  </div>
+                  {nomeProcFat && !procSigtapRefSel && (
                     <p className="text-[11px] font-semibold text-teal-900 bg-white/80 p-2 rounded border border-teal/20">
                       Procedimento para faturamento: <strong>{nomeProcFat}</strong>
                     </p>
@@ -964,6 +1082,7 @@ export default function LabSigtap() {
                 <Label>Descrição Completa do Procedimento *</Label>
                 <Input
                   placeholder="Ex: DETERMINACAO DE CURVA GLICEMICA (4 DOSAGENS)"
+                  maxLength={1000}
                   value={manualDescricao}
                   onChange={(e) => setManualDescricao(e.target.value)}
                 />

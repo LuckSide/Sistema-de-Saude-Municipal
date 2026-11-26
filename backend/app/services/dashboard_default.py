@@ -55,13 +55,10 @@ def gerar_layout_padrao_para_usuario(user: User) -> list[dict]:
             atalhos_candidatos.append("tfd_frota")
 
         # Se TFD geral:
-        if tem_tela(user, "tfd_resumo") or tem_tela(user, "tfd"):
-            if "tfd_resumo" not in atalhos_candidatos and tem_tela(user, "tfd_resumo"):
-                atalhos_candidatos.append("tfd_resumo")
-            if tem_tela(user, "tfd_pacientes"):
-                atalhos_candidatos.append("tfd_pacientes")
-            if tem_tela(user, "tfd_faturamento"):
-                atalhos_candidatos.append("tfd_faturamento")
+        if tem_tela(user, "tfd_pacientes"):
+            atalhos_candidatos.append("tfd_pacientes")
+        if tem_tela(user, "tfd_faturamento"):
+            atalhos_candidatos.append("tfd_faturamento")
 
         # Se APS:
         if tem_tela(user, "aps"):
@@ -97,19 +94,8 @@ def gerar_layout_padrao_para_usuario(user: User) -> list[dict]:
             "frota-status",
             "fila-especialidade",
         ]
-    elif user.medico_id or getattr(user, "area", "") == "medico":
-        widgets_candidatos = [
-            "fila-prioridades",
-            "fila-especialidade",
-            "tempo-fila-indicadores",
-        ]
-    elif getattr(user, "area", "") == "motorista":
-        widgets_candidatos = [
-            "frota-status",
-            "viagens-proximas",
-        ]
     else:
-        if tem_tela(user, "tfd_resumo") or tem_tela(user, "tfd"):
+        if tem_tela(user, "tfd_viagens") or tem_tela(user, "tfd_exames") or tem_tela(user, "tfd"):
             widgets_candidatos.append("resumo-tfd")
         if tem_tela(user, "tfd_exames") or tem_tela(user, "tfd_medico"):
             widgets_candidatos.append("fila-prioridades")

@@ -1865,3 +1865,20 @@ def _init_db_impl() -> None:
                     conn.execute(text(idx_sql))
             except Exception:
                 pass
+
+        # Migração segura e idempotente para ampliar colunas de nomes SIGTAP/TFD
+        try:
+            from app.services.sigtap_hierarquia import migrar_colunas_sigtap_amplas
+
+            migrar_colunas_sigtap_amplas(conn)
+        except Exception as exc_sigtap_col:
+            _session_log.warning("Aviso em migrar_colunas_sigtap_amplas: %s", exc_sigtap_col)
+
+        # Backfill idempotente de numeração de pedidos (codigo_solicitacao) na Fila de Exames de Sangue (lab_fila_psf)
+        try:
+            from app.services.lab_fase6 import backfill_codigos_fila_psf
+
+            with conn.begin_nested():
+                backfill_codigos_fila_psf(conn)
+        except Exception as exc_backfill_lab:
+            _session_log.warning("Aviso em backfill_codigos_fila_psf: %s", exc_backfill_lab)

@@ -90,11 +90,10 @@ export const MODULOS: NoPermissao[] = [
     codigo: "tfd",
     rotulo: "TFD · Transporte",
     icone: Ambulance,
-    rota: "/tfd",
+    rota: "/tfd/viagens",
     filhos: [
       { codigo: "tfd_viagens", rotulo: "Viagens e Escalas / Ordens de Viagem", icone: Ambulance, rota: "/tfd/viagens" },
       { codigo: "tfd_viagens_passadas", rotulo: "Viagens — alterar/editar datas passadas", icone: CalendarDays, rota: "/tfd/quadro" },
-      { codigo: "tfd_resumo", rotulo: "Solicitações TFD", icone: ClipboardCheck, rota: "/tfd" },
       { codigo: "dash_indicadores", rotulo: "Relatórios da Fila", icone: ChartColumn, rota: "/indicadores" },
     ],
   },
@@ -139,7 +138,8 @@ export const MODULOS: NoPermissao[] = [
       { codigo: "lab_agenda", rotulo: "Vagas e Agenda", icone: CalendarDays, rota: "/lab/agenda" },
       { codigo: "lab_vagas", rotulo: "Configuração de Vagas", icone: Ticket, rota: "/lab/vagas" },
       { codigo: "lab_portal", rotulo: "Portal do Laboratório", icone: FileCheck, rota: "/lab/portal-producao" },
-      { codigo: "lab_audit", rotulo: "Contestações e Auditoria de Laudos", icone: ShieldAlert, rota: "/lab/auditoria" },
+      { codigo: "lab_audit", rotulo: "Contestações e Auditoria", icone: ShieldAlert, rota: "/lab/auditoria" },
+      { codigo: "lab_auditoria_laudos", rotulo: "Auditoria de Laudos", icone: FileCheck, rota: "/lab/auditoria-laudos" },
     ],
   },
   {
@@ -189,7 +189,8 @@ export const MODULOS: NoPermissao[] = [
     icone: Settings,
     apenasGrupo: true,
     filhos: [
-      { codigo: "usuarios", rotulo: "Usuários, Acessos e Tickets de Suporte", icone: UserCog, rota: "/usuarios" },
+      { codigo: "usuarios", rotulo: "Usuários e Acessos", icone: UserCog, rota: "/usuarios" },
+      { codigo: "admin_tickets", rotulo: "Tickets de Suporte", icone: ClipboardCheck, rota: "/admin/tickets" },
       { codigo: "cfg_backup", rotulo: "Backup do Sistema (Superuser)", icone: Database, rota: "/configuracoes?aba=backup" },
       { codigo: "cfg_geral", rotulo: "Configurações Gerais (município, marca, sistema)", icone: SlidersHorizontal, rota: "/configuracoes?aba=geral" },
       { codigo: "auditoria", rotulo: "Auditoria / Logs (requer Superuser)", icone: History, rota: "/auditoria" },
@@ -201,6 +202,7 @@ export const MODULOS: NoPermissao[] = [
     icone: Upload,
     rota: "/configuracoes",
     filhos: [
+      { codigo: "cfg_importar", rotulo: "Importar Dados / Filas", icone: Upload, rota: "/configuracoes?aba=filas" },
       { codigo: "cfg_pec", rotulo: "Integração PEC / e-SUS APS", icone: Database, rota: "/configuracoes?aba=pec" },
       { codigo: "cfg_rnds", rotulo: "Integração RNDS", icone: Network, rota: "/configuracoes?aba=rnds" },
       { codigo: "cfg_whatsapp", rotulo: "WhatsApp / Notificações", icone: MessageCircle, rota: "/configuracoes?aba=whatsapp" },
@@ -212,7 +214,7 @@ export const MODULOS: NoPermissao[] = [
 
 /** Hierarquia de herança espelhada do backend (PAI_DE) para compatibilidade com payloads legados. */
 export const PAI_DE: Record<string, string> = {
-  dash_indicadores: "dashboard",
+  dash_indicadores: "tfd",
   tfd_resumo: "tfd",
   tfd_viagens: "tfd",
   tfd_viagens_passadas: "tfd",
@@ -234,12 +236,14 @@ export const PAI_DE: Record<string, string> = {
   lab_vagas: "lab",
   lab_portal: "lab",
   lab_audit: "lab",
+  lab_auditoria_laudos: "lab",
   lab_faturamento: "lab",
   lab_sigtap: "lab",
   lab_recepcao: "lab",
   lab_orcamento: "lab",
   cfg_geral: "integracoes",
   cfg_filas: "integracoes",
+  cfg_importar: "integracoes",
   cfg_pec: "integracoes",
   cfg_rnds: "integracoes",
   cfg_whatsapp: "integracoes",
@@ -249,7 +253,6 @@ export const PAI_DE: Record<string, string> = {
   cfg_laboratorios: "integracoes",
   cfg_dados: "integracoes",
   cfg_backup: "integracoes",
-  auditoria: "usuarios",
   faturamento_bpa: "apac",
   producao_ambulatorial: "apac",
   apac_solicitacao: "apac",
@@ -277,7 +280,17 @@ export function todosCodigos(): string[] {
 
 /** Pai implica filhas (payloads antigos com só o pai continuam valendo),
  * exceto telas exclusivas (ex: tfd_medico exige concessão explícita). */
-export const EXCLUSIVAS = new Set(["tfd_medico", "tfd_fila_lancamento", "tfd_viagens_passadas", "apac_regulacao", "lab_recepcao"]);
+export const EXCLUSIVAS = new Set([
+  "tfd_medico",
+  "tfd_fila_lancamento",
+  "tfd_viagens_passadas",
+  "apac_regulacao",
+  "lab_recepcao",
+  "auditoria",
+  "cfg_backup",
+  "cfg_geral",
+  "admin_tickets",
+]);
 export function concedida(telas: string[], codigo: string): boolean {
   if (telas.includes(codigo)) return true;
   if (codigo === "tfd_agenda" && telas.includes("tfd_agendamentos")) return true;

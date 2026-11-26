@@ -10,6 +10,8 @@ import {
   validaCnes,
   validaEmail,
   soDigitos,
+  validarForcaSenha,
+  avaliarRequisitosSenha,
 } from "../src/utils/validacoes.ts";
 
 test("soDigitos limpa pontuações", () => {
@@ -67,4 +69,57 @@ test("validaEmail permite vazio e valida formato", () => {
   assert.strictEqual(validaEmail("invalido"), "E-mail inválido. Use o formato usuario@dominio.ext.");
   assert.strictEqual(validaEmail("duplo..ponto@dominio.com"), "E-mail inválido. Use o formato usuario@dominio.ext.");
   assert.strictEqual(validaEmail("contato@guape.mg.gov.br"), "");
+});
+
+test("validarForcaSenha rejeita senhas fracas, comuns, numéricas, sequenciais e iguais ao usuário", () => {
+  for (const fraca of [
+    "",
+    "   ",
+    "Ab1@xy",
+    "123456",
+    "12345678",
+    "00000000",
+    "11111111",
+    "aaaaaaaa",
+    "20252026",
+    "98765432",
+    "senha123",
+    "Senha 123",
+    "PASSWORD123",
+    "admin123",
+    "guape123",
+    "mudar123",
+    "trocar123",
+    "qwerty123",
+    "abc12345",
+    "1q2w3e4r",
+    "saude123",
+    "senhaforte",
+    "Abcd@2026",
+    "Dcba@2026",
+    "Senha1234!",
+    "Teste4321@",
+    "Qwer@2026",
+  ]) {
+    const msg = validarForcaSenha(fraca, "operador.tfd");
+    assert.ok(typeof msg === "string" && msg.length > 0, `Deveria rejeitar: ${fraca}`);
+  }
+
+  assert.ok(validarForcaSenha("maria.silva", "maria.silva"));
+  assert.ok(validarForcaSenha("Maria.Silva@2026", "maria.silva"));
+  assert.ok(validarForcaSenha("operador99", "operador"));
+});
+
+test("validarForcaSenha e avaliarRequisitosSenha aceitam senhas fortes", () => {
+  for (const forte of ["Guape#2026", "Clinica!94", "NovaSenha123@", "Saude@k7m2p"]) {
+    assert.strictEqual(validarForcaSenha(forte, "operador.tfd"), null);
+    const reqs = avaliarRequisitosSenha(forte, "operador.tfd");
+    assert.deepStrictEqual(reqs, {
+      minimoCaracteres: true,
+      letraENumeroOuEspecial: true,
+      semCaractereRepetidoOuNumerica: true,
+      semSequenciaOuComum: true,
+      diferenteDoUsuario: true,
+    });
+  }
 });

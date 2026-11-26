@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Eye, EyeOff, KeyRound, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Circle, Eye, EyeOff, KeyRound, ShieldCheck } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { primeiraTrocaSenha } from "../services/api";
+import { avaliarRequisitosSenha, validarForcaSenha } from "../utils/validacoes";
 import { Button, Input, Label } from "../components/ui/primitives";
 
 export default function AlterarSenhaInicial() {
@@ -17,6 +18,9 @@ export default function AlterarSenhaInicial() {
   const [erro, setErro] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const reqs = avaliarRequisitosSenha(nova, user?.username ?? "");
+  const erroForca = nova ? validarForcaSenha(nova, user?.username ?? "") : null;
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setErro("");
@@ -24,12 +28,13 @@ export default function AlterarSenhaInicial() {
       setErro("Informe a senha atual (temporária) utilizada para entrar.");
       return;
     }
-    if (nova !== confirma) {
-      setErro("Nova senha e confirmação não conferem.");
+    const erroSenha = validarForcaSenha(nova, user?.username ?? "");
+    if (erroSenha) {
+      setErro(erroSenha);
       return;
     }
-    if (nova.length < 6) {
-      setErro("Nova senha precisa de ao menos 6 caracteres.");
+    if (nova !== confirma) {
+      setErro("Nova senha e confirmação não conferem.");
       return;
     }
     if (nova === atual) {
@@ -97,7 +102,7 @@ export default function AlterarSenhaInicial() {
             </div>
           </div>
           <div>
-            <Label>Nova senha pessoal (mín. 6)</Label>
+            <Label>Nova senha pessoal (mín. 8)</Label>
             <div className="relative mt-1">
               <Input
                 type={mostrarNova ? "text" : "password"}
@@ -118,6 +123,32 @@ export default function AlterarSenhaInicial() {
                 {mostrarNova ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
+            <ul className="mt-2 space-y-1 rounded-xl bg-sand/60 p-2.5 text-[11px]">
+              {[
+                { ok: reqs.minimoCaracteres, txt: "Mínimo de 8 caracteres" },
+                { ok: reqs.letraENumeroOuEspecial, txt: "Letras + número ou caractere especial" },
+                { ok: reqs.semCaractereRepetidoOuNumerica, txt: "Não ser só números nem caractere repetido" },
+                { ok: reqs.semSequenciaOuComum, txt: "Sem sequências (1234, abcd, qwer) ou senhas fáceis" },
+                { ok: reqs.diferenteDoUsuario, txt: "Diferente do seu nome de usuário" },
+              ].map((item) => (
+                <li
+                  key={item.txt}
+                  className={`flex items-center gap-1.5 ${
+                    item.ok ? "font-medium text-teal" : "text-ink/60"
+                  }`}
+                >
+                  {item.ok ? (
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                  ) : (
+                    <Circle className="h-3.5 w-3.5 shrink-0" />
+                  )}
+                  <span>{item.txt}</span>
+                </li>
+              ))}
+            </ul>
+            {nova && erroForca && (
+              <p className="mt-1.5 text-xs font-medium text-amber-700">{erroForca}</p>
+            )}
           </div>
           <div>
             <Label>Confirmar nova senha</Label>

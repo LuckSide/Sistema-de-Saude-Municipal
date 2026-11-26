@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { BookOpenText, Layers, Pencil, Plus, Search, ShieldCheck, ShieldOff, Trash2, X } from "lucide-react";
 import {
+  labSigtap,
   msgErro,
   pagData,
   pagMeta,
@@ -20,6 +21,7 @@ import {
   tfdUnificarEspecialidades,
   type EspecialidadeCat,
   type ProcedimentoCat,
+  type SigtapProc,
   type TipoFila,
 } from "../../services/api";
 import { Badge, Button, Card, Input, Label } from "../../components/ui/primitives";
@@ -70,7 +72,55 @@ export default function CatalogoExames() {
   const [formTipo, setFormTipo] = useState(vazioTipo);
   const [formProc, setFormProc] = useState(vazioProc);
   const [formEsp, setFormEsp] = useState(vazioEsp);
+  const [buscaSigtapRef, setBuscaSigtapRef] = useState("");
+  const [resultadosSigtapRef, setResultadosSigtapRef] = useState<SigtapProc[]>([]);
+  const [buscandoSigtapRef, setBuscandoSigtapRef] = useState(false);
+  const [procSigtapRefSel, setProcSigtapRefSel] = useState<SigtapProc | null>(null);
   const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    const termo = buscaSigtapRef.trim();
+    if (!modal || aba !== "procedimentos" || !formProc.sem_codigo_especifico || termo.length < 2) {
+      setResultadosSigtapRef([]);
+      setBuscandoSigtapRef(false);
+      return;
+    }
+    let cancelado = false;
+    const timer = setTimeout(async () => {
+      setBuscandoSigtapRef(true);
+      try {
+        const resp = await labSigtap(termo, undefined, 1, 15, false);
+        if (!cancelado) {
+          setResultadosSigtapRef(pagData<SigtapProc>(resp));
+        }
+      } catch {
+        if (!cancelado) setResultadosSigtapRef([]);
+      } finally {
+        if (!cancelado) setBuscandoSigtapRef(false);
+      }
+    }, 250);
+    return () => {
+      cancelado = true;
+      clearTimeout(timer);
+    };
+  }, [buscaSigtapRef, modal, aba, formProc.sem_codigo_especifico]);
+
+  function selecionarProcedimentoSigtapRef(proc: SigtapProc) {
+    setProcSigtapRefSel(proc);
+    setFormProc((prev) => ({
+      ...prev,
+      codigo_faturamento_sigtap: proc.codigo,
+      nome: prev.nome.trim() ? prev.nome : proc.descricao,
+    }));
+    setBuscaSigtapRef("");
+    setResultadosSigtapRef([]);
+  }
+
+  function limparBuscaSigtapRef() {
+    setBuscaSigtapRef("");
+    setResultadosSigtapRef([]);
+    setProcSigtapRefSel(null);
+  }
   const [unificando, setUnificando] = useState(false);
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
@@ -128,6 +178,7 @@ export default function CatalogoExames() {
 
   function abrirModal(id?: number) {
     setErro(""); setOk("");
+    limparBuscaSigtapRef();
     if (aba === "tipos") {
       if (id) {
         const t = tipos.find((x) => x.id === id);
@@ -163,6 +214,7 @@ export default function CatalogoExames() {
   function fecharModal() {
     setModal(false); setEditId(null);
     setFormTipo(vazioTipo); setFormProc(vazioProc); setFormEsp(vazioEsp);
+    limparBuscaSigtapRef();
     setErro("");
   }
 
@@ -343,7 +395,7 @@ export default function CatalogoExames() {
                   {tipos.map((t) => (
                     <tr key={t.id} className="border-b border-sus-900/5 last:border-0">
                       <td className="px-4 py-3 font-mono text-xs">{t.codigo || "—"}</td>
-                      <td className="px-4 py-3 font-semibold">{t.nome}</td>
+                      <td className="px-4 py-3 font-semibold" title={t.nome}>{t.nome}</td>
                       <td className="px-4 py-3">
                         <Badge variant={t.ativo ? "success" : "outline"}>
                           {t.ativo ? <ShieldCheck className="h-3 w-3" /> : <ShieldOff className="h-3 w-3" />}
@@ -384,7 +436,7 @@ export default function CatalogoExames() {
                           </span>
                         ) : null}
                       </td>
-                      <td className="px-4 py-3 font-semibold">{t.nome}</td>
+                      <td className="px-4 py-3 font-semibold" title={t.nome}>{t.nome}</td>
                       <td className="px-4 py-3 text-xs text-ink/60">
                         {t.tipo_fila || "—"}
                         {t.codigo_especialidade ? <span className="block">CBO {t.codigo_especialidade}{t.nome_especialidade ? ` · ${t.nome_especialidade}` : ""}</span> : null}
@@ -424,7 +476,7 @@ export default function CatalogoExames() {
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-3 font-semibold">{t.nome}</td>
+                      <td className="px-4 py-3 font-semibold" title={t.nome}>{t.nome}</td>
                       <td className="px-4 py-3">
                         <Badge variant={t.ativo ? "success" : "outline"}>
                           {t.ativo ? <ShieldCheck className="h-3 w-3" /> : <ShieldOff className="h-3 w-3" />}
@@ -486,15 +538,85 @@ export default function CatalogoExames() {
                     </label>
                   </div>
                   {formProc.sem_codigo_especifico && (
-                    <div className="md:col-span-2 rounded-xl border border-teal/20 bg-teal/5 p-2.5 space-y-1">
-                      <Label className="text-xs font-bold text-teal-950">Código SIGTAP para Faturamento SUS (de-para)</Label>
-                      <Input
-                        value={formProc.codigo_faturamento_sigtap}
-                        onChange={(e) => setFormProc({ ...formProc, codigo_faturamento_sigtap: e.target.value.replace(/\D/g, "") })}
-                        placeholder="Ex: 0205020186 (10 dígitos)"
-                        maxLength={10}
-                        className="font-mono text-xs"
-                      />
+                    <div className="md:col-span-2 rounded-xl border border-teal/20 bg-teal/5 p-3 space-y-2.5">
+                      <Label className="text-xs font-bold text-teal-950">
+                        Buscar Procedimento Existente na Tabela SIGTAP (Faturamento SUS)
+                      </Label>
+                      <div className="relative">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-teal-700/60" />
+                        <Input
+                          placeholder="Buscar na tabela SIGTAP por código ou descrição..."
+                          value={buscaSigtapRef}
+                          onChange={(e) => setBuscaSigtapRef(e.target.value)}
+                          className="pl-8 text-xs bg-white"
+                        />
+                        {buscandoSigtapRef && (
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-teal">
+                            Buscando…
+                          </span>
+                        )}
+                        {resultadosSigtapRef.length > 0 && (
+                          <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-52 overflow-y-auto rounded-xl border border-sus-900/15 bg-white shadow-lg">
+                            {resultadosSigtapRef.map((pr) => {
+                              const valRef = Number(pr.valor_sa || 0) + Number(pr.valor_sp || 0);
+                              return (
+                                <button
+                                  key={pr.id ?? pr.codigo}
+                                  type="button"
+                                  onClick={() => selecionarProcedimentoSigtapRef(pr)}
+                                  className="w-full border-b border-sus-900/5 px-3 py-2 text-left text-xs hover:bg-sand/70 last:border-0"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-mono font-bold text-teal">{pr.codigo}</span>
+                                    <span className="font-mono text-[11px] text-ink/60">
+                                      {pr.instrumento} · {pr.complexidade} · Valor SIGTAP/SUS: R$ {valRef.toFixed(2)}
+                                    </span>
+                                  </div>
+                                  <p className="mt-0.5 font-medium text-sus-950">{pr.descricao}</p>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                      {procSigtapRefSel && (
+                        <div className="flex items-start justify-between gap-2 rounded-lg border border-teal/25 bg-white/90 px-3 py-2 text-[11px]">
+                          <div>
+                            <p className="font-bold text-teal-950">
+                              Selecionado: <span className="font-mono">{procSigtapRefSel.codigo}</span> — {procSigtapRefSel.descricao}
+                            </p>
+                            <p className="text-ink/65 mt-0.5">
+                              Valor SIGTAP/SUS: <strong>R$ {(Number(procSigtapRefSel.valor_sa || 0) + Number(procSigtapRefSel.valor_sp || 0)).toFixed(2)}</strong> · Instrumento: <strong>{procSigtapRefSel.instrumento}</strong> · Complexidade: <strong>{procSigtapRefSel.complexidade}</strong>
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={limparBuscaSigtapRef}
+                            className="text-ink/40 hover:text-ink"
+                            title="Limpar seleção"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      )}
+                      <div>
+                        <Label className="text-[11px] font-semibold text-teal-950">
+                          Código SIGTAP para Faturamento SUS (de-para)
+                        </Label>
+                        <Input
+                          value={formProc.codigo_faturamento_sigtap}
+                          onChange={(e) => {
+                            const v = e.target.value.replace(/\D/g, "");
+                            setFormProc({ ...formProc, codigo_faturamento_sigtap: v });
+                            if (procSigtapRefSel && v !== procSigtapRefSel.codigo) {
+                              setProcSigtapRefSel(null);
+                            }
+                          }}
+                          placeholder="Ex: 0205020186 (10 dígitos)"
+                          maxLength={10}
+                          className="mt-1 font-mono text-xs bg-white"
+                        />
+                      </div>
                     </div>
                   )}
                   <div>
@@ -506,7 +628,7 @@ export default function CatalogoExames() {
                     />
                   </div>
                   <div><Label>Código curto</Label><Input value={formProc.codigo_curto} onChange={(e) => setFormProc({ ...formProc, codigo_curto: e.target.value.toUpperCase() })} placeholder="Ex: USG-TV" /></div>
-                  <div className="md:col-span-2"><Label>Nome procedimento *</Label><Input value={formProc.nome} onChange={(e) => setFormProc({ ...formProc, nome: e.target.value.toUpperCase() })} placeholder="Ex: ULTRASSONOGRAFIA TRANSVAGINAL" /></div>
+                  <div className="md:col-span-2"><Label>Nome procedimento *</Label><Input value={formProc.nome} onChange={(e) => setFormProc({ ...formProc, nome: e.target.value.toUpperCase() })} maxLength={1000} placeholder="Ex: ULTRASSONOGRAFIA TRANSVAGINAL" /></div>
                   <div><Label>Tipo de fila</Label><Input value={formProc.tipo_fila} onChange={(e) => setFormProc({ ...formProc, tipo_fila: e.target.value.toUpperCase() })} placeholder="Ex: ULTRASSONOGRAFIA" /></div>
                   <div><Label>CBO padrão</Label><Input value={formProc.codigo_especialidade} onChange={(e) => setFormProc({ ...formProc, codigo_especialidade: e.target.value.replace(/\D/g, "").slice(0, 6) })} placeholder="Ex: 225320" inputMode="numeric" /></div>
                   <div className="md:col-span-2">

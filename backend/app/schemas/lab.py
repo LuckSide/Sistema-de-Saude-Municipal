@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 # ---------- SIGTAP ----------
 class SigtapIn(BaseModel):
     codigo: str = Field(default="", max_length=20)
-    descricao: str = Field(min_length=2, max_length=255)
+    descricao: str = Field(min_length=2, max_length=1000)
     complexidade: str = Field(default="MC", pattern="^(NA|AB|MC|AC)$")
     instrumento: str = Field(default="BPA-C", pattern="^(BPA-C|BPA-I|BPA-F|AIH|APAC|RAAS)$")
     valor_sa: float = Field(default=0.0, ge=0)

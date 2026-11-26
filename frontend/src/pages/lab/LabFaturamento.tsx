@@ -372,7 +372,7 @@ export default function LabFaturamento() {
       await labContratoPrecoRemover(contratoPrecoSel.id, precoId);
       const precos = await labContratoPrecosListar(contratoPrecoSel.id);
       setPrecosContrato(precos);
-      setOk("Preço customizado removido. O procedimento voltou ao valor padrão SIGTAP.");
+      setOk("Preço customizado removido. O procedimento voltou ao Valor SIGTAP/SUS padrão.");
     } catch {
       setErro("Erro ao remover preço customizado.");
     } finally {
@@ -1600,7 +1600,7 @@ export default function LabFaturamento() {
               {procSelecionadoPreco && (
                 <div className="flex items-center justify-between text-xs pt-1">
                   <span className="text-ink/65">
-                    Valor SIGTAP oficial: <strong className="font-mono">R$ {procSelecionadoPreco.valor_sa?.toFixed(2)}</strong>
+                    Valor SIGTAP/SUS oficial: <strong className="font-mono">R$ {procSelecionadoPreco.valor_sa?.toFixed(2)}</strong>
                   </span>
                   <Button
                     type="button"
@@ -1621,8 +1621,8 @@ export default function LabFaturamento() {
                   <tr className="bg-sand text-[11px] uppercase text-sus-900/60 sticky top-0">
                     <th className="px-3 py-2 font-semibold">Código</th>
                     <th className="px-3 py-2 font-semibold">Procedimento</th>
-                    <th className="px-3 py-2 font-semibold text-right">SIGTAP SUS</th>
-                    <th className="px-3 py-2 font-semibold text-right">Valor Contratual</th>
+                    <th className="px-3 py-2 font-semibold text-right">Valor SIGTAP/SUS</th>
+                    <th className="px-3 py-2 font-semibold text-right">Valor Contrato Local</th>
                     <th className="px-3 py-2 font-semibold text-center">Ações</th>
                   </tr>
                 </thead>
@@ -1642,7 +1642,7 @@ export default function LabFaturamento() {
                           type="button"
                           onClick={() => removerPrecoCustomizado(p.id)}
                           className="text-red-600 hover:text-red-800 p-1"
-                          title="Remover preço contratual (restaura valor SIGTAP)"
+                          title="Remover preço contratual (restaura Valor SIGTAP/SUS)"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
@@ -1652,7 +1652,7 @@ export default function LabFaturamento() {
                   {precosContrato.length === 0 && (
                     <tr>
                       <td colSpan={5} className="px-3 py-6 text-center text-ink/40">
-                        Nenhum procedimento com preço diferenciado. Todos seguem a tabela SIGTAP oficial.
+                        Nenhum procedimento com preço diferenciado. Todos seguem o Valor SIGTAP/SUS oficial.
                       </td>
                     </tr>
                   )}

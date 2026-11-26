@@ -41,8 +41,8 @@ class TicketOut(BaseModel):
 
 
 def require_admin_suporte(user: User = Depends(get_current_user_senha_ok)) -> User:
-    """Valida se o usuário tem perfil administrativo ou permissão de usuários/administração."""
-    if user.is_superuser or tem_tela(user, "usuarios") or tem_tela(user, "administracao"):
+    """Valida se o usuário tem perfil administrativo ou permissão de suporte/usuários."""
+    if user.is_superuser or tem_tela(user, "admin_tickets") or tem_tela(user, "usuarios"):
         return user
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,

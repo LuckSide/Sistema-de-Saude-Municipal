@@ -444,7 +444,7 @@ def test_user_unidade_padrao_e_atribuicao():
 
         data = UserCreate(
             username="operador_psf",
-            password="Password123",
+            password="Guape@2026#1",
             gerar_temporaria=False,
             nome="Operador PSF",
             unidade_saude_id=uni.id,

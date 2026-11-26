@@ -88,7 +88,7 @@ const PRESETS_PERMISSAO: { rotulo: string; area: "painel" | "ferramentas"; telas
   {
     rotulo: "Operador TFD",
     area: "painel",
-    telas: ["dashboard", "tfd_resumo", "tfd_viagens", "tfd_pacientes", "tfd_exames", "tfd_agenda", "tfd_relatorio_agendados", "tfd_frota", "tfd_motoristas"],
+    telas: ["dashboard", "tfd_viagens", "tfd_pacientes", "tfd_exames", "tfd_agenda", "tfd_relatorio_agendados", "tfd_frota", "tfd_motoristas"],
   },
   {
     rotulo: "Recepção PSF",
@@ -989,7 +989,7 @@ export default function Usuarios() {
 
                     {!editId && (
                       <p className="rounded-xl bg-sand/70 px-3 py-2 text-xs text-ink/65">
-                        Uma senha temporária (bcrypt) será gerada automaticamente e exibida 1 vez após criar. Troca obrigatória no 1º acesso.
+                        Uma senha temporária forte (bcrypt) será gerada automaticamente e exibida 1 vez após criar. No 1º acesso, o usuário deverá definir uma senha pessoal forte (mín. 8 caracteres com letras e números/símbolos, sem sequências ou senhas comuns).
                       </p>
                     )}
                   </div>

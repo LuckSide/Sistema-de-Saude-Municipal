@@ -194,3 +194,182 @@ export function toastCampos(erros: Record<string, string>, rotulos: Record<strin
   }
   return `Não foi possível salvar: os campos ${nomes.map((c) => `'${rotulos[c] ?? c}'`).join(", ")} contêm erros. Confira os destaques abaixo.`;
 }
+
+export const SENHA_MIN_CARACTERES = 8;
+
+const SENHAS_FRACAS = new Set([
+  "123456",
+  "1234567",
+  "12345678",
+  "123456789",
+  "1234567890",
+  "000000",
+  "0000000",
+  "00000000",
+  "111111",
+  "11111111",
+  "222222",
+  "22222222",
+  "333333",
+  "33333333",
+  "444444",
+  "555555",
+  "666666",
+  "777777",
+  "888888",
+  "999999",
+  "99999999",
+  "987654",
+  "98765432",
+  "987654321",
+  "senha",
+  "senha123",
+  "senha1234",
+  "senha@123",
+  "password",
+  "password123",
+  "password1234",
+  "admin",
+  "admin123",
+  "admin1234",
+  "admin@123",
+  "guape",
+  "guape123",
+  "guape1234",
+  "guape@123",
+  "mudar123",
+  "mudar1234",
+  "mudar@123",
+  "trocar123",
+  "trocar1234",
+  "trocar@123",
+  "qwerty",
+  "qwerty123",
+  "qwerty1234",
+  "abc123",
+  "abc1234",
+  "abc12345",
+  "abcdef",
+  "abcdefg",
+  "abcdefgh",
+  "1q2w3e4r",
+  "1q2w3e4r5t",
+  "qazwsx",
+  "zxcvbn",
+  "saude123",
+  "saude1234",
+  "saude@123",
+  "saudeguape",
+  "saudeguape123",
+  "prefeitura",
+  "prefeitura123",
+  "teste123",
+  "teste1234",
+  "usuario123",
+  "operador123",
+  "letmein",
+  "welcome",
+]);
+
+const TRILHAS_TECLADO = ["qwertyuiop", "asdfghjkl", "zxcvbnm", "1234567890"];
+
+function contemSequenciaSimples(normalizada: string): boolean {
+  if (normalizada.length < 4) return false;
+  for (let i = 0; i <= normalizada.length - 4; i++) {
+    const trecho = normalizada.slice(i, i + 4);
+    const soDigitosAsc = /^[0-9]{4}$/.test(trecho);
+    const soLetrasAsc = /^[a-z]{4}$/.test(trecho);
+    if (soDigitosAsc || soLetrasAsc) {
+      const d1 = trecho.charCodeAt(1) - trecho.charCodeAt(0);
+      const d2 = trecho.charCodeAt(2) - trecho.charCodeAt(1);
+      const d3 = trecho.charCodeAt(3) - trecho.charCodeAt(2);
+      if ((d1 === 1 && d2 === 1 && d3 === 1) || (d1 === -1 && d2 === -1 && d3 === -1)) {
+        return true;
+      }
+    }
+  }
+  for (const trilha of TRILHAS_TECLADO) {
+    const reverso = trilha.split("").reverse().join("");
+    for (const base of [trilha, reverso]) {
+      for (let i = 0; i <= base.length - 4; i++) {
+        if (normalizada.includes(base.slice(i, i + 4))) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function temCombinacaoMinima(senha: string): boolean {
+  const temLetra = /\p{L}/u.test(senha);
+  const temNumeroOuEspecial = /[0-9]/.test(senha) || /[^\p{L}0-9\s]/u.test(senha);
+  return temLetra && temNumeroOuEspecial;
+}
+
+function ehBaseadaNoUsuario(normalizada: string, username: string): boolean {
+  const uNorm = (username ?? "").replace(/\s+/g, "").toLowerCase();
+  if (uNorm.length < 3) return false;
+  if (normalizada === uNorm) return true;
+  const uEsc = uNorm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (new RegExp(`^\\d*${uEsc}\\d*$`).test(normalizada)) return true;
+  const uLetras = uNorm.replace(/[^\p{L}]/gu, "");
+  const sLetras = normalizada.replace(/[^\p{L}]/gu, "");
+  return uLetras.length >= 3 && sLetras === uLetras;
+}
+
+export interface RequisitosSenha {
+  minimoCaracteres: boolean;
+  letraENumeroOuEspecial: boolean;
+  semCaractereRepetidoOuNumerica: boolean;
+  semSequenciaOuComum: boolean;
+  diferenteDoUsuario: boolean;
+}
+
+/** Avalia os requisitos visuais da política de senhas em tempo real. */
+export function avaliarRequisitosSenha(senha: string, username = ""): RequisitosSenha {
+  const valor = senha ?? "";
+  const normalizada = valor.replace(/\s+/g, "").toLowerCase();
+  const naoVazia = normalizada.length > 0;
+  return {
+    minimoCaracteres: valor.length >= SENHA_MIN_CARACTERES,
+    letraENumeroOuEspecial: temCombinacaoMinima(valor),
+    semCaractereRepetidoOuNumerica:
+      naoVazia && new Set(normalizada).size > 1 && !/^\d+$/.test(normalizada),
+    semSequenciaOuComum:
+      naoVazia && !SENHAS_FRACAS.has(normalizada) && !contemSequenciaSimples(normalizada),
+    diferenteDoUsuario: naoVazia && !ehBaseadaNoUsuario(normalizada, username),
+  };
+}
+
+/** Valida força da senha espelhando o backend (`app/core/security.py`).
+ * Retorna mensagem de erro clara em pt-BR ou `null` quando forte. */
+export function validarForcaSenha(senha: string, username = ""): string | null {
+  const valor = senha ?? "";
+  if (!valor.trim()) {
+    return "A senha não pode estar em branco.";
+  }
+  if (valor.length < SENHA_MIN_CARACTERES) {
+    return `A senha deve ter no mínimo ${SENHA_MIN_CARACTERES} caracteres.`;
+  }
+  const normalizada = valor.replace(/\s+/g, "").toLowerCase();
+  if (new Set(normalizada).size <= 1) {
+    return "A senha não pode ser composta por apenas um caractere repetido.";
+  }
+  if (SENHAS_FRACAS.has(normalizada)) {
+    return "Esta senha é muito comum ou previsível. Escolha uma senha mais forte.";
+  }
+  if (/^\d+$/.test(normalizada)) {
+    return "A senha não pode conter apenas números.";
+  }
+  if (contemSequenciaSimples(normalizada)) {
+    return "A senha não pode conter sequências simples (como 1234, abcd ou qwer).";
+  }
+  if (!temCombinacaoMinima(valor)) {
+    return "A senha deve combinar letras com pelo menos um número ou caractere especial.";
+  }
+  if (ehBaseadaNoUsuario(normalizada, username)) {
+    return "A senha não pode ser igual ou baseada apenas no nome de usuário.";
+  }
+  return null;
+}

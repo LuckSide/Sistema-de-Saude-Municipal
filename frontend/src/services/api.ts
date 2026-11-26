@@ -2121,11 +2121,17 @@ export const labsRemover = (id: number, permanente?: boolean) =>
 
 export type FilaPsfItem = {
   id: number;
+  codigo_solicitacao?: string;
+  numero_pedido?: string;
   paciente_id: number;
   paciente_nome: string;
   paciente_cpf?: string;
   paciente_cns?: string;
   paciente_prontuario?: string;
+  paciente_endereco?: string;
+  paciente_numero?: string;
+  paciente_bairro?: string;
+  paciente_municipio?: string;
   especialidade?: string;
   unidade_psf: string;
   medico_solicitante: string;
@@ -2157,13 +2163,20 @@ export type FilaPsfItem = {
 };
 
 export function mapFila(o: any): FilaPsfItem {
+  const cod = o.codigo_solicitacao ?? o.numero_pedido ?? "";
   return {
     id: o.id,
+    codigo_solicitacao: cod,
+    numero_pedido: o.numero_pedido ?? cod,
     paciente_id: o.paciente_id,
     paciente_nome: o.paciente_nome ?? "",
     paciente_cpf: o.paciente_cpf ?? "",
     paciente_cns: o.paciente_cns ?? "",
     paciente_prontuario: o.paciente_prontuario ?? "",
+    paciente_endereco: o.paciente_endereco ?? "",
+    paciente_numero: o.paciente_numero ?? "",
+    paciente_bairro: o.paciente_bairro ?? "",
+    paciente_municipio: o.paciente_municipio ?? "",
     especialidade: o.especialidade ?? "",
     unidade_psf: o.unidade_psf ?? "",
     medico_solicitante: o.medico_solicitante ?? o.medico ?? "",
@@ -2199,6 +2212,7 @@ export type FilaPsfFiltros = {
   status?: string;
   unidade?: string;
   especialidade?: string;
+  prioridade?: string;
   fila_id?: number;
   tipo_fila?: string;
   data_de?: string;
@@ -2466,6 +2480,12 @@ export type ComprovanteExame = {
   qr_code_url?: string;
   codigo_curto?: string;
   numero_pedido?: string;
+  codigo_solicitacao?: string;
+  tipo_comprovante?: string;
+  data_pedido?: string;
+  data_solicitacao?: string;
+  fila_nome?: string;
+  prioridade?: string;
   exige_preparo?: boolean;
   transporte?: {
     possui_viagem: boolean;
@@ -2804,6 +2824,9 @@ export const solicitarListar = (filtros?: {
 
 export const labObterComprovante = (mid: number): Promise<ComprovanteExame> =>
   api.get(`/api/exames/solicitacoes/${mid}/comprovante`).then((r) => r.data as ComprovanteExame);
+
+export const labObterComprovanteFilaPsf = (fid: number): Promise<ComprovanteExame> =>
+  api.get(`/api/exames/fila-psf/${fid}/comprovante`).then((r) => r.data as ComprovanteExame);
 
 export const labCancelarSolicitacao = (mid: number): Promise<void> =>
   api.delete(`/api/exames/solicitacoes/${mid}`).then(() => undefined);

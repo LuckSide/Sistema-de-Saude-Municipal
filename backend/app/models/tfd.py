@@ -203,7 +203,7 @@ class ExameFila(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     paciente_id: int = Field(foreign_key="tfd_pacientes.id", index=True)
-    exame: str = Field(max_length=120, index=True)
+    exame: str = Field(sa_column=Column(Text, nullable=False, index=True))
     especialidade: str = Field(default="", max_length=80)
     # Filtros avançados e-SUS (mapeados de fila_todos.csv):
     # - tipo_fila = servico_tipo_nome (ex: ULTRASSONOGRAFIA, CONSULTAS ESPECIALIZADAS)
@@ -287,7 +287,7 @@ class ProcedimentoCatalogo(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     codigo: str = Field(max_length=20, index=True)  # codigo_procedimento ex: 0205020186
-    nome: str = Field(max_length=150, index=True)  # nome_procedimento
+    nome: str = Field(sa_column=Column(Text, nullable=False, index=True))  # nome_procedimento
     tipo_fila: str = Field(default="", max_length=80, index=True)
     fila_id: int | None = Field(default=None, foreign_key="tfd_tipos_fila.id", index=True)  # servico_tipo_nome
     codigo_especialidade: str = Field(default="", max_length=10, index=True)  # CBO padrão
@@ -314,7 +314,7 @@ class Faturamento(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     viagem_id: int | None = Field(default=None, foreign_key="tfd_viagens.id", index=True)
     paciente_id: int = Field(foreign_key="tfd_pacientes.id", index=True)
-    procedimento: str = Field(max_length=150)  # nome SIGTAP
+    procedimento: str = Field(sa_column=Column(Text, nullable=False))  # nome SIGTAP
     codigo_sigtap: str = Field(default="", max_length=20, index=True)
     competencia: str = Field(max_length=7, index=True)  # AAAA-MM
     quantidade: int = Field(default=1)

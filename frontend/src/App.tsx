@@ -8,6 +8,7 @@ import { ConfirmDialogProvider } from "./components/ConfirmDialog";
 import { useCidadeDinamica } from "./hooks/useCidade";
 import { Protected, Shell } from "./components/Layout";
 import TopRouteProgressBar from "./components/TopRouteProgressBar";
+import { MODULOS } from "./permissoes";
 
 // Loading Fallback para transição suave de módulos (nível root)
 function PageLoader() {
@@ -70,7 +71,6 @@ const Login = lazyWithRetry(() => import("./pages/Login"));
 const Dashboard = lazyWithRetry(() => import("./pages/Dashboard"));
 const Usuarios = lazyWithRetry(() => import("./pages/Usuarios"));
 const TfdLayout = lazyWithRetry(() => import("./pages/tfd/TfdLayout"));
-const TfdResumo = lazyWithRetry(() => import("./pages/tfd/TfdResumo"));
 const TfdViagens = lazyWithRetry(() => import("./pages/tfd/TfdViagens"));
 const TfdPacientes = lazyWithRetry(() => import("./pages/tfd/TfdPacientes"));
 const AgendaTfd = lazyWithRetry(() => import("./pages/tfd/AgendaTfd"));
@@ -128,23 +128,38 @@ function Guard({ tela, children }: { tela: string; children: ReactElement }) {
   return children;
 }
 
-// Configurações centraliza município, filas, PEC e RNDS: aceita a tela
-// "usuarios" (admin) ou a legada "integracoes".
+function HomeGuard({ children }: { children: ReactElement }) {
+  const { can, loading } = useAuth();
+  if (loading) return null;
+  if (can("dashboard")) return children;
+  for (const m of MODULOS) {
+    for (const f of m.filhos ?? []) {
+      if (f.rota && can(f.codigo)) return <Navigate to={f.rota} replace />;
+    }
+    if (!m.apenasGrupo && m.rota && can(m.codigo)) return <Navigate to={m.rota} replace />;
+  }
+  return (
+    <div className="rounded-2xl border border-sus-900/10 bg-white p-8 text-center text-sm text-ink/70">
+      Nenhuma tela liberada para o seu usuário. Solicite acesso ao administrador.
+    </div>
+  );
+}
+
+// Configurações centraliza parâmetros, cadastros auxiliares, filas, PEC e RNDS.
 function ConfigGuard({ children }: { children: ReactElement }) {
   const { can, loading } = useAuth();
   if (loading) return null;
   const CFG_TELAS = [
-    "usuarios",
     "integracoes",
     "cfg_geral",
     "cfg_filas",
+    "cfg_importar",
     "cfg_pec",
     "cfg_rnds",
     "cfg_whatsapp",
     "cfg_exames",
     "cfg_medicos",
     "cfg_unidades",
-    "cfg_laboratorios",
     "cfg_dados",
     "cfg_backup",
   ];
@@ -162,11 +177,24 @@ function GuardQualquer({ telas, children }: { telas: string[]; children: ReactEl
 function LabGuard({ tela, telas, children }: { tela: string; telas?: string[]; children: ReactElement }) {
   const { can, loading } = useAuth();
   if (loading) return null;
-  const LAB_TELAS = ["lab", "lab_recepcao", "lab_marcacao", "lab_fila", "lab_agenda", "lab_vagas", "lab_audit", "lab_faturamento", "lab_sigtap"];
+  const LAB_TELAS = [
+    "lab",
+    "lab_recepcao",
+    "lab_marcacao",
+    "lab_fila",
+    "lab_agenda",
+    "lab_vagas",
+    "lab_portal",
+    "lab_orcamento",
+    "lab_audit",
+    "lab_auditoria_laudos",
+    "lab_faturamento",
+    "lab_sigtap",
+  ];
   const alvos = telas ?? [tela];
   if (tela === "lab") {
     if (!LAB_TELAS.some((t) => can(t))) return <Navigate to="/" replace />;
-  } else if (!can("lab") && !alvos.some((t) => can(t))) {
+  } else if (!alvos.some((t) => can(t))) {
     return <Navigate to="/" replace />;
   }
   return children;
@@ -174,7 +202,7 @@ function LabGuard({ tela, telas, children }: { tela: string; telas?: string[]; c
 
 function TfdRoutes() {
   return (
-    <GuardQualquer telas={["tfd", "tfd_resumo", "tfd_viagens", "tfd_pacientes", "tfd_exames", "tfd_fila_lancamento", "tfd_agenda", "tfd_relatorio_agendados", "tfd_catalogo", "tfd_destinos", "tfd_frota", "tfd_motoristas", "tfd_frota_gestao", "tfd_faturamento"]}>
+    <GuardQualquer telas={["tfd", "tfd_viagens", "tfd_pacientes", "tfd_exames", "tfd_fila_lancamento", "tfd_agenda", "tfd_relatorio_agendados", "tfd_catalogo", "tfd_destinos", "tfd_frota", "tfd_motoristas", "tfd_frota_gestao", "tfd_faturamento"]}>
       <TfdLayout />
     </GuardQualquer>
   );
@@ -207,8 +235,8 @@ export default function App() {
 
                 {/* Rotas Autenticadas com Shell e Sidebar Persistentes */}
                 <Route element={<AppShellLayout />}>
-                  <Route path="/" element={<Dashboard />} />
-                  <Route path="/fila-exames" element={<GuardQualquer telas={["tfd_exames", "tfd_fila_lancamento", "tfd_medico", "tfd"]}><FilaExames /></GuardQualquer>} />
+                  <Route path="/" element={<HomeGuard><Dashboard /></HomeGuard>} />
+                  <Route path="/fila-exames" element={<Guard tela="tfd_exames"><FilaExames /></Guard>} />
                   <Route path="/solicitacoes/nova" element={<Navigate to="/tfd/solicitacoes/nova" replace />} />
                   <Route path="/solicitacoes" element={<Navigate to="/fila-exames" replace />} />
                   <Route path="/painel-medico" element={<Guard tela="tfd_medico"><PainelMedico /></Guard>} />
@@ -216,61 +244,61 @@ export default function App() {
                   <Route path="/usuarios" element={<Guard tela="usuarios"><Usuarios /></Guard>} />
 
                   <Route path="/tfd" element={<TfdRoutes />}>
-                    <Route index element={<Guard tela="tfd_resumo"><TfdResumo /></Guard>} />
-                    <Route path="solicitacoes/nova" element={<GuardQualquer telas={["tfd_exames", "tfd_fila_lancamento", "tfd"]}><NovaSolicitacao /></GuardQualquer>} />
-                    <Route path="relatorio-agendados" element={<GuardQualquer telas={["tfd_agenda", "tfd_relatorio_agendados", "tfd_exames", "tfd", "usuarios"]}><RelatorioAgendados /></GuardQualquer>} />
+                    <Route index element={<Navigate to="/" replace />} />
+                    <Route path="solicitacoes/nova" element={<GuardQualquer telas={["tfd_exames", "tfd_fila_lancamento"]}><NovaSolicitacao /></GuardQualquer>} />
+                    <Route path="relatorio-agendados" element={<Guard tela="tfd_relatorio_agendados"><RelatorioAgendados /></Guard>} />
                     <Route path="viagens" element={<Guard tela="tfd_viagens"><TfdViagens /></Guard>} />
-                    <Route path="quadro" element={<GuardQualquer telas={["tfd_viagens", "tfd_frota_gestao"]}><QuadroViagens /></GuardQualquer>} />
+                    <Route path="quadro" element={<Guard tela="tfd_frota_gestao"><QuadroViagens /></Guard>} />
                     <Route path="pacientes" element={<Guard tela="tfd_pacientes"><TfdPacientes /></Guard>} />
                     <Route path="agenda" element={<Guard tela="tfd_agenda"><AgendaTfd /></Guard>} />
                     <Route path="agendamentos" element={<Guard tela="tfd_agenda"><Agendamentos /></Guard>} />
                     <Route path="exames" element={<Navigate to="/fila-exames" replace />} />
                     <Route path="catalogo" element={<Guard tela="tfd_catalogo"><CatalogoExames /></Guard>} />
                     <Route path="destinos" element={<Guard tela="tfd_destinos"><TfdDestinos /></Guard>} />
-                    <Route path="frota" element={<GuardQualquer telas={["tfd_frota", "tfd_frota_gestao", "tfd"]}><TfdFrota /></GuardQualquer>} />
-                    <Route path="motoristas" element={<GuardQualquer telas={["tfd_frota", "tfd_motoristas", "tfd_frota_gestao", "tfd"]}><TfdMotoristas /></GuardQualquer>} />
+                    <Route path="frota" element={<GuardQualquer telas={["tfd_frota", "tfd_frota_gestao"]}><TfdFrota /></GuardQualquer>} />
+                    <Route path="motoristas" element={<GuardQualquer telas={["tfd_motoristas", "tfd_frota_gestao"]}><TfdMotoristas /></GuardQualquer>} />
                     <Route path="faturamento" element={<Guard tela="tfd_faturamento"><TfdFaturamento /></Guard>} />
                   </Route>
 
                   <Route path="/lab" element={<LabRoutes />}>
-                    <Route index element={<LabGuard tela="lab_recepcao" telas={["lab_recepcao", "lab_marcacao", "lab"]}><RecepcaoLab /></LabGuard>} />
-                    <Route path="recepcao" element={<LabGuard tela="lab_recepcao" telas={["lab_recepcao", "lab"]}><RecepcaoLab /></LabGuard>} />
+                    <Route index element={<LabGuard tela="lab_recepcao" telas={["lab_recepcao", "lab_marcacao", "lab_fila", "lab_agenda", "lab_vagas", "lab_portal", "lab_orcamento", "lab_audit", "lab_auditoria_laudos", "lab_faturamento"]}><RecepcaoLab /></LabGuard>} />
+                    <Route path="recepcao" element={<LabGuard tela="lab_recepcao"><RecepcaoLab /></LabGuard>} />
                     <Route path="marcacao" element={<LabGuard tela="lab_marcacao"><LabMarcacao /></LabGuard>} />
                     <Route path="fila" element={<LabGuard tela="lab_fila"><FilaPsf /></LabGuard>} />
                     <Route path="agenda" element={<LabGuard tela="lab_agenda" telas={["lab_agenda", "lab_vagas"]}><VagasAgenda /></LabGuard>} />
                     <Route path="vagas" element={<LabGuard tela="lab_vagas"><VagasAgenda /></LabGuard>} />
                     <Route path="auditoria" element={<LabGuard tela="lab_audit"><AuditLab /></LabGuard>} />
-                    <Route path="auditoria-laudos" element={<LabGuard tela="lab_audit" telas={["lab_audit", "lab_orcamento", "lab_faturamento", "lab", "usuarios"]}><AuditoriaLaudos /></LabGuard>} />
-                    <Route path="orcamento" element={<LabGuard tela="lab_orcamento" telas={["lab_orcamento", "lab_marcacao", "lab"]}><LabOrcamentoLotes /></LabGuard>} />
-                    <Route path="lotes" element={<LabGuard tela="lab_orcamento" telas={["lab_orcamento", "lab_marcacao", "lab"]}><LabOrcamentoLotes /></LabGuard>} />
+                    <Route path="auditoria-laudos" element={<LabGuard tela="lab_auditoria_laudos" telas={["lab_auditoria_laudos", "lab_audit"]}><AuditoriaLaudos /></LabGuard>} />
+                    <Route path="orcamento" element={<LabGuard tela="lab_orcamento"><LabOrcamentoLotes /></LabGuard>} />
+                    <Route path="lotes" element={<LabGuard tela="lab_orcamento"><LabOrcamentoLotes /></LabGuard>} />
                     <Route path="faturamento" element={<LabGuard tela="lab_faturamento"><LabFaturamento /></LabGuard>} />
-                    <Route path="portal-producao" element={<LabGuard tela="lab_recepcao" telas={["lab_recepcao", "lab_portal", "lab_faturamento", "lab", "usuarios"]}><PortalLaboratorio /></LabGuard>} />
+                    <Route path="portal-producao" element={<LabGuard tela="lab_portal"><PortalLaboratorio /></LabGuard>} />
                     <Route path="sigtap" element={<Navigate to="/sigtap" replace />} />
                   </Route>
 
-                  <Route path="/prestadores" element={<GuardQualquer telas={["cfg_unidades", "cfg_laboratorios", "usuarios", "tfd", "lab", "cfg_geral"]}><Prestadores /></GuardQualquer>} />
-                  <Route path="/sigtap" element={<GuardQualquer telas={["lab_sigtap", "tfd_catalogo", "tfd", "lab", "usuarios", "cfg_geral"]}><LabSigtap /></GuardQualquer>} />
+                  <Route path="/prestadores" element={<Guard tela="cfg_laboratorios"><Prestadores /></Guard>} />
+                  <Route path="/sigtap" element={<Guard tela="lab_sigtap"><LabSigtap /></Guard>} />
                   <Route path="/aps" element={<Guard tela="aps"><ApsPainel /></Guard>} />
                   <Route path="/apac/solicitacoes" element={<Guard tela="apac_solicitacao"><ApacSolicitacao /></Guard>} />
                   <Route path="/apac/regulacao" element={<Guard tela="apac_regulacao"><ApacRegulacao /></Guard>} />
                   <Route path="/apac/faturamento" element={<Guard tela="apac_faturamento"><ApacFaturamento /></Guard>} />
-                  <Route path="/faturamento/bpa" element={<GuardQualquer telas={["faturamento_bpa", "tfd", "lab", "usuarios", "tfd_faturamento", "lab_faturamento", "apac_faturamento", "apac"]}><FaturamentoBpa /></GuardQualquer>} />
+                  <Route path="/faturamento/bpa" element={<Guard tela="faturamento_bpa"><FaturamentoBpa /></Guard>} />
                   <Route path="/faturamento/prestadores" element={<Navigate to="/lab/faturamento" replace />} />
                   <Route path="/regulacao/bpa" element={<Navigate to="/faturamento/bpa" replace />} />
-                  <Route path="/producao-ambulatorial" element={<GuardQualquer telas={["producao_ambulatorial", "faturamento_bpa", "tfd", "lab", "usuarios", "tfd_medico", "tfd_faturamento"]}><ProducaoProfissional /></GuardQualquer>} />
+                  <Route path="/producao-ambulatorial" element={<Guard tela="producao_ambulatorial"><ProducaoProfissional /></Guard>} />
                   <Route path="/producao-profissional" element={<Navigate to="/producao-ambulatorial" replace />} />
-                  <Route path="/oxigenio" element={<GuardQualquer telas={["oxigenio_estoque", "oxigenio", "usuarios"]}><OxigenioPainelEstoque /></GuardQualquer>} />
-                  <Route path="/oxigenio/equipamentos" element={<GuardQualquer telas={["oxigenio_equipamentos", "oxigenio", "usuarios"]}><OxigenioEquipamentos /></GuardQualquer>} />
-                  <Route path="/oxigenio/emprestimos" element={<GuardQualquer telas={["oxigenio_emprestimos", "oxigenio", "usuarios"]}><OxigenioEmprestimos /></GuardQualquer>} />
-                  <Route path="/oxigenio/empresas" element={<GuardQualquer telas={["oxigenio_empresas", "oxigenio", "usuarios"]}><OxigenioEmpresas /></GuardQualquer>} />
-                  <Route path="/oxigenio/relatorios" element={<GuardQualquer telas={["oxigenio_relatorios", "oxigenio", "usuarios"]}><OxigenioRequisicaoAF /></GuardQualquer>} />
-                  <Route path="/farmacia" element={<GuardQualquer telas={["farmacia_estoque", "farmacia", "usuarios"]}><FarmaciaEstoque /></GuardQualquer>} />
-                  <Route path="/farmacia/validade" element={<GuardQualquer telas={["farmacia_validade", "farmacia", "usuarios"]}><FarmaciaValidade /></GuardQualquer>} />
-                  <Route path="/farmacia/links" element={<GuardQualquer telas={["farmacia_links", "farmacia", "usuarios"]}><FarmaciaLinks /></GuardQualquer>} />
-                  <Route path="/farmacia/insumos" element={<GuardQualquer telas={["farmacia_insumos", "farmacia", "usuarios"]}><FarmaciaInsumos /></GuardQualquer>} />
+                  <Route path="/oxigenio" element={<Guard tela="oxigenio_estoque"><OxigenioPainelEstoque /></Guard>} />
+                  <Route path="/oxigenio/equipamentos" element={<Guard tela="oxigenio_equipamentos"><OxigenioEquipamentos /></Guard>} />
+                  <Route path="/oxigenio/emprestimos" element={<Guard tela="oxigenio_emprestimos"><OxigenioEmprestimos /></Guard>} />
+                  <Route path="/oxigenio/empresas" element={<Guard tela="oxigenio_empresas"><OxigenioEmpresas /></Guard>} />
+                  <Route path="/oxigenio/relatorios" element={<Guard tela="oxigenio_relatorios"><OxigenioRequisicaoAF /></Guard>} />
+                  <Route path="/farmacia" element={<Guard tela="farmacia_estoque"><FarmaciaEstoque /></Guard>} />
+                  <Route path="/farmacia/validade" element={<Guard tela="farmacia_validade"><FarmaciaValidade /></Guard>} />
+                  <Route path="/farmacia/links" element={<Guard tela="farmacia_links"><FarmaciaLinks /></Guard>} />
+                  <Route path="/farmacia/insumos" element={<Guard tela="farmacia_insumos"><FarmaciaInsumos /></Guard>} />
                   <Route path="/integracoes" element={<Navigate to="/configuracoes" replace />} />
-                  <Route path="/auditoria" element={<GuardQualquer telas={["auditoria", "usuarios"]}><Auditoria /></GuardQualquer>} />
-                  <Route path="/admin/tickets" element={<GuardQualquer telas={["usuarios", "auditoria"]}><GestaoTickets /></GuardQualquer>} />
+                  <Route path="/auditoria" element={<Guard tela="auditoria"><Auditoria /></Guard>} />
+                  <Route path="/admin/tickets" element={<Guard tela="admin_tickets"><GestaoTickets /></Guard>} />
                   <Route path="/suporte/tickets" element={<Navigate to="/admin/tickets" replace />} />
                   <Route path="/configuracoes" element={<ConfigGuard><Configuracoes /></ConfigGuard>} />
                   <Route path="/admin/medicos" element={<Navigate to="/configuracoes?aba=medicos" replace />} />

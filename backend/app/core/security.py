@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import ipaddress
 import os
+import re
 import secrets
 import socket
 from urllib.parse import urlparse
@@ -12,6 +13,149 @@ from passlib.context import CryptContext
 from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+SENHA_MIN_CARACTERES = 8
+
+_SENHAS_FRACAS = frozenset({
+    "123456",
+    "1234567",
+    "12345678",
+    "123456789",
+    "1234567890",
+    "000000",
+    "0000000",
+    "00000000",
+    "111111",
+    "11111111",
+    "222222",
+    "22222222",
+    "333333",
+    "33333333",
+    "444444",
+    "555555",
+    "666666",
+    "777777",
+    "888888",
+    "999999",
+    "99999999",
+    "987654",
+    "98765432",
+    "987654321",
+    "senha",
+    "senha123",
+    "senha1234",
+    "senha@123",
+    "password",
+    "password123",
+    "password1234",
+    "admin",
+    "admin123",
+    "admin1234",
+    "admin@123",
+    "guape",
+    "guape123",
+    "guape1234",
+    "guape@123",
+    "mudar123",
+    "mudar1234",
+    "mudar@123",
+    "trocar123",
+    "trocar1234",
+    "trocar@123",
+    "qwerty",
+    "qwerty123",
+    "qwerty1234",
+    "abc123",
+    "abc1234",
+    "abc12345",
+    "abcdef",
+    "abcdefg",
+    "abcdefgh",
+    "1q2w3e4r",
+    "1q2w3e4r5t",
+    "qazwsx",
+    "zxcvbn",
+    "saude123",
+    "saude1234",
+    "saude@123",
+    "saudeguape",
+    "saudeguape123",
+    "prefeitura",
+    "prefeitura123",
+    "teste123",
+    "teste1234",
+    "usuario123",
+    "operador123",
+    "letmein",
+    "welcome",
+})
+
+_TRILHAS_TECLADO = (
+    "qwertyuiop",
+    "asdfghjkl",
+    "zxcvbnm",
+    "1234567890",
+)
+
+
+def _contem_sequencia_simples(normalizada: str) -> bool:
+    """Detecta sequências crescentes/decrescentes de 4+ caracteres ou trilhas de teclado."""
+    if len(normalizada) < 4:
+        return False
+    for i in range(len(normalizada) - 3):
+        trecho = normalizada[i : i + 4]
+        if all("0" <= c <= "9" for c in trecho) or all("a" <= c <= "z" for c in trecho):
+            diffs = [ord(trecho[j + 1]) - ord(trecho[j]) for j in range(3)]
+            if diffs == [1, 1, 1] or diffs == [-1, -1, -1]:
+                return True
+    for trilha in _TRILHAS_TECLADO:
+        for base in (trilha, trilha[::-1]):
+            for i in range(len(base) - 3):
+                if base[i : i + 4] in normalizada:
+                    return True
+    return False
+
+
+def validar_forca_senha(senha: str, username: str = "") -> None:
+    """Valida a política de senhas fortes; lança ValueError em pt-BR se fraca."""
+    if not isinstance(senha, str) or not senha.strip():
+        raise ValueError("A senha não pode estar em branco.")
+    if len(senha) < SENHA_MIN_CARACTERES:
+        raise ValueError(f"A senha deve ter no mínimo {SENHA_MIN_CARACTERES} caracteres.")
+
+    normalizada = "".join(senha.split()).lower()
+    if len(set(normalizada)) <= 1:
+        raise ValueError("A senha não pode ser composta por apenas um caractere repetido.")
+    if normalizada in _SENHAS_FRACAS:
+        raise ValueError("Esta senha é muito comum ou previsível. Escolha uma senha mais forte.")
+    if normalizada.isdigit():
+        raise ValueError("A senha não pode conter apenas números.")
+    if _contem_sequencia_simples(normalizada):
+        raise ValueError(
+            "A senha não pode conter sequências simples (como 1234, abcd ou qwer)."
+        )
+
+    tem_letra = any(c.isalpha() for c in senha)
+    tem_numero_ou_especial = any(
+        c.isdigit() or (not c.isalnum() and not c.isspace()) for c in senha
+    )
+    if not (tem_letra and tem_numero_ou_especial):
+        raise ValueError(
+            "A senha deve combinar letras com pelo menos um número ou caractere especial."
+        )
+
+    u_norm = "".join((username or "").split()).lower()
+    if len(u_norm) >= 3:
+        u_letras = "".join(c for c in u_norm if c.isalpha())
+        s_letras = "".join(c for c in normalizada if c.isalpha())
+        if (
+            normalizada == u_norm
+            or re.fullmatch(rf"\d*{re.escape(u_norm)}\d*", normalizada)
+            or (len(u_letras) >= 3 and s_letras == u_letras)
+        ):
+            raise ValueError(
+                "A senha não pode ser igual ou baseada apenas no nome de usuário."
+            )
 
 _HOSTS_BLOQUEADOS = {
     "localhost",

@@ -255,6 +255,25 @@ _PERMS_PACIENTES_LEITURA = (
 )
 
 
+def _parse_data_nascimento_termo(termo: str) -> date | None:
+    """Converte termos DD/MM/AAAA ou DDMMAAAA (1900..2100) em date válido."""
+    s = (termo or "").strip()
+    if not s:
+        return None
+    m = _re.fullmatch(r"(\d{2})/(\d{2})/(\d{4})", s)
+    if not m:
+        m = _re.fullmatch(r"(\d{2})(\d{2})(\d{4})", s)
+    if not m:
+        return None
+    dia, mes, ano = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if not (1900 <= ano <= 2100 and 1 <= mes <= 12 and 1 <= dia <= 31):
+        return None
+    try:
+        return date(ano, mes, dia)
+    except ValueError:
+        return None
+
+
 def _montar_filtros_busca_paciente(
     db: Session, termo_limpo: str
 ) -> tuple[list[Paciente] | None, object | None, object | None]:
@@ -288,7 +307,7 @@ def _montar_filtros_busca_paciente(
             exatos = unicos
         return exatos, None, None
 
-    # 2. Busca multi-palavras inteligente e sem distinção de acentos
+    # 2. Busca multi-palavras inteligente e sem distinção de acentos (inclui data de nascimento DD/MM/AAAA ou DDMMAAAA)
     palavras = [p for p in termo_limpo.split() if p]
     if not palavras:
         return [], None, None
@@ -300,12 +319,19 @@ def _montar_filtros_busca_paciente(
     for w in palavras:
         w_clean = remover_acentos(w)
         w_digits = "".join(c for c in w if c.isdigit())
+        data_w = _parse_data_nascimento_termo(w)
+        if data_w is not None and "/" in w:
+            # Data com barras explícitas (DD/MM/AAAA): filtra diretamente pela data de nascimento
+            lista_and.append(Paciente.nascimento == data_w)
+            continue
         conds = [
             nome_campo.ilike(f"%{w_clean}%"),
             Paciente.cpf.ilike(f"%{w}%"),
             Paciente.cns.ilike(f"%{w}%"),
             Paciente.codigo_prontuario.ilike(f"%{w}%"),
         ]
+        if data_w is not None:
+            conds.append(Paciente.nascimento == data_w)
         if w_digits:
             if len(w_digits) <= 9 and int(w_digits) <= 2147483647:
                 conds.append(Paciente.id == int(w_digits))
@@ -316,11 +342,14 @@ def _montar_filtros_busca_paciente(
         lista_and.append(or_(*conds))
 
     primeira_w = remover_acentos(palavras[0])
-    ordem_relevancia = case(
+    data_primeira = _parse_data_nascimento_termo(palavras[0])
+    regras_ordem = [
         (nome_campo.ilike(f"{primeira_w}%"), 0),
         (Paciente.codigo_prontuario.ilike(f"{palavras[0]}%"), 0),
-        else_=1,
-    )
+    ]
+    if data_primeira is not None:
+        regras_ordem.append((Paciente.nascimento == data_primeira, 0))
+    ordem_relevancia = case(*regras_ordem, else_=1)
     return None, and_(*lista_and), ordem_relevancia
 
 
@@ -436,9 +465,38 @@ def _mapa_siblings_cpf_cns(db: Session, pacs: list[Paciente]) -> dict[int, int]:
     return sibling_to_canon
 
 
+def _resolver_unidades_pacientes(db: Session, pacs: list[Paciente]) -> dict[int, tuple[str, str]]:
+    """Resolve (unidade_nome, unidade_cnes) em lote a partir de UnidadeSaude quando ausente no paciente."""
+    u_ids = {p.unidade_saude_id for p in pacs if p.unidade_saude_id and (not p.unidade_nome or not p.unidade_cnes)}
+    cnes_busca = {(p.unidade_cnes or "").strip() for p in pacs if not p.unidade_nome and (p.unidade_cnes or "").strip()}
+    by_id: dict[int, UnidadeSaude] = {}
+    by_cnes: dict[str, UnidadeSaude] = {}
+    if u_ids:
+        for u in db.exec(select(UnidadeSaude).where(UnidadeSaude.id.in_(u_ids))).all():
+            if u.id is not None:
+                by_id[u.id] = u
+    if cnes_busca:
+        for u in db.exec(select(UnidadeSaude).where(UnidadeSaude.cnes.in_(cnes_busca))).all():
+            if u.cnes:
+                by_cnes[u.cnes.strip()] = u
+
+    res: dict[int, tuple[str, str]] = {}
+    for p in pacs:
+        if not p.id:
+            continue
+        u_obj = by_id.get(p.unidade_saude_id) if p.unidade_saude_id else None
+        if not u_obj and p.unidade_cnes:
+            u_obj = by_cnes.get(p.unidade_cnes.strip())
+        u_nome = (p.unidade_nome or "").strip() or (u_obj.nome if u_obj else "")
+        u_cnes = (p.unidade_cnes or "").strip() or (u_obj.cnes if u_obj else "")
+        res[p.id] = (u_nome, u_cnes)
+    return res
+
+
 def _enriquecer_pacientes_com_fila(db: Session, pacs: list[Paciente]) -> list[PacienteOut]:
     if not pacs:
         return []
+    unidades_resolvidas = _resolver_unidades_pacientes(db, pacs)
     sibling_to_canon = _mapa_siblings_cpf_cns(db, pacs)
     todos_ids = list(sibling_to_canon.keys())
     contagens: dict[int, dict[str, int]] = {}
@@ -482,6 +540,11 @@ def _enriquecer_pacientes_com_fila(db: Session, pacs: list[Paciente]) -> list[Pa
     out_lista: list[PacienteOut] = []
     for p in pacs:
         item = PacienteOut.model_validate(p, from_attributes=True)
+        u_nome, u_cnes = unidades_resolvidas.get(p.id or 0, ("", ""))
+        if not item.unidade_nome and u_nome:
+            item.unidade_nome = u_nome
+        if not item.unidade_cnes and u_cnes:
+            item.unidade_cnes = u_cnes
         b = contagens.get(p.id or 0, {})
         item.fila_aguardando_qtd = b.get("aguardando", 0)
         item.fila_agendado_qtd = b.get("agendado", 0)
@@ -596,8 +659,11 @@ def buscar_pacientes_pec(
             .limit(40)
         ).all()
     locais = _deduplicar_lista_pacientes(list(locais))[:20]
-    out = [
-        {
+    unidades_resolvidas = _resolver_unidades_pacientes(db, locais)
+    out = []
+    for p in locais:
+        u_nome, u_cnes = unidades_resolvidas.get(p.id or 0, (p.unidade_nome or "", p.unidade_cnes or ""))
+        out.append({
             "id": p.id,
             "origem": "local",
             "nome": p.nome,
@@ -605,17 +671,21 @@ def buscar_pacientes_pec(
             "cpf": p.cpf,
             "prontuario": p.codigo_prontuario or (gerar_prontuario_aleatorio(None, p.id) if p.id else str(p.co_seq_cidadao_pec or "")),
             "nascimento": p.nascimento.isoformat() if p.nascimento else None,
-            "ubs": p.unidade_nome or "",
-            "unidade_cnes": p.unidade_cnes or "",
+            "unidade_saude_id": p.unidade_saude_id,
+            "unidade_nome": u_nome,
+            "ubs": u_nome,
+            "unidade_cnes": u_cnes,
             "equipe": p.equipe_esf or "",
             "microarea": p.microarea or "",
             "nome_mae": p.nome_mae or "",
             "telefone": p.telefone or "",
-            "endereco": f"{p.endereco}, {p.endereco_numero}" if p.endereco and p.endereco_numero else (p.endereco or ""),
+            "endereco": p.endereco or "",
+            "endereco_numero": p.endereco_numero or "",
+            "complemento": p.complemento or "",
             "bairro": p.bairro or "",
-        }
-        for p in locais
-    ]
+            "municipio": p.municipio or "",
+            "cep": p.cep or "",
+        })
     if termo_limpo:
         try:
             from app.core.audit import registrar_log_pesquisa
@@ -3530,12 +3600,17 @@ def criar_exame(data: ExameIn, db: Session = Depends(get_db), ator: User = Depen
             raise HTTPException(403, "Apenas a Central de Regulação/TFD pode realizar agendamento direto. Usuários do PSF lançam pedidos para a fila de espera.")
 
     # Perfil de Lançamento Restrito: apenas adiciona à fila, sem marcar urgente e sem agendar direto
-    from app.services.permissoes import tem_tela
+    from app.services.permissoes import tem_acao, tem_tela
     if not ator.is_superuser and tem_tela(ator, "tfd_fila_lancamento") and not tem_tela(ator, "tfd_exames") and not tem_tela(ator, "tfd_medico"):
         if (payload.get("prioridade") or "").lower() == "urgente":
             raise HTTPException(403, "Perfil de lançamento restrito não pode definir prioridade urgente.")
         if payload.get("data_agendada"):
             raise HTTPException(403, "Perfil de lançamento restrito não pode realizar agendamento direto.")
+
+    # Agendamento direto exige permissão RBAC de agenda TFD
+    if payload.get("data_agendada") or (payload.get("status") or "").lower() == "agendado":
+        if not ator.is_superuser and not (tem_tela(ator, "tfd_agenda") and tem_acao(ator, "tfd_agenda", "criar")):
+            raise HTTPException(403, "Sem permissão de Agenda TFD (tfd_agenda:criar) para realizar agendamento direto.")
 
     # Snapshot de unidade de saúde de origem (se informada ou vinculada)
     if payload.get("unidade_saude_id") and not payload.get("data_agendada"):
@@ -3634,12 +3709,16 @@ def criar_exames_lote(
         if ator.unidade_saude_id and data.unidade_saude_id and data.unidade_saude_id != ator.unidade_saude_id:
             raise HTTPException(403, "Usuários do PSF só podem lançar pedidos vinculados à sua própria unidade.")
 
-    from app.services.permissoes import tem_tela
+    from app.services.permissoes import tem_acao, tem_tela
     if not ator.is_superuser and tem_tela(ator, "tfd_fila_lancamento") and not tem_tela(ator, "tfd_exames") and not tem_tela(ator, "tfd_medico"):
         if (data.prioridade or "").lower() == "urgente":
             raise HTTPException(403, "Perfil de lançamento restrito não pode definir prioridade urgente.")
         if data.agendamento_direto:
             raise HTTPException(403, "Perfil de lançamento restrito não pode realizar agendamento direto.")
+
+    if data.agendamento_direto or any(i.data_agendada for i in data.itens):
+        if not ator.is_superuser and not (tem_tela(ator, "tfd_agenda") and tem_acao(ator, "tfd_agenda", "criar")):
+            raise HTTPException(403, "Sem permissão de Agenda TFD (tfd_agenda:criar) para realizar agendamento direto em lote.")
 
     if data.agendamento_direto:
         if not data.data_agendada:

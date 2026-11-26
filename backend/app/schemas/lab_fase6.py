@@ -107,6 +107,8 @@ class FilaPsfIn(BaseModel):
 
 class FilaPsfOut(FilaPsfIn):
     id: int
+    codigo_solicitacao: str = ""
+    numero_pedido: str = ""
     especialidade: str = ""
     status: str = "na_fila"
     prioridade: str = "rotina"
@@ -114,6 +116,10 @@ class FilaPsfOut(FilaPsfIn):
     paciente_cpf: str = ""
     paciente_cns: str = ""
     paciente_prontuario: str = ""
+    paciente_endereco: str = ""
+    paciente_numero: str = ""
+    paciente_bairro: str = ""
+    paciente_municipio: str = ""
     exames_nomes: list[str] = Field(default_factory=list)
     lote_id: int | None = None
     criado_por: str = ""
@@ -348,6 +354,12 @@ class ComprovanteExameOut(BaseModel):
     qr_code_url: str | None = None
     codigo_curto: str | None = None
     numero_pedido: str | None = None
+    codigo_solicitacao: str | None = None
+    tipo_comprovante: str = "agendamento"
+    data_pedido: str = ""
+    data_solicitacao: str = ""
+    fila_nome: str = ""
+    prioridade: str = ""
     exige_preparo: bool = True
     transporte: dict | None = None
     instrucoes_transporte: str = ""

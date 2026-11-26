@@ -11,9 +11,11 @@ import {
   Filter,
   FlaskConical,
   Layers,
+  MapPin,
   MessageSquare,
   Minus,
   Plus,
+  Printer,
   RotateCcw,
   Search,
   Stethoscope,
@@ -56,6 +58,8 @@ import AlertaPedidoDuplicado from "../../components/AlertaPedidoDuplicado";
 import { useAuth } from "../../hooks/useAuth";
 import { useConfirm } from "../../components/ConfirmDialog";
 import ModalPedidosInelegiveis from "../../components/ModalPedidosInelegiveis";
+import ComprovanteExameModal from "../../components/ComprovanteExameModal";
+import { acoesEfetivas, type Acao } from "../../permissoes";
 import { useBackdropClose } from "../../hooks/useBackdropClose";
 
 const MEDICO_GENERICO = "Médico da Unidade / Responsável Técnico";
@@ -66,10 +70,56 @@ function fmtData(s?: string) {
   return a && m && d ? `${d}/${m}/${a}` : s;
 }
 
+function tempoEspera(s?: string | null): string {
+  if (!s) return "";
+  const base = s.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(base)) return "";
+  const [ano, mes, dia] = base.split("-").map(Number);
+  const dt = new Date(ano, mes - 1, dia);
+  if (isNaN(dt.getTime())) return "";
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  const dias = Math.floor((hoje.getTime() - dt.getTime()) / (1000 * 60 * 60 * 24));
+  if (dias < 0) return "";
+  if (dias === 0) return "hoje";
+  if (dias === 1) return "1 dia";
+  if (dias < 30) return `${dias} dias`;
+  const meses = Math.floor(dias / 30.4375);
+  return meses < 12 ? `${meses} ${meses === 1 ? "mês" : "meses"}` : `${Math.floor(dias / 365.25)}a`;
+}
+
+function formatarEnderecoPaciente(p?: {
+  endereco?: string;
+  endereco_numero?: string;
+  complemento?: string;
+  bairro?: string;
+  municipio?: string;
+  cep?: string;
+} | null): string {
+  if (!p) return "";
+  const log = [p.endereco, p.endereco_numero ? `nº ${p.endereco_numero}` : ""].filter(Boolean).join(", ");
+  return [log, p.complemento, p.bairro, p.municipio, p.cep ? `CEP ${p.cep}` : ""].filter(Boolean).join(" · ");
+}
+
 export default function FilaPsf() {
   const { confirmar } = useConfirm();
-  const { user, can } = useAuth();
-  const podeEditar = Boolean(user?.is_superuser || can("lab_fila") || can("lab"));
+  const auth = useAuth();
+  const { user, can } = auth;
+  const canAction = (tela: string, acao: "ver" | "criar" | "editar" | "excluir"): boolean => {
+    if (typeof (auth as any).canAction === "function") {
+      return Boolean((auth as any).canAction(tela, acao));
+    }
+    if (!user) return false;
+    if (user.is_superuser) return true;
+    if (!can(tela) && !can("lab")) return false;
+    return acoesEfetivas((user.acoes ?? {}) as Record<string, Acao[]>, tela).includes(acao);
+  };
+  const podeCriar = canAction("lab_fila", "criar");
+  const podeEditar = canAction("lab_fila", "editar");
+  const podeExcluir = canAction("lab_fila", "excluir");
+  const usuarioRestritoUnidade = Boolean(
+    user?.unidade_saude_id && !user?.is_superuser && !can("lab") && !can("lab_marcacao") && !can("lab_agenda")
+  );
   const [lista, setLista] = useState<FilaPsfItem[]>([]);
   const [unidades, setUnidades] = useState<UnidadeSaude[]>([]);
   const [medicos, setMedicos] = useState<Medico[]>([]);
@@ -81,6 +131,8 @@ export default function FilaPsf() {
   const [modalInelegiveisAberto, setModalInelegiveisAberto] = useState(false);
   const [itemEditando, setItemEditando] = useState<FilaPsfItem | null>(null);
   const [detalheItem, setDetalheItem] = useState<FilaPsfItem | null>(null);
+  const [pedidoCriado, setPedidoCriado] = useState<FilaPsfItem | null>(null);
+  const [comprovanteFilaId, setComprovanteFilaId] = useState<number | null>(null);
 
   const [modalLote, setModalLote] = useState(false);
   const [selecionados, setSelecionados] = useState<Set<number>>(new Set());
@@ -103,7 +155,9 @@ export default function FilaPsf() {
     tipo_fila: "",
     especialidade: "",
     unidade_psf: "",
+    unidade_saude_id: "",
     medico: MEDICO_GENERICO,
+    prioridade: "rotina",
     data_solicitacao: new Date().toISOString().slice(0, 10),
     data_pedido: new Date().toISOString().slice(0, 10),
     justificativa: "",
@@ -112,6 +166,7 @@ export default function FilaPsf() {
 
   // Procedimentos SIGTAP (Exames de Sangue)
   const [buscaSig, setBuscaSig] = useState("");
+  const [feedbackExame, setFeedbackExame] = useState("");
   const [sigtap, setSigtap] = useState<SigtapProc[]>([]);
   const [itens, setItens] = useState<{ sigtap: SigtapProc; quantidade: number }[]>([]);
 
@@ -174,6 +229,12 @@ export default function FilaPsf() {
     return () => clearTimeout(t);
   }, [buscaSig, modalAberto, form.tipo_fila, form.especialidade]);
 
+  useEffect(() => {
+    if (!feedbackExame) return;
+    const t = window.setTimeout(() => setFeedbackExame(""), 2500);
+    return () => window.clearTimeout(t);
+  }, [feedbackExame]);
+
   function adicionarSig(s: SigtapProc) {
     setItens((prev) => {
       const idx = prev.findIndex((i) => i.sigtap.id === s.id);
@@ -184,6 +245,8 @@ export default function FilaPsf() {
       }
       return [...prev, { sigtap: s, quantidade: 1 }];
     });
+    setBuscaSig("");
+    setFeedbackExame(`Exame "${s.descricao}" adicionado ao pedido!`);
   }
 
   function removerItem(sigtapId: number) {
@@ -212,6 +275,7 @@ export default function FilaPsf() {
   const [filtroFilaId, setFiltroFilaId] = useState("");
   const [filtrosAvancados, setFiltrosAvancados] = useState(false);
   const [filtroEspecialidade, setFiltroEspecialidade] = useState("");
+  const [filtroPrioridade, setFiltroPrioridade] = useState("");
   const [termoBusca, setTermoBusca] = useState("");
   const [filtroUnidade, setFiltroUnidade] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("na_fila");
@@ -227,6 +291,7 @@ export default function FilaPsf() {
         status: filtroStatus !== "todos" ? filtroStatus : undefined,
         unidade: filtroUnidade || undefined,
         especialidade: filtroEspecialidade.trim() || undefined,
+        prioridade: filtroPrioridade || undefined,
         data_de: dataDe || undefined,
         data_ate: dataAte || undefined,
         q: termoBusca.trim() || undefined,
@@ -287,26 +352,35 @@ export default function FilaPsf() {
 
   useEffect(() => {
     carregar(1);
-  }, [filtroFilaId, filtroStatus, filtroUnidade, dataDe, dataAte]);
+  }, [filtroFilaId, filtroStatus, filtroUnidade, filtroPrioridade, dataDe, dataAte]);
 
   useEffect(() => {
     const t = setTimeout(() => {
       carregar(1);
     }, 300);
     return () => clearTimeout(t);
-  }, [termoBusca]);
+  }, [termoBusca, filtroEspecialidade]);
 
   function limparFiltros() {
     setFiltroFilaId("");
     setTermoBusca("");
     setFiltroUnidade("");
+    setFiltroEspecialidade("");
+    setFiltroPrioridade("");
     setFiltroStatus("na_fila");
     setDataDe("");
     setDataAte("");
   }
 
   const temFiltroAtivo = Boolean(
-    filtroFilaId || termoBusca.trim() || filtroUnidade || filtroStatus !== "na_fila" || dataDe || dataAte
+    filtroFilaId ||
+      termoBusca.trim() ||
+      filtroUnidade ||
+      filtroEspecialidade.trim() ||
+      filtroPrioridade ||
+      filtroStatus !== "na_fila" ||
+      dataDe ||
+      dataAte
   );
 
   function set(k: string, v: string) {
@@ -327,13 +401,18 @@ export default function FilaPsf() {
     setPacienteSelecionado(null);
     setItens([]);
     setBuscaSig("");
+    setFeedbackExame("");
+    const unidInitNome = unidPadraoUsuario || (unidades[0]?.nome ?? "");
+    const unidInitObj = unidades.find((x) => x.nome === unidInitNome);
     setForm({
       paciente_id: "",
       fila_id: filtroFilaId || (filasLab[0] ? String(filasLab[0].id) : ""),
       tipo_fila: "",
       especialidade: "",
-      unidade_psf: unidPadraoUsuario || (unidades[0]?.nome ?? ""),
+      unidade_psf: unidInitNome,
+      unidade_saude_id: unidInitObj ? String(unidInitObj.id) : (user?.unidade_saude_id ? String(user.unidade_saude_id) : ""),
       medico: MEDICO_GENERICO,
+      prioridade: "rotina",
       data_solicitacao: new Date().toISOString().slice(0, 10),
       data_pedido: new Date().toISOString().slice(0, 10),
       justificativa: "",
@@ -352,7 +431,11 @@ export default function FilaPsf() {
       nome: item.paciente_nome,
       cpf: item.paciente_cpf || "",
       cns: item.paciente_cns || "",
-      prontuario: item.paciente_prontuario || "",
+      codigo_prontuario: item.paciente_prontuario || "",
+      endereco: item.paciente_endereco || "",
+      endereco_numero: item.paciente_numero || "",
+      bairro: item.paciente_bairro || "",
+      municipio: item.paciente_municipio || "",
     } as unknown as Paciente);
     setItens(
       (item.sigtap_ids || []).map((id, idx) => ({
@@ -365,13 +448,23 @@ export default function FilaPsf() {
       }))
     );
     setBuscaSig("");
+    setFeedbackExame("");
+    const unidObj = unidades.find(
+      (u) => (item.unidade_saude_id && u.id === item.unidade_saude_id) || u.nome === item.unidade_psf
+    );
     setForm({
       paciente_id: String(item.paciente_id),
       fila_id: item.fila_id ? String(item.fila_id) : "",
       tipo_fila: item.tipo_fila || "",
       especialidade: item.especialidade || "",
       unidade_psf: item.unidade_psf || "",
+      unidade_saude_id: item.unidade_saude_id
+        ? String(item.unidade_saude_id)
+        : unidObj
+        ? String(unidObj.id)
+        : "",
       medico: item.medico || MEDICO_GENERICO,
+      prioridade: item.prioridade || "rotina",
       data_solicitacao: item.data_solicitacao || new Date().toISOString().slice(0, 10),
       data_pedido: item.data_pedido || item.data_solicitacao || new Date().toISOString().slice(0, 10),
       justificativa: item.justificativa || "",
@@ -502,12 +595,18 @@ export default function FilaPsf() {
     const filaSel = filasLab.find((f) => String(f.id) === form.fila_id);
     const tipoFilaNome = filaSel?.nome || form.especialidade.trim();
     const filaIdNum = form.fila_id ? Number(form.fila_id) : undefined;
+    const unidMatch = unidades.find((u) => u.nome === form.unidade_psf.trim());
+    const unidIdNum = form.unidade_saude_id
+      ? Number(form.unidade_saude_id)
+      : unidMatch?.id;
     try {
       if (itemEditando) {
         await filaPsfAtualizar(itemEditando.id, {
           especialidade: form.especialidade.trim(),
           unidade_psf: form.unidade_psf.trim(),
+          unidade_saude_id: unidIdNum,
           medico: form.medico.trim(),
+          prioridade: form.prioridade || "rotina",
           data_solicitacao: form.data_solicitacao,
           data_pedido: form.data_pedido || form.data_solicitacao,
           justificativa: form.justificativa.trim(),
@@ -517,12 +616,16 @@ export default function FilaPsf() {
           tipo_fila: tipoFilaNome,
         });
         setOk(`Pedido de ${itemEditando.paciente_nome} atualizado com sucesso.`);
+        fecharModal();
+        await carregar();
       } else {
-        await filaPsfCriar({
+        const criado = await filaPsfCriar({
           paciente_id: Number(form.paciente_id),
           especialidade: form.especialidade.trim(),
           unidade_psf: form.unidade_psf.trim(),
+          unidade_saude_id: unidIdNum,
           medico: form.medico.trim(),
+          prioridade: form.prioridade || "rotina",
           data_solicitacao: form.data_solicitacao,
           data_pedido: form.data_pedido || form.data_solicitacao,
           justificativa: form.justificativa.trim(),
@@ -531,10 +634,11 @@ export default function FilaPsf() {
           fila_id: filaIdNum,
           tipo_fila: tipoFilaNome,
         });
-        setOk("Pedido incluído na fila de exames com sucesso.");
+        setOk(`Pedido ${criado.codigo_solicitacao || `#${criado.id}`} incluído na fila de exames com sucesso.`);
+        fecharModal();
+        await carregar();
+        setPedidoCriado(criado);
       }
-      fecharModal();
-      await carregar();
     } catch (e: any) {
       setErro(e?.response?.data?.detail || "Erro ao salvar pedido na fila.");
     } finally {
@@ -638,6 +742,7 @@ export default function FilaPsf() {
               ...(selecionados.size > 0 ? { ids: Array.from(selecionados).join(",") } : {}),
               ...(filtroStatus !== "todos" ? { status: filtroStatus } : {}),
               ...(filtroUnidade ? { unidade: filtroUnidade } : {}),
+              ...(filtroPrioridade ? { prioridade: filtroPrioridade } : {}),
               ...(dataDe ? { data_de: dataDe } : {}),
               ...(dataAte ? { data_ate: dataAte } : {}),
               ...(termoBusca.trim() ? { q: termoBusca.trim() } : {}),
@@ -670,9 +775,11 @@ export default function FilaPsf() {
           </Button>
 
           {/* Botão Principal para abrir Dialog de Novo Pedido */}
-          <Button onClick={abrirModalNovo} className="flex items-center gap-1.5 shadow-sm">
-            <Plus className="h-4 w-4" /> Novo pedido na fila
-          </Button>
+          {podeCriar && (
+            <Button onClick={abrirModalNovo} className="flex items-center gap-1.5 shadow-sm">
+              <Plus className="h-4 w-4" /> Novo pedido na fila
+            </Button>
+          )}
         </div>
       </div>
 
@@ -717,7 +824,7 @@ export default function FilaPsf() {
               <Input
                 value={termoBusca}
                 onChange={(e) => setTermoBusca(e.target.value)}
-                placeholder="Nome, CPF, prontuário ou exame…"
+                placeholder="Nº do pedido, nome, CPF, prontuário ou exame…"
                 className="pl-9 h-10 text-xs bg-white"
               />
               {termoBusca && (
@@ -788,6 +895,7 @@ export default function FilaPsf() {
                 <option value="na_fila">Na Fila (Aguardando)</option>
                 <option value="fora_da_fila">Já Saíram da Fila</option>
                 <option value="agendado">Agendado</option>
+                <option value="realizado">Realizado</option>
                 <option value="cancelado">Cancelado</option>
               </Select>
             </div>
@@ -796,7 +904,7 @@ export default function FilaPsf() {
               type="button"
               onClick={() => setFiltrosAvancados(!filtrosAvancados)}
               className={`h-10 px-2.5 text-xs font-bold border transition mt-auto shrink-0 ${
-                filtrosAvancados || filtroEspecialidade || filtroStatus === "fora_da_fila"
+                filtrosAvancados || filtroEspecialidade || filtroPrioridade || filtroStatus === "fora_da_fila"
                   ? "bg-teal text-white border-teal"
                   : "bg-white text-sus-900 border-sus-900/20 hover:bg-sand"
               }`}
@@ -858,7 +966,22 @@ export default function FilaPsf() {
 
         {/* Painel Expansível de Filtros Avançados */}
         {filtrosAvancados && (
-          <div className="p-3.5 bg-sand/40 border border-teal/20 rounded-xl grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+          <div className="p-3.5 bg-sand/40 border border-teal/20 rounded-xl grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+            <div>
+              <Label className="text-xs font-bold text-sus-950 mb-1 block">
+                Prioridade
+              </Label>
+              <Select
+                value={filtroPrioridade}
+                onChange={(e) => setFiltroPrioridade(e.target.value)}
+                className="!h-9 text-xs font-medium text-sus-950 bg-white"
+              >
+                <option value="">Todas as prioridades</option>
+                <option value="rotina">Rotina</option>
+                <option value="urgente">Urgente</option>
+                <option value="alta">Alta</option>
+              </Select>
+            </div>
             <div>
               <Label className="text-xs font-bold text-sus-950 mb-1 block">
                 Especialidade Solicitante
@@ -883,6 +1006,7 @@ export default function FilaPsf() {
                 <option value="na_fila">Apenas na Fila (Aguardando)</option>
                 <option value="fora_da_fila">✓ Apenas Pedidos que já Saíram da Fila</option>
                 <option value="agendado">Somente Agendados</option>
+                <option value="realizado">Somente Realizados</option>
                 <option value="cancelado">Somente Cancelados</option>
               </Select>
             </div>
@@ -918,6 +1042,16 @@ export default function FilaPsf() {
               {filtroUnidade && (
                 <span className="rounded-md bg-teal/10 px-1.5 py-0.5 text-teal font-semibold">
                   PSF: {filtroUnidade}
+                </span>
+              )}
+              {filtroPrioridade && (
+                <span className="rounded-md bg-teal/10 px-1.5 py-0.5 text-teal font-semibold">
+                  Prioridade: {filtroPrioridade}
+                </span>
+              )}
+              {filtroEspecialidade.trim() && (
+                <span className="rounded-md bg-teal/10 px-1.5 py-0.5 text-teal font-semibold">
+                  Especialidade: {filtroEspecialidade.trim()}
                 </span>
               )}
               {(dataDe || dataAte) && (
@@ -962,13 +1096,13 @@ export default function FilaPsf() {
                     title="Selecionar todos os pedidos desta página"
                   />
                 </th>
+                <th className="px-4 py-3 font-semibold">Nº Pedido</th>
                 <th className="px-4 py-3 font-semibold">Data Pedido</th>
                 <th className="px-4 py-3 font-semibold">Paciente</th>
-                <th className="px-4 py-3 font-semibold">Especialidade</th>
+                <th className="px-4 py-3 font-semibold">Fila / Especialidade</th>
                 <th className="px-4 py-3 font-semibold">PSF / Origem</th>
-                <th className="px-4 py-3 font-semibold">Médico Requisitante</th>
-                <th className="px-4 py-3 font-semibold">Exames Solicitados</th>
-                <th className="px-4 py-3 font-semibold">Justificativa / Obs</th>
+                <th className="px-4 py-3 font-semibold">Médico</th>
+                <th className="px-4 py-3 font-semibold">Exames</th>
                 <th className="px-4 py-3 font-semibold">Status</th>
                 <th className="px-4 py-3 text-right font-semibold">Ações</th>
               </tr>
@@ -976,14 +1110,18 @@ export default function FilaPsf() {
             <tbody>
               {lista.map((f) => {
                 const isSelected = selecionados.has(f.id);
+                const numPedido = f.codigo_solicitacao || f.numero_pedido || `#${f.id}`;
+                const espera = tempoEspera(f.data_pedido || f.data_solicitacao);
+                const endResumo = [f.paciente_endereco, f.paciente_numero ? `nº ${f.paciente_numero}` : "", f.paciente_bairro].filter(Boolean).join(" · ");
                 return (
                   <tr
                     key={f.id}
-                    className={`border-b border-sus-900/5 last:border-0 hover:bg-sand/30 transition ${
+                    onClick={() => setDetalheItem(f)}
+                    className={`border-b border-sus-900/5 last:border-0 hover:bg-sand/30 transition cursor-pointer ${
                       isSelected ? "bg-teal/5" : ""
                     }`}
                   >
-                    <td className="px-4 py-3 text-center">
+                    <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
                         checked={isSelected}
@@ -991,8 +1129,21 @@ export default function FilaPsf() {
                         className="h-4 w-4 rounded border-sus-900/20 text-teal focus:ring-teal"
                       />
                     </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span
+                        className="inline-flex items-center rounded bg-sus-900/10 px-2 py-0.5 text-[11px] font-mono font-bold text-sus-900"
+                        title={`Protocolo do Pedido (#${f.id})`}
+                      >
+                        {numPedido}
+                      </span>
+                    </td>
                     <td className="px-4 py-3 text-xs font-semibold text-sus-950 whitespace-nowrap">
-                      {fmtData(f.data_pedido || f.data_solicitacao)}
+                      <div>{fmtData(f.data_pedido || f.data_solicitacao)}</div>
+                      {espera && (
+                        <span className="text-[10px] font-medium text-amber-800">
+                          há {espera}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -1007,7 +1158,13 @@ export default function FilaPsf() {
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-ink/50">
+                      {endResumo && (
+                        <div className="mt-0.5 flex items-center gap-1 text-[11px] text-ink/60 truncate max-w-[280px]" title={endResumo}>
+                          <MapPin className="h-3 w-3 shrink-0 text-teal" />
+                          <span className="truncate">{endResumo}</span>
+                        </div>
+                      )}
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-ink/50 mt-0.5">
                         {f.paciente_cpf && <span>CPF: {f.paciente_cpf}</span>}
                         {f.paciente_prontuario && <span>Pront.: {f.paciente_prontuario}</span>}
                         {(f.criado_por_nome || f.criado_por) && (
@@ -1032,7 +1189,7 @@ export default function FilaPsf() {
                     </td>
                     <td className="px-4 py-3 text-xs text-ink/75 font-medium">{f.unidade_psf}</td>
                     <td className="px-4 py-3 text-xs text-ink/75">{f.medico}</td>
-                    <td className="px-4 py-3 text-xs whitespace-nowrap">
+                    <td className="px-4 py-3 text-xs whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       {f.exames_nomes && f.exames_nomes.length > 0 ? (
                         <button
                           type="button"
@@ -1046,44 +1203,57 @@ export default function FilaPsf() {
                         <span className="text-ink/40 text-[11px]">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-xs text-ink/65 max-w-xs">
-                      {f.justificativa && (
-                        <p className="font-medium text-sus-950 truncate" title={f.justificativa}>
-                          {f.justificativa}
-                        </p>
-                      )}
-                      {f.obs && <p className="italic text-[11px] truncate" title={f.obs}>{f.obs}</p>}
-                      {!f.justificativa && !f.obs && "—"}
-                    </td>
                     <td className="px-4 py-3 text-xs">
-                      {f.status === "agendado" ? (
-                        <div className="flex flex-col gap-0.5">
-                          <span className="inline-flex items-center gap-1 w-fit rounded-md bg-teal/15 px-2 py-0.5 font-bold text-teal border border-teal/30 text-[11px]">
-                            <CalendarDays className="h-3 w-3" /> Agendado
-                          </span>
-                          {(f.data_agendada || f.data_solicitacao) && (
-                            <span className="text-[10px] text-ink/65 font-medium">
-                              p/ {fmtData(f.data_agendada || f.data_solicitacao)} {f.hora_agendada ? `às ${f.hora_agendada}` : ""}
+                      <div className="flex flex-col gap-1">
+                        {f.status === "agendado" ? (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="inline-flex items-center gap-1 w-fit rounded-md bg-teal/15 px-2 py-0.5 font-bold text-teal border border-teal/30 text-[11px]">
+                              <CalendarDays className="h-3 w-3" /> Agendado
                             </span>
-                          )}
-                        </div>
-                      ) : f.status === "na_fila" || f.status === "aguardando" ? (
-                        <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 font-semibold text-amber-700 border border-amber-200">
-                          Na Fila (Aguardando)
-                        </span>
-                      ) : f.status === "realizado" ? (
-                        <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700 border border-emerald-200">
-                          <CheckCircle2 className="h-3 w-3" /> Realizado
-                        </span>
-                      ) : (
-                        <span className="rounded-md bg-slate-100 px-2 py-0.5 font-semibold text-slate-600 border border-slate-200">
-                          {f.status}
-                        </span>
-                      )}
+                            {(f.data_agendada || f.data_solicitacao) && (
+                              <span className="text-[10px] text-ink/65 font-medium">
+                                p/ {fmtData(f.data_agendada || f.data_solicitacao)} {f.hora_agendada ? `às ${f.hora_agendada}` : ""}
+                              </span>
+                            )}
+                          </div>
+                        ) : f.status === "na_fila" || f.status === "aguardando" ? (
+                          <span className="inline-flex items-center gap-1 w-fit rounded-md bg-amber-50 px-2 py-0.5 font-semibold text-amber-700 border border-amber-200">
+                            Na Fila (Aguardando)
+                          </span>
+                        ) : f.status === "realizado" ? (
+                          <span className="inline-flex items-center gap-1 w-fit rounded-md bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700 border border-emerald-200">
+                            <CheckCircle2 className="h-3 w-3" /> Realizado
+                          </span>
+                        ) : (
+                          <span className="w-fit rounded-md bg-slate-100 px-2 py-0.5 font-semibold text-slate-600 border border-slate-200">
+                            {f.status}
+                          </span>
+                        )}
+                        {f.prioridade && f.prioridade !== "rotina" && (
+                          <span
+                            className={`w-fit rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
+                              f.prioridade === "urgente"
+                                ? "bg-rose-100 text-rose-800 border border-rose-300"
+                                : "bg-orange-100 text-orange-800 border border-orange-300"
+                            }`}
+                          >
+                            {f.prioridade}
+                          </span>
+                        )}
+                      </div>
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="inline-flex items-center gap-1">
                         <button
+                          type="button"
+                          onClick={() => setComprovanteFilaId(f.id)}
+                          className="rounded-lg p-1.5 text-teal hover:bg-teal/10 transition"
+                          title="Imprimir Comprovante de Inclusão na Fila"
+                        >
+                          <Printer className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => setDetalheItem(f)}
                           className="rounded-lg p-1.5 text-sus-900 hover:bg-sand transition"
                           title="Ver detalhes do pedido"
@@ -1092,6 +1262,7 @@ export default function FilaPsf() {
                         </button>
                         {podeEditar && (
                           <button
+                            type="button"
                             onClick={() => abrirModalEditar(f)}
                             className="rounded-lg p-1.5 text-teal hover:bg-teal/10 transition"
                             title="Editar pedido"
@@ -1099,13 +1270,16 @@ export default function FilaPsf() {
                             <Edit2 className="h-4 w-4" />
                           </button>
                         )}
-                        <button
-                          onClick={() => excluir(f.id)}
-                          className="rounded-lg p-1.5 text-red-600 hover:bg-red-50 transition"
-                          title="Remover da fila"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                        {podeExcluir && (
+                          <button
+                            type="button"
+                            onClick={() => excluir(f.id)}
+                            className="rounded-lg p-1.5 text-red-600 hover:bg-red-50 transition"
+                            title="Remover da fila"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -1113,7 +1287,7 @@ export default function FilaPsf() {
               })}
               {lista.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-10 text-center text-ink/45">
+                  <td colSpan={10} className="px-4 py-10 text-center text-ink/45">
                     Nenhum pedido aguardando na fila de exames.
                   </td>
                 </tr>
@@ -1136,7 +1310,7 @@ export default function FilaPsf() {
           {...modalBackdrop}
         >
           <div
-            className="rise max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 sm:p-8 shadow-2xl"
+            className="rise max-h-[92vh] w-full max-w-6xl overflow-y-auto rounded-3xl bg-white p-6 sm:p-8 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Cabeçalho do Dialog */}
@@ -1160,330 +1334,439 @@ export default function FilaPsf() {
               </button>
             </div>
 
-            {/* Formulário Simétrico e Padronizado */}
+            {/* Formulário em 2 Colunas (SIGTAP à direita) */}
             <div className="space-y-4">
-              {/* Seção 1: Paciente e Origem do Pedido */}
-              <div className="rounded-2xl border border-sus-900/10 p-4 space-y-3">
-                <h4 className="text-xs font-bold uppercase tracking-wide text-sus-900/70 flex items-center gap-1.5">
-                  <User className="h-3.5 w-3.5 text-teal" /> 1. Paciente e Origem do Pedido
-                </h4>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                {/* Coluna da Esquerda: Paciente, Origem e Justificativa */}
+                <div className="space-y-4">
+                  {/* Seção 1: Paciente e Origem do Pedido */}
+                  <div className="rounded-2xl border border-sus-900/10 p-4 space-y-3">
+                    <h4 className="text-xs font-bold uppercase tracking-wide text-sus-900/70 flex items-center gap-1.5">
+                      <User className="h-3.5 w-3.5 text-teal" /> 1. Paciente e Origem do Pedido
+                    </h4>
 
-                <BuscaPacienteAutocomplete
-                  pacienteId={form.paciente_id}
-                  pacienteInicial={pacienteSelecionado}
-                  onSelect={(p) => {
-                    setPacienteSelecionado(p);
-                    set("paciente_id", p ? String(p.id) : "");
-                  }}
-                  label="Paciente"
-                  obrigatorio
-                />
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-start">
-                  <div>
-                    <div className="flex items-center min-h-[26px] mb-1.5">
-                      <Label className="!mb-0 flex items-center gap-1.5">
-                        <Calendar className="h-3.5 w-3.5 text-teal" /> Data do Pedido *
-                      </Label>
-                    </div>
-                    <Input
-                      type="date"
-                      value={form.data_pedido || form.data_solicitacao}
-                      onChange={(e) => {
-                        set("data_pedido", e.target.value);
-                        set("data_solicitacao", e.target.value);
-                      }}
-                      required
-                    />
-                    <p className="mt-1.5 text-[11px] text-ink/50">
-                      Data da requisição médica.
-                    </p>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center min-h-[26px] mb-1.5">
-                      <Label className="!mb-0 flex items-center gap-1.5">
-                        <FlaskConical className="h-3.5 w-3.5 text-purple-600" /> Fila de Sangue
-                      </Label>
-                    </div>
-                    <Select
-                      value={form.fila_id}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        const fObj = filasLab.find((f) => String(f.id) === val);
+                    <BuscaPacienteAutocomplete
+                      pacienteId={form.paciente_id}
+                      pacienteInicial={pacienteSelecionado}
+                      onSelect={(p) => {
+                        setPacienteSelecionado(p);
+                        if (!p) {
+                          set("paciente_id", "");
+                          return;
+                        }
+                        const unidPac =
+                          !itemEditando && !usuarioRestritoUnidade && p.unidade_saude_id
+                            ? unidades.find((u) => u.id === p.unidade_saude_id)
+                            : undefined;
+                        const unidNomeFallback =
+                          !itemEditando && !usuarioRestritoUnidade && !unidPac
+                            ? ((p as any).unidade_nome || "").trim()
+                            : "";
                         setForm((prev) => ({
                           ...prev,
-                          fila_id: val,
-                          tipo_fila: fObj ? fObj.nome : prev.tipo_fila,
-                          especialidade: prev.especialidade || (fObj ? fObj.nome : ""),
+                          paciente_id: String(p.id),
+                          ...(unidPac
+                            ? { unidade_psf: unidPac.nome, unidade_saude_id: String(unidPac.id) }
+                            : unidNomeFallback
+                            ? { unidade_psf: unidNomeFallback, unidade_saude_id: String(p.unidade_saude_id || "") }
+                            : {}),
                         }));
                       }}
-                      className="text-xs !h-9"
-                    >
-                      <option value="">Selecione a fila…</option>
-                      {filasLab.map((f) => (
-                        <option key={f.id} value={String(f.id)}>
-                          {f.nome}
-                        </option>
-                      ))}
-                    </Select>
-                    <p className="mt-1.5 text-[11px] text-ink/50">
-                      Fila do laboratório.
-                    </p>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center min-h-[26px] mb-1.5">
-                      <Label className="!mb-0 flex items-center gap-1.5">
-                        <Building2 className="h-3.5 w-3.5 text-teal" /> Especialidade *
-                      </Label>
-                    </div>
-                    <Input
-                      value={form.especialidade}
-                      onChange={(e) => set("especialidade", e.target.value)}
-                      placeholder="Ex: Clínica Geral, Pediatria…"
-                      required
-                      list="especialidades-lab-datalist"
-                      className="text-xs"
+                      label="Paciente"
+                      obrigatorio
                     />
-                    <datalist id="especialidades-lab-datalist">
-                      {listaEspecialidades.map((esp) => (
-                        <option key={esp.id} value={esp.nome}>
-                          {esp.codigo_cbo ? `CBO ${esp.codigo_cbo} · ` : ""}{esp.nome}
-                        </option>
-                      ))}
-                    </datalist>
-                    <p className="mt-1.5 text-[11px] text-ink/50">
-                      Especialidade solicitante (selecionada ou sugerida pelo médico).
-                    </p>
-                  </div>
 
-                  <div>
-                    <div className="flex items-center min-h-[26px] mb-1.5">
-                      <Label className="!mb-0 flex items-center gap-1.5">
-                        <Building2 className="h-3.5 w-3.5 text-teal" /> PSF / Unidade *
-                      </Label>
-                    </div>
-                    <Combobox
-                      value={form.unidade_psf}
-                      onChange={(v) => set("unidade_psf", v)}
-                      options={opcoesUnidades}
-                      placeholder="Buscar unidade de saúde…"
-                      searchPlaceholder="Digite o nome da unidade…"
-                      emptyText="Nenhuma unidade encontrada"
-                      showAll={false}
-                    />
-                    {user?.unidade_saude_nome && form.unidade_psf === user.unidade_saude_nome ? (
-                      <p className="mt-1.5 text-[11px] text-teal font-medium">
-                        ✓ Unidade vinculada ao seu usuário
-                      </p>
-                    ) : (
-                      <p className="mt-1.5 text-[11px] text-ink/50">
-                        Posto de saúde requisitante.
-                      </p>
+                    {/* Endereço e dados cadastrais do paciente logo abaixo do seletor */}
+                    {pacienteSelecionado && (
+                      <div className="rounded-xl border border-sus-900/10 bg-sand/30 p-3 text-xs space-y-1.5">
+                        <div className="flex flex-wrap gap-x-4 gap-y-1">
+                          {pacienteSelecionado.cpf && (
+                            <span>
+                              <span className="text-ink/60">CPF:</span>{" "}
+                              <strong className="font-mono text-sus-950">{pacienteSelecionado.cpf}</strong>
+                            </span>
+                          )}
+                          {pacienteSelecionado.cns && (
+                            <span>
+                              <span className="text-ink/60">CNS:</span>{" "}
+                              <strong className="font-mono text-sus-950">{pacienteSelecionado.cns}</strong>
+                            </span>
+                          )}
+                          {pacienteSelecionado.codigo_prontuario && (
+                            <span>
+                              <span className="text-ink/60">Pront.:</span>{" "}
+                              <strong className="font-mono text-sus-950">{pacienteSelecionado.codigo_prontuario}</strong>
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-start gap-1.5 text-ink/80">
+                          <MapPin className="h-3.5 w-3.5 shrink-0 text-teal mt-0.5" />
+                          <span>
+                            <strong className="text-sus-950">Endereço:</strong>{" "}
+                            {formatarEnderecoPaciente(pacienteSelecionado) || "Endereço não informado no cadastro"}
+                          </span>
+                        </div>
+                      </div>
                     )}
-                  </div>
 
-                  <div>
-                    <div className="flex items-center justify-between min-h-[26px] mb-1.5">
-                      <Label className="!mb-0 flex items-center gap-1.5">
-                        <Stethoscope className="h-3.5 w-3.5 text-teal" /> Médico(a) *
-                      </Label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setForm((prev) => ({
-                            ...prev,
-                            medico: MEDICO_GENERICO,
-                            especialidade: prev.especialidade || "Clínica Geral",
-                          }));
-                        }}
-                        className="inline-flex items-center rounded-md bg-teal/10 px-2 py-0.5 text-[10px] font-bold text-teal hover:bg-teal/20 transition"
-                        title="Redefinir para Médico da Unidade"
-                      >
-                        🏥 Médico Unidade
-                      </button>
-                    </div>
-                    <Combobox
-                      value={form.medico}
-                      onChange={(v) => {
-                        const medObj = medicos.find((m) => m.nome === v);
-                        const espMed = (medObj?.especialidade || (medObj?.especialidades ? medObj.especialidades.split(",")[0].trim() : "") || "").trim();
-                        setForm((prev) => ({
-                          ...prev,
-                          medico: v,
-                          especialidade: espMed || prev.especialidade,
-                        }));
-                      }}
-                      options={opcoesMedicos}
-                      placeholder="Buscar médico requisitante…"
-                      searchPlaceholder="Digite o nome do médico ou CRM…"
-                      emptyText="Nenhum médico encontrado"
-                      showAll={false}
-                    />
-                    <p className="mt-1.5 text-[11px] text-ink/50">
-                      Médico(a) solicitante.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Seção 2: Procedimentos SIGTAP (Exames de Sangue) */}
-              <div className="rounded-2xl border border-sus-900/10 p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold uppercase tracking-wide text-sus-900/70 flex items-center gap-1.5">
-                    <FlaskConical className="h-3.5 w-3.5 text-teal" /> 2. Procedimentos SIGTAP *
-                  </h4>
-                  <span className="text-xs font-bold text-teal">
-                    {totalItens} {totalItens === 1 ? "exame adicionado" : "exames adicionados"}
-                  </span>
-                </div>
-
-                <div className="relative">
-                  <Search className="absolute left-3 top-3 h-4 w-4 text-ink/40" />
-                  <Input
-                    className="pl-9"
-                    placeholder="Buscar código ou nome do exame laboratorial na tabela SIGTAP…"
-                    value={buscaSig}
-                    onChange={(e) => setBuscaSig(e.target.value)}
-                  />
-                </div>
-
-                {/* Resultados da busca */}
-                <div className="max-h-36 space-y-1 overflow-auto rounded-xl border border-sus-900/10 p-2 bg-sand/30">
-                  {sigtap.slice(0, 30).map((s) => (
-                    <button
-                      key={s.id}
-                      type="button"
-                      onClick={() => adicionarSig(s)}
-                      className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-white transition"
-                    >
-                      <Plus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-teal" />
-                      <span>
-                        <b>{s.codigo}</b> · {s.descricao}
-                      </span>
-                    </button>
-                  ))}
-                  {buscaSig.trim() && sigtap.length === 0 && (
-                    <p className="py-2 text-center text-xs text-ink/45">
-                      Nenhum exame encontrado para "{buscaSig}".
-                    </p>
-                  )}
-                  {!buscaSig.trim() && sigtap.length === 0 && (
-                    <p className="py-2 text-center text-xs text-ink/45">
-                      Digite para buscar exames laboratoriais na tabela SIGTAP.
-                    </p>
-                  )}
-                </div>
-
-                {/* Lista de itens selecionados */}
-                <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                  {itens.map((i) => (
-                    <div
-                      key={i.sigtap.id}
-                      className="flex items-center gap-2 rounded-xl border border-sus-900/10 bg-white p-2 text-xs"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-semibold text-sus-950">
-                          <b>{i.sigtap.codigo || `#${i.sigtap.id}`}</b> · {i.sigtap.descricao}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+                      <div>
+                        <div className="flex items-center min-h-[26px] mb-1.5">
+                          <Label className="!mb-0 flex items-center gap-1.5">
+                            <Calendar className="h-3.5 w-3.5 text-teal" /> Data do Pedido *
+                          </Label>
+                        </div>
+                        <Input
+                          type="date"
+                          value={form.data_pedido || form.data_solicitacao}
+                          onChange={(e) => {
+                            set("data_pedido", e.target.value);
+                            set("data_solicitacao", e.target.value);
+                          }}
+                          required
+                        />
+                        <p className="mt-1 text-[11px] text-ink/50">
+                          Data da requisição médica.
                         </p>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => setQtd(i.sigtap.id, i.quantidade - 1)}
-                          className="rounded-lg p-1 text-sus-900 hover:bg-sand"
-                          title="Diminuir"
+
+                      <div>
+                        <div className="flex items-center min-h-[26px] mb-1.5">
+                          <Label className="!mb-0 flex items-center gap-1.5">
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-600" /> Prioridade
+                          </Label>
+                        </div>
+                        <Select
+                          value={form.prioridade}
+                          onChange={(e) => set("prioridade", e.target.value)}
+                          className="text-xs !h-9"
                         >
-                          <Minus className="h-3 w-3" />
-                        </button>
-                        <input
-                          type="number"
-                          min={1}
-                          max={99}
-                          value={i.quantidade}
-                          onChange={(e) => setQtd(i.sigtap.id, Number(e.target.value))}
-                          className="w-12 rounded-lg border border-sus-900/15 px-1.5 py-0.5 text-center text-xs font-bold"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setQtd(i.sigtap.id, i.quantidade + 1)}
-                          className="rounded-lg p-1 text-sus-900 hover:bg-sand"
-                          title="Aumentar"
-                        >
-                          <Plus className="h-3 w-3" />
-                        </button>
+                          <option value="rotina">Rotina</option>
+                          <option value="urgente">Urgente</option>
+                          <option value="alta">Alta</option>
+                        </Select>
+                        <p className="mt-1 text-[11px] text-ink/50">
+                          Classificação clínica do pedido.
+                        </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => removerItem(i.sigtap.id)}
-                        className="rounded-lg p-1 text-red-600 hover:bg-red-50"
-                        title="Excluir item"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+
+                      <div>
+                        <div className="flex items-center min-h-[26px] mb-1.5">
+                          <Label className="!mb-0 flex items-center gap-1.5">
+                            <FlaskConical className="h-3.5 w-3.5 text-purple-600" /> Fila de Sangue
+                          </Label>
+                        </div>
+                        <Select
+                          value={form.fila_id}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            const fObj = filasLab.find((f) => String(f.id) === val);
+                            setForm((prev) => ({
+                              ...prev,
+                              fila_id: val,
+                              tipo_fila: fObj ? fObj.nome : prev.tipo_fila,
+                              especialidade: prev.especialidade || (fObj ? fObj.nome : ""),
+                            }));
+                          }}
+                          className="text-xs !h-9"
+                        >
+                          <option value="">Selecione a fila…</option>
+                          {filasLab.map((f) => (
+                            <option key={f.id} value={String(f.id)}>
+                              {f.nome}
+                            </option>
+                          ))}
+                        </Select>
+                        <p className="mt-1 text-[11px] text-ink/50">
+                          Fila do laboratório.
+                        </p>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center min-h-[26px] mb-1.5">
+                          <Label className="!mb-0 flex items-center gap-1.5">
+                            <Building2 className="h-3.5 w-3.5 text-teal" /> Especialidade *
+                          </Label>
+                        </div>
+                        <Input
+                          value={form.especialidade}
+                          onChange={(e) => set("especialidade", e.target.value)}
+                          placeholder="Ex: Clínica Geral, Pediatria…"
+                          required
+                          list="especialidades-lab-datalist"
+                          className="text-xs"
+                        />
+                        <datalist id="especialidades-lab-datalist">
+                          {listaEspecialidades.map((esp) => (
+                            <option key={esp.id} value={esp.nome}>
+                              {esp.codigo_cbo ? `CBO ${esp.codigo_cbo} · ` : ""}{esp.nome}
+                            </option>
+                          ))}
+                        </datalist>
+                        <p className="mt-1 text-[11px] text-ink/50">
+                          Especialidade solicitante.
+                        </p>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center min-h-[26px] mb-1.5">
+                          <Label className="!mb-0 flex items-center gap-1.5">
+                            <Building2 className="h-3.5 w-3.5 text-teal" /> PSF / Unidade *
+                          </Label>
+                        </div>
+                        <Combobox
+                          value={form.unidade_psf}
+                          onChange={(v) => {
+                            const uObj = unidades.find((u) => u.nome === v);
+                            setForm((prev) => ({
+                              ...prev,
+                              unidade_psf: v,
+                              unidade_saude_id: uObj ? String(uObj.id) : "",
+                            }));
+                          }}
+                          options={opcoesUnidades}
+                          placeholder="Buscar unidade de saúde…"
+                          searchPlaceholder="Digite o nome da unidade…"
+                          emptyText="Nenhuma unidade encontrada"
+                          showAll={false}
+                        />
+                        {pacienteSelecionado?.unidade_saude_id &&
+                        String(pacienteSelecionado.unidade_saude_id) === form.unidade_saude_id ? (
+                          <p className="mt-1 text-[11px] text-teal font-medium">
+                            ✓ Unidade vinculada ao cadastro do paciente
+                          </p>
+                        ) : user?.unidade_saude_nome && form.unidade_psf === user.unidade_saude_nome ? (
+                          <p className="mt-1 text-[11px] text-teal font-medium">
+                            ✓ Unidade vinculada ao seu usuário
+                          </p>
+                        ) : (
+                          <p className="mt-1 text-[11px] text-ink/50">
+                            Posto de saúde requisitante.
+                          </p>
+                        )}
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between min-h-[26px] mb-1.5">
+                          <Label className="!mb-0 flex items-center gap-1.5">
+                            <Stethoscope className="h-3.5 w-3.5 text-teal" /> Médico(a) *
+                          </Label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setForm((prev) => ({
+                                ...prev,
+                                medico: MEDICO_GENERICO,
+                                especialidade: prev.especialidade || "Clínica Geral",
+                              }));
+                            }}
+                            className="inline-flex items-center rounded-md bg-teal/10 px-2 py-0.5 text-[10px] font-bold text-teal hover:bg-teal/20 transition"
+                            title="Redefinir para Médico da Unidade"
+                          >
+                            🏥 Médico Unidade
+                          </button>
+                        </div>
+                        <Combobox
+                          value={form.medico}
+                          onChange={(v) => {
+                            const medObj = medicos.find((m) => m.nome === v);
+                            const espMed = (medObj?.especialidade || (medObj?.especialidades ? medObj.especialidades.split(",")[0].trim() : "") || "").trim();
+                            setForm((prev) => ({
+                              ...prev,
+                              medico: v,
+                              especialidade: espMed || prev.especialidade,
+                            }));
+                          }}
+                          options={opcoesMedicos}
+                          placeholder="Buscar médico requisitante…"
+                          searchPlaceholder="Digite o nome do médico ou CRM…"
+                          emptyText="Nenhum médico encontrado"
+                          showAll={false}
+                        />
+                        <p className="mt-1 text-[11px] text-ink/50">
+                          Médico(a) solicitante.
+                        </p>
+                      </div>
                     </div>
-                  ))}
-                  {itens.length === 0 && (
-                    <p className="rounded-xl bg-sand/60 px-3 py-2.5 text-center text-xs text-ink/50">
-                      Nenhum exame adicionado ao pedido ainda. Pesquise e adicione acima.
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {/* ALERTA DE DUPLICIDADE EM TEMPO REAL */}
-              {duplicidadeFila && !ignorarDuplicidadeFila && (
-                <AlertaPedidoDuplicado
-                  pedido={duplicidadeFila}
-                  tipoModulo="lab"
-                  onProsseguir={() => setIgnorarDuplicidadeFila(true)}
-                  onCancelar={() => {
-                    setItens([]);
-                    setDuplicidadeFila(null);
-                  }}
-                />
-              )}
-
-              {/* Seção 3: Justificativa Clínica e Observações */}
-              <div className="rounded-2xl border border-sus-900/10 p-4 space-y-3">
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <Label className="!mb-0">3. Justificativa Clínica do Pedido *</Label>
-                    <span
-                      className={`text-[11px] font-bold ${
-                        form.justificativa.trim().length < 12 ? "text-amber-600" : "text-teal"
-                      }`}
-                    >
-                      {form.justificativa.trim().length}/12 caracteres mínimos
-                    </span>
                   </div>
-                  <textarea
-                    rows={3}
-                    maxLength={500}
-                    value={form.justificativa}
-                    onChange={(e) => set("justificativa", e.target.value)}
-                    placeholder="Informe a indicação/justificativa clínica do pedido de exames (mínimo de 12 caracteres)..."
-                    className={`w-full rounded-xl border bg-white px-3 py-2 text-xs outline-none transition focus:border-teal ${
-                      form.justificativa.length > 0 && form.justificativa.trim().length < 12
-                        ? "border-red-400 focus:border-red-500"
-                        : "border-sus-900/15"
-                    }`}
-                  />
-                  {form.justificativa.trim().length > 0 && form.justificativa.trim().length < 12 && (
-                    <p className="mt-1 text-[11px] text-red-600 font-medium">
-                      A justificativa deve conter pelo menos 12 caracteres para validar o pedido.
-                    </p>
-                  )}
+
+                  {/* Seção 3: Justificativa Clínica e Observações */}
+                  <div className="rounded-2xl border border-sus-900/10 p-4 space-y-3">
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <Label className="!mb-0">3. Justificativa Clínica do Pedido *</Label>
+                        <span
+                          className={`text-[11px] font-bold ${
+                            form.justificativa.trim().length < 12 ? "text-amber-600" : "text-teal"
+                          }`}
+                        >
+                          {form.justificativa.trim().length}/12 caracteres mínimos
+                        </span>
+                      </div>
+                      <textarea
+                        rows={3}
+                        maxLength={500}
+                        value={form.justificativa}
+                        onChange={(e) => set("justificativa", e.target.value)}
+                        placeholder="Informe a indicação/justificativa clínica do pedido de exames (mínimo de 12 caracteres)..."
+                        className={`w-full rounded-xl border bg-white px-3 py-2 text-xs outline-none transition focus:border-teal ${
+                          form.justificativa.length > 0 && form.justificativa.trim().length < 12
+                            ? "border-red-400 focus:border-red-500"
+                            : "border-sus-900/15"
+                        }`}
+                      />
+                      {form.justificativa.trim().length > 0 && form.justificativa.trim().length < 12 && (
+                        <p className="mt-1 text-[11px] text-red-600 font-medium">
+                          A justificativa deve conter pelo menos 12 caracteres para validar o pedido.
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <Label>Observações Adicionais (opcional)</Label>
+                      <Input
+                        placeholder="Orientações específicas, sintomas, prioridades…"
+                        value={form.obs}
+                        onChange={(e) => set("obs", e.target.value)}
+                      />
+                    </div>
+                  </div>
                 </div>
 
-                <div>
-                  <Label>Observações Adicionais (opcional)</Label>
-                  <Input
-                    placeholder="Orientações específicas, sintomas, prioridades…"
-                    value={form.obs}
-                    onChange={(e) => set("obs", e.target.value)}
-                  />
+                {/* Coluna da Direita: Procedimentos SIGTAP (Exames de Sangue) */}
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-sus-900/10 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold uppercase tracking-wide text-sus-900/70 flex items-center gap-1.5">
+                        <FlaskConical className="h-3.5 w-3.5 text-teal" /> 2. Procedimentos SIGTAP *
+                      </h4>
+                      <span className="text-xs font-bold text-teal">
+                        {totalItens} {totalItens === 1 ? "exame adicionado" : "exames adicionados"}
+                      </span>
+                    </div>
+
+                    <div className="relative">
+                      <Search className="absolute left-3 top-3 h-4 w-4 text-ink/40" />
+                      <Input
+                        className="pl-9 pr-8"
+                        placeholder="Buscar código ou nome do exame laboratorial na tabela SIGTAP…"
+                        value={buscaSig}
+                        onChange={(e) => setBuscaSig(e.target.value)}
+                      />
+                      {buscaSig && (
+                        <button
+                          type="button"
+                          onClick={() => setBuscaSig("")}
+                          className="absolute right-2.5 top-2.5 text-ink/40 hover:text-ink/80 transition"
+                          title="Limpar busca de exame"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+
+                    {feedbackExame && (
+                      <div className="flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                        <span className="truncate">{feedbackExame}</span>
+                      </div>
+                    )}
+
+                    {/* Resultados da busca */}
+                    <div className="max-h-48 space-y-1 overflow-auto rounded-xl border border-sus-900/10 p-2 bg-sand/30">
+                      {sigtap.slice(0, 30).map((s) => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => adicionarSig(s)}
+                          className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-white transition"
+                        >
+                          <Plus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-teal" />
+                          <span>
+                            <b>{s.codigo}</b> · {s.descricao}
+                          </span>
+                        </button>
+                      ))}
+                      {buscaSig.trim() && sigtap.length === 0 && (
+                        <p className="py-2 text-center text-xs text-ink/45">
+                          Nenhum exame encontrado para "{buscaSig}".
+                        </p>
+                      )}
+                      {!buscaSig.trim() && sigtap.length === 0 && (
+                        <p className="py-2 text-center text-xs text-ink/45">
+                          Digite para buscar exames laboratoriais na tabela SIGTAP.
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Lista de itens selecionados */}
+                    <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                      {itens.map((i) => (
+                        <div
+                          key={i.sigtap.id}
+                          className="flex items-center gap-2 rounded-xl border border-sus-900/10 bg-white p-2 text-xs"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-semibold text-sus-950">
+                              <b>{i.sigtap.codigo || `#${i.sigtap.id}`}</b> · {i.sigtap.descricao}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setQtd(i.sigtap.id, i.quantidade - 1)}
+                              className="rounded-lg p-1 text-sus-900 hover:bg-sand"
+                              title="Diminuir"
+                            >
+                              <Minus className="h-3 w-3" />
+                            </button>
+                            <input
+                              type="number"
+                              min={1}
+                              max={99}
+                              value={i.quantidade}
+                              onChange={(e) => setQtd(i.sigtap.id, Number(e.target.value))}
+                              className="w-12 rounded-lg border border-sus-900/15 px-1.5 py-0.5 text-center text-xs font-bold"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setQtd(i.sigtap.id, i.quantidade + 1)}
+                              className="rounded-lg p-1 text-sus-900 hover:bg-sand"
+                              title="Aumentar"
+                            >
+                              <Plus className="h-3 w-3" />
+                            </button>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removerItem(i.sigtap.id)}
+                            className="rounded-lg p-1 text-red-600 hover:bg-red-50"
+                            title="Excluir item"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                      {itens.length === 0 && (
+                        <p className="rounded-xl bg-sand/60 px-3 py-2.5 text-center text-xs text-ink/50">
+                          Nenhum exame adicionado ao pedido ainda. Pesquise e adicione acima.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* ALERTA DE DUPLICIDADE EM TEMPO REAL */}
+                  {duplicidadeFila && !ignorarDuplicidadeFila && (
+                    <AlertaPedidoDuplicado
+                      pedido={duplicidadeFila}
+                      tipoModulo="lab"
+                      onProsseguir={() => setIgnorarDuplicidadeFila(true)}
+                      onCancelar={() => {
+                        setItens([]);
+                        setDuplicidadeFila(null);
+                      }}
+                    />
+                  )}
                 </div>
               </div>
 
@@ -1656,10 +1939,13 @@ export default function FilaPsf() {
           >
             <div className="flex items-start justify-between border-b border-sus-900/10 pb-3">
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <h3 className="font-display text-lg font-bold text-sus-950">
                     {detalheItem.paciente_nome}
                   </h3>
+                  <span className="inline-flex items-center rounded bg-sus-900/10 px-2 py-0.5 text-xs font-mono font-bold text-sus-900">
+                    {detalheItem.codigo_solicitacao || detalheItem.numero_pedido || `#${detalheItem.id}`}
+                  </span>
                   <span
                     className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-bold ${
                       detalheItem.status === "agendado"
@@ -1671,12 +1957,38 @@ export default function FilaPsf() {
                   >
                     {detalheItem.status === "agendado" ? "Agendado" : detalheItem.status === "realizado" ? "Realizado" : "Na Fila (Aguardando)"}
                   </span>
+                  {detalheItem.prioridade && detalheItem.prioridade !== "rotina" && (
+                    <span
+                      className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-bold uppercase ${
+                        detalheItem.prioridade === "urgente"
+                          ? "bg-rose-100 text-rose-800 border border-rose-300"
+                          : "bg-orange-100 text-orange-800 border border-orange-300"
+                      }`}
+                    >
+                      {detalheItem.prioridade}
+                    </span>
+                  )}
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-ink/60">
                   {detalheItem.paciente_cpf && <span>CPF: <b>{detalheItem.paciente_cpf}</b></span>}
                   {detalheItem.paciente_cns && <span>CNS: <b>{detalheItem.paciente_cns}</b></span>}
                   {detalheItem.paciente_prontuario && <span>Prontuário: <b>{detalheItem.paciente_prontuario}</b></span>}
                 </div>
+                {(detalheItem.paciente_endereco || detalheItem.paciente_bairro) && (
+                  <div className="mt-1 flex items-center gap-1 text-xs text-ink/70">
+                    <MapPin className="h-3.5 w-3.5 text-teal shrink-0" />
+                    <span>
+                      {[
+                        detalheItem.paciente_endereco,
+                        detalheItem.paciente_numero ? `nº ${detalheItem.paciente_numero}` : "",
+                        detalheItem.paciente_bairro,
+                        detalheItem.paciente_municipio,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  </div>
+                )}
               </div>
               <button
                 type="button"
@@ -1787,7 +2099,7 @@ export default function FilaPsf() {
             </div>
 
             {/* Rodapé do Modal de Detalhes */}
-            <div className="flex items-center justify-between pt-3 border-t border-sus-900/10">
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-sus-900/10">
               <button
                 type="button"
                 onClick={() => setDetalheItem(null)}
@@ -1795,22 +2107,157 @@ export default function FilaPsf() {
               >
                 Fechar
               </button>
-              {podeEditar && (
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
-                  onClick={() => {
-                    const item = detalheItem;
-                    setDetalheItem(null);
-                    abrirModalEditar(item);
-                  }}
-                  className="flex items-center gap-1.5 text-xs"
+                  type="button"
+                  onClick={() => setComprovanteFilaId(detalheItem.id)}
+                  className="border border-teal bg-white text-teal hover:bg-teal/10 flex items-center gap-1.5 text-xs"
                 >
-                  <Edit2 className="h-3.5 w-3.5" />
-                  Editar Pedido
+                  <Printer className="h-3.5 w-3.5" />
+                  Imprimir Comprovante
                 </Button>
-              )}
+                {podeEditar && (
+                  <Button
+                    onClick={() => {
+                      const item = detalheItem;
+                      setDetalheItem(null);
+                      abrirModalEditar(item);
+                    }}
+                    className="flex items-center gap-1.5 text-xs"
+                  >
+                    <Edit2 className="h-3.5 w-3.5" />
+                    Editar Pedido
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
         </div>
+      )}
+
+      {/* DIALOG PÓS-LANÇAMENTO */}
+      {pedidoCriado && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-sus-950/60 p-4"
+          onClick={() => setPedidoCriado(null)}
+        >
+          <div
+            className="rise w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-sus-900/10 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-100 text-emerald-700">
+                  <CheckCircle2 className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="font-display text-lg font-bold text-sus-950">
+                    Pedido incluído na fila com sucesso!
+                  </h3>
+                  <p className="text-xs text-ink/60">
+                    O pedido foi registrado na Fila Municipal de Exames de Sangue.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPedidoCriado(null)}
+                className="rounded-xl p-1.5 text-ink/40 hover:bg-sand transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="rounded-2xl border border-teal/25 bg-teal/5 p-4 text-center">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-teal block">
+                Número do Pedido Gerado
+              </span>
+              <p className="mt-1 font-mono text-2xl font-black text-sus-950 tracking-wide">
+                {pedidoCriado.codigo_solicitacao || pedidoCriado.numero_pedido || `#${pedidoCriado.id}`}
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-sus-900/10 bg-sand/30 p-3.5 text-xs space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <span className="text-ink/55 block text-[11px]">Paciente</span>
+                  <strong className="text-sus-950">{pedidoCriado.paciente_nome}</strong>
+                </div>
+                <div>
+                  <span className="text-ink/55 block text-[11px]">Data do Pedido</span>
+                  <strong className="text-sus-950">
+                    {fmtData(pedidoCriado.data_pedido || pedidoCriado.data_solicitacao)}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-ink/55 block text-[11px]">PSF / Unidade</span>
+                  <strong className="text-sus-950">{pedidoCriado.unidade_psf}</strong>
+                </div>
+                <div>
+                  <span className="text-ink/55 block text-[11px]">Fila / Especialidade</span>
+                  <strong className="text-teal">
+                    {pedidoCriado.tipo_fila || pedidoCriado.especialidade || "Geral"}
+                  </strong>
+                </div>
+              </div>
+              {pedidoCriado.exames_nomes && pedidoCriado.exames_nomes.length > 0 && (
+                <div className="pt-2 border-t border-sus-900/10">
+                  <span className="text-ink/55 block text-[11px] mb-1">
+                    Exames Solicitados ({pedidoCriado.exames_nomes.length})
+                  </span>
+                  <ul className="list-disc pl-4 space-y-0.5 text-sus-950 font-medium max-h-28 overflow-y-auto">
+                    {pedidoCriado.exames_nomes.map((nome, idx) => (
+                      <li key={idx}>{nome}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                onClick={() => {
+                  const fid = pedidoCriado.id;
+                  setPedidoCriado(null);
+                  setComprovanteFilaId(fid);
+                }}
+                className="bg-teal hover:bg-teal/90 text-white font-bold flex items-center justify-center gap-2"
+              >
+                <Printer className="h-4 w-4" />
+                Imprimir Comprovante de Inclusão na Fila
+              </Button>
+              {podeCriar && (
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setPedidoCriado(null);
+                    abrirModalNovo();
+                  }}
+                  className="border border-sus-900/15 bg-white text-sus-950 hover:bg-sand"
+                >
+                  <Plus className="h-4 w-4" />
+                  Novo Pedido
+                </Button>
+              )}
+              <Button
+                type="button"
+                onClick={() => setPedidoCriado(null)}
+                className="border border-sus-900/15 bg-white text-ink hover:bg-sand"
+              >
+                Fechar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DO COMPROVANTE DE INCLUSÃO NA FILA */}
+      {comprovanteFilaId !== null && (
+        <ComprovanteExameModal
+          filaPsfId={comprovanteFilaId}
+          onClose={() => setComprovanteFilaId(null)}
+        />
       )}
 
       {modalInelegiveisAberto && (

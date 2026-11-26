@@ -377,7 +377,7 @@ class ViagemFilaOut(ViagemFilaIn):
 # ---------- Fila de exames / procedimentos ----------
 class ExameBase(BaseModel):
     paciente_id: int
-    exame: str = Field(default="", max_length=120)
+    exame: str = Field(default="", max_length=1000)
     especialidade: str = Field(default="", max_length=80)
     tipo_fila: str = Field(default="ELETIVO", max_length=80)
     fila_id: int | None = None
@@ -405,7 +405,7 @@ class ExameBase(BaseModel):
 
 
 class ExameIn(ExameBase):
-    exame: str = Field(min_length=2, max_length=120)
+    exame: str = Field(min_length=2, max_length=1000)
     especialidade: str = Field(min_length=2, max_length=120, description="Especialidade requisitante obrigatória")
     prioridade: str = Field(default="rotina", pattern="^(rotina|urgente)$")
     status: str = Field(
@@ -541,7 +541,7 @@ class ExameLoteCriarItemIn(BaseModel):
 
 class ExameLoteCriarIn(BaseModel):
     tipo_fila: str = Field(min_length=1, max_length=80)
-    exame: str = Field(min_length=2, max_length=120)
+    exame: str = Field(min_length=2, max_length=1000)
     codigo_procedimento: str = Field(default="", max_length=20)
     especialidade: str = Field(default="", max_length=80)
     codigo_especialidade: str = Field(default="", max_length=10)
@@ -615,7 +615,7 @@ class TipoFilaOut(TipoFilaIn):
 
 class ProcedimentoIn(BaseModel):
     codigo: str = Field(default="", max_length=20)
-    nome: str = Field(min_length=2, max_length=150)
+    nome: str = Field(min_length=2, max_length=1000)
     tipo_fila: str = Field(default="", max_length=80)
     codigo_especialidade: str = Field(default="", max_length=10)
     nome_especialidade: str = Field(default="", max_length=120)
@@ -656,7 +656,7 @@ class FiltrosOpcoesOut(BaseModel):
 class FaturaIn(BaseModel):
     viagem_id: int | None = None
     paciente_id: int
-    procedimento: str = Field(min_length=2, max_length=150)
+    procedimento: str = Field(min_length=2, max_length=1000)
     codigo_sigtap: str = Field(default="", max_length=20)
     competencia: str = Field(min_length=7, max_length=7, pattern=r"^\d{4}-\d{2}$")
     quantidade: int = Field(default=1, ge=1)

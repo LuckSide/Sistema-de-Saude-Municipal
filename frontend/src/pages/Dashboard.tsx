@@ -48,12 +48,12 @@ import { WIDGETS, WidgetMiniPreview, WidgetPorId } from "../widgets";
 
 const CARDS_PADRAO = [
   { refs: ["dash_indicadores"], titulo: "Indicadores e Agenda", desc: "Evolução das filas e volume.", icon: ChartColumn, to: "/indicadores" },
-  { refs: ["tfd"], titulo: "TFD · Operações", desc: "Viagens, pacientes e frota.", icon: Ambulance, to: "/tfd" },
+  { refs: ["tfd_viagens", "tfd"], titulo: "TFD · Viagens", desc: "Viagens, passageiros e rotas.", icon: Ambulance, to: "/tfd/viagens" },
   { refs: ["tfd_exames"], titulo: "Fila de Espera", desc: "Regulação e procedimentos.", icon: ListOrdered, to: "/fila-exames" },
-  { refs: ["lab"], titulo: "Exames laboratoriais", desc: "Marcação de exames de sangue e fila.", icon: FlaskConical, to: "/lab" },
+  { refs: ["lab_recepcao", "lab_marcacao", "lab_fila", "lab"], titulo: "Exames laboratoriais", desc: "Marcação de exames de sangue e fila.", icon: FlaskConical, to: "/lab/fila" },
   { refs: ["aps"], titulo: "Indicadores", desc: "Indicadores e metas de repasse (APS Previne).", icon: Activity, to: "/aps" },
   { refs: ["usuarios"], titulo: "Contas e Acessos", desc: "Gestão de usuários.", icon: Users, to: "/usuarios" },
-  { refs: ["usuarios", "integracoes"], seed: "integracoes", titulo: "Configurações", desc: "Parâmetros do município.", icon: Settings2, to: "/configuracoes" },
+  { refs: ["cfg_geral", "integracoes"], seed: "cfg_geral", titulo: "Configurações", desc: "Parâmetros do município.", icon: Settings2, to: "/configuracoes" },
 ];
 
 const WIDE_WIDGETS = new Set(["agenda-semana", "tempo-fila-indicadores"]);
@@ -203,7 +203,7 @@ export default function Dashboard() {
       base.push({ id: uid(ref), tipo: "atalho", ref });
     }
     // Adiciona widget inicial de resumo se permitido
-    if (can("tfd_resumo") || can("tfd")) {
+    if (can("tfd_viagens") || can("tfd_exames") || can("tfd")) {
       base.push({ id: uid("resumo-tfd"), tipo: "widget", ref: "resumo-tfd" });
     }
     alterar(base);

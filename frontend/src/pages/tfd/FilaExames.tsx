@@ -19,6 +19,7 @@ import {
   tfdFiltrosOpcoes,
   tfdPacientes,
   tfdRegenerarTokenExame,
+  tfdTipos,
   validarCboProcedimento,
   msgErro,
   type ValidarCboResult,
@@ -34,6 +35,7 @@ import {
   type PacientePec,
   type SigtapCbo,
   type SigtapCidItem,
+  type TipoFila,
   fetchMedicos,
   fetchUnidadesSaude,
   type Medico,
@@ -156,59 +158,12 @@ function removerAcentos(texto: string): string {
   return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
-const TIPOS_VIVVER_OFICIAIS: { sigla: string; nome: string }[] = [
-  { sigla: "USG", nome: "ULTRASSONOGRAFIA" },
-  { sigla: "TOMO", nome: "TOMOGRAFIA" },
-  { sigla: "RNM", nome: "RESSONÂNCIA MAGNÉTICA" },
-  { sigla: "CARD", nome: "EXAMES CARDIOLOGICOS" },
-  { sigla: "MAMO", nome: "MAMOGRAFIA E MASTOLOGIA" },
-  { sigla: "BIO", nome: "BIOPSIA" },
-  { sigla: "CIR", nome: "CIRURGIAS" },
-  { sigla: "PCIR", nome: "PEQUENA CIRURGIA" },
-  { sigla: "AVPC", nome: "AVALIAÇÃO CIRURGIA" },
-  { sigla: "DEOS", nome: "DENSITOMETRIA OSSEA" },
-  { sigla: "ESPM", nome: "ESPIROMETRIA" },
-  { sigla: "RXCTS", nome: "EXAME RADIOLOGICO CONTRASTADO E TFD" },
-  { sigla: "CINT", nome: "CINTILOGRAFIA" },
-  { sigla: "EXGAS", nome: "EXAMES GASTROENTEROLOGIA" },
-  { sigla: "NEU", nome: "EXAMES NEUROLOGICOS" },
-  { sigla: "ORL", nome: "EXAMES OTORRINOLARINGOLOGIA" },
-  { sigla: "EXURO", nome: "EXAMES UROLOGICOS" },
-  { sigla: "POF", nome: "PROCEDIMENTOS OFTALMOLOGICOS" },
-  { sigla: "CES", nome: "CONSULTAS ESPECIALIZADAS" },
-  { sigla: "RCES", nome: "RETORNO CONSULTA ESPECIALIZADA" },
-  { sigla: "EXGO", nome: "EX. LAB. GINECOLOGIA" },
-  { sigla: "EXHD", nome: "EX. LAB. HIPERDIA" },
-  { sigla: "EXPED", nome: "EX. LAB. PEDIATRIA" },
-  { sigla: "EXPN", nome: "EX. LAB. PRÉ-NATAL" },
-  { sigla: "EXPSF", nome: "EX. LAB. PSF ROTINA" },
-  { sigla: "EXSEC", nome: "EX. LAB. SECRETARIA" },
-];
-
-const ALIASES_TIPO_FILA: Record<string, string[]> = {
-  USG: ["ULTRASSONOGRAFIA", "ULTRASSOM", "ECOGRAFIA"],
-  TOMO: ["TOMOGRAFIA", "TOMOGRAFIA COMPUTADORIZADA", "TC"],
-  RNM: ["RESSONANCIA", "RESSONANCIA MAGNETICA", "RM"],
-  CARD: ["EXAMES CARDIOLOGICOS", "CARDIOLOGIA", "CARDIO", "ECG", "ELETROCARDIOGRAMA", "ECOCARDIOGRAMA", "HOLTER", "MAPA"],
-  MAMO: ["MAMOGRAFIA E MASTOLOGIA", "MAMOGRAFIA", "MASTOLOGIA"],
-  BIO: ["BIOPSIA", "PUNCAO"],
-  CIR: ["CIRURGIAS", "CIRURGIA", "CIRURGICO", "PEQUENA CIRURGIA", "AVALIACAO CIRURGIA"],
-  PCIR: ["PEQUENA CIRURGIA", "CIRURGIAS"],
-  AVPC: ["AVALIACAO CIRURGIA", "CIRURGIAS"],
-  DEOS: ["DENSITOMETRIA OSSEA", "DENSITOMETRIA"],
-  ESPM: ["ESPIROMETRIA", "PROVA DE FUNCAO PULMONAR"],
-  RXCTS: ["EXAME RADIOLOGICO CONTRASTADO E TFD", "RAIO-X CONTRASTADO", "RX CONTRASTADO", "CONTRASTADO"],
-  CINT: ["CINTILOGRAFIA", "MEDICINA NUCLEAR"],
-  EXGAS: ["EXAMES GASTROENTEROLOGIA", "ENDOSCOPIA", "COLONOSCOPIA", "GASTRO"],
-  NEU: ["EXAMES NEUROLOGICOS", "NEUROLOGIA", "EEG", "ELETRONEUROMIOGRAFIA"],
-  ORL: ["EXAMES OTORRINOLARINGOLOGIA", "OTORRINO", "AUDIOMETRIA", "IMPEDANCIOMETRIA"],
-  EXURO: ["EXAMES UROLOGICOS", "UROLOGIA", "URODINAMICA", "UROFLUXOMETRIA"],
-  POF: ["PROCEDIMENTOS OFTALMOLOGICOS", "OFTALMOLOGIA", "MAPEAMENTO DE RETINA", "CAMPIMETRIA"],
-  CES: ["CONSULTAS ESPECIALIZADAS", "CONSULTA"],
-  RCES: ["RETORNO CONSULTA ESPECIALIZADA", "RETORNO"],
-};
-
-function matchTipoFila(tipoProc?: string, siglaProc?: string, filtro?: string): boolean {
+function matchTipoFila(
+  tipoProc?: string,
+  siglaProc?: string,
+  filtro?: string,
+  tiposCadastrados: TipoFila[] = [],
+): boolean {
   if (!filtro || !filtro.trim()) return true;
   const f = removerAcentos(filtro.trim().toUpperCase());
   const tp = removerAcentos((tipoProc || "").toUpperCase());
@@ -217,11 +172,19 @@ function matchTipoFila(tipoProc?: string, siglaProc?: string, filtro?: string): 
   if (tp === f || sp === f) return true;
   if (tp && f && (tp.includes(f) || f.includes(tp))) return true;
 
-  for (const [sigla, sinonimos] of Object.entries(ALIASES_TIPO_FILA)) {
-    const todos = [sigla, ...sinonimos];
-    const filtroCasou = todos.some((s) => s === f || f.includes(s) || s.includes(f));
+  for (const tf of tiposCadastrados) {
+    const termos = [
+      tf.codigo || "",
+      tf.nome || "",
+      ...(tf.sinonimos || "").split(","),
+    ]
+      .map((s) => removerAcentos(s.trim().toUpperCase()))
+      .filter(Boolean);
+    const filtroCasou = termos.some((s) => s === f || f.includes(s) || s.includes(f));
     if (filtroCasou) {
-      if (sp === sigla || todos.some((s) => s === tp || tp.includes(s))) return true;
+      if ((sp && termos.includes(sp)) || termos.some((s) => s === tp || (tp && tp.includes(s)))) {
+        return true;
+      }
     }
   }
 
@@ -255,6 +218,7 @@ export default function FilaExames() {
   const [filtroCbo, setFiltroCbo] = useState("");
   const [espCbo, setEspCbo] = useState("");
   const [opTipos, setOpTipos] = useState<OpcaoFiltro[]>([]);
+  const [tiposCadastrados, setTiposCadastrados] = useState<TipoFila[]>([]);
   const [opProcs, setOpProcs] = useState<OpcaoFiltro[]>([]);
   const [opEsps, setOpEsps] = useState<OpcaoFiltro[]>([]);
   const [opCbos, setOpCbos] = useState<OpcaoFiltro[]>([]);
@@ -648,16 +612,12 @@ export default function FilaExames() {
   async function carregarOpcoes(st = filtro, tf = tipoFila, cboSel = filtroCbo) {
     try {
       const o = await tfdFiltrosOpcoes(st || undefined, tf || undefined, cboSel || undefined);
-      const tiposSemLab = (o.tipos ?? []).filter((t) => {
-        const v = (t.value || "").toLowerCase();
-        const l = (t.label || "").toLowerCase();
-        return !v.includes("lab") && !v.includes("sangue") && !l.includes("laborat") && !l.includes("sangue");
-      });
-      setOpTipos(tiposSemLab);
+      const tiposLista = o.tipos ?? [];
+      setOpTipos(tiposLista);
       setOpProcs(o.procedimentos ?? []);
       setOpEsps(o.especialidades ?? []);
       setOpCbos(o.cbos ?? []);
-      return { ...o, tipos: tiposSemLab };
+      return { ...o, tipos: tiposLista };
     } catch {
       setOpTipos([]);
       setOpProcs([]);
@@ -865,14 +825,47 @@ export default function FilaExames() {
       keywords: `${o.value} ${o.label}`,
     }));
   }
-  const opcoesTipo = useMemo(() => paraCombo(opTipos), [opTipos]);
+  const opcoesTipo = useMemo<ComboOption[]>(() => {
+    const mapa = new Map<string, ComboOption>();
+    const contagensPorNome = new Map<string, OpcaoFiltro>();
+    for (const o of opTipos) {
+      const k = removerAcentos((o.value || "").trim().toUpperCase());
+      if (k) contagensPorNome.set(k, o);
+    }
+    for (const tf of tiposCadastrados) {
+      if (!tf.ativo) continue;
+      const nome = (tf.nome || "").trim();
+      if (!nome) continue;
+      const k = removerAcentos(nome.toUpperCase());
+      const contagem = contagensPorNome.get(k);
+      mapa.set(k, {
+        value: contagem?.value || nome,
+        label: contagem?.label || (tf.codigo ? `${tf.codigo} · ${nome}` : nome),
+        keywords: `${tf.codigo || ""} ${nome} ${tf.sinonimos || ""}`.trim(),
+      });
+    }
+    for (const o of opTipos) {
+      const k = removerAcentos((o.value || "").trim().toUpperCase());
+      if (k && !mapa.has(k)) {
+        mapa.set(k, {
+          value: o.value,
+          label: o.label,
+          keywords: `${o.value} ${o.label}`,
+        });
+      }
+    }
+    return Array.from(mapa.values());
+  }, [opTipos, tiposCadastrados]);
   const opcoesProc = useMemo(() => paraCombo(opProcs), [opProcs]);
   const opcoesCbo = useMemo(() => paraCombo(opCbos), [opCbos]);
   const opcoesEsp = useMemo(() => paraCombo(opEsps), [opEsps]);
 
   useEffect(() => {
-    // Opções com contagem p/ Tipo / Procedimento / CBO ao abrir a tela.
+    // Opções com contagem p/ Tipo / Procedimento / CBO ao abrir a tela + filas cadastradas no banco.
     carregarOpcoes("aguardando").catch(() => {});
+    tfdTipos({ ativos: true, limit: 500 })
+      .then((r) => setTiposCadastrados(pagData<TipoFila>(r).filter((t) => t.ativo)))
+      .catch(() => setTiposCadastrados([]));
     fetchMedicos({ somente_ativos: true })
       .then((m) => { setMedicos(m); setMedicosErro(""); })
       .catch(() => { setMedicos([]); setMedicosErro("Falha ao carregar médicos. Confira o cadastro em Médicos/profissionais."); });
@@ -891,9 +884,9 @@ export default function FilaExames() {
 
   const procsDoTipo = useMemo(() => {
     if (!form.tipo_fila?.trim()) return catalogo;
-    const filtrados = catalogo.filter((c) => matchTipoFila(c.tipo_fila, c.codigo_curto, form.tipo_fila));
+    const filtrados = catalogo.filter((c) => matchTipoFila(c.tipo_fila, c.codigo_curto, form.tipo_fila, tiposCadastrados));
     return filtrados.length > 0 ? filtrados : catalogo;
-  }, [catalogo, form.tipo_fila]);
+  }, [catalogo, form.tipo_fila, tiposCadastrados]);
 
   // Filtro local imediato: dropdown responde a cada tecla mesmo antes da API voltar.
   const opcoesFiltradas = useMemo(() => {
@@ -2372,7 +2365,7 @@ export default function FilaExames() {
                     onChange={(e) => {
                       const novoTipo = e.target.value.toUpperCase();
                       setForm((f) => {
-                        const compativel = !f.exame || matchTipoFila(f.tipo_fila, f.codigo_curto, novoTipo);
+                        const compativel = !f.exame || matchTipoFila(f.tipo_fila, f.codigo_curto, novoTipo, tiposCadastrados);
                         return {
                           ...f,
                           tipo_fila: novoTipo,
@@ -2380,20 +2373,29 @@ export default function FilaExames() {
                         };
                       });
                     }}
-                    placeholder="Ex: ULTRASSONOGRAFIA"
+                    placeholder="Selecione ou digite o tipo de fila…"
                     list="tipos-fila-datalist"
                   />
                   <datalist id="tipos-fila-datalist">
-                    {TIPOS_VIVVER_OFICIAIS.map((t) => (
-                      <option key={t.sigla} value={t.nome}>
-                        {t.sigla} · {t.nome}
+                    {tiposCadastrados.map((tf) => (
+                      <option key={`tf-${tf.id}`} value={tf.nome}>
+                        {tf.codigo ? `${tf.codigo} · ${tf.nome}` : tf.nome}
                       </option>
                     ))}
-                    {opTipos.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label || o.value}
-                      </option>
-                    ))}
+                    {opTipos
+                      .filter(
+                        (o) =>
+                          !tiposCadastrados.some(
+                            (tf) =>
+                              removerAcentos((tf.nome || "").trim().toUpperCase()) ===
+                              removerAcentos((o.value || "").trim().toUpperCase()),
+                          ),
+                      )
+                      .map((o) => (
+                        <option key={`op-${o.value}`} value={o.value}>
+                          {o.label || o.value}
+                        </option>
+                      ))}
                   </datalist>
                 </div>
                 <div>

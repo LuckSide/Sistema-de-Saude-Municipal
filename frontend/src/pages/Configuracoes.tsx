@@ -23,6 +23,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Search,
   Send,
   Server,
   ShieldAlert,
@@ -52,8 +53,10 @@ import {
   fetchSettings,
   importarFilas,
   importarViagensCarro,
+  labSigtap,
   labSigtapCriar,
   limparDuplicadosPec,
+  pagData,
   resetarERessincronizarPec,
   restaurarBackup,
   salvarExamesPermitidos,
@@ -76,6 +79,7 @@ import {
   type PecResetPreview,
   type PecSyncLogItem,
   type PecSyncStatus,
+  type SigtapProc,
   type UpdateStatus,
   type WhatsAppConfig,
   type WhatsAppLogItem,
@@ -118,16 +122,16 @@ export default function Configuracoes() {
   // Médicos/PSFs exigem "usuarios" (mesma regra das telas standalone —
   // nada é concedido a quem não tinha).
   const abasVisiveis = ABAS.filter((a) => {
-    if (a.id === "geral") return can("cfg_geral") || can("usuarios");
-    if (a.id === "gestao_filas") return can("cfg_filas") || can("cfg_geral") || can("usuarios") || can("tfd");
-    if (a.id === "filas") return can("cfg_filas");
+    if (a.id === "geral") return can("cfg_geral");
+    if (a.id === "gestao_filas") return can("cfg_filas");
+    if (a.id === "filas") return can("cfg_importar") || can("cfg_filas");
     if (a.id === "pec") return can("cfg_pec");
-    if (a.id === "whatsapp") return can("cfg_whatsapp") || can("cfg_geral") || can("usuarios") || can("cfg_pec");
-    if (a.id === "exames") return can("cfg_exames") || can("cfg_geral") || can("usuarios") || can("tfd_catalogo") || can("lab_vagas");
-    if (a.id === "medicos") return can("cfg_medicos") || can("usuarios") || can("lab_vagas");
-    if (a.id === "unidades") return can("cfg_unidades") || can("usuarios") || can("lab_vagas");
+    if (a.id === "whatsapp") return can("cfg_whatsapp");
+    if (a.id === "exames") return can("cfg_exames");
+    if (a.id === "medicos") return can("cfg_medicos");
+    if (a.id === "unidades") return can("cfg_unidades");
     if (a.id === "dados") return !!user?.is_superuser || can("cfg_dados");
-    if (a.id === "backup") return !!user?.is_superuser;
+    if (a.id === "backup") return !!user?.is_superuser || can("cfg_backup");
     return can("cfg_rnds");
   });
   const normalizarAbaParam = (raw: string | null): Aba => {
@@ -2609,8 +2613,60 @@ function AbaExamesPermitidos() {
   const [novoValorSp, setNovoValorSp] = useState("0,00");
   const [novoSemCodigo, setNovoSemCodigo] = useState(false);
   const [novoCodigoFat, setNovoCodigoFat] = useState("");
+  const [buscaSigtapRef, setBuscaSigtapRef] = useState("");
+  const [resultadosSigtapRef, setResultadosSigtapRef] = useState<SigtapProc[]>([]);
+  const [buscandoSigtapRef, setBuscandoSigtapRef] = useState(false);
+  const [procSigtapRefSel, setProcSigtapRefSel] = useState<SigtapProc | null>(null);
   const [salvandoNovo, setSalvandoNovo] = useState(false);
   const [erroNovo, setErroNovo] = useState("");
+
+  useEffect(() => {
+    const termo = buscaSigtapRef.trim();
+    if (!modalNovo || !novoSemCodigo || termo.length < 2) {
+      setResultadosSigtapRef([]);
+      setBuscandoSigtapRef(false);
+      return;
+    }
+    let cancelado = false;
+    const timer = setTimeout(async () => {
+      setBuscandoSigtapRef(true);
+      try {
+        const resp = await labSigtap(termo, undefined, 1, 15, false);
+        if (!cancelado) {
+          setResultadosSigtapRef(pagData<SigtapProc>(resp));
+        }
+      } catch {
+        if (!cancelado) setResultadosSigtapRef([]);
+      } finally {
+        if (!cancelado) setBuscandoSigtapRef(false);
+      }
+    }, 250);
+    return () => {
+      cancelado = true;
+      clearTimeout(timer);
+    };
+  }, [buscaSigtapRef, modalNovo, novoSemCodigo]);
+
+  function selecionarProcedimentoSigtapRef(proc: SigtapProc) {
+    setProcSigtapRefSel(proc);
+    setNovoCodigoFat(proc.codigo);
+    setNovoValorSa(Number(proc.valor_sa || 0).toFixed(2).replace(".", ","));
+    setNovoValorSh(Number(proc.valor_sh || 0).toFixed(2).replace(".", ","));
+    setNovoValorSp(Number(proc.valor_sp || 0).toFixed(2).replace(".", ","));
+    if (proc.complexidade) setNovoComplexidade(proc.complexidade);
+    if (proc.instrumento) setNovoInstrumento(proc.instrumento);
+    if (!novoDescricao.trim()) {
+      setNovoDescricao(proc.descricao);
+    }
+    setBuscaSigtapRef("");
+    setResultadosSigtapRef([]);
+  }
+
+  function limparBuscaSigtapRef() {
+    setBuscaSigtapRef("");
+    setResultadosSigtapRef([]);
+    setProcSigtapRefSel(null);
+  }
 
   async function criarProcedimentoManual() {
     setErroNovo("");
@@ -2653,6 +2709,7 @@ function AbaExamesPermitidos() {
       setNovoValorSp("0,00");
       setNovoSemCodigo(false);
       setNovoCodigoFat("");
+      limparBuscaSigtapRef();
       await carregar();
     } catch (e: unknown) {
       setErroNovo(msgErro(e, "Falha ao cadastrar procedimento manual compatível com o SIGTAP."));
@@ -2834,7 +2891,7 @@ function AbaExamesPermitidos() {
       });
 
       setOk(
-        `Configurações salvas com sucesso! ${res.total_habilitados} procedimentos gerais habilitados, regras de serviços/filas e valores combinados locais atualizados.`
+        `Configurações salvas com sucesso! ${res.total_habilitados} procedimentos gerais habilitados, regras de serviços/filas e valores de contrato local atualizados.`
       );
       setAlterado(false);
       await carregar();
@@ -2889,7 +2946,7 @@ function AbaExamesPermitidos() {
                 Procedimentos e Exames Permitidos (SIGTAP)
               </h2>
               <p className="mt-0.5 text-xs text-ink/65">
-                Defina os exames liberados por tipo de fila/serviço (ex: Rotina PSF) e configure valores combinados localmente com laboratórios credenciados.
+                Defina os exames liberados por tipo de fila/serviço (ex: Rotina PSF) e configure o Valor Contrato Local com laboratórios credenciados.
               </p>
             </div>
           </div>
@@ -3062,8 +3119,8 @@ function AbaExamesPermitidos() {
                 <th className="w-28 px-3 py-3">Código SIGTAP</th>
                 <th className="px-3 py-3">Descrição do Procedimento</th>
                 <th className="w-20 px-3 py-3 text-center">Inst.</th>
-                <th className="w-28 px-3 py-3 text-right">Valor SIGTAP</th>
-                <th className="w-40 px-3 py-3 text-center">Valor Combinado Local</th>
+                <th className="w-28 px-3 py-3 text-right">Valor SIGTAP/SUS</th>
+                <th className="w-40 px-3 py-3 text-center">Valor Contrato Local</th>
                 <th className="w-32 px-3 py-3 text-right">Disponibilidade</th>
               </tr>
             </thead>
@@ -3095,7 +3152,7 @@ function AbaExamesPermitidos() {
                     <td className="px-3 py-2 font-mono font-semibold text-sus-950">
                       {p.codigo}
                     </td>
-                    <td className="px-3 py-2 font-medium text-ink/80">
+                    <td className="px-3 py-2 font-medium text-ink/80" title={p.descricao}>
                       {p.descricao}
                     </td>
                     <td className="px-3 py-2 text-center text-ink/55">
@@ -3114,13 +3171,13 @@ function AbaExamesPermitidos() {
                           value={valCombInput}
                           onChange={(e) => alterarValorCombinado(p.codigo, e.target.value)}
                           placeholder="0,00"
-                          title="Valor combinado local com laboratório (prevalece sobre a Tabela SIGTAP)"
+                          title="Valor Contrato Local com laboratório (prevalece sobre o Valor SIGTAP/SUS)"
                           className="w-20 rounded border border-sus-900/20 bg-white px-2 py-1 text-right font-mono text-xs font-semibold text-sus-950 focus:border-teal focus:outline-none"
                         />
                         {temValorComb && (
                           <span
                             className="rounded bg-emerald-100 px-1 py-0.5 text-[9px] font-bold text-emerald-800"
-                            title="Valor combinado local ativo! Será utilizado no faturamento ao invés do SIGTAP."
+                            title="Valor Contrato Local ativo! Será utilizado no faturamento ao invés do Valor SIGTAP/SUS."
                           >
                             Local
                           </span>
@@ -3199,19 +3256,86 @@ function AbaExamesPermitidos() {
               </div>
 
               {novoSemCodigo && (
-                <div className="rounded-xl border border-teal/20 bg-teal/5 p-3.5 space-y-1.5">
+                <div className="rounded-xl border border-teal/20 bg-teal/5 p-3.5 space-y-2.5">
                   <Label className="text-xs font-bold text-teal-950">
-                    Código SIGTAP de Outro Exame (Apenas para Faturamento SUS) *
+                    Vincular Procedimento da Tabela SIGTAP (Faturamento SUS) *
                   </Label>
-                  <Input
-                    placeholder="Ex: 0202010183 (10 dígitos numéricos)"
-                    maxLength={10}
-                    value={novoCodigoFat}
-                    onChange={(e) => setNovoCodigoFat(e.target.value.replace(/\D/g, ""))}
-                    className="mt-1 text-xs font-mono font-bold"
-                  />
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-teal-700/60" />
+                    <Input
+                      placeholder="Buscar procedimento SIGTAP por código ou descrição..."
+                      value={buscaSigtapRef}
+                      onChange={(e) => setBuscaSigtapRef(e.target.value)}
+                      className="pl-8 text-xs bg-white"
+                    />
+                    {buscandoSigtapRef && (
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-teal">
+                        Buscando…
+                      </span>
+                    )}
+                    {resultadosSigtapRef.length > 0 && (
+                      <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-52 overflow-y-auto rounded-xl border border-sus-900/15 bg-white shadow-lg">
+                        {resultadosSigtapRef.map((pr) => {
+                          const valRef = Number(pr.valor_sa || 0) + Number(pr.valor_sp || 0);
+                          return (
+                            <button
+                              key={pr.id ?? pr.codigo}
+                              type="button"
+                              onClick={() => selecionarProcedimentoSigtapRef(pr)}
+                              className="w-full border-b border-sus-900/5 px-3 py-2 text-left text-xs hover:bg-sand/70 last:border-0"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-mono font-bold text-teal">{pr.codigo}</span>
+                                <span className="font-mono text-[11px] text-ink/60">
+                                  {pr.instrumento} · {pr.complexidade} · Valor SIGTAP/SUS: R$ {valRef.toFixed(2)}
+                                </span>
+                              </div>
+                              <p className="mt-0.5 font-medium text-sus-950">{pr.descricao}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  {procSigtapRefSel && (
+                    <div className="flex items-start justify-between gap-2 rounded-lg border border-teal/25 bg-white/90 px-3 py-2 text-[11px]">
+                      <div>
+                        <p className="font-bold text-teal-950">
+                          Selecionado: <span className="font-mono">{procSigtapRefSel.codigo}</span> — {procSigtapRefSel.descricao}
+                        </p>
+                        <p className="text-ink/65 mt-0.5">
+                          Valor SIGTAP/SUS: <strong>R$ {(Number(procSigtapRefSel.valor_sa || 0) + Number(procSigtapRefSel.valor_sp || 0)).toFixed(2)}</strong> · Instrumento: <strong>{procSigtapRefSel.instrumento}</strong> · Complexidade: <strong>{procSigtapRefSel.complexidade}</strong>
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={limparBuscaSigtapRef}
+                        className="text-ink/40 hover:text-ink"
+                        title="Limpar seleção"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+                  <div>
+                    <Label className="text-[11px] font-semibold text-teal-950">
+                      Código SIGTAP para Faturamento SUS (10 dígitos)
+                    </Label>
+                    <Input
+                      placeholder="Ex: 0202010183 (10 dígitos numéricos)"
+                      maxLength={10}
+                      value={novoCodigoFat}
+                      onChange={(e) => {
+                        setNovoCodigoFat(e.target.value.replace(/\D/g, ""));
+                        if (procSigtapRefSel && e.target.value.replace(/\D/g, "") !== procSigtapRefSel.codigo) {
+                          setProcSigtapRefSel(null);
+                        }
+                      }}
+                      className="mt-1 text-xs font-mono font-bold bg-white"
+                    />
+                  </div>
                   <p className="text-[10px] text-ink/50">
-                    Código oficial que constará no BPA/Faturamento, faturando o procedimento sob as regras deste item no SUS.
+                    Código oficial que constará no BPA/Faturamento, preenchendo automaticamente os valores e regras deste item no SUS.
                   </p>
                 </div>
               )}
@@ -3253,6 +3377,7 @@ function AbaExamesPermitidos() {
                     value={novoDescricao}
                     onChange={(e) => setNovoDescricao(e.target.value)}
                     placeholder="Ex: DOSAGEM DE HEMOGLOBINA GLICADA A1C"
+                    maxLength={1000}
                     className="mt-1 text-xs uppercase"
                   />
                 </div>

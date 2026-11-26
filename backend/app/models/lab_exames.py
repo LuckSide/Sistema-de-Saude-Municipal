@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Column, Date, DateTime
+from sqlalchemy import Column, Date, DateTime, Text
 from sqlmodel import Field, SQLModel
 
 
@@ -9,7 +9,7 @@ class SigtapProcedimento(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     codigo: str = Field(max_length=20, index=True, unique=True)
-    descricao: str = Field(max_length=255, index=True)
+    descricao: str = Field(sa_column=Column(Text, nullable=False, index=True))
     complexidade: str = Field(default="", max_length=20)
     instrumento: str = Field(default="BPA-C", max_length=10, index=True)
     # Detalhe Tabela Unificada DATASUS (importação SIGTAP)
@@ -26,11 +26,11 @@ class SigtapProcedimento(SQLModel, table=True):
     competencia: str = Field(default="", max_length=7, index=True)  # AAAA-MM da carga
     # Hierarquia completa Tabela Unificada SIGTAP (Área/Grupo -> Subgrupo -> Forma de Organização)
     grupo_codigo: str = Field(default="", max_length=2, index=True)
-    grupo_nome: str = Field(default="", max_length=150)
+    grupo_nome: str = Field(default="", sa_column=Column(Text, nullable=False, default=""))
     subgrupo_codigo: str = Field(default="", max_length=4, index=True)
-    subgrupo_nome: str = Field(default="", max_length=180)
+    subgrupo_nome: str = Field(default="", sa_column=Column(Text, nullable=False, default=""))
     forma_organizacao_codigo: str = Field(default="", max_length=6, index=True)
-    forma_organizacao_nome: str = Field(default="", max_length=180)
+    forma_organizacao_nome: str = Field(default="", sa_column=Column(Text, nullable=False, default=""))
     origem_manual: bool = Field(default=False, index=True)
     sem_codigo_especifico: bool = Field(default=False, index=True)
     codigo_faturamento_sigtap: str = Field(default="", max_length=20, index=True)
@@ -52,7 +52,7 @@ class SigtapGrupo(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     codigo: str = Field(max_length=2, unique=True, index=True)
-    nome: str = Field(max_length=150)
+    nome: str = Field(sa_column=Column(Text, nullable=False))
 
 
 class SigtapSubgrupo(SQLModel, table=True):
@@ -63,7 +63,7 @@ class SigtapSubgrupo(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     codigo: str = Field(max_length=4, unique=True, index=True)
     grupo_codigo: str = Field(max_length=2, index=True)
-    nome: str = Field(max_length=180)
+    nome: str = Field(sa_column=Column(Text, nullable=False))
 
 
 class SigtapFormaOrganizacao(SQLModel, table=True):
@@ -75,7 +75,7 @@ class SigtapFormaOrganizacao(SQLModel, table=True):
     codigo: str = Field(max_length=6, unique=True, index=True)
     grupo_codigo: str = Field(max_length=2, index=True)
     subgrupo_codigo: str = Field(max_length=4, index=True)
-    nome: str = Field(max_length=180)
+    nome: str = Field(sa_column=Column(Text, nullable=False))
 
 
 class SigtapOcupacao(SQLModel, table=True):
@@ -85,8 +85,8 @@ class SigtapOcupacao(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     cbo: str = Field(max_length=10, unique=True, index=True)
-    descricao: str = Field(default="", max_length=150)
-    descricao_normalizada: str = Field(default="", max_length=150, index=True)
+    descricao: str = Field(default="", sa_column=Column(Text, nullable=False, default=""))
+    descricao_normalizada: str = Field(default="", sa_column=Column(Text, nullable=False, default="", index=True))
     ativo: bool = Field(default=True, index=True)
 
 
@@ -98,7 +98,7 @@ class SigtapCbo(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     procedimento_codigo: str = Field(max_length=20, index=True)
     cbo: str = Field(max_length=10, index=True)
-    descricao: str = Field(default="", max_length=120)
+    descricao: str = Field(default="", sa_column=Column(Text, nullable=False, default=""))
 
 
 class SigtapCid(SQLModel, table=True):
@@ -109,7 +109,7 @@ class SigtapCid(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     procedimento_codigo: str = Field(max_length=20, index=True)
     cid: str = Field(max_length=10, index=True)
-    descricao: str = Field(default="", max_length=255)
+    descricao: str = Field(default="", sa_column=Column(Text, nullable=False, default=""))
 
 
 class SigtapVersao(SQLModel, table=True):

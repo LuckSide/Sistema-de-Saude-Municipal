@@ -247,7 +247,7 @@ def importar_tabela_sia(
                 srv_por_pa.setdefault(pa9, []).append({
                     "servico": sv,
                     "classificacao": cl,
-                    "descricao": (r.get("PASRV_DSCR") or "").strip()[:120],
+                    "descricao": (r.get("PASRV_DSCR") or "").strip(),
                 })
 
     cids_pa9: set[str] = set()
@@ -260,7 +260,7 @@ def importar_tabela_sia(
     # 3. Mapeia e prepara dados estruturados para upsert
     pend_proc: dict[str, dict] = {}
     for cod, r_proc in proced_lookup.items():
-        desc = r_proc.get("PA_DC", "").strip()[:255]
+        desc = r_proc.get("PA_DC", "").strip()
         if not desc:
             continue
 
@@ -375,9 +375,9 @@ def importar_tabela_sia(
             "valor_sh": round(valor_sh, 2),
             "competencia": competencia[:7],
             "grupo_codigo": hier["grupo_codigo"][:2],
-            "grupo_nome": hier["grupo_nome"][:150],
+            "grupo_nome": hier["grupo_nome"],
             "subgrupo_codigo": hier["subgrupo_codigo"][:4],
-            "subgrupo_nome": hier["subgrupo_nome"][:180],
+            "subgrupo_nome": hier["subgrupo_nome"],
             "forma_organizacao_codigo": hier["forma_organizacao"][:6],
             "exige_cpf": exige_cpf,
             "exige_cns": exige_cns,

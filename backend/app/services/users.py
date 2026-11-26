@@ -4,14 +4,19 @@ import secrets
 from sqlmodel import Session, select
 from sqlalchemy.exc import IntegrityError
 
-from app.core.security import hash_password, verify_password
+from app.core.security import (
+    SENHA_MIN_CARACTERES,
+    hash_password,
+    validar_forca_senha,
+    verify_password,
+)
 from app.models.user import User
 from app.schemas import UserCreate, UserUpdate
 from app.services.permissoes import TODAS_TELAS, acoes_map, validar_acoes
 
 TELAS_VALIDAS = set(TODAS_TELAS)
 
-SENHA_MIN = 6
+SENHA_MIN = SENHA_MIN_CARACTERES
 
 
 def telas_to_str(telas: list[str]) -> str:
@@ -145,9 +150,21 @@ def users_to_out(users: list[User], db: Session) -> list[dict]:
 def gerar_temporaria(tamanho: int = 5) -> str:
     """Senha temporária curta e ditável: minúsculas + dígitos, sem ambíguos.
     Uso único com troca obrigatória no 1º login (nunca reutilizada)."""
-    alfabeto = "abcdefghijkmnpqrstuvwxyz23456789"
-    base = "".join(secrets.choice(alfabeto) for _ in range(tamanho))
-    return f"Saude@{base}"
+    letras = "abcdefghijkmnpqrstuvwxyz"
+    digitos = "23456789"
+    alfabeto = letras + digitos
+    rng = secrets.SystemRandom()
+    for _ in range(30):
+        chars = [secrets.choice(letras), secrets.choice(digitos)]
+        chars.extend(secrets.choice(alfabeto) for _ in range(max(2, tamanho - 2)))
+        rng.shuffle(chars)
+        candidata = f"Saude@{''.join(chars)}"
+        try:
+            validar_forca_senha(candidata)
+            return candidata
+        except ValueError:
+            continue
+    return f"Saude@{secrets.token_hex(4)}"
 
 
 def _validar_medico_id(db: Session, medico_id) -> int | None:
@@ -242,8 +259,7 @@ def create_user(db: Session, data: UserCreate) -> tuple[User, str | None]:
         temporaria = gerar_temporaria()
         pwd_hash = hash_password(temporaria)
     else:
-        if len(data.password) < SENHA_MIN:
-            raise ValueError(f"Senha deve ter ao menos {SENHA_MIN} caracteres")
+        validar_forca_senha(data.password, username)
         pwd_hash = hash_password(data.password)
     pid, pac_vinculado = _validar_paciente_id(db, getattr(data, "paciente_id", None))
     nome_final = (data.nome or "").strip() or (pac_vinculado.nome if pac_vinculado else "")
@@ -326,19 +342,23 @@ def list_users(db: Session) -> list[User]:
     return list(db.exec(select(User).order_by(User.id)).all())
 
 
-def _validar_nova(atual: str, nova: str, confirmar: str | None = None) -> None:
-    if len(nova) < SENHA_MIN:
-        raise ValueError(f"Nova senha deve ter ao menos {SENHA_MIN} caracteres")
-    if nova == atual:
-        raise ValueError("Nova senha deve ser diferente da atual")
+def _validar_nova(
+    atual: str,
+    nova: str,
+    confirmar: str | None = None,
+    username: str = "",
+) -> None:
     if confirmar is not None and nova != confirmar:
         raise ValueError("Nova senha e confirmação não conferem")
+    validar_forca_senha(nova, username)
+    if nova == atual:
+        raise ValueError("Nova senha deve ser diferente da atual")
 
 
 def trocar_senha(db: Session, user: User, senha_atual: str, nova_senha: str) -> None:
     if not verify_password(senha_atual, user.password_hash):
         raise ValueError("Senha atual incorreta")
-    _validar_nova(senha_atual, nova_senha)
+    _validar_nova(senha_atual, nova_senha, username=user.username)
     user.password_hash = hash_password(nova_senha)
     user.must_change_password = False
     _bump_token_version(user)
@@ -350,10 +370,9 @@ def primeira_troca(db: Session, user: User, senha_atual: str, nova: str, confirm
     """Troca do primeiro acesso: usuário autenticado define sua nova senha pessoal."""
     if not (senha_atual or "").strip() or not verify_password(senha_atual, user.password_hash):
         raise ValueError("Senha atual (temporária) incorreta")
-    if len(nova) < SENHA_MIN:
-        raise ValueError(f"Nova senha deve ter ao menos {SENHA_MIN} caracteres")
     if confirmar is not None and nova != confirmar:
         raise ValueError("Nova senha e confirmação não conferem")
+    validar_forca_senha(nova, user.username)
     if verify_password(nova, user.password_hash):
         raise ValueError("Nova senha deve ser diferente da senha temporária")
     user.password_hash = hash_password(nova)
@@ -376,8 +395,8 @@ def reset_senha(db: Session, user: User) -> str:
 def ensure_first_superuser(db: Session, username: str, password: str) -> None:
     if db.exec(select(User)).first():
         return
-    if len(password) < SENHA_MIN:
-        raise ValueError(f"FIRST_SUPERUSER_PASSWORD deve ter ao menos {SENHA_MIN} caracteres")
+    if len(password) < 6:
+        raise ValueError("FIRST_SUPERUSER_PASSWORD deve ter ao menos 6 caracteres")
     user = User(
         username=username.strip().lower(),
         password_hash=hash_password(password),

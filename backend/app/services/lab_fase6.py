@@ -392,10 +392,13 @@ def gerar_comprovante_agendamento(db: Session, mestre_id: int) -> dict:
     from app.services.whatsapp import buscar_transporte_vinculado
     transporte_info = buscar_transporte_vinculado(db, m.paciente_id, m.data_agendada)
 
+    nasc_obj = (getattr(pac, "nascimento", None) or getattr(pac, "data_nascimento", None)) if pac else None
     return {
         "id": m.id,
+        "tipo_comprovante": "agendamento",
         "protocolo": protocolo,
         "codigo_curto": protocolo,
+        "codigo_solicitacao": protocolo,
         "numero_pedido": protocolo,
         "qr_code_url": qr_url,
         "paciente_id": m.paciente_id,
@@ -403,7 +406,7 @@ def gerar_comprovante_agendamento(db: Session, mestre_id: int) -> dict:
         "paciente_cpf": getattr(pac, "cpf", "") or "",
         "paciente_cns": getattr(pac, "cns", "") or "",
         "paciente_prontuario": prontuario,
-        "paciente_nascimento": pac.data_nascimento.isoformat() if pac and getattr(pac, "data_nascimento", None) else "",
+        "paciente_nascimento": nasc_obj.isoformat() if nasc_obj else "",
         "data_agendada": m.data_agendada.isoformat(),
         "hora_agendada": getattr(m, "hora_agendada", "07:00") or "07:00",
         "laboratorio_id": m.laboratorio_id,
@@ -424,6 +427,223 @@ def gerar_comprovante_agendamento(db: Session, mestre_id: int) -> dict:
         "emitido_em": datetime.utcnow().isoformat(),
         "agendado_por": m.agendado_por,
         "exige_preparo": True,
+    }
+
+
+def gerar_codigo_fila_psf_unico(
+    db: Session,
+    data_ref: date | None = None,
+    usados: set[str] | None = None,
+) -> str:
+    """Gera código de solicitação aleatório único entre lab_fila_psf e lab_solic_mestre."""
+    local_usados = usados if usados is not None else set()
+    for _ in range(40):
+        cod = gerar_protocolo_lab_aleatorio(data_agendada=data_ref, db=db, usados=local_usados)
+        existe_fila = db.exec(
+            select(FilaPsf.id).where(FilaPsf.codigo_solicitacao == cod)
+        ).first()
+        if not existe_fila:
+            return cod
+        local_usados.add(cod)
+    return gerar_protocolo_lab_aleatorio(data_agendada=data_ref, db=db, usados=local_usados)
+
+
+def backfill_codigos_fila_psf(db_or_conn) -> int:
+    """Preenche codigo_solicitacao em registros legados de lab_fila_psf de forma idempotente."""
+    from sqlalchemy import text
+
+    is_session = isinstance(db_or_conn, Session)
+    pendentes = list(
+        db_or_conn.execute(
+            text(
+                "SELECT id, data_pedido, data_solicitacao FROM lab_fila_psf "
+                "WHERE codigo_solicitacao IS NULL OR TRIM(codigo_solicitacao) = ''"
+            )
+        ).fetchall()
+    )
+    if not pendentes:
+        return 0
+
+    usados: set[str] = set()
+    for tabela in ("lab_fila_psf", "lab_solic_mestre"):
+        try:
+            rows = db_or_conn.execute(
+                text(
+                    f"SELECT codigo_solicitacao FROM {tabela} "
+                    "WHERE codigo_solicitacao IS NOT NULL AND TRIM(codigo_solicitacao) != ''"
+                )
+            ).fetchall()
+            for (c,) in rows:
+                if c:
+                    usados.add(str(c).strip())
+        except Exception:
+            pass
+
+    atualizados = 0
+    for fid, d_ped, d_sol in pendentes:
+        dt_ref: date | None = None
+        for cand in (d_ped, d_sol):
+            if isinstance(cand, date):
+                dt_ref = cand
+                break
+            if isinstance(cand, str) and cand.strip():
+                try:
+                    dt_ref = date.fromisoformat(cand.strip()[:10])
+                    break
+                except ValueError:
+                    pass
+        cod = gerar_protocolo_lab_aleatorio(data_agendada=dt_ref or date.today(), db=None, usados=usados)
+        res = db_or_conn.execute(
+            text(
+                "UPDATE lab_fila_psf SET codigo_solicitacao = :cod "
+                "WHERE id = :fid AND (codigo_solicitacao IS NULL OR TRIM(codigo_solicitacao) = '')"
+            ).bindparams(cod=cod, fid=int(fid))
+        )
+        atualizados += getattr(res, "rowcount", 1) or 0
+
+    if is_session:
+        db_or_conn.commit()
+    return atualizados
+
+
+def gerar_comprovante_fila_psf(db: Session, fila_id: int) -> dict:
+    """Gera o comprovante de inclusão na fila de espera de exames de sangue (não agendado)."""
+    fila = db.get(FilaPsf, fila_id)
+    if not fila:
+        raise HTTPException(404, "Pedido na fila não encontrado")
+    pac = db.get(Paciente, fila.paciente_id)
+
+    protocolo = (getattr(fila, "codigo_solicitacao", "") or "").strip()
+    if not protocolo:
+        protocolo = gerar_codigo_fila_psf_unico(db, fila.data_pedido or fila.data_solicitacao)
+        fila.codigo_solicitacao = protocolo
+        db.add(fila)
+        db.commit()
+        db.refresh(fila)
+
+    prontuario = (getattr(pac, "codigo_prontuario", "") or "").strip()
+    if not prontuario and pac and pac.id:
+        prontuario = gerar_prontuario_aleatorio(db=db)
+        pac.codigo_prontuario = prontuario
+        db.add(pac)
+        db.commit()
+
+    # Extrair SIGTAP IDs preservando ordem e somando quantidades
+    raw_ids: list[int] = []
+    raw_json = getattr(fila, "sigtap_ids_json", None) or ""
+    if raw_json and raw_json.strip() not in ("", "[]"):
+        try:
+            parsed = json.loads(raw_json)
+            if isinstance(parsed, list):
+                raw_ids = [int(x) for x in parsed if str(x).isdigit()]
+        except Exception:
+            raw_ids = []
+    if not raw_ids and fila.observacoes and "SIGTAP_IDS:" in fila.observacoes:
+        try:
+            trecho = fila.observacoes.split("SIGTAP_IDS:")[1].split("|")[0].strip()
+            parsed = json.loads(trecho)
+            if isinstance(parsed, list):
+                raw_ids = [int(x) for x in parsed if str(x).isdigit()]
+        except Exception:
+            raw_ids = []
+
+    qtd_por_sid: dict[int, int] = {}
+    for sid in raw_ids:
+        qtd_por_sid[sid] = qtd_por_sid.get(sid, 0) + 1
+
+    procs_map: dict[int, SigtapProcedimento] = {}
+    if qtd_por_sid:
+        procs = db.exec(
+            select(SigtapProcedimento).where(SigtapProcedimento.id.in_(list(qtd_por_sid.keys())))
+        ).all()
+        procs_map = {p.id: p for p in procs if p.id is not None}
+
+    itens_out: list[dict] = []
+    for sid, qtd in qtd_por_sid.items():
+        proc = procs_map.get(sid)
+        itens_out.append(
+            {
+                "id": sid,
+                "solicitacao_id": fila.id,
+                "sigtap_id": sid,
+                "quantidade": qtd,
+                "status_auditoria": fila.status or "na_fila",
+                "observacao": "",
+                "procedimento_codigo": proc.codigo if proc else "",
+                "procedimento_descricao": proc.descricao if proc else f"Exame SIGTAP #{sid}",
+                "preparo_especifico": "",
+            }
+        )
+
+    if not itens_out and fila.observacoes and "Exames:" in fila.observacoes:
+        try:
+            nomes_str = fila.observacoes.split("Exames:")[1].split("|")[0].strip()
+            for idx, nome in enumerate([n.strip() for n in nomes_str.split(",") if n.strip()], start=1):
+                itens_out.append(
+                    {
+                        "id": idx,
+                        "solicitacao_id": fila.id,
+                        "sigtap_id": 0,
+                        "quantidade": 1,
+                        "status_auditoria": fila.status or "na_fila",
+                        "observacao": "",
+                        "procedimento_codigo": "",
+                        "procedimento_descricao": nome,
+                        "preparo_especifico": "",
+                    }
+                )
+        except Exception:
+            pass
+
+    d_ped_obj = fila.data_pedido or fila.data_solicitacao
+    d_ped_str = d_ped_obj.isoformat() if d_ped_obj else ""
+    d_sol_str = fila.data_solicitacao.isoformat() if fila.data_solicitacao else d_ped_str
+    nasc_obj = (getattr(pac, "nascimento", None) or getattr(pac, "data_nascimento", None)) if pac else None
+
+    qr_data = f"FILA_LAB:{protocolo}|PRONT:{prontuario}|PAC:{pac.id if pac else ''}"
+    qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={urllib.parse.quote(qr_data)}"
+
+    return {
+        "id": fila.id,
+        "tipo_comprovante": "inclusao_fila",
+        "protocolo": protocolo,
+        "codigo_curto": protocolo,
+        "codigo_solicitacao": protocolo,
+        "numero_pedido": protocolo,
+        "qr_code_url": qr_url,
+        "paciente_id": fila.paciente_id,
+        "paciente_nome": pac.nome if pac else "?",
+        "paciente_cpf": getattr(pac, "cpf", "") or "",
+        "paciente_cns": getattr(pac, "cns", "") or "",
+        "paciente_prontuario": prontuario,
+        "paciente_nascimento": nasc_obj.isoformat() if nasc_obj else "",
+        "data_agendada": "",
+        "hora_agendada": "",
+        "data_pedido": d_ped_str,
+        "data_solicitacao": d_sol_str,
+        "laboratorio_id": 0,
+        "laboratorio_nome": "A definir no agendamento / Fila Municipal",
+        "unidade_psf": getattr(fila, "unidade_psf", "") or "Secretaria de Saúde",
+        "medico_solicitante": getattr(fila, "medico_solicitante", "") or "Médico da Unidade",
+        "fila_nome": getattr(fila, "tipo_fila", "") or getattr(fila, "especialidade", "") or "Fila de Exames de Sangue",
+        "prioridade": getattr(fila, "prioridade", "rotina") or "rotina",
+        "justificativa": getattr(fila, "justificativa", "") or "",
+        "instrucoes_transporte": "",
+        "transporte": None,
+        "status": fila.status or "na_fila",
+        "status_auditoria": fila.status or "na_fila",
+        "itens": itens_out,
+        "jejum_horas": "",
+        "preparo_instrucoes": [],
+        "orientacoes_gerais": [
+            "Este comprovante confirma a inclusão do pedido na Fila Municipal de Espera de Exames de Sangue.",
+            "Aguarde o agendamento em lote realizado pela Secretaria Municipal de Saúde conforme disponibilidade de vagas.",
+            "Quando o exame for agendado, você receberá a confirmação com data, horário, laboratório e instruções de preparo/jejum.",
+            f"Guarde o número do pedido ({protocolo}) para acompanhamento junto à sua Unidade de Saúde (PSF).",
+        ],
+        "emitido_em": datetime.utcnow().strftime("%d/%m/%Y %H:%M"),
+        "agendado_por": getattr(fila, "criado_por", "") or "Unidade de Saúde",
+        "exige_preparo": False,
     }
 
 

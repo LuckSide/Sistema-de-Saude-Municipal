@@ -146,7 +146,7 @@ def listar_sigtap(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
-    _=Depends(need_any_perm("lab_sigtap", "lab_fila", "lab_marcacao", "lab", "tfd_exames", "tfd_fila_lancamento", "tfd")),
+    _=Depends(need_any_perm("lab_sigtap", "lab_fila", "lab_marcacao", "lab", "tfd_exames", "tfd_fila_lancamento", "tfd", "tfd_catalogo", "cfg_exames", "cfg_geral")),
 ):
     from app.models.settings import SystemSettings
     from app.services.cbo_normalizacao import limpar_codigo_cbo
@@ -677,7 +677,7 @@ def exportar_solicitacoes(
 @router.get("/sigtap/versoes", response_model=list[SigtapVersaoOut])
 def versoes_sigtap(
     db: Session = Depends(get_db),
-    _=Depends(need_any_perm("lab_sigtap", "lab_fila", "lab_marcacao", "lab", "tfd_exames", "tfd_fila_lancamento", "tfd")),
+    _=Depends(need_any_perm("lab_sigtap", "lab_fila", "lab_marcacao", "lab", "tfd_exames", "tfd_fila_lancamento", "tfd", "tfd_catalogo", "cfg_exames", "cfg_geral")),
 ):
     """Histórico de cargas SIGTAP com competência (mês/ano)."""
     from app.models.lab_exames import SigtapVersao

@@ -1497,7 +1497,7 @@ def seed_vivver_procedimentos(db: Session, caminho_csv: str | None = None) -> di
             if chave not in existentes:
                 proc = ProcedimentoCatalogo(
                     codigo=cod,
-                    nome=nome[:150],
+                    nome=nome,
                     tipo_fila=tipo_nome[:80],
                     nome_especialidade=esp_nome[:120],
                     codigo_especialidade=esp_cbo[:10],
@@ -1560,7 +1560,7 @@ def _ler_vivver_catalogo_csv_cached() -> tuple[dict, ...]:
             sigla = MAPA_TIPO_SIGLA.get(tipo_nome, "")
             itens.append({
                 "codigo": cod,
-                "nome": nome[:150],
+                "nome": nome,
                 "tipo_fila": tipo_nome[:80],
                 "nome_especialidade": esp_nome,
                 "codigo_especialidade": esp_cod,
@@ -1584,7 +1584,7 @@ def seed_arvore_sigtap(db: Session) -> dict:
     grupos_exist = {g.codigo: g for g in db.exec(select(SigtapGrupo)).all()}
     for cod, nome in GRUPOS_SIGTAP.items():
         if cod not in grupos_exist:
-            g = SigtapGrupo(codigo=cod, nome=nome[:150])
+            g = SigtapGrupo(codigo=cod, nome=nome)
             db.add(g)
             grupos_exist[cod] = g
 
@@ -1592,7 +1592,7 @@ def seed_arvore_sigtap(db: Session) -> dict:
     for cod, nome in SUBGRUPOS_SIGTAP.items():
         g_cod = cod[:2]
         if cod not in subgrupos_exist:
-            sg = SigtapSubgrupo(codigo=cod, grupo_codigo=g_cod, nome=nome[:180])
+            sg = SigtapSubgrupo(codigo=cod, grupo_codigo=g_cod, nome=nome)
             db.add(sg)
             subgrupos_exist[cod] = sg
 
@@ -1605,8 +1605,8 @@ def seed_arvore_sigtap(db: Session) -> dict:
         if cbo_cod not in ocup_exist:
             db.add(SigtapOcupacao(
                 cbo=cbo_cod,
-                descricao=nome_desc[:150],
-                descricao_normalizada=sanitizar_texto_cbo(nome_desc)[:150],
+                descricao=nome_desc,
+                descricao_normalizada=sanitizar_texto_cbo(nome_desc),
                 ativo=True,
             ))
             ocup_exist[cbo_cod] = True  # type: ignore[assignment]
@@ -1626,14 +1626,14 @@ def seed_arvore_sigtap(db: Session) -> dict:
                 grupos_exist[info["grupo_codigo"]].nome
                 if info["grupo_codigo"] in grupos_exist
                 else info["grupo_nome"]
-            )[:150]
+            )
         if info["subgrupo_codigo"]:
             p.subgrupo_codigo = info["subgrupo_codigo"]
             p.subgrupo_nome = (
                 subgrupos_exist[info["subgrupo_codigo"]].nome
                 if info["subgrupo_codigo"] in subgrupos_exist
                 else info["subgrupo_nome"]
-            )[:180]
+            )
         if info["forma_organizacao"] and not p.forma_organizacao_codigo:
             p.forma_organizacao_codigo = info["forma_organizacao"]
         db.add(p)
@@ -1776,3 +1776,51 @@ def obter_arvore_sigtap(
         "cbos": cbos_out,
         "procedimentos_cbo_total": len(procs_do_cbo),
     }
+
+
+def migrar_colunas_sigtap_amplas(conn) -> dict:
+    """Migração aditiva e idempotente para ampliar colunas de nome/descrição SIGTAP para TEXT.
+
+    Em PostgreSQL, converte colunas VARCHAR restritivas para TEXT sem perda de dados.
+    Em SQLite, atua como no-op seguro.
+    """
+    from sqlalchemy import inspect, text
+
+    alvos: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("sigtap_procedimentos", ("descricao", "grupo_nome", "subgrupo_nome", "forma_organizacao_nome")),
+        ("sigtap_grupos", ("nome",)),
+        ("sigtap_subgrupos", ("nome",)),
+        ("sigtap_formas_organizacao", ("nome",)),
+        ("sigtap_ocupacoes", ("descricao", "descricao_normalizada")),
+        ("sigtap_cbos", ("descricao",)),
+        ("sigtap_cids", ("descricao",)),
+        ("tfd_procedimentos", ("nome",)),
+        ("tfd_exames_fila", ("exame",)),
+        ("tfd_faturamento", ("procedimento",)),
+    )
+
+    dialect_name = getattr(getattr(conn, "dialect", None), "name", "")
+    alteradas: list[str] = []
+    if dialect_name != "postgresql":
+        return {"dialect": dialect_name, "alteradas": alteradas}
+
+    insp = inspect(conn)
+    for tabela, colunas in alvos:
+        if not insp.has_table(tabela):
+            continue
+        cols_info = {c["name"]: c for c in insp.get_columns(tabela)}
+        for col in colunas:
+            info = cols_info.get(col)
+            if not info:
+                continue
+            tipo_str = str(info.get("type", "")).upper()
+            if tipo_str == "TEXT":
+                continue
+            try:
+                with conn.begin_nested():
+                    conn.execute(text(f"ALTER TABLE {tabela} ALTER COLUMN {col} TYPE TEXT"))
+                alteradas.append(f"{tabela}.{col}")
+            except Exception:
+                pass
+
+    return {"dialect": dialect_name, "alteradas": alteradas}
