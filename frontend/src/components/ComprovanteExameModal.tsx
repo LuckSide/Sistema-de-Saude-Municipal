@@ -217,17 +217,16 @@ export default function ComprovanteExameModal({
 
               {/* QR Code de Identificação Exclusiva (gerado localmente offline) */}
               {comprovante.qr_code_url && (
-                <div className="flex flex-col items-center justify-center p-2 print:p-1 rounded-xl bg-white border border-sus-900/15 shadow-sm text-center shrink-0">
+                <div className="flex flex-col items-center justify-center p-2 print:p-1.5 rounded-xl bg-white border border-sus-900/15 shadow-sm text-center shrink-0">
                   <img
                     src={gerarQrDataUri(comprovante.qr_code_url)}
                     alt="QR Code da Solicitação"
-                    className="h-24 w-24 object-contain print:h-14 print:w-14"
+                    className="h-28 w-28 object-contain print:h-20 print:w-20"
                     loading="eager"
                   />
                   <span className="text-[10px] print:text-[9px] font-mono font-bold text-ink/75 mt-1">
                     {comprovante.codigo_curto || comprovante.protocolo}
                   </span>
-                  <span className="text-[9px] print:text-[8px] text-teal font-semibold tracking-tight">Leitura Rápida / Balcão</span>
                 </div>
               )}
             </div>
