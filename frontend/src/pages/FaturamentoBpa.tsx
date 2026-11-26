@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   AlertCircle,
   AlertTriangle,
@@ -795,13 +796,13 @@ export default function FaturamentoBpa() {
                     </div>
 
                     {c.link_correcao && (
-                      <a
-                        href={c.link_correcao}
+                      <Link
+                        to={c.link_correcao}
                         className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-sus-900/15 text-sus-950 hover:bg-sand text-xs font-semibold shrink-0 shadow-xs"
                       >
                         Corrigir Cadastro
                         <ExternalLink className="h-3.5 w-3.5 text-teal" />
-                      </a>
+                      </Link>
                     )}
                   </div>
                 ))}

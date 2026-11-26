@@ -507,7 +507,7 @@ export default function LabFaturamento() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="font-display text-xl font-bold text-sus-950 flex items-center gap-2">
-            <FileSpreadsheet className="h-5 w-5 text-teal" /> Faturamento, Contratos & SIA-SUS · Laboratório
+            <FileSpreadsheet className="h-5 w-5 text-teal" /> Faturamento de Prestadores
           </h2>
           <p className="text-xs text-ink/65">
             Gestão integrada de contratos de prestadores, limites orçamentários, preços pactuados, apuração mensal e exportação SIA/SUS.

@@ -115,7 +115,7 @@ export const MODULOS: NoPermissao[] = [
       { codigo: "faturamento_bpa", rotulo: "Faturamento BPA Oficial (SIA/SUS)", icone: FileCheck, rota: "/faturamento/bpa" },
       { codigo: "producao_ambulatorial", rotulo: "Produção Ambulatorial (BPA)", icone: Activity, rota: "/producao-ambulatorial" },
       { codigo: "apac_faturamento", rotulo: "Faturamento APAC (SIA/SUS)", icone: ReceiptText, rota: "/apac/faturamento" },
-      { codigo: "lab_faturamento", rotulo: "Faturamento Laboratório", icone: ReceiptText, rota: "/lab/faturamento" },
+      { codigo: "lab_faturamento", rotulo: "Faturamento de Prestadores", icone: ReceiptText, rota: "/lab/faturamento" },
       { codigo: "lab_orcamento", rotulo: "Controle de Orçamento e Lotes", icone: Coins, rota: "/lab/orcamento" },
       { codigo: "tfd_faturamento", rotulo: "Faturamento e Custos TFD", icone: Coins, rota: "/tfd/faturamento" },
       { codigo: "apac_solicitacao", rotulo: "Laudos e Solicitações de APAC", icone: FileCheck, rota: "/apac/solicitacoes" },

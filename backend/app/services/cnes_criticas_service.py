@@ -274,7 +274,7 @@ def auditar_criticas_bpa_competencia(
                 registro_id=uid,
                 registro_identificador=f"Unidade ID #{uid}",
                 sugestao_correcao="Vincule as produções a uma Unidade de Saúde válida existente.",
-                link_correcao="/cadastros/unidades",
+                link_correcao="/configuracoes?aba=unidades",
             )
             continue
 
@@ -293,7 +293,7 @@ def auditar_criticas_bpa_competencia(
                 registro_id=u.id,
                 registro_identificador=f"Unidade: {nome_uni}",
                 sugestao_correcao="Acesse Cadastros > Unidades de Saúde e informe um CNES válido com 7 dígitos.",
-                link_correcao=f"/cadastros/unidades?id={u.id}",
+                link_correcao=f"/configuracoes?aba=unidades&id={u.id}",
             )
 
         # Crítica Unidade: Tipo de Estabelecimento cadastrado (Bloqueante)
@@ -309,7 +309,7 @@ def auditar_criticas_bpa_competencia(
                 registro_id=u.id,
                 registro_identificador=f"Unidade: {nome_uni}",
                 sugestao_correcao="Cadastre o Tipo de Estabelecimento na Unidade de Saúde.",
-                link_correcao=f"/cadastros/unidades?id={u.id}",
+                link_correcao=f"/configuracoes?aba=unidades&id={u.id}",
             )
 
         # Crítica Unidade: Código IBGE cadastrado (Bloqueante)
@@ -325,7 +325,7 @@ def auditar_criticas_bpa_competencia(
                 registro_id=u.id,
                 registro_identificador=f"Unidade: {nome_uni}",
                 sugestao_correcao="Cadastre o Código IBGE oficial do Município (312810) na Unidade.",
-                link_correcao=f"/cadastros/unidades?id={u.id}",
+                link_correcao=f"/configuracoes?aba=unidades&id={u.id}",
             )
 
         # Crítica Unidade: Responsável Técnico com CNS cadastrado (Aviso)
@@ -340,7 +340,7 @@ def auditar_criticas_bpa_competencia(
                 registro_id=u.id,
                 registro_identificador=f"Unidade: {nome_uni}",
                 sugestao_correcao="Vincule o Responsável Técnico e seu CNS no cadastro da Unidade de Saúde.",
-                link_correcao=f"/cadastros/unidades?id={u.id}",
+                link_correcao=f"/configuracoes?aba=unidades&id={u.id}",
             )
         else:
             valido_cns_resp, motivo_resp = valida_cns(resp_cns)
@@ -354,7 +354,7 @@ def auditar_criticas_bpa_competencia(
                     registro_id=u.id,
                     registro_identificador=f"Unidade: {nome_uni}",
                     sugestao_correcao="Atualize o CNS do Responsável Técnico para um número regular no padrão SUS.",
-                    link_correcao=f"/cadastros/unidades?id={u.id}",
+                    link_correcao=f"/configuracoes?aba=unidades&id={u.id}",
                 )
 
     # -------------------------------------------------------------
@@ -382,7 +382,7 @@ def auditar_criticas_bpa_competencia(
                 registro_id=mid,
                 registro_identificador=f"Profissional ID #{mid}",
                 sugestao_correcao="Vincule a produção a um profissional médico ou da equipe existente.",
-                link_correcao="/cadastros/medicos",
+                link_correcao="/configuracoes?aba=medicos",
             )
             continue
 
@@ -401,7 +401,7 @@ def auditar_criticas_bpa_competencia(
                 registro_id=m.id,
                 registro_identificador=f"Profissional: {nome_prof}",
                 sugestao_correcao="Acesse Cadastros > Profissionais de Saúde e informe um CNS de 15 dígitos.",
-                link_correcao=f"/cadastros/medicos?id={m.id}",
+                link_correcao=f"/configuracoes?aba=medicos&id={m.id}",
             )
         else:
             valido_cns_p, motivo_cns_p = valida_cns(cns_prof)
@@ -416,7 +416,7 @@ def auditar_criticas_bpa_competencia(
                     registro_id=m.id,
                     registro_identificador=f"Profissional: {nome_prof}",
                     sugestao_correcao="Corrija o CNS do profissional para um número válido emitido pelo Ministério da Saúde.",
-                    link_correcao=f"/cadastros/medicos?id={m.id}",
+                    link_correcao=f"/configuracoes?aba=medicos&id={m.id}",
                 )
 
         # Crítica Profissional: Sem CBO cadastrado (Bloqueante)
@@ -432,7 +432,7 @@ def auditar_criticas_bpa_competencia(
                 registro_id=m.id,
                 registro_identificador=f"Profissional: {nome_prof}",
                 sugestao_correcao="Cadastre o código CBO (ex: 225142 Médico Clínico) no cadastro do profissional.",
-                link_correcao=f"/cadastros/medicos?id={m.id}",
+                link_correcao=f"/configuracoes?aba=medicos&id={m.id}",
             )
 
         # Crítica Profissional: Sem vínculo CNES cadastrado (Aviso)
@@ -458,7 +458,7 @@ def auditar_criticas_bpa_competencia(
                 registro_id=m.id,
                 registro_identificador=f"Profissional: {nome_prof}",
                 sugestao_correcao="Vincule as Unidades de Saúde onde o profissional atua em seu cadastro.",
-                link_correcao=f"/cadastros/medicos?id={m.id}",
+                link_correcao=f"/configuracoes?aba=medicos&id={m.id}",
             )
 
         # Crítica Profissional: Carga Horária Semanal (CHS) zerada ou inconsistente (Aviso)
@@ -478,7 +478,7 @@ def auditar_criticas_bpa_competencia(
                 registro_id=m.id,
                 registro_identificador=f"Profissional: {nome_prof}",
                 sugestao_correcao="Ajuste a Carga Horária Semanal (1 a 60h) no cadastro do profissional.",
-                link_correcao=f"/cadastros/medicos?id={m.id}",
+                link_correcao=f"/configuracoes?aba=medicos&id={m.id}",
             )
 
     # -------------------------------------------------------------
@@ -510,7 +510,7 @@ def auditar_criticas_bpa_competencia(
                 registro_id=p_amb.id,
                 registro_identificador=f"Produção #{p_amb.id} - Proc: {cod_proc}",
                 sugestao_correcao="Altere o lançamento para o código SIGTAP oficial correspondente.",
-                link_correcao="/faturamento/bpa",
+                link_correcao="/producao-ambulatorial",
             )
 
         # 4.1 BPA-I sem CNS do paciente (Bloqueante)
@@ -527,7 +527,7 @@ def auditar_criticas_bpa_competencia(
                     registro_id=p_amb.id,
                     registro_identificador=f"Produção #{p_amb.id} - Paciente: {nome_pac}",
                     sugestao_correcao="Informe o número do Cartão SUS (CNS) do paciente.",
-                    link_correcao=f"/cadastros/pacientes?id={p_amb.paciente_id}" if p_amb.paciente_id else "/faturamento/bpa",
+                    link_correcao=f"/tfd/pacientes?id={p_amb.paciente_id}" if p_amb.paciente_id else "/producao-ambulatorial",
                 )
             else:
                 valido_cns_pac, mot_cns_pac = valida_cns(cns_pac)
@@ -542,7 +542,7 @@ def auditar_criticas_bpa_competencia(
                         registro_id=p_amb.id,
                         registro_identificador=f"Produção #{p_amb.id} - Paciente: {nome_pac}",
                         sugestao_correcao="Atualize o cadastro do paciente com o CNS regular.",
-                        link_correcao=f"/cadastros/pacientes?id={p_amb.paciente_id}" if p_amb.paciente_id else "/faturamento/bpa",
+                        link_correcao=f"/tfd/pacientes?id={p_amb.paciente_id}" if p_amb.paciente_id else "/producao-ambulatorial",
                     )
 
         # 4.2 Faixa Etária Mínima/Máxima do SIGTAP (Bloqueante)
@@ -560,7 +560,7 @@ def auditar_criticas_bpa_competencia(
                     registro_id=p_amb.id,
                     registro_identificador=f"Produção #{p_amb.id} - Proc: {cod_proc}",
                     sugestao_correcao="Verifique a data de nascimento do paciente ou utilize o procedimento pediátrico adequado.",
-                    link_correcao="/faturamento/bpa",
+                    link_correcao="/producao-ambulatorial",
                 )
             if proc.idade_max and proc.idade_max > 0 and idade > proc.idade_max:
                 add_critica(
@@ -573,7 +573,7 @@ def auditar_criticas_bpa_competencia(
                     registro_id=p_amb.id,
                     registro_identificador=f"Produção #{p_amb.id} - Proc: {cod_proc}",
                     sugestao_correcao="Verifique a data de nascimento do paciente ou utilize o procedimento correspondente.",
-                    link_correcao="/faturamento/bpa",
+                    link_correcao="/producao-ambulatorial",
                 )
 
         # 4.3 Sexo do paciente incompatível com regra do SIGTAP (Bloqueante)
@@ -593,7 +593,7 @@ def auditar_criticas_bpa_competencia(
                     registro_id=p_amb.id,
                     registro_identificador=f"Produção #{p_amb.id} - Proc: {cod_proc}",
                     sugestao_correcao="Revise o procedimento solicitado ou corrija o sexo no cadastro do paciente.",
-                    link_correcao=f"/cadastros/pacientes?id={p_amb.paciente_id}" if p_amb.paciente_id else "/faturamento/bpa",
+                    link_correcao=f"/tfd/pacientes?id={p_amb.paciente_id}" if p_amb.paciente_id else "/producao-ambulatorial",
                 )
 
         # 4.4 Exigência de Serviço Especializado / Classificação na regra do SIGTAP (Bloqueante/Aviso)
@@ -618,7 +618,7 @@ def auditar_criticas_bpa_competencia(
                     registro_id=p_amb.id,
                     registro_identificador=f"Produção #{p_amb.id} - Serv: {serv_exigido}",
                     sugestao_correcao="Habilite o Serviço Especializado e Classificação na Unidade de Saúde em Cadastros.",
-                    link_correcao=f"/cadastros/unidades?id={p_amb.unidade_saude_id}",
+                    link_correcao=f"/configuracoes?aba=unidades&id={p_amb.unidade_saude_id}",
                 )
 
     # -------------------------------------------------------------
@@ -653,7 +653,7 @@ def auditar_criticas_bpa_competencia(
                     registro_id=s_lab.id,
                     registro_identificador=f"Exame Solicitação #{s_lab.codigo_solicitacao or s_lab.id}",
                     sugestao_correcao="Associe o exame ao código SIGTAP oficial correspondente.",
-                    link_correcao="/faturamento/bpa",
+                    link_correcao="/producao-ambulatorial",
                 )
 
             # Checagem BPA-I
@@ -670,7 +670,7 @@ def auditar_criticas_bpa_competencia(
                         registro_id=s_lab.id,
                         registro_identificador=f"Exame Solicitação #{s_lab.codigo_solicitacao or s_lab.id}",
                         sugestao_correcao="Informe o CNS no cadastro do paciente.",
-                        link_correcao=f"/cadastros/pacientes?id={s_lab.paciente_id}",
+                        link_correcao=f"/tfd/pacientes?id={s_lab.paciente_id}",
                     )
                 else:
                     valido_cns_pac, mot_cns_pac = valida_cns(cns_pac)
@@ -685,7 +685,7 @@ def auditar_criticas_bpa_competencia(
                             registro_id=s_lab.id,
                             registro_identificador=f"Exame Solicitação #{s_lab.codigo_solicitacao or s_lab.id}",
                             sugestao_correcao="Corrija o CNS do paciente no cadastro geral.",
-                            link_correcao=f"/cadastros/pacientes?id={s_lab.paciente_id}",
+                            link_correcao=f"/tfd/pacientes?id={s_lab.paciente_id}",
                         )
 
             # Faixa Etária Exame
@@ -701,7 +701,7 @@ def auditar_criticas_bpa_competencia(
                     registro_id=s_lab.id,
                     registro_identificador=f"Exame Solicitação #{s_lab.codigo_solicitacao or s_lab.id}",
                     sugestao_correcao="Verifique a data de nascimento do paciente ou selecione o exame apropriado.",
-                    link_correcao="/laboratorio/gestao-lotes",
+                    link_correcao="/lab/orcamento",
                 )
             if proc.idade_max and proc.idade_max > 0 and idade > proc.idade_max:
                 add_critica(
@@ -714,7 +714,7 @@ def auditar_criticas_bpa_competencia(
                     registro_id=s_lab.id,
                     registro_identificador=f"Exame Solicitação #{s_lab.codigo_solicitacao or s_lab.id}",
                     sugestao_correcao="Verifique a data de nascimento do paciente.",
-                    link_correcao="/laboratorio/gestao-lotes",
+                    link_correcao="/lab/orcamento",
                 )
 
             # Sexo Exame
@@ -734,7 +734,7 @@ def auditar_criticas_bpa_competencia(
                         registro_id=s_lab.id,
                         registro_identificador=f"Exame Solicitação #{s_lab.codigo_solicitacao or s_lab.id}",
                         sugestao_correcao="Revise a solicitação do exame ou o sexo cadastrado no paciente.",
-                        link_correcao=f"/cadastros/pacientes?id={s_lab.paciente_id}",
+                        link_correcao=f"/tfd/pacientes?id={s_lab.paciente_id}",
                     )
 
     # -------------------------------------------------------------
@@ -762,7 +762,7 @@ def auditar_criticas_bpa_competencia(
                     registro_id=v.id,
                     registro_identificador=f"Viagem TFD #{v.id} - Paciente: {nome_pac}",
                     sugestao_correcao="Informe o CNS no cadastro do paciente para faturamento do TFD.",
-                    link_correcao=f"/cadastros/pacientes?id={vp.paciente_id}",
+                    link_correcao=f"/tfd/pacientes?id={vp.paciente_id}",
                 )
             else:
                 valido_cns_pac, mot_cns_pac = valida_cns(cns_pac)
@@ -776,7 +776,7 @@ def auditar_criticas_bpa_competencia(
                         registro_id=v.id,
                         registro_identificador=f"Viagem TFD #{v.id} - Paciente: {nome_pac}",
                         sugestao_correcao="Atualize o CNS no cadastro do paciente.",
-                        link_correcao=f"/cadastros/pacientes?id={vp.paciente_id}",
+                        link_correcao=f"/tfd/pacientes?id={vp.paciente_id}",
                     )
 
     # Contadores e Consolidação Final

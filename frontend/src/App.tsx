@@ -254,6 +254,7 @@ export default function App() {
                   <Route path="/apac/regulacao" element={<Guard tela="apac_regulacao"><ApacRegulacao /></Guard>} />
                   <Route path="/apac/faturamento" element={<Guard tela="apac_faturamento"><ApacFaturamento /></Guard>} />
                   <Route path="/faturamento/bpa" element={<GuardQualquer telas={["faturamento_bpa", "tfd", "lab", "usuarios", "tfd_faturamento", "lab_faturamento", "apac_faturamento", "apac"]}><FaturamentoBpa /></GuardQualquer>} />
+                  <Route path="/faturamento/prestadores" element={<Navigate to="/lab/faturamento" replace />} />
                   <Route path="/regulacao/bpa" element={<Navigate to="/faturamento/bpa" replace />} />
                   <Route path="/producao-ambulatorial" element={<GuardQualquer telas={["producao_ambulatorial", "faturamento_bpa", "tfd", "lab", "usuarios", "tfd_medico", "tfd_faturamento"]}><ProducaoProfissional /></GuardQualquer>} />
                   <Route path="/producao-profissional" element={<Navigate to="/producao-ambulatorial" replace />} />
