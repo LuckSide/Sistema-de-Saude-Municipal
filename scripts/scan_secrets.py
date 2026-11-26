@@ -72,49 +72,81 @@ def eh_falso_positivo(texto: str) -> bool:
     return False
 
 
+def _listar_arquivos_candidatos(root_dir: str) -> list[str]:
+    """Lista arquivos rastreados pelo Git e não-rastreados não ignorados pelo .gitignore.
+
+    Arquivos estritamente locais e cobertos pelo .gitignore (como .env local) não são
+    enviados em `git push`; já qualquer .env/.pem/.key rastreado ou não-ignorado é reportado.
+    """
+    try:
+        res = subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            cwd=root_dir,
+            capture_output=True,
+        )
+        if res.returncode == 0:
+            arqs = []
+            for raw in res.stdout.split(b"\x00"):
+                if not raw:
+                    continue
+                rel = raw.decode("utf-8", errors="ignore")
+                partes = rel.split("/")
+                if any(p in IGNORAR_DIRETORIOS for p in partes[:-1]):
+                    continue
+                if os.path.isfile(os.path.join(root_dir, rel)):
+                    arqs.append(rel)
+            return arqs
+    except Exception:
+        pass
+
+    arqs = []
+    for dirpath, dirnames, filenames in os.walk(root_dir):
+        dirnames[:] = [d for d in dirnames if d not in IGNORAR_DIRETORIOS]
+        for fname in filenames:
+            fpath = os.path.join(dirpath, fname)
+            arqs.append(os.path.relpath(fpath, root_dir))
+    return arqs
+
+
 def escanear_arquivos(root_dir: str) -> list[tuple[str, str, str]]:
     vulnerabilidades = []
 
-    for dirpath, dirnames, filenames in os.walk(root_dir):
-        dirnames[:] = [d for d in dirnames if d not in IGNORAR_DIRETORIOS]
+    for relpath in _listar_arquivos_candidatos(root_dir):
+        fname = os.path.basename(relpath)
+        fpath = os.path.join(root_dir, relpath)
 
-        for fname in filenames:
-            fpath = os.path.join(dirpath, fname)
-            relpath = os.path.relpath(fpath, root_dir)
+        if fname in IGNORAR_ARQUIVOS:
+            continue
 
-            if fname in IGNORAR_ARQUIVOS:
-                continue
+        # 1. Verifica extensão proibida
+        _, ext = os.path.splitext(fname)
+        eh_migration_sql = ext.lower() == ".sql" and any(
+            part in ("migrations", "migration") for part in relpath.split(os.sep)
+        )
+        if (ext.lower() in EXTENSOES_PROIBIDAS and not eh_migration_sql) or fname == ".env" or fname.startswith(".env."):
+            vulnerabilidades.append((relpath, f"Arquivo com extensão sensível restrita ({ext})", fname))
+            continue
 
-            # 1. Verifica extensão proibida
-            _, ext = os.path.splitext(fname)
-            eh_migration_sql = ext.lower() == ".sql" and any(
-                part in ("migrations", "migration") for part in relpath.split(os.sep)
-            )
-            if (ext.lower() in EXTENSOES_PROIBIDAS and not eh_migration_sql) or fname == ".env" or fname.startswith(".env."):
-                vulnerabilidades.append((relpath, f"Arquivo com extensão sensível restrita ({ext})", fname))
-                continue
+        if fname.endswith((".pyc", ".png", ".jpg", ".jpeg", ".svg", ".ico", ".woff", ".woff2", ".ttf", ".pdf")):
+            continue
 
-            if fname.endswith((".pyc", ".png", ".jpg", ".jpeg", ".svg", ".ico", ".woff", ".woff2", ".ttf", ".pdf")):
-                continue
-
-            # 2. Varredura de conteúdo
-            try:
-                with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
-                    linhas = f.readlines()
-                    for idx, linha in enumerate(linhas, 1):
-                        for rotulo, pattern in RE_SECRETS:
-                            matches = pattern.findall(linha)
-                            for m in matches:
-                                m_str = str(m)
-                                if not eh_falso_positivo(linha):
-                                    snippet = linha.strip()[:80]
-                                    vulnerabilidades.append((
-                                        f"{relpath}:{idx}",
-                                        rotulo,
-                                        f"Trecho: {snippet}"
-                                    ))
-            except Exception:
-                pass
+        # 2. Varredura de conteúdo
+        try:
+            with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                linhas = f.readlines()
+                for idx, linha in enumerate(linhas, 1):
+                    for rotulo, pattern in RE_SECRETS:
+                        matches = pattern.findall(linha)
+                        for _m in matches:
+                            if not eh_falso_positivo(linha):
+                                snippet = linha.strip()[:80]
+                                vulnerabilidades.append((
+                                    f"{relpath}:{idx}",
+                                    rotulo,
+                                    f"Trecho: {snippet}"
+                                ))
+        except Exception:
+            pass
 
     return vulnerabilidades
 
