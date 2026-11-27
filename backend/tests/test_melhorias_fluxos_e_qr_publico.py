@@ -413,3 +413,102 @@ def test_qr_comprovantes_apontam_para_acompanhamento_publico_sem_pii(db_session:
         )
         assert r_qr.status_code == 200, r_qr.text
         assert r_qr.json()["encontrado"] is True
+
+
+def test_contagem_filas_separa_exames_por_procedimento_e_consultas_por_especialidade(client, db_session):
+    """Garante que exames diagnósticos (ex.: Endoscopia e Colonoscopia) não se misturem
+    entre si nem com consultas especializadas do mesmo CBO (ex.: Gastroenterologista).
+    """
+    from app.models.tfd import ExameFila, Paciente
+
+    p1 = Paciente(nome="Paciente Um", cpf="111.000.000-01", municipio="Guapé")
+    p2 = Paciente(nome="Paciente Dois", cpf="111.000.000-02", municipio="Guapé")
+    p3 = Paciente(nome="Paciente Tres", cpf="111.000.000-03", municipio="Guapé")
+    p4 = Paciente(nome="Paciente Quatro", cpf="111.000.000-04", municipio="Guapé")
+    db_session.add_all([p1, p2, p3, p4])
+    db_session.commit()
+    for p in (p1, p2, p3, p4):
+        db_session.refresh(p)
+
+    # 2 Endoscopias (uma com CBO 225165 e outra com CBO 225310),
+    # 1 Colonoscopia (CBO 225165), e 1 Consulta Gastro (CBO 225165)
+    endo1 = ExameFila(
+        paciente_id=p1.id,
+        exame="9999990005 - ENDOSCOPIA",
+        codigo_procedimento="9999990005",
+        tipo_fila="EXAMES GASTROENTEROLOGIA",
+        especialidade="EXAMES GASTROENTEROLOGIA",
+        codigo_especialidade="225165",
+        nome_especialidade="Médico gastroenterologista",
+        status="aguardando",
+        prioridade="rotina",
+        data_pedido=date(2026, 11, 1),
+    )
+    endo2 = ExameFila(
+        paciente_id=p2.id,
+        exame="9999990005 - ENDOSCOPIA",
+        codigo_procedimento="9999990005",
+        tipo_fila="EXAMES GASTROENTEROLOGIA",
+        especialidade="EXAMES GASTROENTEROLOGIA",
+        codigo_especialidade="225310",
+        nome_especialidade="Médico em endoscopia",
+        status="aguardando",
+        prioridade="rotina",
+        data_pedido=date(2026, 11, 2),
+    )
+    colono = ExameFila(
+        paciente_id=p3.id,
+        exame="0209010029 - COLONOSCOPIA (COLOSCOPIA)",
+        codigo_procedimento="0209010029",
+        tipo_fila="EXAMES GASTROENTEROLOGIA",
+        especialidade="EXAMES GASTROENTEROLOGIA",
+        codigo_especialidade="225165",
+        nome_especialidade="Médico gastroenterologista",
+        status="aguardando",
+        prioridade="rotina",
+        data_pedido=date(2026, 11, 3),
+    )
+    cons_gastro = ExameFila(
+        paciente_id=p4.id,
+        exame="0301010072 - CONSULTA MEDICA EM ATENÇÃO ESPECIALIZADA",
+        codigo_procedimento="0301010072",
+        tipo_fila="CONSULTAS ESPECIALIZADAS",
+        especialidade="CONSULTAS ESPECIALIZADAS",
+        codigo_especialidade="225165",
+        nome_especialidade="Médico gastroenterologista",
+        status="aguardando",
+        prioridade="rotina",
+        data_pedido=date(2026, 11, 4),
+    )
+    db_session.add_all([endo1, endo2, colono, cons_gastro])
+    db_session.commit()
+
+    # Lista filtrada por ENDOSCOPIA -> deve contar 2 na fila específica, 3 no tipo EXAMES GASTROENTEROLOGIA
+    r_endo = client.get("/api/tfd/exames", params={"status": "aguardando", "procedimento": "ENDOSCOPIA"})
+    assert r_endo.status_code == 200, r_endo.text
+    d_endo = r_endo.json()
+    assert d_endo["total"] == 2
+    assert len(d_endo["data"]) == 2
+    for row in d_endo["data"]:
+        assert row["total_especialidade"] == 2
+        assert row["total_fila"] == 2
+        assert row["total_tipo"] == 3
+        assert row["grupo_tipo"] == "EXAMES GASTROENTEROLOGIA"
+
+    # Lista filtrada por COLONOSCOPIA -> deve contar 1 (não 4!)
+    r_col = client.get("/api/tfd/exames", params={"status": "aguardando", "procedimento": "COLONOSCOPIA"})
+    assert r_col.status_code == 200, r_col.text
+    d_col = r_col.json()
+    assert d_col["total"] == 1
+    assert d_col["data"][0]["total_especialidade"] == 1
+    assert d_col["data"][0]["total_fila"] == 1
+    assert d_col["data"][0]["total_tipo"] == 3
+
+    # Lista sem filtro -> consulta Gastro fica com total_especialidade == 1 e total_tipo == 1 (não 4!)
+    r_all = client.get("/api/tfd/exames", params={"status": "aguardando"})
+    assert r_all.status_code == 200, r_all.text
+    por_id = {x["id"]: x for x in r_all.json()["data"]}
+    assert por_id[cons_gastro.id]["total_especialidade"] == 1
+    assert por_id[cons_gastro.id]["total_tipo"] == 1
+    assert por_id[endo1.id]["total_especialidade"] == 2
+    assert por_id[colono.id]["total_especialidade"] == 1

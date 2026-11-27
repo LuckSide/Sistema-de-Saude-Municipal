@@ -2249,15 +2249,31 @@ def _remover_acentos(texto: str) -> str:
     return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 
+def _identificar_grupo_procedimento(e: ExameFila) -> tuple[str, str]:
+    """Extrai o nome canônico do exame/procedimento sem o prefixo numérico SIGTAP/local."""
+    ex = (e.exame or "").strip()
+    m = _re.match(r"^[0-9.\-]{4,}\s*[-·]\s*(.+)$", ex)
+    nome_proc = (m.group(1) if m else ex).strip() or ex or (e.tipo_fila or "").strip() or "PROCEDIMENTO"
+    return f"PROC:{_remover_acentos(nome_proc).upper()}", nome_proc
+
+
 def _identificar_grupo_especialidade(e: ExameFila) -> tuple[str, str]:
-    """Retorna (chave_unica, rotulo_amigavel) unificando estritamente qualquer variação
-    da mesma especialidade médica (CBO, nome de especialidade ou menção no procedimento)
-    para garantir que NUNCA existam duas pessoas em 1º ou 2º lugar e que a ordenação seja
-    estritamente sequencial (1, 2, 3...) dentro da especialidade.
+    """Retorna (chave_unica, rotulo_amigavel) da especialidade/CBO do pedido.
+
+    Respeita prioritariamente um `codigo_especialidade` (CBO) já preenchido no registro
+    antes de recorrer a heurísticas textuais por palavra-chave no campo `especialidade`.
     """
     cbo = (e.codigo_especialidade or "").strip()
-    if cbo and cbo in CBO_PARA_NOME_CANONICO:
-        return f"CBO:{cbo}", CBO_PARA_NOME_CANONICO[cbo]
+    if cbo:
+        if cbo in CBO_PARA_NOME_CANONICO:
+            return f"CBO:{cbo}", CBO_PARA_NOME_CANONICO[cbo]
+        nome_esp_reg = (e.nome_especialidade or "").strip()
+        if nome_esp_reg:
+            return f"CBO:{cbo}", nome_esp_reg
+        from app.services.cbo_normalizacao import _CBO_DESC_CANONICA
+
+        nome_canon_extra = _CBO_DESC_CANONICA.get(cbo)
+        return f"CBO:{cbo}", (nome_canon_extra or f"Especialidade CBO {cbo}")
 
     haystack = _remover_acentos(
         f"{e.nome_especialidade or ''} {e.especialidade or ''} {e.exame or ''}"
@@ -2267,54 +2283,68 @@ def _identificar_grupo_especialidade(e: ExameFila) -> tuple[str, str]:
         if padrao in haystack:
             return f"CBO:{cbo_padrao}", rotulo_padrao
 
-    if cbo:
-        rot = (e.nome_especialidade or "").strip() or f"Especialidade CBO {cbo}"
-        return f"CBO:{cbo}", rot
-
     nome_esp = (e.nome_especialidade or "").strip()
     esp = (e.especialidade or "").strip()
-    tipo = (e.tipo_fila or "").strip()
-    ex = (e.exame or "").strip()
 
     if nome_esp and _remover_acentos(nome_esp).upper() not in TERMOS_FILA_GENERICOS:
         return f"ESP:{_remover_acentos(nome_esp).upper()}", nome_esp
     if esp and _remover_acentos(esp).upper() not in TERMOS_FILA_GENERICOS:
         return f"ESP:{_remover_acentos(esp).upper()}", esp
 
-    import re as _re
-    m = _re.match(r"^[0-9.\-]{4,}\s*-\s*(.+)$", ex)
-    nome_proc = (m.group(1) if m else ex).strip() or ex or tipo or "GERAL"
-    cod_proc = (e.codigo_procedimento or "").strip()
-    chave = f"PROC:{cod_proc}" if cod_proc else f"PROC:{_remover_acentos(nome_proc).upper()}"
-    return chave, nome_proc
+    return _identificar_grupo_procedimento(e)
 
 
 def _eh_consulta_especializada(e: ExameFila) -> bool:
-    tf = _remover_acentos(e.tipo_fila or "").upper()
-    esp = _remover_acentos(e.especialidade or "").upper()
-    cbo = (e.codigo_especialidade or "").strip()
-    if tf in TIPOS_CONSULTA_ESPECIALIZADA or "CONSULTA" in tf or "CONSULTA" in esp:
+    """Identifica se o pedido é consulta/retorno/avaliação médica (e não exame/cirurgia).
+
+    Ter `codigo_especialidade` (CBO) ou `nome_especialidade` preenchido NÃO torna
+    exames diagnósticos (ultrassonografia, endoscopia, colonoscopia etc.) em consultas.
+    """
+    tf = _remover_acentos(e.tipo_fila or "").strip().upper()
+    esp = _remover_acentos(e.especialidade or "").strip().upper()
+    ex = _remover_acentos(e.exame or "").strip().upper()
+    cod_proc = (e.codigo_procedimento or "").strip()
+
+    if tf in TIPOS_CONSULTA_ESPECIALIZADA or "CONSULTA" in tf or "AVALIACAO CIRURGIA" in tf:
         return True
-    if bool(cbo) or bool(e.nome_especialidade):
+    if (
+        cod_proc.startswith("030101")
+        or ex.startswith("CONSULTA")
+        or " - CONSULTA " in ex
+        or " · CONSULTA " in ex
+        or "RETORNO EM CONSULTA" in ex
+    ):
         return True
-    haystack = _remover_acentos(f"{e.nome_especialidade or ''} {e.especialidade or ''} {e.exame or ''}").upper()
-    return any(p in haystack for p, _, _ in MAPA_ESPECIALIDADES_CANONICAS)
+    if "CONSULTA" in esp and not any(
+        k in tf for k in ("EXAME", "CIRURGIA", "ULTRA", "TOMOG", "RESSON", "MAMO", "RAIO", "BIOPSIA", "ENDOSC", "COLON")
+    ):
+        return True
+    return False
+
+
+def _identificar_grupo_fila_especifica(e: ExameFila) -> tuple[str, str]:
+    """Define a fila específica de atendimento do paciente:
+    - Consultas/Retornos/Avaliações: agrupa por (Tipo de Fila de Consulta + Especialidade),
+      nunca misturando com exames diagnósticos (ex.: Endoscopia/Colonoscopia).
+    - Exames/Procedimentos/Cirurgias: agrupa estritamente pelo procedimento específico
+      (ex.: ENDOSCOPIA separada de COLONOSCOPIA).
+    """
+    if _eh_consulta_especializada(e):
+        chave_tipo, rot_tipo = _identificar_grupo_tipo(e)
+        chave_esp, rot_esp = _identificar_grupo_especialidade(e)
+        if chave_tipo == "CONSULTAS ESPECIALIZADAS":
+            return f"CONS|{chave_tipo}|{chave_esp}", rot_esp
+        return f"CONS|{chave_tipo}|{chave_esp}", f"{rot_esp} · {rot_tipo}"
+    return _identificar_grupo_procedimento(e)
 
 
 def _grupo_fila(e: ExameFila) -> tuple[str, str]:
-    """Fila específica do encaminhamento: (chave, rótulo).
-
-    - Consultas especializadas: agrupa pela Especialidade médica canônica.
-    - Demais procedimentos: agrupa pelo Tipo de Fila / Procedimento.
-    """
-    if _eh_consulta_especializada(e):
-        return _identificar_grupo_especialidade(e)
-    rotulo = (e.tipo_fila or "").strip() or "GERAL"
-    return f"TIPO|{rotulo.upper()}", rotulo
+    """Fila específica do encaminhamento: (chave, rótulo)."""
+    return _identificar_grupo_fila_especifica(e)
 
 
 def _grupo_especialidade(e: ExameFila) -> str:
-    chave, _ = _identificar_grupo_especialidade(e)
+    chave, _ = _identificar_grupo_fila_especifica(e)
     return chave
 
 
@@ -2407,10 +2437,15 @@ def _data_inclusao_iso(e: ExameFila) -> str:
 
 
 def _identificar_grupo_tipo(e: ExameFila) -> tuple[str, str]:
+    tf = (e.tipo_fila or "").strip()
+    tf_norm = _remover_acentos(tf).upper()
+    if tf_norm in ("CONSULTAS ESPECIALIZADAS", "CONSULTA ESPECIALIZADA"):
+        return "CONSULTAS ESPECIALIZADAS", "Consultas Especializadas"
+    if tf_norm not in {"", "ELETIVO", "URGENTE", "PRIORITARIO", "PRIORIDADE", "ROTINA", "GERAL"}:
+        return tf_norm, tf
     if _eh_consulta_especializada(e):
         return "CONSULTAS ESPECIALIZADAS", "Consultas Especializadas"
-    rot = (e.tipo_fila or "").strip() or "PROCEDIMENTOS"
-    return rot.upper(), rot
+    return "PROCEDIMENTOS", "Procedimentos"
 
 
 def _calcular_duplo_rank(
@@ -2418,9 +2453,9 @@ def _calcular_duplo_rank(
     status_filtro: str | None = None,
 ) -> tuple[dict[int, tuple[int, int, str]], dict[int, tuple[int, int, str]]]:
     """Calcula ordenações sequenciais independentes e estritas:
-    1. rank_tipo: ordenação sequencial estrita (1, 2, 3...) dentro do Tipo de Fila geral (ex: Consultas Especializadas).
-    2. rank_esp: ordenação sequencial estrita (1, 2, 3...) unificada canonicamente por Especialidade / Procedimento.
-    Garante que para qualquer especialidade SEMPRE exista apenas uma pessoa em cada posição (1º, 2º, 3º...).
+    1. rank_tipo: ordenação sequencial estrita (1, 2, 3...) dentro do Tipo de Fila cadastrado.
+    2. rank_esp: ordenação sequencial estrita (1, 2, 3...) na fila específica (especialidade
+       para consultas; procedimento específico para exames/cirurgias).
     Retorna (rank_tipo, rank_esp) como dicionários {id: (posicao, total, rotulo)}.
     """
     filtro_st = [ExameFila.status == status_filtro] if status_filtro else [ExameFila.status == "aguardando"]
@@ -2449,11 +2484,11 @@ def _calcular_duplo_rank(
         for i, m in enumerate(_ordenar_fila(membros)):
             rank_tipo[m.id] = (i + 1, total, rotulos_tipo[chave])
 
-    # 2. Posição por Especialidade / Procedimento (Canônica e Sem Duplicidade de Posições)
+    # 2. Posição Específica (Especialidade p/ consultas; Procedimento p/ exames/cirurgias)
     grupos_esp: dict[str, list[ExameFila]] = {}
     rotulos_esp: dict[str, str] = {}
     for e in base:
-        chave, rot = _identificar_grupo_especialidade(e)
+        chave, rot = _identificar_grupo_fila_especifica(e)
         grupos_esp.setdefault(chave, []).append(e)
         rotulos_esp[chave] = rot
 
@@ -2467,27 +2502,9 @@ def _calcular_duplo_rank(
 
 
 def _rank_por_grupo(db: Session, status_filtro: str | None = None) -> dict[int, tuple[int, int, str]]:
-    """Posição na fila específica do encaminhamento (legado / exportação)."""
-    rank_tipo, rank_esp = _calcular_duplo_rank(db, status_filtro)
-    filtro_st = [ExameFila.status == status_filtro] if status_filtro else [ExameFila.status == "aguardando"]
-    base = list(
-        db.exec(
-            select(ExameFila).where(ExameFila.ativo == True, *filtro_st)
-        ).all()
-    )
-    if not base:
-        base = list(
-            db.exec(
-                select(ExameFila).where(ExameFila.ativo == True, ExameFila.status.in_(["aguardando", "agendado"]))
-            ).all()
-        )
-    rank_misto: dict[int, tuple[int, int, str]] = {}
-    for e in base:
-        if _eh_consulta_especializada(e):
-            rank_misto[e.id] = rank_esp.get(e.id, (None, None, ""))
-        else:
-            rank_misto[e.id] = rank_tipo.get(e.id, (None, None, ""))
-    return rank_misto
+    """Posição na fila específica do encaminhamento (consultas por especialidade; exames por procedimento)."""
+    _, rank_esp = _calcular_duplo_rank(db, status_filtro)
+    return rank_esp
 
 
 def _com_posicao(
@@ -2501,10 +2518,7 @@ def _com_posicao(
     offset_base: int = 0,
     total_filtrado: int | None = None,
 ) -> list[ExameOut]:
-    """Posições segmentadas: tipo de fila, especialidade e legado.
-    - Fila por Especialidade: ordem sequencial estrita dos pacientes aguardando aquela especialidade (1º, 2º, 3º...).
-    - Fila por Tipo de Fila: posição do paciente em relação a TODAS as consultas especializadas daquele tipo (ex: 2º de 659).
-    """
+    """Posições segmentadas: tipo de fila, fila específica (especialidade/procedimento) e legado."""
     rank_tipo, rank_esp = _calcular_duplo_rank(db, status_filtro)
     total_geral = len(rank_tipo) or (
         db.exec(
@@ -2515,6 +2529,7 @@ def _com_posicao(
         ).one() or 1
     )
 
+    filtrando_proc = bool(filtro_proc and filtro_proc.strip())
     filtrando_especialidade = bool(
         filtro_esp
         or (filtro_q and any(p in filtro_q.upper() for p, _, _ in MAPA_ESPECIALIDADES_CANONICAS))
@@ -2536,26 +2551,22 @@ def _com_posicao(
 
         pos_seq = offset_base + idx_item + 1
 
-        if filtrando_especialidade:
-            # Ao filtrar por Especialidade (ex: Cardiologista, mesmo que o filtro de Tipo também esteja preenchido):
-            # - Posição por Especialidade: 1º, 2º, 3º... daquela especialidade
-            # - Posição por Tipo de Fila: posição do paciente em relação a TODAS as consultas especializadas (ex: 2º de 659)
+        if filtrando_proc or filtrando_especialidade:
             pos_esp = pos_seq
-            tot_esp = total_filtrado or tot_esp_global
-            rot_esp = rot_esp_global or (e.nome_especialidade or e.especialidade or "Especialidade")
+            tot_esp = total_filtrado if total_filtrado is not None else tot_esp_global
+            rot_esp = rot_esp_global or (filtro_proc.strip() if filtrando_proc else (e.nome_especialidade or e.especialidade or "Especialidade"))
             pos_t = pos_t_global
             tot_t = tot_t_global
-            rot_t = rot_t_global or "Consultas Especializadas"
+            rot_t = rot_t_global or (e.tipo_fila or "Tipo de Fila")
+            pos_leg, tot_leg, rot_leg = pos_esp, tot_esp, rot_esp
         elif filtrando_tipo:
-            # Ao filtrar apenas por Tipo de Fila (ex: Consultas Especializadas como um todo):
-            # - Posição por Tipo de Fila: 1º, 2º, 3º... de todas as consultas especializadas
-            # - Posição por Especialidade: posição individual de cada um na sua respectiva especialidade
             pos_t = pos_seq
-            tot_t = total_filtrado or tot_t_global
+            tot_t = total_filtrado if total_filtrado is not None else tot_t_global
             rot_t = rot_t_global or (e.tipo_fila or "Tipo de Fila")
             pos_esp = pos_esp_global
             tot_esp = tot_esp_global
             rot_esp = rot_esp_global
+            pos_leg, tot_leg, rot_leg = pos_t, tot_t, rot_t
         else:
             pos_t = pos_t_global
             tot_t = tot_t_global
@@ -2563,10 +2574,7 @@ def _com_posicao(
             pos_esp = pos_esp_global
             tot_esp = tot_esp_global
             rot_esp = rot_esp_global
-
-        pos_leg = pos_esp if _eh_consulta_especializada(e) else pos_t
-        tot_leg = tot_esp if _eh_consulta_especializada(e) else tot_t
-        rot_leg = rot_esp if _eh_consulta_especializada(e) else rot_t
+            pos_leg, tot_leg, rot_leg = pos_esp, tot_esp, rot_esp
 
         dump = e.model_dump()
         if not dump.get("codigo_curto") and e.id:
@@ -3226,14 +3234,15 @@ def exportar_fila(
         if filtrando_especialidade:
             pos_esp = pos_seq
             pos_tipo = pos_t_global
+            pos_leg = pos_esp
         elif filtrando_tipo:
             pos_tipo = pos_seq
             pos_esp = pos_esp_global
+            pos_leg = pos_tipo
         else:
             pos_tipo = pos_t_global
             pos_esp = pos_esp_global
-
-        pos_leg = pos_esp if _eh_consulta_especializada(e) else pos_tipo
+            pos_leg = pos_esp
         linhas.append(
             _linha_fila(
                 db,

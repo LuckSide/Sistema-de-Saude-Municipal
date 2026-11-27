@@ -1258,7 +1258,8 @@ export default function FilaExames() {
   const podeEditarPrio = !editId || podeAlterarPrioridade(exameEmEdicao?.medico_id);
   const prioAlterada = !!exameEmEdicao && form.prioridade !== exameEmEdicao.prioridade;
 
-  const badgeTotal = lista.length > 0 ? lista[0].total_fila ?? total : total;
+  const temFiltroFila = Boolean(tipoFila || proc || filtroCbo || espCbo);
+  const badgeTotal = temFiltroFila && lista.length > 0 ? lista[0].total_fila ?? total : total;
   const prioCor: Record<string, string> = {
     rotina: "bg-sus-900/10 text-sus-900",
     urgente: "bg-red-100 text-red-700 border border-red-200",
@@ -1270,7 +1271,9 @@ export default function FilaExames() {
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="font-display text-lg font-bold text-sus-950">Fila de Procedimentos</h2>
           <span className="rounded-full bg-teal/10 px-2.5 py-0.5 text-xs font-semibold text-teal">
-            {total} no filtro · {badgeTotal} na fila
+            {temFiltroFila
+              ? `${total} no filtro · ${badgeTotal} na fila`
+              : `${total} ${total === 1 ? "pedido na fila" : "pedidos na fila"}`}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -1727,7 +1730,7 @@ export default function FilaExames() {
                         <span className="inline-flex items-center rounded-md bg-teal/15 px-2 py-0.5 text-teal whitespace-nowrap" title="Posição no Tipo de Fila Geral (ex: Consultas Especializadas)">
                           G: {(e.posicao_tipo ?? e.posicao) ? `${e.posicao_tipo ?? e.posicao}` : "—"}{e.total_tipo ? `/${e.total_tipo}` : ""}
                         </span>
-                        <span className="inline-flex items-center rounded-md bg-sus-900/10 px-2 py-0.5 text-sus-900 whitespace-nowrap" title="Posição na Especialidade">
+                        <span className="inline-flex items-center rounded-md bg-sus-900/10 px-2 py-0.5 text-sus-900 whitespace-nowrap" title="Posição na fila específica (Especialidade ou Procedimento)">
                           Esp: {(e.posicao_especialidade ?? e.posicao) ? `${e.posicao_especialidade ?? e.posicao}` : "—"}{e.total_especialidade ? `/${e.total_especialidade}` : ""}
                         </span>
                       </div>
