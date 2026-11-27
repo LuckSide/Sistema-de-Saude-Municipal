@@ -55,6 +55,18 @@ MAPEAMENTO_PROCEDIMENTOS_LEGADOS: dict[str, str] = {
 }
 
 
+def _resolver_codigo_sigtap_efetivo(codigo_raw: str, proc: SigtapProcedimento | None = None) -> str:
+    """Resolve mapeamento de código legado municipal (99999...) via tabela fixa ou de-para cadastrado no SIGTAP."""
+    cod = (codigo_raw or "").strip()
+    if cod in MAPEAMENTO_PROCEDIMENTOS_LEGADOS:
+        cod = MAPEAMENTO_PROCEDIMENTOS_LEGADOS[cod]
+    if cod.startswith("99999") and proc is not None:
+        cod_fat = (getattr(proc, "codigo_faturamento_sigtap", "") or "").strip()
+        if len(cod_fat) == 10 and cod_fat.isdigit() and not cod_fat.startswith("99999"):
+            return cod_fat
+    return cod
+
+
 def _carregar_parametros_institucionais_bpa(db: Session) -> dict[str, str]:
     """Carrega os parâmetros institucionais do município/gestor salvos em Configurações Gerais."""
     s = db.exec(select(SystemSettings).where(SystemSettings.id == 1)).first()
@@ -668,9 +680,7 @@ def gerar_bpa_completo_municipio(
         if not proc and getattr(p_amb, "procedimento_id", None):
             proc = get_procedimento(p_amb.procedimento_id)
 
-        cod_proc = limpar_numeros(p_amb.procedimento_codigo).rjust(10, "0")
-        if cod_proc in MAPEAMENTO_PROCEDIMENTOS_LEGADOS:
-            cod_proc = MAPEAMENTO_PROCEDIMENTOS_LEGADOS[cod_proc]
+        cod_proc = _resolver_codigo_sigtap_efetivo(limpar_numeros(p_amb.procedimento_codigo).rjust(10, "0"), proc)
         if cod_proc.startswith("99999"):
             # Procedimento extra-tabela SUS sem código SIGTAP válido não pode constar no arquivo BPA
             continue
@@ -776,9 +786,7 @@ def gerar_bpa_completo_municipio(
 
             qtd = it.quantidade or 1
             instrumento = (getattr(proc, "instrumento", "") or "BPA-C").upper()
-            codigo_proc = proc.codigo.strip()
-            if codigo_proc in MAPEAMENTO_PROCEDIMENTOS_LEGADOS:
-                codigo_proc = MAPEAMENTO_PROCEDIMENTOS_LEGADOS[codigo_proc]
+            codigo_proc = _resolver_codigo_sigtap_efetivo(proc.codigo.strip(), proc)
             if codigo_proc.startswith("99999"):
                 # Exame extra-tabela SUS (ex: CA 15-3, D-Dímero) sem código SIGTAP não vai ao BPA/SIA
                 continue
@@ -1235,10 +1243,10 @@ def obter_demonstrativo_faturamento(
     for p in prods_amb:
         u = unidades_map.get(p.unidade_saude_id) if p.unidade_saude_id else None
         cnes_u = limpar_numeros(getattr(u, "cnes", "")) or cnes_filtro or cfg["cnes_sms"]
-        cod = limpar_numeros(p.procedimento_codigo).zfill(10)
-        if cod in MAPEAMENTO_PROCEDIMENTOS_LEGADOS:
-            cod = MAPEAMENTO_PROCEDIMENTOS_LEGADOS[cod]
-        proc = get_sigtap(cod)
+        cod_orig = limpar_numeros(p.procedimento_codigo).zfill(10)
+        proc_orig = get_sigtap(cod_orig)
+        cod = _resolver_codigo_sigtap_efetivo(cod_orig, proc_orig)
+        proc = get_sigtap(cod) or proc_orig
 
         vl_sa = float(
             p.valor_unitario
@@ -1285,9 +1293,7 @@ def obter_demonstrativo_faturamento(
             if not proc:
                 continue
 
-            cod = limpar_numeros(proc.codigo).zfill(10)
-            if cod in MAPEAMENTO_PROCEDIMENTOS_LEGADOS:
-                cod = MAPEAMENTO_PROCEDIMENTOS_LEGADOS[cod]
+            cod = _resolver_codigo_sigtap_efetivo(limpar_numeros(proc.codigo).zfill(10), proc)
             vl_sa = float(
                 getattr(proc, "valor_combinado", 0.0)
                 or getattr(proc, "valor_sa", 0.0)

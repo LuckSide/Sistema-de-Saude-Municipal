@@ -273,3 +273,35 @@ def test_editar_sigtap_legado_e_link_bpa_para_catalogo_sigtap(session: Session):
 
     auditoria_pos = auditar_criticas_bpa_competencia(session, "2026-11")
     assert not [c for c in auditoria_pos["criticas"] if "9999900275" in c["mensagem"]]
+
+
+def test_listar_sigtap_nao_falha_com_complexidade_vazia_ou_legada(session: Session):
+    """Regressão: registros legados com complexidade='' ou 'Alta Complexidade' não devem quebrar GET /api/lab/sigtap."""
+    from app.api.v1.lab import listar_sigtap
+    from app.models.lab_exames import SigtapProcedimento
+    from app.models.user import User
+
+    p_vazio = SigtapProcedimento(
+        codigo="9999900275",
+        descricao="DOSAGEM DO ANTÍGENO CA 15-3",
+        complexidade="",
+        instrumento="BPA-I",
+    )
+    p_extenso = SigtapProcedimento(
+        codigo="0206010010",
+        descricao="TOMOGRAFIA COMPUTADORIZADA",
+        complexidade="Alta Complexidade",
+        instrumento="APAC",
+    )
+    session.add_all([p_vazio, p_extenso])
+    session.commit()
+
+    admin = User(username="admin_list_sigtap", password_hash="x", is_superuser=True)
+    res_legado = listar_sigtap(q="9999900275", db=session, _=admin)
+    assert res_legado["total"] == 1
+    assert res_legado["data"][0].codigo == "9999900275"
+    assert res_legado["data"][0].complexidade == ""
+
+    res_ext = listar_sigtap(q="0206010010", db=session, _=admin)
+    assert res_ext["total"] == 1
+    assert res_ext["data"][0].complexidade == "AC"

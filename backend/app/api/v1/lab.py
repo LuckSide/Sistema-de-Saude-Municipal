@@ -23,6 +23,7 @@ from app.schemas.lab import (
     SigtapVersaoOut,
     SolicitacaoIn,
     SolicitacaoOut,
+    normalizar_complexidade_sigtap,
 )
 from app.schemas.lab_fase6 import (
     LabAprovarFaturamentoIn,
@@ -105,6 +106,18 @@ def _sigtap_para_out(r: SigtapProcedimento) -> SigtapOut:
     from app.services.sigtap_hierarquia import decompor_codigo_sigtap
 
     d = r.model_dump()
+    d["codigo"] = d.get("codigo") or ""
+    d["descricao"] = d.get("descricao") or ""
+    d["complexidade"] = normalizar_complexidade_sigtap(d.get("complexidade"), default="")
+    d["instrumento"] = (d.get("instrumento") or "BPA-C").strip() or "BPA-C"
+    d["sexo"] = d.get("sexo") or ""
+    d["tipos_fila_permitidos"] = d.get("tipos_fila_permitidos") or ""
+    d["competencia"] = d.get("competencia") or ""
+    d["codigo_faturamento_sigtap"] = d.get("codigo_faturamento_sigtap") or ""
+    d["valor_sa"] = max(0.0, float(d.get("valor_sa") or 0.0))
+    d["valor_sp"] = max(0.0, float(d.get("valor_sp") or 0.0))
+    d["valor_sh"] = max(0.0, float(d.get("valor_sh") or 0.0))
+    d["valor_combinado"] = max(0.0, float(d.get("valor_combinado") or 0.0))
     if not d.get("grupo_codigo") or not d.get("subgrupo_codigo") or not d.get("grupo_nome"):
         info = decompor_codigo_sigtap(r.codigo)
         d["grupo_codigo"] = d.get("grupo_codigo") or info["grupo_codigo"]
@@ -308,7 +321,7 @@ def criar_sigtap(
     db.add(obj)
     db.commit()
     db.refresh(obj)
-    return obj
+    return _sigtap_para_out(obj)
 
 
 @router.put("/sigtap/{sid}", response_model=SigtapOut)
@@ -355,7 +368,10 @@ def atualizar_sigtap(
     if codigo != obj.codigo:
         existente = db.exec(select(SigtapProcedimento).where(SigtapProcedimento.codigo == codigo, SigtapProcedimento.id != sid)).first()
         if existente:
-            raise HTTPException(400, f"Já existe outro procedimento com o código '{codigo}'.")
+            raise HTTPException(
+                400,
+                f"Já existe outro procedimento com o código '{codigo}'. Para vincular este item legado a esse código oficial no BPA, marque 'Procedimento não tem código específico no SIGTAP' e selecione '{codigo}' no campo de faturamento SUS.",
+            )
 
     ref_codigo = cod_fat or codigo
     obj.codigo = codigo

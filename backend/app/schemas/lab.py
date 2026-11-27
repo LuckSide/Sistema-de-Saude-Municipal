@@ -1,14 +1,36 @@
 from datetime import date
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+_COMPLEXIDADE_MAP = {
+    "NA": "NA",
+    "AB": "AB",
+    "MC": "MC",
+    "AC": "AC",
+    "NAO SE APLICA": "NA",
+    "NÃO SE APLICA": "NA",
+    "ATENCAO BASICA": "AB",
+    "ATENÇÃO BÁSICA": "AB",
+    "MEDIA COMPLEXIDADE": "MC",
+    "MÉDIA COMPLEXIDADE": "MC",
+    "ALTA COMPLEXIDADE": "AC",
+}
+
+
+def normalizar_complexidade_sigtap(valor: str | None, default: str = "") -> str:
+    raw = (valor or "").strip()
+    if not raw:
+        return default
+    return _COMPLEXIDADE_MAP.get(raw.upper(), raw.upper())
 
 
 # ---------- SIGTAP ----------
-class SigtapIn(BaseModel):
+class SigtapBase(BaseModel):
     codigo: str = Field(default="", max_length=20)
-    descricao: str = Field(min_length=2, max_length=1000)
-    complexidade: str = Field(default="MC", pattern="^(NA|AB|MC|AC)$")
-    instrumento: str = Field(default="BPA-C", pattern="^(BPA-C|BPA-I|BPA-F|AIH|APAC|RAAS)$")
+    descricao: str = Field(default="", max_length=1000)
+    complexidade: str = Field(default="")
+    instrumento: str = Field(default="BPA-C")
     valor_sa: float = Field(default=0.0, ge=0)
     valor_sp: float = Field(default=0.0, ge=0)
     valor_sh: float = Field(default=0.0, ge=0)
@@ -19,7 +41,18 @@ class SigtapIn(BaseModel):
     codigo_faturamento_sigtap: str = Field(default="", max_length=20)
 
 
-class SigtapOut(SigtapIn):
+class SigtapIn(SigtapBase):
+    descricao: str = Field(min_length=2, max_length=1000)
+    complexidade: str = Field(default="MC", pattern="^(NA|AB|MC|AC)$")
+    instrumento: str = Field(default="BPA-C", pattern="^(BPA-C|BPA-I|BPA-F|AIH|APAC|RAAS)$")
+
+    @field_validator("complexidade", mode="before")
+    @classmethod
+    def _normalizar_complexidade(cls, v: object) -> str:
+        return normalizar_complexidade_sigtap(None if v is None else str(v), default="MC")
+
+
+class SigtapOut(SigtapBase):
     id: int
     sexo: str = ""
     idade_min: int = 0

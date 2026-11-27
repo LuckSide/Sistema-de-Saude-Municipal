@@ -288,6 +288,7 @@ export default function LabSigtap() {
 
   function buscar(p = 1, limite = pageSize) {
     const limitParam = limite >= 5000 ? 5000 : limite;
+    setErro("");
     labSigtap(
       q || undefined,
       inst || undefined,
@@ -299,13 +300,14 @@ export default function LabSigtap() {
       cboCodigo || undefined,
     )
       .then((r) => {
+        setErro("");
         setLista(pagData<SigtapProc>(r));
         const m = pagMeta(r);
         setTotal(m.total);
         setPage(m.page);
         setPages(m.pages);
       })
-      .catch(() => setErro("Falha ao buscar tabela."));
+      .catch((e) => setErro(msgErro(e, "Falha ao buscar tabela.")));
   }
 
   function carregarVersoes() {
@@ -375,7 +377,7 @@ export default function LabSigtap() {
           setSearchParams(next, { replace: true });
         }
       })
-      .catch(() => {});
+      .catch((e) => setErro(msgErro(e, "Falha ao carregar procedimento para edição.")));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, lista]);
 
@@ -1042,6 +1044,15 @@ export default function LabSigtap() {
             </div>
 
             <div className="space-y-3">
+              {editSigtapId && manualCodigo.trim().startsWith("99999") && !manualSemCodigo && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                  <p className="font-bold">Código municipal legado ({manualCodigo.trim()})</p>
+                  <p className="mt-0.5 text-[11px] leading-relaxed">
+                    Para corrigir a crítica do BPA/SUS: informe um código SIGTAP oficial de 10 dígitos no campo de código abaixo, ou marque{" "}
+                    <strong>"Procedimento não tem código específico no SIGTAP"</strong> para vincular um código oficial equivalente para faturamento.
+                  </p>
+                </div>
+              )}
               {/* Opção: Não possui código SIGTAP específico */}
               <div className="rounded-xl border border-amber-300 bg-amber-50/70 p-3 space-y-1.5">
                 <label className="flex items-center gap-2 text-xs font-bold text-amber-950 cursor-pointer">
@@ -1051,7 +1062,7 @@ export default function LabSigtap() {
                     onChange={(e) => {
                       const checked = e.target.checked;
                       setManualSemCodigo(checked);
-                      if (checked) {
+                      if (checked && !editSigtapId) {
                         setManualCodigo("");
                       }
                     }}

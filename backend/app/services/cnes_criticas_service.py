@@ -488,6 +488,9 @@ def auditar_criticas_bpa_competencia(
         proc = get_sigtap(p_amb.procedimento_codigo)
         nome_proc = p_amb.procedimento_nome or (proc.descricao if proc else p_amb.procedimento_codigo)
         cod_proc = p_amb.procedimento_codigo
+        cod_fat_amb = (getattr(proc, "codigo_faturamento_sigtap", "") or "").strip() if proc else ""
+        if cod_proc.startswith("99999") and len(cod_fat_amb) == 10 and cod_fat_amb.isdigit() and not cod_fat_amb.startswith("99999"):
+            cod_proc = cod_fat_amb
         instru = (p_amb.instrumento_registro or "BPA-C").upper()
 
         pac: Paciente | None = None
