@@ -15,10 +15,12 @@ from typing import Optional
 
 from sqlmodel import Session, select
 
+from app.models.cadastros_saude import Medico
 from app.models.lab_exames import SigtapCbo, SigtapOcupacao
-from app.models.tfd import Especialidade, ExameFila, ProcedimentoCatalogo
+from app.models.tfd import Especialidade, ExameFila, ProcedimentoCatalogo, TipoFila
 
 # (cbo_canonico, nome_canonico, radical_semantico, termos_equivalentes)
+# Alinhado estritamente aos códigos oficiais da Tabela Unificada SIGTAP / CBO-2002 DATASUS.
 CBO_ESPECIALIDADES_CANONICAS: list[tuple[str, str, str, tuple[str, ...]]] = [
     ("225165", "Médico Gastroenterologista", "gastroenterologia", ("gastroenterolog", "gastrolog", "gastroloj", "gastro", "hepatolog")),
     ("225120", "Médico Cardiologista", "cardiologia", ("cardiolog", "cardeolog", "cardio", "cardiologista")),
@@ -35,30 +37,80 @@ CBO_ESPECIALIDADES_CANONICAS: list[tuple[str, str, str, tuple[str, ...]]] = [
     ("225133", "Médico Psiquiatra", "psiquiatria", ("psiquiatr", "psiquico", "pisiquiatr")),
     ("225225", "Médico Cirurgião Geral", "cirurgia geral", ("cirurgia geral", "cirurgiao geral", "cirurgiao")),
     ("225275", "Médico Otorrinolaringologista", "otorrinolaringologia", ("otorrinolaringolog", "otorinolaringolog", "otorrino")),
-    ("225195", "Médico Reumatologista", "reumatologia", ("reumatolog", "reumato")),
-    ("225180", "Médico Pneumologista", "pneumologia", ("pneumolog", "pneumo", "pnelmolog")),
+    ("225136", "Médico Reumatologista", "reumatologia", ("reumatolog", "reumato")),
+    ("225195", "Médico Homeopata", "homeopatia", ("homeopat", "homeopata")),
+    ("225127", "Médico Pneumologista", "pneumologia", ("pneumolog", "pneumo", "pnelmolog")),
     ("225103", "Médico Infectologista", "infectologia", ("infectolog", "infecto")),
     ("225109", "Médico Nefrologista", "nefrologia", ("nefrolog", "nefro")),
     ("225185", "Médico Hematologista", "hematologia", ("hematolog", "hemato")),
     ("225210", "Médico Cirurgião Cardiovascular", "cirurgia cardiovascular", ("cirurgia cardiovascular", "cirurgiao cardiovascular")),
-    ("225280", "Médico Cirurgião Vascular", "cirurgia vascular", ("cirurgia vascular", "cirurgiao vascular", "vascular", "angiolog")),
-    ("225148", "Médico Angiologista", "angiologia", ("angiologista", "angiologia")),
-    ("225271", "Médico Mastologista", "mastologia", ("mastolog", "masto")),
-    ("225122", "Médico Cancerologista / Oncologista", "oncologia", ("oncolog", "cancerolog")),
-    ("225181", "Médico Geriatra", "geriatria", ("geriatr", "jeriatr", "geriatra")),
+    ("225203", "Médico em Cirurgia Vascular", "cirurgia vascular", ("cirurgia vascular", "cirurgiao vascular", "vascular")),
+    ("225115", "Médico Angiologista", "angiologia", ("angiologista", "angiologia", "angiolog")),
+    ("225255", "Médico Mastologista", "mastologia", ("mastolog", "masto")),
+    ("225121", "Médico Oncologista Clínico", "oncologia", ("oncologista clinico", "oncologia clinica", "oncolog", "cancerolog")),
+    ("225122", "Médico Cancerologista Pediátrico", "cancerologia pediatrica", ("cancerologista pediatrico", "oncologia pediatrica")),
+    ("225290", "Médico Cancerologista Cirúrgico", "cancerologia cirurgica", ("cancerologista cirurgico", "cirurgia oncologica")),
+    ("225180", "Médico Geriatra", "geriatria", ("geriatr", "jeriatr", "geriatra")),
     ("225110", "Médico Alergista e Imunologista", "alergia imunologia", ("alerg", "alergolog", "imunolog")),
-    ("225240", "Médico Cirurgião Pediátrico", "cirurgia pediatrica", ("cirurgia pediatrica", "cirurgiao pediatrico")),
-    ("225230", "Médico Cirurgião Plástico", "cirurgia plastica", ("cirurgia plastica", "cirurgiao plastico")),
-    ("225235", "Médico Coloproctologista", "coloproctologia", ("coloproctolog", "proctolog")),
+    ("225230", "Médico Cirurgião Pediátrico", "cirurgia pediatrica", ("cirurgia pediatrica", "cirurgiao pediatrico")),
+    ("225235", "Médico Cirurgião Plástico", "cirurgia plastica", ("cirurgia plastica", "cirurgiao plastico")),
+    ("225240", "Médico Cirurgião Torácico", "cirurgia toracica", ("cirurgia toracica", "cirurgiao toracico")),
+    ("225215", "Médico Cirurgião de Cabeça e Pescoço", "cirurgia cabeca pescoco", ("cabeca e pescoco",)),
+    ("225220", "Médico Cirurgião do Aparelho Digestivo", "cirurgia aparelho digestivo", ("aparelho digestivo",)),
+    ("225280", "Médico Coloproctologista", "coloproctologia", ("coloproctolog", "proctolog")),
     ("225320", "Médico em Radiologia e Diagnóstico por Imagem", "radiologia imagem", ("radiolog", "ultrassonograf", "diagnostico por imagem", "imagem")),
-    ("225310", "Médico Patologista Clínico / Medicina Laboratorial", "patologia clinica", ("patologia clinica", "medicina laboratorial")),
-    ("225305", "Médico Anatomopatologista / Citopatologista", "anatomia patologica", ("anatomia patologica", "anatomopatolog", "citopatolog")),
+    ("225310", "Médico em Endoscopia", "endoscopia", ("medico em endoscopia", "endoscopista")),
+    ("225335", "Médico Patologista Clínico / Medicina Laboratorial", "patologia clinica", ("patologia clinica", "patologista clinico", "medicina laboratorial")),
+    ("225148", "Médico Anatomopatologista", "anatomia patologica", ("anatomia patologica", "anatomopatolog")),
+    ("225305", "Médico Citopatologista", "citopatologia", ("citopatolog",)),
+    ("225325", "Médico Patologista", "patologia", ("medico patologista",)),
     ("225315", "Médico em Medicina Nuclear", "medicina nuclear", ("medicina nuclear",)),
-    ("225142", "Médico da Estratégia de Saúde da Família", "medicina familia", ("estrategia saude familia", "saude familia", "familia comunidade", "psf", "esf")),
+    ("225142", "Médico da Estratégia de Saúde da Família", "medicina familia", ("estrategia saude familia", "saude familia", "psf", "esf")),
+    ("225130", "Médico de Família e Comunidade", "medicina familia comunidade", ("familia e comunidade",)),
+    ("225170", "Médico Generalista", "medicina generalista", ("generalista",)),
     ("225151", "Médico Anestesiologista", "anestesiologia", ("anestesiolog", "anestesista")),
-    ("225140", "Médico Nutrólogo", "nutrologia", ("nutrolog", "nutrologo")),
+    ("225118", "Médico Nutrólogo", "nutrologia", ("nutrolog", "nutrologo")),
+    ("225140", "Médico do Trabalho", "medicina do trabalho", ("medico do trabalho", "medicina do trabalho")),
     ("225160", "Médico Fisiatra", "fisiatria", ("fisiatr", "medicina fisica")),
 ]
+
+# Códigos fictícios/trocados de versões legadas -> código oficial SIGTAP equivalente
+_CBOS_OBSOLETOS_PARA_OFICIAL: dict[str, str] = {
+    "225181": "225180",  # Geriatria
+    "225271": "225255",  # Mastologia
+    "225226": "225225",  # Pequena Cirurgia -> Cirurgia Geral
+}
+
+# Correção cirúrgica quando especialidade gravou CBO trocado em relação ao nome
+_CORRECAO_ESP_NOME_CBO_INVERTIDO: dict[tuple[str, str], str] = {
+    ("reumatologia", "225195"): "225136",
+    ("reumatologia", "225145"): "225136",
+    ("pneumologia", "225180"): "225127",
+    ("geriatria", "225181"): "225180",
+    ("mastologia", "225271"): "225255",
+    ("cirurgia plastica", "225230"): "225235",
+    ("cirurgia pediatrica", "225240"): "225230",
+    ("cirurgia pediatrica", "225220"): "225230",
+    ("coloproctologia", "225235"): "225280",
+    ("nutrologia", "225140"): "225118",
+    ("oncologia clinica", "225122"): "225121",
+    ("angiologia e cirurgia vascular", "225210"): "225203",
+    ("angiologia e cirurgia vascular", "225280"): "225203",
+    ("pequena cirurgia", "225226"): "225225",
+}
+
+# Códigos de 5 dígitos criados quando versões anteriores removiam letras de CBOs alfanuméricos do CNES
+_CBOS_TRUNCADOS_ALFANUM: dict[str, str] = {
+    "51511": "515140",
+    "22411": "224140",
+    "22353": "223580",
+    "22311": "2231F1",
+    "22318": "2231A1",
+    "22319": "2231A2",
+    "22361": "2236F1",
+    "51521": "5152C1",
+    "31352": "3135D2",
+}
 
 _CBO_DESC_CANONICA: dict[str, str] = {cbo: nome for cbo, nome, _, _ in CBO_ESPECIALIDADES_CANONICAS}
 _RADICAL_PARA_CBO: dict[str, str] = {rad: cbo for cbo, _, rad, _ in CBO_ESPECIALIDADES_CANONICAS}
@@ -132,9 +184,9 @@ _SUBSTITUICOES_LEXICAS: dict[str, str] = {
 
 
 def limpar_codigo_cbo(cbo: Optional[str]) -> str:
-    """Normaliza um código CBO mantendo apenas dígitos (máx. 6 caracteres)."""
-    digits = re.sub(r"\D", "", str(cbo or ""))
-    return digits[:6] if digits else ""
+    """Normaliza um código CBO preservando dígitos e sufixos alfanuméricos CNES/SUS (máx. 6 caracteres)."""
+    cleaned = re.sub(r"[^A-Za-z0-9]", "", str(cbo or "")).upper()
+    return cleaned[:6] if cleaned else ""
 
 
 def sanitizar_texto_cbo(texto: Optional[str]) -> str:
@@ -293,6 +345,45 @@ def especialidade_pertence_ao_cbo(
     return False
 
 
+def profissional_atende_cbo(
+    medico: Medico,
+    cbo_alvo: str,
+    desc_cbo: str = "",
+) -> bool:
+    """Verifica se um profissional possui o CBO principal ou especialidade secundária equivalente ao CBO alvo."""
+    alvo = limpar_codigo_cbo(cbo_alvo)
+    if not alvo:
+        return True
+
+    cbo_med = limpar_codigo_cbo(getattr(medico, "cbo_codigo", ""))
+    if cbo_med and cbo_med == alvo:
+        return True
+
+    desc_ref = (desc_cbo or _CBO_DESC_CANONICA.get(alvo, "")).strip()
+    cbo_desc_med = (getattr(medico, "cbo_descricao", "") or "").strip()
+    if not cbo_med and cbo_desc_med and desc_ref and comparar_nomes_cbo(cbo_desc_med, desc_ref) >= 0.88:
+        return True
+
+    partes_esp: list[str] = []
+    esp_p = (getattr(medico, "especialidade", "") or "").strip()
+    if esp_p:
+        partes_esp.append(esp_p)
+    esps_raw = (getattr(medico, "especialidades", "") or "").strip()
+    if esps_raw:
+        partes_esp.extend([p.strip() for p in re.split(r"[,;/|]", esps_raw) if p.strip()])
+
+    for esp in partes_esp:
+        if desc_ref and sanitizar_texto_cbo(esp) == sanitizar_texto_cbo(desc_ref):
+            return True
+        _chave, cbo_sug = chave_semantica_cbo(esp)
+        if cbo_sug and cbo_sug == alvo:
+            return True
+        if desc_ref and comparar_nomes_cbo(esp, desc_ref) >= 0.90:
+            return True
+
+    return False
+
+
 def encontrar_especialidade_equivalente(
     db: Session,
     nome: str,
@@ -339,12 +430,18 @@ def _melhor_chave_ordenacao_esp(e: Especialidade) -> tuple[int, int, int, int]:
 
 
 def unificar_cbos_duplicados(db: Session) -> dict:
-    """Identifica e unifica registros duplicados/variantes de CBOs e especialidades no banco."""
+    """Identifica, corrige CBOs trocados e unifica registros duplicados mantendo profissionais intactos."""
+    # Passo 0: corrige códigos fictícios/invertidos em tfd_especialidades antes do agrupamento
     todas = list(db.exec(select(Especialidade).order_by(Especialidade.id)).all())
     grupos: dict[str, list[Especialidade]] = {}
 
     for e in todas:
         cbo_norm = limpar_codigo_cbo(e.codigo_cbo)
+        nome_san = sanitizar_texto_cbo(e.nome)
+        if (nome_san, cbo_norm) in _CORRECAO_ESP_NOME_CBO_INVERTIDO:
+            cbo_norm = _CORRECAO_ESP_NOME_CBO_INVERTIDO[(nome_san, cbo_norm)]
+        elif cbo_norm in _CBOS_OBSOLETOS_PARA_OFICIAL:
+            cbo_norm = _CBOS_OBSOLETOS_PARA_OFICIAL[cbo_norm]
         if cbo_norm != (e.codigo_cbo or "").strip():
             e.codigo_cbo = cbo_norm
             db.add(e)
@@ -484,21 +581,65 @@ def unificar_cbos_duplicados(db: Session) -> dict:
         params = {f"d{i}": v for i, v in enumerate(bloco)}
         db.execute(_sa_text(f"DELETE FROM sigtap_cbos WHERE id IN ({in_clause})"), params)
 
-    # Sincroniza tabela normalizada sigtap_ocupacoes
-    vistos_oc: dict[str, SigtapOcupacao] = {
-        limpar_codigo_cbo(o.cbo): o for o in db.exec(select(SigtapOcupacao)).all() if limpar_codigo_cbo(o.cbo)
-    }
-    candidatos_oc: list[tuple[str, str]] = []
-    for esp in db.exec(select(Especialidade)).all():
-        c = limpar_codigo_cbo(esp.codigo_cbo)
-        if c and esp.nome:
-            candidatos_oc.append((c, esp.nome))
+    # Sincroniza tabela normalizada sigtap_ocupacoes priorizando a descrição oficial de sigtap_cbos
+    med_cbos_em_uso: set[str] = set()
+    med_cands: list[tuple[str, str]] = []
+    for med in db.exec(select(Medico)).all():
+        mc = limpar_codigo_cbo(getattr(med, "cbo_codigo", ""))
+        if mc:
+            med_cbos_em_uso.add(mc)
+            md = (getattr(med, "cbo_descricao", "") or "").strip()
+            if md:
+                med_cands.append((mc, md))
+
+    oficiais_sigtap_cbo: dict[str, str] = {}
     for _eid, sc_cbo, sc_desc in vistos_sigtap.values():
         c = limpar_codigo_cbo(sc_cbo)
-        if c:
-            candidatos_oc.append((c, sc_desc or _CBO_DESC_CANONICA.get(c, f"CBO {c}")))
+        desc_sc = (sc_desc or "").strip()[:150]
+        if c and desc_sc and not desc_sc.startswith("CBO "):
+            oficiais_sigtap_cbo.setdefault(c, desc_sc)
+
+    vistos_oc: dict[str, SigtapOcupacao] = {}
+    for o in db.exec(select(SigtapOcupacao)).all():
+        oc_cod = limpar_codigo_cbo(o.cbo)
+        if not oc_cod:
+            continue
+        # Remove ocupações de códigos fictícios (225181, 225271, 225226) ou truncados de 5 dígitos sem médico ativo
+        if (oc_cod in _CBOS_OBSOLETOS_PARA_OFICIAL or oc_cod in _CBOS_TRUNCADOS_ALFANUM) and oc_cod not in oficiais_sigtap_cbo and oc_cod not in med_cbos_em_uso:
+            db.delete(o)
+            continue
+        vistos_oc[oc_cod] = o
+
+    # Garante descrições oficiais de sigtap_cbos prevalecendo sobre rótulos antigos incorretos
+    for c_of, desc_of in oficiais_sigtap_cbo.items():
+        if c_of in vistos_oc:
+            oc = vistos_oc[c_of]
+            if oc.descricao != desc_of or not oc.ativo:
+                oc.descricao = desc_of
+                oc.descricao_normalizada = sanitizar_texto_cbo(desc_of)[:150]
+                oc.ativo = True
+                db.add(oc)
+        else:
+            oc = SigtapOcupacao(
+                cbo=c_of,
+                descricao=desc_of,
+                descricao_normalizada=sanitizar_texto_cbo(desc_of)[:150],
+                ativo=True,
+            )
+            db.add(oc)
+            vistos_oc[c_of] = oc
+
+    candidatos_oc: list[tuple[str, str]] = []
     for cbo_c, nome_c, _rad, _t in CBO_ESPECIALIDADES_CANONICAS:
-        candidatos_oc.append((cbo_c, nome_c))
+        if cbo_c not in oficiais_sigtap_cbo:
+            candidatos_oc.append((cbo_c, nome_c))
+    for mc, md in med_cands:
+        if mc not in oficiais_sigtap_cbo:
+            candidatos_oc.append((mc, md))
+    for esp in db.exec(select(Especialidade)).all():
+        c = limpar_codigo_cbo(esp.codigo_cbo)
+        if c and esp.nome and c not in oficiais_sigtap_cbo:
+            candidatos_oc.append((c, esp.nome))
 
     for cbo_cod, desc_raw in candidatos_oc:
         desc_limpa = (desc_raw or "").strip()[:150]
@@ -520,6 +661,57 @@ def unificar_cbos_duplicados(db: Session) -> dict:
                 oc.descricao = desc_limpa
                 oc.descricao_normalizada = desc_norm
                 db.add(oc)
+
+    # Atualiza regras de tipos de serviço que apontavam para códigos fictícios/trocados (sem tocar em médicos)
+    try:
+        for tf in db.exec(select(TipoFila)).all():
+            mudou_tf = False
+            tf_nome_san = sanitizar_texto_cbo(tf.nome)
+            cbo_pad = limpar_codigo_cbo(tf.cbo_padrao)
+            if cbo_pad in _CBOS_OBSOLETOS_PARA_OFICIAL:
+                tf.cbo_padrao = _CBOS_OBSOLETOS_PARA_OFICIAL[cbo_pad]
+                mudou_tf = True
+            elif cbo_pad == "225180" and "espirometria" in tf_nome_san:
+                tf.cbo_padrao = "225127"
+                mudou_tf = True
+            elif cbo_pad == "225310" and "ex lab" in tf_nome_san:
+                tf.cbo_padrao = "225335"
+                mudou_tf = True
+            elif cbo_pad == "225305" and "biopsia" in tf_nome_san:
+                tf.cbo_padrao = "225148"
+                mudou_tf = True
+
+            raw_perm = (tf.cbos_permitidos or "").strip()
+            if raw_perm.startswith("["):
+                import json as _json
+                try:
+                    arr = _json.loads(raw_perm)
+                    if isinstance(arr, list):
+                        novos_arr: list[str] = []
+                        for item_c in arr:
+                            c_item = limpar_codigo_cbo(str(item_c))
+                            if not c_item:
+                                continue
+                            if c_item == "225226":
+                                c_item = "225225"
+                            elif c_item in _CBOS_OBSOLETOS_PARA_OFICIAL:
+                                c_item = _CBOS_OBSOLETOS_PARA_OFICIAL[c_item]
+                            elif c_item == "225180" and "espirometria" in tf_nome_san:
+                                c_item = "225127"
+                            elif c_item == "225310" and "ex lab" in tf_nome_san:
+                                c_item = "225335"
+                            if c_item not in novos_arr:
+                                novos_arr.append(c_item)
+                        if novos_arr != arr:
+                            tf.cbos_permitidos = _json.dumps(novos_arr)
+                            mudou_tf = True
+                except Exception:
+                    pass
+            if mudou_tf:
+                db.add(tf)
+                registros_atualizados += 1
+    except Exception:
+        pass
 
     db.commit()
     return {

@@ -1487,6 +1487,15 @@ export type CboEspecialidadesOut = {
   especialidades: { id: number | null; codigo_cbo: string; nome: string; ativo: boolean }[];
   areas: { codigo: string; nome: string }[];
   subgrupos: { codigo: string; nome: string }[];
+  profissionais?: {
+    id: number;
+    nome: string;
+    cbo_codigo: string;
+    cbo_descricao: string;
+    conselho: string;
+    especialidade: string;
+    especialidades: string;
+  }[];
 };
 export const tfdCboEspecialidades = (cbo: string) =>
   api.get<CboEspecialidadesOut>("/api/tfd/cbo-especialidades", { params: { cbo } }).then((r) => r.data);
@@ -2007,9 +2016,28 @@ export type SigtapImportOut = {
 
 export const sigtapVersoes = () =>
   api.get<SigtapVersao[]>("/api/lab/sigtap/versoes").then((r) => r.data);
-export type SigtapCbo = { cbo: string; descricao: string; origem: string };
-export const sigtapCbos = (procedimento_codigo?: string, q?: string, grupo_codigo?: string, subgrupo_codigo?: string) =>
-  api.get<SigtapCbo[]>("/api/lab/sigtap/cbos", { params: { procedimento_codigo, q, grupo_codigo, subgrupo_codigo } }).then((r) => r.data);
+export type SigtapCboProfissional = {
+  id: number;
+  nome: string;
+  cbo_codigo: string;
+  conselho?: string;
+  especialidades?: string;
+};
+export type SigtapCbo = {
+  cbo: string;
+  descricao: string;
+  origem: string;
+  total_profissionais?: number;
+  profissionais?: SigtapCboProfissional[];
+};
+export const sigtapCbos = (
+  procedimento_codigo?: string,
+  q?: string,
+  grupo_codigo?: string,
+  subgrupo_codigo?: string,
+  limit?: number,
+) =>
+  api.get<SigtapCbo[]>("/api/lab/sigtap/cbos", { params: { procedimento_codigo, q, grupo_codigo, subgrupo_codigo, limit } }).then((r) => r.data);
 export const sigtapArvore = (params?: { grupo_codigo?: string; subgrupo_codigo?: string; cbo?: string }) =>
   api.get<SigtapArvore>("/api/lab/sigtap/arvore", { params }).then((r) => r.data);
 export const sigtapAutoSyncStatus = () =>

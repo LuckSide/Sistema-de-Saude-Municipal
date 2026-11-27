@@ -268,6 +268,66 @@ def test_t1_5_filas_inconsistencias_tfd_exames_fila(db: Session):
     assert set(dups_tfd[0]["ids"]) == {ef1.id, ef2.id}
 
 
+def test_t1_5b_consultas_0301010072_especialidades_distintas_nao_sao_duplicadas(db: Session):
+    """Regressão: consultas 0301010072 em especialidades distintas não devem ser apontadas como duplicidade."""
+    p = Paciente(nome="PACIENTE MULTI ESPECIALIDADE", cpf="11111111119")
+    db.add(p)
+    db.commit()
+
+    c_hemato = ExameFila(
+        paciente_id=p.id,
+        exame="0301010072 - CONSULTA MEDICA EM ATENÇÃO ESPECIALIZADA",
+        codigo_procedimento="0301010072",
+        tipo_fila="CONSULTAS ESPECIALIZADAS",
+        especialidade="CONSULTAS ESPECIALIZADAS",
+        nome_especialidade="Médico hematologista",
+        status="agendado",
+        ativo=True,
+    )
+    c_uro = ExameFila(
+        paciente_id=p.id,
+        exame="0301010072 - CONSULTA MEDICA EM ATENÇÃO ESPECIALIZADA",
+        codigo_procedimento="0301010072",
+        tipo_fila="CONSULTAS ESPECIALIZADAS",
+        especialidade="CONSULTAS ESPECIALIZADAS",
+        codigo_especialidade="225285",
+        nome_especialidade="Médico urologista",
+        status="aguardando",
+        ativo=True,
+    )
+    c_gastro = ExameFila(
+        paciente_id=p.id,
+        exame="0301010072 - CONSULTA MEDICA EM ATENÇÃO ESPECIALIZADA",
+        codigo_procedimento="0301010072",
+        tipo_fila="CONSULTAS ESPECIALIZADAS",
+        especialidade="CONSULTAS ESPECIALIZADAS",
+        codigo_especialidade="225165",
+        nome_especialidade="Médico gastroenterologista",
+        status="aguardando",
+        ativo=True,
+    )
+    c_uro_dup = ExameFila(
+        paciente_id=p.id,
+        exame="0301010072 - CONSULTA MEDICA EM ATENÇÃO ESPECIALIZADA",
+        codigo_procedimento="0301010072",
+        tipo_fila="CONSULTAS ESPECIALIZADAS",
+        especialidade="CONSULTAS ESPECIALIZADAS",
+        codigo_especialidade="225285",
+        nome_especialidade="Médico urologista",
+        status="aguardando",
+        ativo=True,
+    )
+    db.add_all([c_hemato, c_uro, c_gastro, c_uro_dup])
+    db.commit()
+
+    dups, _ = diagnosticar_filas(db)
+    dups_tfd = [d for d in dups if d["tipo"] == "duplicidade_tfd_exames_fila"]
+
+    assert len(dups_tfd) == 1
+    assert set(dups_tfd[0]["ids"]) == {c_uro.id, c_uro_dup.id}
+    assert "urologista" in dups_tfd[0]["descricao"].lower()
+
+
 def test_t1_6_filas_inconsistencias_lab_fila_psf(db: Session):
     """T1.6: Identifica solicitações duplicadas na mesma data para lab_fila_psf."""
     p = Paciente(nome="PACIENTE LAB PSF", cpf="11111111113")

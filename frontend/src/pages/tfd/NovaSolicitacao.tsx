@@ -70,7 +70,14 @@ import BuscaPacienteAutocomplete from "../../components/BuscaPacienteAutocomplet
 import BotaoWhatsApp from "../../components/BotaoWhatsApp";
 import ComprovanteExameModal from "../../components/ComprovanteExameModal";
 import AlertaPedidoDuplicado from "../../components/AlertaPedidoDuplicado";
-import { formatarSubMedico, isMedicoGenericoNome, keywordsMedico } from "../../utils/medicos";
+import {
+  formatarSubMedico,
+  isMedicoGenericoNome,
+  keywordsMedico,
+  medicoAtendeCbo,
+  medicosPorCbo,
+  normalizarCodigoCbo,
+} from "../../utils/medicos";
 
 function hojeISO(): string {
   return new Date().toISOString().slice(0, 10);
@@ -540,12 +547,8 @@ export default function NovaSolicitacao() {
         medObj?.nome.includes("Médico da Unidade") ||
         medObj?.nome.includes("Medico da Unidade");
       if (!isGenerico && medObj) {
-        const cboMed = (medObj.cbo_codigo || "").replace(/\D/g, "");
-        const cbosSet = new Set(cbosLiberadosServico.map((c) => c.cbo.replace(/\D/g, "")));
-        const cbosPrefix4 = new Set(
-          cbosLiberadosServico.map((c) => c.cbo.replace(/\D/g, "").slice(0, 4)).filter((p) => p.length === 4),
-        );
-        if (!cbosSet.has(cboMed) && !cbosPrefix4.has(cboMed.slice(0, 4))) {
+        const atende = cbosLiberadosServico.some((c) => medicoAtendeCbo(medObj, c.cbo, c.nome));
+        if (!atende) {
           setErro(
             `O Tipo de Serviço "${tipoServico}" possui regra de CBO estrita. O profissional selecionado (${medObj.nome}) possui CBO "${medObj.cbo_codigo || "não cadastrado"}", incompatível com as regras deste serviço.`,
           );
@@ -1251,12 +1254,8 @@ export default function NovaSolicitacao() {
         medObj?.nome.includes("Médico da Unidade") ||
         medObj?.nome.includes("Medico da Unidade");
       if (!isGenerico && medObj) {
-        const cboMed = (medObj.cbo_codigo || "").replace(/\D/g, "");
-        const cbosSet = new Set(cbosLiberadosServico.map((c) => c.cbo.replace(/\D/g, "")));
-        const cbosPrefix4 = new Set(
-          cbosLiberadosServico.map((c) => c.cbo.replace(/\D/g, "").slice(0, 4)).filter((p) => p.length === 4),
-        );
-        if (!cbosSet.has(cboMed) && !cbosPrefix4.has(cboMed.slice(0, 4))) {
+        const atende = cbosLiberadosServico.some((c) => medicoAtendeCbo(medObj, c.cbo, c.nome));
+        if (!atende) {
           setErro(
             `O Tipo de Serviço "${tipoServico}" possui regra de CBO estrita. O profissional selecionado (${medObj.nome}) possui CBO "${medObj.cbo_codigo || "não cadastrado"}", que não está entre os CBOs liberados para este serviço (${cbosLiberadosServico.map((c) => c.cbo + (c.nome ? ` - ${c.nome}` : "")).join(", ")}).`,
           );
@@ -1389,20 +1388,20 @@ export default function NovaSolicitacao() {
   }, [tipoFilaAtivo]);
 
   const opcoesMedicos = useMemo(() => {
-    const cbosSet = new Set(cbosLiberadosServico.map((c) => c.cbo.replace(/\D/g, "")));
-    const cbosPrefix4 = new Set(
-      cbosLiberadosServico.map((c) => c.cbo.replace(/\D/g, "").slice(0, 4)).filter((p) => p.length === 4),
-    );
-    const temRegra = cbosSet.size > 0;
+    const temRegra = cbosLiberadosServico.length > 0;
+    const temFiltroEsp = Boolean(normalizarCodigoCbo(codigoEspecialidade) || especialidade.trim());
 
     return medicos
       .map((m) => {
-        const cboMed = (m.cbo_codigo || "").replace(/\D/g, "");
         const isGenerico = isMedicoGenericoNome(m.nome);
         const cboMatch =
           temRegra &&
           !isGenerico &&
-          (cbosSet.has(cboMed) || cbosPrefix4.has(cboMed.slice(0, 4)));
+          cbosLiberadosServico.some((c) => medicoAtendeCbo(m, c.cbo, c.nome));
+        const espMatch =
+          temFiltroEsp &&
+          !isGenerico &&
+          medicoAtendeCbo(m, codigoEspecialidade, especialidade);
 
         const extras: string[] = [];
         if (cboMatch) {
@@ -1410,35 +1409,42 @@ export default function NovaSolicitacao() {
         } else if (temRegra && tipoFilaAtivo?.exigir_cbo_estrito && !isGenerico) {
           extras.push("CBO não autorizado neste serviço");
         }
+        if (espMatch && !cboMatch) {
+          extras.push(`Atende ${especialidade || `CBO ${codigoEspecialidade}`}`);
+        }
         const subTexto = formatarSubMedico(m, extras);
 
         return {
           value: String(m.id),
-          label: cboMatch ? `${m.nome} [CBO Liberado]` : m.nome,
+          label: cboMatch ? `${m.nome} [CBO Liberado]` : espMatch ? `${m.nome} [Mesmo CBO]` : m.nome,
           sub: subTexto || undefined,
-          keywords: keywordsMedico(m, cboMatch ? "liberado autorizado especialista" : ""),
+          keywords: keywordsMedico(m, `${cboMatch ? "liberado autorizado" : ""} ${espMatch ? "especialista cbo" : ""}`),
           cboMatch,
+          espMatch,
           isGenerico,
         };
       })
       .sort((a, b) => {
-        // 1. Médicos com CBO liberado no topo
+        // 1. Médicos com CBO liberado no serviço no topo
         if (a.cboMatch && !b.cboMatch) return -1;
         if (!a.cboMatch && b.cboMatch) return 1;
-        // 2. Médico genérico da unidade
+        // 2. Médicos compatíveis com a especialidade/CBO selecionado
+        if (a.espMatch && !b.espMatch) return -1;
+        if (!a.espMatch && b.espMatch) return 1;
+        // 3. Médico genérico da unidade
         if (a.isGenerico && !b.isGenerico) return -1;
         if (!a.isGenerico && b.isGenerico) return 1;
         return a.label.localeCompare(b.label, "pt-BR");
       });
-  }, [medicos, cbosLiberadosServico, tipoServico, tipoFilaAtivo]);
+  }, [medicos, cbosLiberadosServico, tipoServico, tipoFilaAtivo, codigoEspecialidade, especialidade]);
 
   const opcoesEspecialidades = useMemo(() => {
     const resolverNomeCbo = (cod: string, nomeAtual?: string) => {
-      const limpo = (cod || "").replace(/\D/g, "");
-      if (nomeAtual && !/^CBO\s*\d+/i.test(nomeAtual.trim())) return nomeAtual.trim();
-      const cad = especialidadesCadastradas.find((e) => (e.codigo_cbo || "").replace(/\D/g, "") === limpo);
+      const limpo = normalizarCodigoCbo(cod);
+      if (nomeAtual && !/^CBO\s*[A-Za-z0-9]+/i.test(nomeAtual.trim())) return nomeAtual.trim();
+      const cad = especialidadesCadastradas.find((e) => normalizarCodigoCbo(e.codigo_cbo) === limpo);
       if (cad?.nome) return cad.nome.trim();
-      const procMatch = procedimentosTodos.find((p) => (p.codigo_especialidade || "").replace(/\D/g, "") === limpo);
+      const procMatch = procedimentosTodos.find((p) => normalizarCodigoCbo(p.codigo_especialidade) === limpo);
       if (procMatch?.nome_especialidade || procMatch?.especialidade) {
         return (procMatch.nome_especialidade || procMatch.especialidade || "").trim();
       }
@@ -1449,7 +1455,7 @@ export default function NovaSolicitacao() {
     if (cbosLiberadosServico.length > 0) {
       const mapaLiberados = new Map<string, { nome: string; cbo: string; sub?: string }>();
       for (const c of cbosLiberadosServico) {
-        const cod = (c.cbo || "").replace(/\D/g, "");
+        const cod = normalizarCodigoCbo(c.cbo);
         if (!cod) continue;
         const nome = resolverNomeCbo(cod, c.nome);
         if (!mapaLiberados.has(cod)) {
@@ -1458,8 +1464,8 @@ export default function NovaSolicitacao() {
       }
 
       if (!isConsulta && cbosAutorizados.length > 0) {
-        const sigtapSet = new Set(cbosAutorizados.map((c) => (c.cbo || "").replace(/\D/g, "")));
-        const intersecao = cbosAutorizados.filter((c) => mapaLiberados.has((c.cbo || "").replace(/\D/g, "")));
+        const sigtapSet = new Set(cbosAutorizados.map((c) => normalizarCodigoCbo(c.cbo)));
+        const intersecao = cbosAutorizados.filter((c) => mapaLiberados.has(normalizarCodigoCbo(c.cbo)));
         if (intersecao.length > 0) {
           return intersecao.map((c) => ({
             value: c.descricao || resolverNomeCbo(c.cbo),
@@ -1493,7 +1499,7 @@ export default function NovaSolicitacao() {
       const nome = (nomeRaw || "").trim();
       if (!nome) return;
       const nomeNorm = normalizarTexto(nome);
-      const cboLimpo = (cboRaw || "").replace(/\D/g, "");
+      const cboLimpo = normalizarCodigoCbo(cboRaw);
       const chave = cboLimpo ? `CBO:${cboLimpo}` : `TXT:${nomeNorm}`;
       const atual = mapa.get(chave);
       if (atual) {
@@ -1509,24 +1515,24 @@ export default function NovaSolicitacao() {
 
     // 1. Se há um CBO explicitamente selecionado na árvore/filtro, exibe APENAS as especialidades correspondentes/autorizadas para aquele CBO
     if (cboFiltroSig) {
-      const cboPrefix = cboFiltroSig.slice(0, 4);
+      const cboFiltNorm = normalizarCodigoCbo(cboFiltroSig);
       const mapaCbo = new Map<string, { nome: string; cbo?: string; autorizadoSigtap?: boolean }>();
       const nomesCbo = new Set<string>();
 
       for (const e of espsCboSel) {
-        adicionarEspUnica(mapaCbo, nomesCbo, e.nome || "", e.codigo_cbo || cboFiltroSig);
+        adicionarEspUnica(mapaCbo, nomesCbo, e.nome || "", e.codigo_cbo || cboFiltNorm);
       }
       for (const e of especialidadesCadastradas) {
-        const ec = (e.codigo_cbo || "").replace(/\D/g, "");
-        if (ec && (ec === cboFiltroSig || (cboPrefix.length >= 4 && ec.startsWith(cboPrefix)))) {
+        const ec = normalizarCodigoCbo(e.codigo_cbo);
+        if (ec && ec === cboFiltNorm) {
           adicionarEspUnica(mapaCbo, nomesCbo, e.nome || "", ec);
         }
       }
       if (!isConsulta && cbosAutorizados.length > 0) {
-        const autorizadosSet = new Set(cbosAutorizados.map((c) => (c.cbo || "").replace(/\D/g, "")));
+        const autorizadosSet = new Set(cbosAutorizados.map((c) => normalizarCodigoCbo(c.cbo)));
         for (const c of cbosAutorizados) {
-          const cc = (c.cbo || "").replace(/\D/g, "");
-          if (cc === cboFiltroSig || (cboPrefix.length >= 4 && cc.startsWith(cboPrefix))) {
+          const cc = normalizarCodigoCbo(c.cbo);
+          if (cc === cboFiltNorm) {
             adicionarEspUnica(mapaCbo, nomesCbo, c.descricao || `CBO ${c.cbo}`, cc, { autorizadoSigtap: true });
           }
         }
@@ -1642,9 +1648,9 @@ export default function NovaSolicitacao() {
               }
               const opt = opcoesEspecialidades.find((o) => o.value === v);
               if (opt?.sub) {
-                const cboMatch = opt.sub.match(/\d{4,6}/);
+                const cboMatch = opt.sub.match(/CBO\s+([A-Za-z0-9]{4,6})/i) || opt.sub.match(/[A-Za-z0-9]{4,6}/);
                 if (cboMatch) {
-                  setCodigoEspecialidade(cboMatch[0]);
+                  setCodigoEspecialidade(normalizarCodigoCbo(cboMatch[1] || cboMatch[0]));
                   return;
                 }
               }
@@ -1676,6 +1682,41 @@ export default function NovaSolicitacao() {
             showAll={Boolean(cboFiltroSig)}
           />
         </div>
+        {(codigoEspecialidade || especialidade) && (() => {
+          const profsCompat = medicosPorCbo(medicos, codigoEspecialidade, especialidade);
+          if (profsCompat.length === 0) return null;
+          return (
+            <div className="mt-1.5 rounded-xl border border-teal/20 bg-teal/5 px-2.5 py-2 text-[11px]">
+              <p className="font-bold text-teal-950">
+                Profissionais vinculados a {codigoEspecialidade ? `CBO ${codigoEspecialidade}` : especialidade} ({profsCompat.length}):
+              </p>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {profsCompat.slice(0, 12).map((pm) => {
+                  const selecionado = String(medicoId) === String(pm.id);
+                  return (
+                    <button
+                      key={pm.id}
+                      type="button"
+                      disabled={isBloqueadoPsfUnidadeMedico}
+                      onClick={() => !isBloqueadoPsfUnidadeMedico && setMedicoId(String(pm.id))}
+                      className={`rounded-md px-2 py-0.5 text-[10px] font-semibold transition ${
+                        selecionado
+                          ? "bg-teal text-white"
+                          : "bg-white text-sus-950 border border-teal/25 hover:bg-teal/15"
+                      } ${isBloqueadoPsfUnidadeMedico ? "cursor-default opacity-80" : ""}`}
+                      title={pm.cbo_codigo ? `CBO ${pm.cbo_codigo}` : undefined}
+                    >
+                      {pm.nome}
+                    </button>
+                  );
+                })}
+                {profsCompat.length > 12 && (
+                  <span className="px-1.5 py-0.5 text-[10px] text-ink/60">+{profsCompat.length - 12} outros</span>
+                )}
+              </div>
+            </div>
+          );
+        })()}
         <p className="mt-1 text-[11px] text-ink/60">
           {cbosLiberadosServico.length > 0
             ? "Exibindo somente os CBOs liberados para este tipo de serviço."

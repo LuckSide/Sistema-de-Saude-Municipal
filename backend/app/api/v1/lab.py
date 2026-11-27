@@ -406,10 +406,16 @@ def listar_cbos_sigtap(
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    """CBOs autorizados por procedimento (Tabela Unificada SIGTAP) e busca unificada sem duplicatas."""
+    """CBOs autorizados por procedimento (Tabela Unificada SIGTAP), busca completa em todas as ocupações e profissionais vinculados."""
+    from app.models.cadastros_saude import Medico
     from app.models.tfd import Especialidade as _Esp
     from app.api.v1.tfd import MAPA_ESPECIALIDADES_CANONICAS
-    from app.services.cbo_normalizacao import limpar_codigo_cbo, sanitizar_texto_cbo, comparar_nomes_cbo
+    from app.services.cbo_normalizacao import (
+        comparar_nomes_cbo,
+        limpar_codigo_cbo,
+        profissional_atende_cbo,
+        sanitizar_texto_cbo,
+    )
 
     cod = "".join(c for c in (procedimento_codigo if isinstance(procedimento_codigo, str) else "") if c.isdigit())
     g_cod = (grupo_codigo if isinstance(grupo_codigo, str) else "").strip()[:2]
@@ -422,6 +428,38 @@ def listar_cbos_sigtap(
     def _eh_tudo_maiusculo(s: str) -> bool:
         return len(s) > 3 and s == s.upper() and s != s.lower()
 
+    _PRIORIDADE_ORIGEM = {"sigtap": 0, "profissional": 1, "catalogo": 2, "canonico": 3}
+
+    medicos_ativos = [
+        m
+        for m in db.exec(
+            select(Medico)
+            .where(Medico.ativo != False)  # noqa: E712
+            .where(~Medico.cbo_codigo.like("7823%"))
+            .order_by(Medico.nome)
+        ).all()
+        if "motorista" not in (m.nome or "").lower()
+    ]
+
+    def _anexar_profissionais(itens: list[dict]) -> list[dict]:
+        for item in itens:
+            cbo_cod = item["cbo"]
+            desc_ref = item.get("descricao", "")
+            profs = []
+            for m in medicos_ativos:
+                if profissional_atende_cbo(m, cbo_cod, desc_ref):
+                    conselho = f"{m.conselho_tipo or 'CRM'}/{m.conselho_uf or 'MG'} {m.crm}".strip() if m.crm else ""
+                    profs.append({
+                        "id": m.id,
+                        "nome": m.nome,
+                        "cbo_codigo": m.cbo_codigo or "",
+                        "conselho": conselho,
+                        "especialidades": m.especialidades or m.especialidade or "",
+                    })
+            item["total_profissionais"] = len(profs)
+            item["profissionais"] = profs
+        return itens
+
     def _deduplicar_cbos(itens: list[dict]) -> list[dict]:
         por_cbo: dict[str, dict] = {}
         for item in itens:
@@ -429,17 +467,28 @@ def listar_cbos_sigtap(
             if not cbo_norm:
                 continue
             desc_atual = (item.get("descricao") or "").strip()
+            orig_atual = item.get("origem", "sigtap")
             if cbo_norm not in por_cbo:
-                por_cbo[cbo_norm] = {"cbo": cbo_norm, "descricao": desc_atual, "origem": item.get("origem", "sigtap")}
+                por_cbo[cbo_norm] = {"cbo": cbo_norm, "descricao": desc_atual, "origem": orig_atual}
             else:
-                desc_prev = por_cbo[cbo_norm]["descricao"]
+                prev = por_cbo[cbo_norm]
+                desc_prev = prev["descricao"]
+                prio_prev = _PRIORIDADE_ORIGEM.get(prev["origem"], 9)
+                prio_atual = _PRIORIDADE_ORIGEM.get(orig_atual, 9)
                 prefere_nova = (
-                    (len(desc_atual) > len(desc_prev) and not desc_atual.startswith("CBO "))
-                    or (_eh_tudo_maiusculo(desc_prev) and desc_atual and not _eh_tudo_maiusculo(desc_atual) and not desc_atual.startswith("CBO "))
+                    (prio_atual < prio_prev and bool(desc_atual) and not desc_atual.startswith("CBO "))
+                    or (
+                        prio_atual == prio_prev
+                        and (
+                            (len(desc_atual) > len(desc_prev) and not desc_atual.startswith("CBO "))
+                            or (_eh_tudo_maiusculo(desc_prev) and desc_atual and not _eh_tudo_maiusculo(desc_atual) and not desc_atual.startswith("CBO "))
+                        )
+                    )
+                    or (not desc_prev and bool(desc_atual))
                 )
                 if prefere_nova:
-                    por_cbo[cbo_norm]["descricao"] = desc_atual
-        return list(por_cbo.values())[:p_limit]
+                    por_cbo[cbo_norm] = {"cbo": cbo_norm, "descricao": desc_atual, "origem": orig_atual}
+        return _anexar_profissionais(list(por_cbo.values())[:p_limit])
 
     if cod:
         # Quando um procedimento é informado, traz estritamente os CBOs autorizados para ele no SIGTAP
@@ -481,13 +530,17 @@ def listar_cbos_sigtap(
                     out.append({"cbo": sc.cbo, "descricao": sc.descricao or "", "origem": "sigtap"})
 
     if not out and not cod:
-        # Busca universal em TODOS os CBOs do SIGTAP e ocupações normalizadas
-        for oc in db.exec(select(SigtapOcupacao).where(SigtapOcupacao.ativo == True).limit(p_limit)).all():  # noqa: E712
+        # Busca universal em TODOS os CBOs do SIGTAP, ocupações e profissionais cadastrados (filtra ANTES de limitar)
+        for cbo, desc in db.exec(select(SigtapCbo.cbo, SigtapCbo.descricao).distinct()).all():
+            out.append({"cbo": cbo, "descricao": desc or "", "origem": "sigtap"})
+
+        for oc in db.exec(select(SigtapOcupacao).where(SigtapOcupacao.ativo == True)).all():  # noqa: E712
             out.append({"cbo": oc.cbo, "descricao": oc.descricao or "", "origem": "sigtap"})
 
-        sigtap_query = select(SigtapCbo.cbo, SigtapCbo.descricao).distinct()
-        for cbo, desc in db.exec(sigtap_query.limit(p_limit)).all():
-            out.append({"cbo": cbo, "descricao": desc or "", "origem": "sigtap"})
+        for m in medicos_ativos:
+            mc = limpar_codigo_cbo(getattr(m, "cbo_codigo", ""))
+            if mc:
+                out.append({"cbo": mc, "descricao": (getattr(m, "cbo_descricao", "") or "").strip() or f"CBO {mc}", "origem": "profissional"})
 
     # Incluir especialidades locais cadastradas e mapa canônico para cobertura completa
     for e in db.exec(select(_Esp).where(_Esp.ativo == True).limit(500)).all():  # noqa: E712

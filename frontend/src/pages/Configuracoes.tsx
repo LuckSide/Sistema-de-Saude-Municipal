@@ -2397,6 +2397,8 @@ function AbaWhatsApp() {
                   value={config.whatsapp_api_url}
                   onChange={(e) => setConfig({ ...config, whatsapp_api_url: e.target.value })}
                   placeholder="https://api.z-api.io/instances/SUA_INSTANCIA/token/SEU_TOKEN"
+                  autoComplete="off"
+                  name="whatsapp_gateway_endpoint"
                   className="mt-1 text-xs font-mono"
                 />
                 <p className="mt-1 text-[11px] text-ink/50">
@@ -2412,6 +2414,8 @@ function AbaWhatsApp() {
                   value={config.whatsapp_instancia_id}
                   onChange={(e) => setConfig({ ...config, whatsapp_instancia_id: e.target.value })}
                   placeholder="Ex: 3A59B28D... ou 104928374928"
+                  autoComplete="off"
+                  name="whatsapp_gateway_instance_id"
                   className="mt-1 text-xs font-mono"
                 />
                 <p className="mt-1 text-[11px] text-ink/50">
@@ -2439,6 +2443,8 @@ function AbaWhatsApp() {
                 value={config.whatsapp_api_token}
                 onChange={(e) => setConfig({ ...config, whatsapp_api_token: e.target.value })}
                 placeholder="Token de acesso Bearer ou Client-Token"
+                autoComplete="new-password"
+                name="whatsapp_gateway_api_token"
                 className="mt-1 text-xs font-mono"
               />
               <p className="mt-1 text-[11px] text-ink/50">

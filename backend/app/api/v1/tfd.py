@@ -2277,27 +2277,37 @@ MAPA_ESPECIALIDADES_CANONICAS = [
     ("CIRURGIAO GERAL", "225225", "Médico Cirurgião Geral"),
     ("OTORRINOLARINGOLOG", "225275", "Médico Otorrinolaringologista"),
     ("OTORRINO", "225275", "Médico Otorrinolaringologista"),
-    ("REUMATOLOG", "225145", "Médico Reumatologista"),
-    ("PNEUMOLOG", "225180", "Médico Pneumologista"),
+    ("REUMATOLOG", "225136", "Médico Reumatologista"),
+    ("HOMEOPAT", "225195", "Médico Homeopata"),
+    ("PNEUMOLOG", "225127", "Médico Pneumologista"),
     ("INFECTOLOG", "225103", "Médico Infectologista"),
     ("NEFROLOG", "225109", "Médico Nefrologista"),
     ("HEMATOLOG", "225185", "Médico Hematologista"),
-    ("VASCULAR", "225280", "Médico Cirurgião Vascular"),
-    ("ANGIOLOG", "225280", "Médico Cirurgião Vascular"),
+    ("CIRURGIA VASCULAR", "225203", "Médico em Cirurgia Vascular"),
+    ("CIRURGIAO VASCULAR", "225203", "Médico em Cirurgia Vascular"),
+    ("VASCULAR", "225203", "Médico em Cirurgia Vascular"),
+    ("ANGIOLOG", "225115", "Médico Angiologista"),
     ("MASTOLOG", "225255", "Médico Mastologista"),
-    ("ONCOLOG", "225122", "Médico Cancerologista / Oncologista"),
-    ("CANCEROLOG", "225122", "Médico Cancerologista / Oncologista"),
-    ("GERIATRA", "225181", "Médico Geriatra"),
-    ("GERIATRI", "225181", "Médico Geriatra"),
+    ("ONCOLOG", "225121", "Médico Oncologista Clínico"),
+    ("CANCEROLOG", "225122", "Médico Cancerologista Pediátrico"),
+    ("GERIATRA", "225180", "Médico Geriatra"),
+    ("GERIATRI", "225180", "Médico Geriatra"),
     ("ALERG", "225110", "Médico Alergista e Imunologista"),
-    ("CIRURGIA PEDIATRICA", "225220", "Médico Cirurgião Pediátrico"),
-    ("CIRURGIAO PEDIATRICO", "225220", "Médico Cirurgião Pediátrico"),
-    ("CIRURGIA PLASTICA", "225230", "Médico Cirurgião Plástico"),
-    ("CIRURGIAO PLASTICO", "225230", "Médico Cirurgião Plástico"),
-    ("COLOPROCTOLOG", "225235", "Médico Coloproctologista"),
-    ("PROCTOLOG", "225235", "Médico Coloproctologista"),
+    ("CIRURGIA PEDIATRICA", "225230", "Médico Cirurgião Pediátrico"),
+    ("CIRURGIAO PEDIATRICO", "225230", "Médico Cirurgião Pediátrico"),
+    ("CIRURGIA PLASTICA", "225235", "Médico Cirurgião Plástico"),
+    ("CIRURGIAO PLASTICO", "225235", "Médico Cirurgião Plástico"),
+    ("CIRURGIA TORACICA", "225240", "Médico Cirurgião Torácico"),
+    ("CIRURGIAO TORACICO", "225240", "Médico Cirurgião Torácico"),
+    ("COLOPROCTOLOG", "225280", "Médico Coloproctologista"),
+    ("PROCTOLOG", "225280", "Médico Coloproctologista"),
     ("NEUROCIRURG", "225260", "Médico Neurocirurgião"),
-    ("ANGIOLOGISTA", "225148", "Médico Angiologista"),
+    ("ANATOMOPATOLOG", "225148", "Médico Anatomopatologista"),
+    ("CITOPATOLOG", "225305", "Médico Citopatologista"),
+    ("ENDOSCOPIA", "225310", "Médico em Endoscopia"),
+    ("PATOLOGISTA CLINICO", "225335", "Médico Patologista Clínico / Medicina Laboratorial"),
+    ("NUTROLOG", "225118", "Médico Nutrólogo"),
+    ("DO TRABALHO", "225140", "Médico do Trabalho"),
 ]
 
 CBO_PARA_NOME_CANONICO = {cbo: nome for _, cbo, nome in MAPA_ESPECIALIDADES_CANONICAS}
@@ -6643,24 +6653,27 @@ def especialidades_por_cbo(
     db: Session = Depends(get_db),
     _=Depends(need_any_perm(*_PERMS_PACIENTES_LEITURA)),
 ):
-    """Retorna as especialidades e áreas/subgrupos SIGTAP autorizados para o CBO selecionado."""
+    """Retorna especialidades, áreas/subgrupos SIGTAP e profissionais ativos compatíveis com o CBO."""
     from app.models.lab_exames import SigtapCbo, SigtapOcupacao, SigtapProcedimento
     from app.services.cbo_normalizacao import (
         CBO_ESPECIALIDADES_CANONICAS,
         especialidade_pertence_ao_cbo,
         limpar_codigo_cbo,
+        profissional_atende_cbo,
     )
     from app.services.sigtap_hierarquia import decompor_codigo_sigtap
 
     cbo_norm = limpar_codigo_cbo(cbo)
     if not cbo_norm:
-        return {"cbo": "", "descricao": "", "especialidades": [], "areas": [], "subgrupos": []}
+        return {"cbo": "", "descricao": "", "especialidades": [], "areas": [], "subgrupos": [], "profissionais": []}
 
+    sc_ref = db.exec(select(SigtapCbo).where(SigtapCbo.cbo == cbo_norm)).first()
     oc = db.exec(select(SigtapOcupacao).where(SigtapOcupacao.cbo == cbo_norm)).first()
-    desc_cbo = (oc.descricao if oc else "") or CBO_PARA_NOME_CANONICO.get(cbo_norm, "")
-    if not desc_cbo:
-        sc = db.exec(select(SigtapCbo).where(SigtapCbo.cbo == cbo_norm)).first()
-        desc_cbo = sc.descricao if sc else ""
+    desc_cbo = (
+        (sc_ref.descricao if sc_ref and sc_ref.descricao else "")
+        or (oc.descricao if oc and oc.descricao else "")
+        or CBO_PARA_NOME_CANONICO.get(cbo_norm, "")
+    )
 
     esps_ativas = list(db.exec(select(Especialidade).where(Especialidade.ativo == True).order_by(Especialidade.nome)).all())  # noqa: E712
     filtradas = [
@@ -6676,6 +6689,30 @@ def especialidades_por_cbo(
                 break
         if not filtradas and desc_cbo:
             filtradas.append({"id": None, "codigo_cbo": cbo_norm, "nome": desc_cbo, "ativo": True})
+
+    profissionais_out: list[dict] = []
+    medicos_ativos = list(
+        db.exec(
+            select(Medico)
+            .where(Medico.ativo != False)  # noqa: E712
+            .where(~Medico.cbo_codigo.like("7823%"))
+            .order_by(Medico.nome)
+        ).all()
+    )
+    for m in medicos_ativos:
+        if "motorista" in (m.nome or "").lower():
+            continue
+        if profissional_atende_cbo(m, cbo_norm, desc_cbo):
+            conselho = f"{m.conselho_tipo or 'CRM'}/{m.conselho_uf or 'MG'} {m.crm}".strip() if m.crm else ""
+            profissionais_out.append({
+                "id": m.id,
+                "nome": m.nome,
+                "cbo_codigo": m.cbo_codigo or "",
+                "cbo_descricao": m.cbo_descricao or "",
+                "conselho": conselho,
+                "especialidade": m.especialidade or "",
+                "especialidades": m.especialidades or "",
+            })
 
     cods_procs = {
         sc.procedimento_codigo
@@ -6705,6 +6742,7 @@ def especialidades_por_cbo(
         "especialidades": filtradas,
         "areas": [{"codigo": k, "nome": v} for k, v in sorted(areas_map.items())],
         "subgrupos": [{"codigo": k, "nome": v} for k, v in sorted(subgrupos_map.items())],
+        "profissionais": profissionais_out,
     }
 
 

@@ -33,6 +33,7 @@ import { useUndo } from "../components/UndoToast";
 import { useConfirm } from "../components/ConfirmDialog";
 import ExportarExcel from "../components/ExportarExcel";
 import { useBackdropClose } from "../hooks/useBackdropClose";
+import { medicosPorCbo, normalizarCodigoCbo } from "../utils/medicos";
 
 const CONSELHOS = ["CRM", "COREN", "CRF", "CRO", "CREFITO", "CRP", "CRESS", "CRN", "CRFa", "OUTROS"];
 const VINCULOS = [
@@ -173,7 +174,7 @@ export default function Medicos() {
       setEspsPorCbo([]);
       return;
     }
-    const cbo = (form.cbo_codigo || "").replace(/\D/g, "");
+    const cbo = normalizarCodigoCbo(form.cbo_codigo);
     if (cbo.length < 4) {
       setEspsPorCbo([]);
       return;
@@ -192,9 +193,8 @@ export default function Medicos() {
   }, [modal, form.cbo_codigo]);
 
   const especialidadesFiltradasModal = useMemo(() => {
-    const cbo = (form.cbo_codigo || "").replace(/\D/g, "");
+    const cbo = normalizarCodigoCbo(form.cbo_codigo);
     if (cbo.length < 4) return especialidadesCadastradas.slice(0, 12);
-    const prefix = cbo.slice(0, 4);
     const mapa = new Map<string, { id: number | string; nome: string; codigo_cbo: string }>();
     for (const e of espsPorCbo) {
       if (e.nome && !mapa.has(e.nome.toLowerCase())) {
@@ -202,8 +202,8 @@ export default function Medicos() {
       }
     }
     for (const e of especialidadesCadastradas) {
-      const ec = (e.codigo_cbo || "").replace(/\D/g, "");
-      if (ec && (ec === cbo || ec.startsWith(prefix)) && !mapa.has(e.nome.toLowerCase())) {
+      const ec = normalizarCodigoCbo(e.codigo_cbo);
+      if (ec && ec === cbo && !mapa.has(e.nome.toLowerCase())) {
         mapa.set(e.nome.toLowerCase(), { id: e.id, nome: e.nome, codigo_cbo: ec });
       }
     }
@@ -659,17 +659,54 @@ export default function Medicos() {
                   </div>
                 </div>
               </div>
-              <div><Label>CBO (código)</Label><Input value={form.cbo_codigo} onChange={(e) => { setForm({ ...form, cbo_codigo: e.target.value.replace(/\D/g, "").slice(0, 6) }); setBuscaCbo(e.target.value.replace(/\D/g, "").slice(0, 6)); }} placeholder="Ex: 225125" inputMode="numeric" /></div>
+              <div>
+                <Label>CBO (código)</Label>
+                <Input
+                  value={form.cbo_codigo}
+                  onChange={(e) => {
+                    const codLimpo = normalizarCodigoCbo(e.target.value);
+                    setForm({ ...form, cbo_codigo: codLimpo });
+                    setBuscaCbo(codLimpo);
+                  }}
+                  placeholder="Ex: 225125 ou 5151F1"
+                />
+              </div>
               <div className="md:col-span-2"><Label>CBO (descrição — SIGTAP)</Label><Input value={buscaCbo || form.cbo_descricao} onChange={(e) => { setBuscaCbo(e.target.value); setForm({ ...form, cbo_descricao: e.target.value }); }} placeholder="Buscar CBO na tabela SIGTAP…" list="cbo-sigtap-list" /></div>
               {cbos.length > 0 && (
-                <div className="md:col-span-2 -mt-1 max-h-36 overflow-y-auto rounded-xl border border-sus-900/10 bg-white">
-                  {cbos.slice(0, 20).map((c) => (
-                    <button key={`${c.cbo}-${c.descricao}`} type="button" onClick={() => { setForm({ ...form, cbo_codigo: c.cbo, cbo_descricao: c.descricao }); setBuscaCbo(""); setCbos([]); }} className="block w-full px-3 py-2 text-left text-sm hover:bg-sand">
-                      <b>{c.cbo}</b> <span className="text-xs text-ink/50">{c.descricao} · {c.origem}</span>
-                    </button>
-                  ))}
+                <div className="md:col-span-2 -mt-1 max-h-44 overflow-y-auto rounded-xl border border-sus-900/10 bg-white">
+                  {cbos.slice(0, 30).map((c) => {
+                    const profsCbo = c.profissionais ?? medicosPorCbo(lista, c.cbo, c.descricao);
+                    return (
+                      <button key={`${c.cbo}-${c.descricao}`} type="button" onClick={() => { setForm({ ...form, cbo_codigo: c.cbo, cbo_descricao: c.descricao }); setBuscaCbo(""); setCbos([]); }} className="block w-full border-b border-sus-900/5 px-3 py-2 text-left text-sm hover:bg-sand last:border-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span><b>{c.cbo}</b> <span className="text-xs text-ink/70">{c.descricao}</span></span>
+                          <span className="text-[11px] font-semibold text-teal shrink-0">
+                            {profsCbo.length > 0 ? `${profsCbo.length} prof.` : c.origem}
+                          </span>
+                        </div>
+                        {profsCbo.length > 0 && (
+                          <p className="mt-0.5 text-[11px] text-ink/50 truncate">
+                            Profissionais: {profsCbo.slice(0, 4).map((p) => p.nome).join(", ")}{profsCbo.length > 4 ? ` (+${profsCbo.length - 4})` : ""}
+                          </p>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
+              {normalizarCodigoCbo(form.cbo_codigo).length >= 5 && (() => {
+                const profsMesmoCbo = medicosPorCbo(lista, form.cbo_codigo, form.cbo_descricao).filter((p) => p.id !== editId);
+                if (profsMesmoCbo.length === 0) return null;
+                return (
+                  <div className="md:col-span-2 rounded-xl border border-teal/20 bg-teal/5 px-3 py-2 text-[11px] text-sus-950">
+                    <span className="font-bold text-teal-900">
+                      Outros profissionais ativos com CBO {normalizarCodigoCbo(form.cbo_codigo)} ({profsMesmoCbo.length}):
+                    </span>{" "}
+                    {profsMesmoCbo.slice(0, 8).map((p) => p.nome).join(", ")}
+                    {profsMesmoCbo.length > 8 ? ` e mais ${profsMesmoCbo.length - 8}` : ""}.
+                  </div>
+                );
+              })()}
               <div className="md:col-span-2">
                 <Label>Especialidade Principal (Atuação primária)</Label>
                 <Input
@@ -684,7 +721,7 @@ export default function Medicos() {
               <div className="md:col-span-2">
                 <Label>
                   Especialidade(s){" "}
-                  {form.cbo_codigo.replace(/\D/g, "").length >= 4 && (
+                  {normalizarCodigoCbo(form.cbo_codigo).length >= 4 && (
                     <span className="ml-1 text-[10px] font-normal text-teal">
                       (vinculadas ao CBO {form.cbo_codigo})
                     </span>
@@ -698,7 +735,7 @@ export default function Medicos() {
                   />
                 </div>
                 {(() => {
-                  const cboClean = form.cbo_codigo.replace(/\D/g, "");
+                  const cboClean = normalizarCodigoCbo(form.cbo_codigo);
                   if (cboClean.length < 4 || !form.especialidades.trim()) return null;
                   const selecionadas = form.especialidades.split(",").map((s) => s.trim()).filter(Boolean);
                   const autorizadasNomes = new Set(especialidadesFiltradasModal.map((x) => x.nome.trim().toLowerCase()));

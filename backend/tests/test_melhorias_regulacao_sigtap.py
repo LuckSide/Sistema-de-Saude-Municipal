@@ -478,3 +478,67 @@ def test_req5_normalizacao_e_deduplicacao_cbos(session):
 
     cbos_listados = listar_cbos_sigtap(q="gastrolojista", db=session, limit=100)
     assert any(item["cbo"] == "225165" for item in cbos_listados)
+
+
+def test_reorganizacao_cbos_oficiais_alfanumericos_e_profissionais_vinculados(session: Session):
+    """Regressão: corrige CBOs trocados mantendo médicos intactos, preserva 5151F1 e exibe todos os profissionais por CBO."""
+    from app.models.cadastros_saude import Medico
+    from app.services.cbo_normalizacao import limpar_codigo_cbo
+
+    assert limpar_codigo_cbo("5151F1") == "5151F1"
+    assert limpar_codigo_cbo("2241E1") == "2241E1"
+
+    # Dados corrompidos herdados de seeds antigos
+    session.add_all([
+        SigtapCbo(procedimento_codigo="0301010072", cbo="225180", descricao="Médico geriatra"),
+        SigtapCbo(procedimento_codigo="0301010072", cbo="225127", descricao="Médico pneumologista"),
+        SigtapCbo(procedimento_codigo="0301010072", cbo="225195", descricao="Médico homeopata"),
+        SigtapCbo(procedimento_codigo="0301010072", cbo="225136", descricao="Médico reumatologista"),
+        SigtapOcupacao(cbo="225180", descricao="Médico Pneumologista", descricao_normalizada="medico pneumologista", ativo=True),
+        SigtapOcupacao(cbo="225181", descricao="Médico Geriatra", descricao_normalizada="medico geriatra", ativo=True),
+        SigtapOcupacao(cbo="225271", descricao="Médico Mastologista", descricao_normalizada="medico mastologista", ativo=True),
+        Especialidade(codigo_cbo="225180", nome="Médico geriatra", ativo=True),
+        Especialidade(codigo_cbo="225181", nome="Geriatria", ativo=True),
+        Especialidade(codigo_cbo="225195", nome="Reumatologia", ativo=True),
+        Especialidade(codigo_cbo="225136", nome="Médico reumatologista", ativo=True),
+    ])
+
+    # Profissionais (incluindo múltiplas especialidades e CBO alfanumérico 5151F1) — NÃO devem ser removidos/alterados
+    m_cardio = Medico(nome="Dr. Cardio Principal", crm="CRM/MG 1001", cbo_codigo="225120", cbo_descricao="Médico cardiologista", especialidade="Cardiologia", especialidades="Médico cardiologista", ativo=True)
+    m_psf_clin = Medico(nome="Dr. PSF Clinico", crm="CRM/MG 1002", cbo_codigo="225142", cbo_descricao="Médico da estratégia de saúde da família", especialidade="Saúde da Família", especialidades="Médico da estratégia de saúde da família, Médico clínico", ativo=True)
+    m_ace = Medico(nome="Maria ACE", crm="", conselho_tipo="OUTROS", cbo_codigo="5151F1", cbo_descricao="Agente de Combate às Endemias", especialidades="Agente de Combate às Endemias", ativo=True)
+    session.add_all([m_cardio, m_psf_clin, m_ace])
+    session.commit()
+
+    unificar_cbos_duplicados(session)
+
+    # 1. Todos os médicos preservados sem alteração
+    assert session.exec(select(Medico)).all() and len(session.exec(select(Medico)).all()) == 3
+    session.refresh(m_ace)
+    assert m_ace.cbo_codigo == "5151F1"
+
+    # 2. Descrições oficiais restauradas em sigtap_ocupacoes e fictícios removidos
+    oc_ger = session.exec(select(SigtapOcupacao).where(SigtapOcupacao.cbo == "225180")).first()
+    assert oc_ger and oc_ger.descricao == "Médico geriatra"
+    assert session.exec(select(SigtapOcupacao).where(SigtapOcupacao.cbo == "225181")).first() is None
+    assert session.exec(select(SigtapOcupacao).where(SigtapOcupacao.cbo == "225271")).first() is None
+    assert session.exec(select(SigtapOcupacao).where(SigtapOcupacao.cbo == "5151F1")).first() is not None
+
+    # 3. Especialidades trocadas unificadas para o CBO correto
+    reumas = [e for e in session.exec(select(Especialidade)).all() if "reumato" in e.nome.lower()]
+    assert len(reumas) == 1
+    assert reumas[0].codigo_cbo == "225136"
+
+    # 4. listar_cbos_sigtap inclui CBO alfanumérico e lista profissionais que atendem 225125 (Clínico) via especialidades secundárias
+    res_clin = listar_cbos_sigtap(q="225125", db=session, limit=50)
+    item_225125 = next((x for x in res_clin if x["cbo"] == "225125"), None)
+    assert item_225125 is not None
+    nomes_clin = [p["nome"] for p in item_225125["profissionais"]]
+    assert "Dr. PSF Clinico" in nomes_clin
+    assert "Dr. Cardio Principal" not in nomes_clin
+
+    res_ace = listar_cbos_sigtap(q="5151F1", db=session, limit=50)
+    assert any(x["cbo"] == "5151F1" and x["total_profissionais"] == 1 for x in res_ace)
+
+    cbo_esp_clin = especialidades_por_cbo(cbo="225125", db=session)
+    assert any(p["nome"] == "Dr. PSF Clinico" for p in cbo_esp_clin["profissionais"])

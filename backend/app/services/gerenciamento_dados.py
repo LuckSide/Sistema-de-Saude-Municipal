@@ -432,7 +432,8 @@ def diagnosticar_filas(db: Session) -> Tuple[List[Dict[str, Any]], List[Dict[str
     inconsistencias: List[Dict[str, Any]] = []
     tabs = tabelas_existentes(db)
 
-    # 1. Duplicidade ativa em tfd_exames_fila (mesmo paciente e mesmo exame/código de procedimento)
+    # 1. Duplicidade ativa em tfd_exames_fila (mesmo paciente e mesmo exame/código de procedimento;
+    #    para consultas/retornos como 0301010072, distingue também pela especialidade/CBO solicitada)
     if "tfd_exames_fila" in tabs:
         exames_ativos = list(
             db.exec(
@@ -441,23 +442,45 @@ def diagnosticar_filas(db: Session) -> Tuple[List[Dict[str, Any]], List[Dict[str
                 .where(ExameFila.status.in_(["aguardando", "agendado"]))
             ).all()
         )
-        grupo_tfd: Dict[Tuple[int, str], List[ExameFila]] = {}
+        grupo_tfd: Dict[Tuple[int, str, str], List[ExameFila]] = {}
         for ef in exames_ativos:
-            proc_chave = (ef.codigo_procedimento or ef.exame or "").strip().lower()
-            if proc_chave:
-                grupo_tfd.setdefault((ef.paciente_id, proc_chave), []).append(ef)
+            cod_proc = (ef.codigo_procedimento or "").strip().lower()
+            exame_norm = normalizar_texto(ef.exame)
+            proc_chave = cod_proc or exame_norm
+            if not proc_chave:
+                continue
 
-        for (paciente_id, proc_chave), itens in grupo_tfd.items():
+            tipo_fila_norm = normalizar_texto(ef.tipo_fila)
+            eh_consulta = (
+                cod_proc in ("0301010072", "9999990001")
+                or "consulta" in tipo_fila_norm
+                or "consulta" in exame_norm
+                or "retorno" in tipo_fila_norm
+                or "retorno" in exame_norm
+            )
+            esp_chave = ""
+            if eh_consulta:
+                esp_chave = (
+                    normalizar_texto(ef.nome_especialidade)
+                    or (ef.codigo_especialidade or "").strip()
+                    or normalizar_texto(ef.especialidade)
+                    or tipo_fila_norm
+                )
+            grupo_tfd.setdefault((ef.paciente_id, proc_chave, esp_chave), []).append(ef)
+
+        for (paciente_id, proc_chave, esp_chave), itens in grupo_tfd.items():
             if len(itens) > 1:
                 ids = [item.id for item in itens]
+                rotulo_esp = (itens[0].nome_especialidade or itens[0].especialidade or itens[0].codigo_especialidade or "").strip()
+                rotulo_proc = f"{proc_chave} · {rotulo_esp}" if (esp_chave and rotulo_esp) else proc_chave
                 duplicidades.append({
                     "tipo": "duplicidade_tfd_exames_fila",
                     "dominio": "filas",
                     "paciente_id": paciente_id,
-                    "chave": proc_chave,
+                    "chave": rotulo_proc,
                     "total": len(ids),
                     "ids": ids,
-                    "descricao": f"Paciente ID {paciente_id} possui {len(ids)} pedidos ativos para o mesmo exame/procedimento ({proc_chave}).",
+                    "descricao": f"Paciente ID {paciente_id} possui {len(ids)} pedidos ativos para o mesmo exame/procedimento ({rotulo_proc}).",
                 })
 
     # 2. Duplicidade ativa em lab_fila_psf (mesmo paciente, mesma data de solicitação e mesma especialidade/tipo)

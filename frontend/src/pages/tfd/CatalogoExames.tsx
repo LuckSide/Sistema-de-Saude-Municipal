@@ -650,7 +650,7 @@ export default function CatalogoExames() {
                   <div><Label>Código curto</Label><Input value={formProc.codigo_curto} onChange={(e) => setFormProc({ ...formProc, codigo_curto: e.target.value.toUpperCase() })} placeholder="Ex: USG-TV" /></div>
                   <div className="md:col-span-2"><Label>Nome procedimento *</Label><Input value={formProc.nome} onChange={(e) => setFormProc({ ...formProc, nome: e.target.value.toUpperCase() })} maxLength={1000} placeholder="Ex: ULTRASSONOGRAFIA TRANSVAGINAL" /></div>
                   <div><Label>Tipo de fila</Label><Input value={formProc.tipo_fila} onChange={(e) => setFormProc({ ...formProc, tipo_fila: e.target.value.toUpperCase() })} placeholder="Ex: ULTRASSONOGRAFIA" /></div>
-                  <div><Label>CBO padrão</Label><Input value={formProc.codigo_especialidade} onChange={(e) => setFormProc({ ...formProc, codigo_especialidade: e.target.value.replace(/\D/g, "").slice(0, 6) })} placeholder="Ex: 225320" inputMode="numeric" /></div>
+                  <div><Label>CBO padrão</Label><Input value={formProc.codigo_especialidade} onChange={(e) => setFormProc({ ...formProc, codigo_especialidade: e.target.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 6) })} placeholder="Ex: 225320" /></div>
                   <div className="md:col-span-2">
                     <Label>Nome especialidade</Label>
                     <Input
@@ -680,7 +680,7 @@ export default function CatalogoExames() {
               )}
               {aba === "especialidades" && (
                 <div className="grid gap-3 md:grid-cols-3">
-                  <div><Label>Código CBO (opcional)</Label><Input value={formEsp.codigo_cbo} onChange={(e) => setFormEsp({ ...formEsp, codigo_cbo: e.target.value.replace(/\D/g, "").slice(0, 6) })} placeholder="Ex: 225320 (opcional)" inputMode="numeric" /></div>
+                  <div><Label>Código CBO (opcional)</Label><Input value={formEsp.codigo_cbo} onChange={(e) => setFormEsp({ ...formEsp, codigo_cbo: e.target.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 6) })} placeholder="Ex: 225320 ou 5151F1 (opcional)" /></div>
                   <div className="md:col-span-2"><Label>Nome especialidade *</Label><Input value={formEsp.nome} onChange={(e) => setFormEsp({ ...formEsp, nome: e.target.value })} placeholder="Ex: Médico em radiologia e diagnóstico por imagem" /></div>
                   <label className="flex cursor-pointer items-center gap-2 text-sm"><input type="checkbox" checked={formEsp.ativo} onChange={(e) => setFormEsp({ ...formEsp, ativo: e.target.checked })} className="rounded border-sus-900/30" /> Ativo</label>
                 </div>

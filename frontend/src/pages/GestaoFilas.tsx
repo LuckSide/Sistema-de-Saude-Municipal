@@ -29,18 +29,21 @@ import {
   tfdExcluirTipo,
   tfdRedefinirRegrasPadrao,
   tfdEspecialidades,
+  sigtapCbos,
   fetchMedicos,
   fetchUnidadesSaude,
   type TipoFila,
   type EspecialidadeCat,
+  type SigtapCbo,
   type Medico,
   type UnidadeSaude,
   pagData,
   pagMeta,
 } from "../services/api";
 import { Badge, Button, Card, Input, Label, Select } from "../components/ui/primitives";
+import { Combobox } from "../components/ui/combobox";
 import { useConfirm } from "../components/ConfirmDialog";
-import { formatarSubMedico, isMedicoGenericoNome } from "../utils/medicos";
+import { formatarSubMedico, isMedicoGenericoNome, medicosPorCbo, normalizarCodigoCbo } from "../utils/medicos";
 
 const TIPOS_FILA_CONFIG: {
   id: string;
@@ -82,31 +85,35 @@ const ESPECIALIDADES_SUGERIDAS = [
   { cbo: "225112", nome: "Neurologia" },
   { cbo: "225260", nome: "Neurocirurgia" },
   { cbo: "225265", nome: "Oftalmologia" },
-  { cbo: "225180", nome: "Pneumologia" },
-  { cbo: "225133", "nome": "Psiquiatria" },
+  { cbo: "225127", nome: "Pneumologia" },
+  { cbo: "225133", nome: "Psiquiatria" },
   { cbo: "225320", nome: "Radiologia e Diagnóstico por Imagem" },
-  { cbo: "225195", nome: "Reumatologia" },
+  { cbo: "225136", nome: "Reumatologia" },
   { cbo: "225285", nome: "Urologia" },
-  { cbo: "225210", nome: "Angiologia e Cirurgia Vascular" },
-  { cbo: "225215", nome: "Cirurgia Cardiovascular" },
+  { cbo: "225203", nome: "Cirurgia Vascular" },
+  { cbo: "225115", nome: "Angiologia" },
+  { cbo: "225210", nome: "Cirurgia Cardiovascular" },
+  { cbo: "225215", nome: "Cirurgia de Cabeça e Pescoço" },
   { cbo: "225109", nome: "Nefrologia" },
-  { cbo: "225181", nome: "Geriatria" },
+  { cbo: "225180", nome: "Geriatria" },
   { cbo: "225103", nome: "Infectologia" },
-  { cbo: "225122", nome: "Oncologia Clínica" },
+  { cbo: "225121", nome: "Oncologia Clínica" },
   { cbo: "225185", nome: "Hematologia e Hemoterapia" },
   { cbo: "225142", nome: "Medicina de Família e Comunidade" },
-  { cbo: "225271", nome: "Mastologia" },
-  { cbo: "225310", nome: "Patologia Clínica / Medicina Laboratorial" },
-  { cbo: "225305", nome: "Anatomia Patológica e Citopatologia" },
+  { cbo: "225255", nome: "Mastologia" },
+  { cbo: "225310", nome: "Endoscopia" },
+  { cbo: "225335", nome: "Patologia Clínica / Medicina Laboratorial" },
+  { cbo: "225148", nome: "Anatomia Patológica" },
+  { cbo: "225305", nome: "Citopatologia" },
   { cbo: "225315", nome: "Medicina Nuclear" },
-  { cbo: "225320", nome: "Cirurgia Plástica" },
-  { cbo: "225240", nome: "Cirurgia Pediátrica" },
-  { cbo: "225215", nome: "Cirurgia Cardiovascular" },
-  { cbo: "225235", nome: "Coloproctologia" },
+  { cbo: "225235", nome: "Cirurgia Plástica" },
+  { cbo: "225230", nome: "Cirurgia Pediátrica" },
+  { cbo: "225240", nome: "Cirurgia Torácica" },
+  { cbo: "225280", nome: "Coloproctologia" },
   { cbo: "225110", nome: "Alergia e Imunologia" },
   { cbo: "225151", nome: "Anestesiologia" },
-  { cbo: "225140", nome: "Nutrologia" },
-  { cbo: "225226", nome: "Pequena Cirurgia" },
+  { cbo: "225118", nome: "Nutrologia" },
+  { cbo: "225140", nome: "Medicina do Trabalho" },
 ];
 
 function extrairCbos(cbosStr: string | undefined): string[] {
@@ -202,18 +209,22 @@ export default function GestaoFilas() {
     unidades_permitidas: [] as number[],
   });
 
-  // Campo auxiliar para adicionar CBO
+  // Campo auxiliar para adicionar CBO e catálogo completo de ocupações SIGTAP
   const [cboParaAdicionar, setCboParaAdicionar] = useState("");
+  const [cbosSigtapCatalogo, setCbosSigtapCatalogo] = useState<SigtapCbo[]>([]);
 
   const { confirmar } = useConfirm();
 
-  // Carrega catálogo de especialidades, médicos e unidades do sistema
+  // Carrega catálogo de especialidades, ocupações SIGTAP, médicos e unidades do sistema
   useEffect(() => {
     tfdEspecialidades({ limit: 1000 })
       .then((res) => {
         const lista = pagData<EspecialidadeCat>(res);
         setEspecialidadesSistema(lista);
       })
+      .catch(() => {});
+    sigtapCbos("", undefined, undefined, undefined, 5000)
+      .then((lista) => setCbosSigtapCatalogo(Array.isArray(lista) ? lista : []))
       .catch(() => {});
     fetchMedicos({ somente_ativos: true })
       .then((m) => setMedicosSistema(m.filter((x) => x.ativo && !isMedicoGenericoNome(x.nome))))
@@ -223,27 +234,44 @@ export default function GestaoFilas() {
       .catch(() => {});
   }, []);
 
-  // Lista consolidada de CBOs disponíveis (do sistema + padrão)
+  // Lista consolidada de CBOs disponíveis (SIGTAP completo + profissionais + catálogo + padrão)
   const mapaCbosDisponiveis = useMemo(() => {
     const mapa = new Map<string, string>();
     for (const esp of ESPECIALIDADES_SUGERIDAS) {
       mapa.set(esp.cbo, esp.nome);
     }
+    for (const sc of cbosSigtapCatalogo) {
+      const cod = normalizarCodigoCbo(sc.cbo);
+      if (cod && sc.descricao) {
+        mapa.set(cod, sc.descricao.trim());
+      }
+    }
     for (const esp of especialidadesSistema) {
-      if (esp.codigo_cbo && esp.nome) {
-        mapa.set(esp.codigo_cbo.trim(), esp.nome.trim());
+      const cod = normalizarCodigoCbo(esp.codigo_cbo);
+      if (cod && esp.nome && !mapa.has(cod)) {
+        mapa.set(cod, esp.nome.trim());
+      }
+    }
+    for (const med of medicosSistema) {
+      const cod = normalizarCodigoCbo(med.cbo_codigo);
+      if (cod && med.cbo_descricao && !mapa.has(cod)) {
+        mapa.set(cod, med.cbo_descricao.trim());
       }
     }
     return mapa;
-  }, [especialidadesSistema]);
+  }, [cbosSigtapCatalogo, especialidadesSistema, medicosSistema]);
 
   const listaCbosParaSelecao = useMemo(() => {
-    const arr: { cbo: string; nome: string }[] = [];
+    const arr: { cbo: string; nome: string; profs: Medico[] }[] = [];
     mapaCbosDisponiveis.forEach((nome, cbo) => {
-      arr.push({ cbo, nome });
+      const profs = medicosPorCbo(medicosSistema, cbo, nome);
+      arr.push({ cbo, nome, profs });
     });
-    return arr.sort((a, b) => a.nome.localeCompare(b.nome));
-  }, [mapaCbosDisponiveis]);
+    return arr.sort((a, b) => {
+      if (b.profs.length !== a.profs.length) return b.profs.length - a.profs.length;
+      return a.nome.localeCompare(b.nome, "pt-BR");
+    });
+  }, [mapaCbosDisponiveis, medicosSistema]);
 
   async function carregarFilas(p = page) {
     setCarregando(true);
@@ -1018,24 +1046,29 @@ export default function GestaoFilas() {
 
                 {/* Seletor / Adicionador de CBO */}
                 <div className="flex gap-2 items-end">
-                  <div className="flex-1">
-                    <Label className="text-xs font-semibold text-sus-950">Selecione uma Especialidade / CBO</Label>
-                    <Select
-                      value={cboParaAdicionar}
-                      onChange={(e) => setCboParaAdicionar(e.target.value)}
-                      className="mt-1 text-xs"
-                    >
-                      <option value="">Selecione para adicionar…</option>
-                      {listaCbosParaSelecao.map((item) => (
-                        <option
-                          key={item.cbo}
-                          value={item.cbo}
-                          disabled={form.cbos_permitidos.includes(item.cbo)}
-                        >
-                          {item.cbo} — {item.nome} {form.cbos_permitidos.includes(item.cbo) ? "(Já adicionado)" : ""}
-                        </option>
-                      ))}
-                    </Select>
+                  <div className="flex-1 min-w-0">
+                    <Label className="text-xs font-semibold text-sus-950">Selecione uma Especialidade / CBO (SIGTAP completo)</Label>
+                    <div className="mt-1">
+                      <Combobox
+                        value={cboParaAdicionar}
+                        onChange={(val) => setCboParaAdicionar(val)}
+                        options={listaCbosParaSelecao
+                          .filter((item) => !form.cbos_permitidos.includes(item.cbo))
+                          .map((item) => ({
+                            value: item.cbo,
+                            label: `${item.cbo} — ${item.nome}`,
+                            sub:
+                              item.profs.length > 0
+                                ? `${item.profs.length} profissional(is): ${item.profs.slice(0, 3).map((p) => p.nome).join(", ")}${item.profs.length > 3 ? "…" : ""}`
+                                : "Sem profissional ativo vinculado",
+                            keywords: `${item.cbo} ${item.nome} ${item.profs.map((p) => p.nome).join(" ")}`,
+                          }))}
+                        placeholder="Buscar por código CBO, profissão ou nome do profissional…"
+                        searchPlaceholder="Digite o CBO (ex: 225120, 2232, 2235), especialidade ou médico…"
+                        emptyText="Nenhum CBO encontrado"
+                        showAll={false}
+                      />
+                    </div>
                   </div>
 
                   <Button
@@ -1044,11 +1077,41 @@ export default function GestaoFilas() {
                       if (cboParaAdicionar) adicionarCbo(cboParaAdicionar);
                     }}
                     disabled={!cboParaAdicionar || form.cbos_permitidos.includes(cboParaAdicionar)}
-                    className="bg-teal hover:bg-teal-700 text-white text-xs h-9 px-3 gap-1 shrink-0"
+                    className="bg-teal hover:bg-teal-700 text-white text-xs h-10 px-3 gap-1 shrink-0"
                   >
                     <Plus className="h-3.5 w-3.5" /> Adicionar CBO
                   </Button>
                 </div>
+
+                {/* Prévia dos profissionais que usam o CBO pré-selecionado ou liberados */}
+                {cboParaAdicionar && (() => {
+                  const nomeSel = mapaCbosDisponiveis.get(cboParaAdicionar) || `CBO ${cboParaAdicionar}`;
+                  const profsSel = medicosPorCbo(medicosSistema, cboParaAdicionar, nomeSel);
+                  return (
+                    <div className="rounded-xl border border-teal/25 bg-white px-3 py-2 text-xs">
+                      <p className="font-bold text-teal-950">
+                        {cboParaAdicionar} — {nomeSel} ({profsSel.length} profissional(is) ativo(s))
+                      </p>
+                      {profsSel.length > 0 ? (
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          {profsSel.map((p) => (
+                            <span
+                              key={p.id}
+                              className="inline-flex items-center gap-1 rounded-md bg-teal/10 px-2 py-0.5 text-[11px] font-medium text-sus-950"
+                            >
+                              {p.nome}
+                              {p.crm ? <span className="text-ink/55">({p.conselho_tipo || "CRM"} {p.crm})</span> : null}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mt-0.5 text-[11px] text-ink/55">
+                          Nenhum profissional ativo cadastrado com este CBO no momento.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Lista de CBOs Liberados como Badges com botão X */}
                 <div className="pt-2">
@@ -1063,6 +1126,7 @@ export default function GestaoFilas() {
                     <div className="flex flex-wrap gap-2 p-2 bg-white rounded-xl border border-teal-200 min-h-[46px] items-center">
                       {form.cbos_permitidos.map((cboCode) => {
                         const nomeEsp = mapaCbosDisponiveis.get(cboCode) || `CBO ${cboCode}`;
+                        const qtdProfs = medicosPorCbo(medicosSistema, cboCode, nomeEsp).length;
                         return (
                           <span
                             key={cboCode}
@@ -1071,6 +1135,7 @@ export default function GestaoFilas() {
                             <Stethoscope className="h-3.5 w-3.5 text-teal" />
                             <span className="font-mono text-[11px] text-teal-700">{cboCode}</span>
                             <span>{nomeEsp}</span>
+                            <span className="text-[10px] text-teal-800/75">({qtdProfs} prof.)</span>
                             <button
                               type="button"
                               onClick={() => removerCbo(cboCode)}
