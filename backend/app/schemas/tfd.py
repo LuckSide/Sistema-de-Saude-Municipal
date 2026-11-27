@@ -393,6 +393,7 @@ class ExameBase(BaseModel):
     data_agendada: date | None = None
     hora_agendada: str = Field(default="", max_length=5)
     medico_id: int | None = None
+    medico_nome: str = Field(default="", max_length=150)
     unidade_saude_id: int | None = None
     destino: str = Field(default="", max_length=120)
     observacoes: str = Field(default="", max_length=500)
@@ -430,6 +431,7 @@ class ExameLoteIn(BaseModel):
     data_agendada: date | None = None
     hora_agendada: str = Field(default="", max_length=5)
     medico_id: int | None = None
+    medico_nome: str = Field(default="", max_length=150)
     unidade_saude_id: int | None = None
     limpar_data_agendada: bool = False
     destino: str = Field(default="", max_length=120)
@@ -590,6 +592,13 @@ class ExamePublicoOut(BaseModel):
     total_fila: int | None = None
     grupo_fila: str = ""
     paciente_iniciais: str = ""
+    origem_modulo: str = "solicitacao"
+    protocolo: str = ""
+    hora_agendada: str = ""
+    unidade_solicitante: str = ""
+    laboratorio_nome: str = ""
+    itens: list[str] = Field(default_factory=list)
+    justificativa: str = ""
 
 
 # ---------- Catálogo dinâmico e-SUS ----------
@@ -606,6 +615,8 @@ class TipoFilaIn(BaseModel):
     cbo_padrao: str = Field(default="", max_length=10)
     sinonimos: str = Field(default="", max_length=1000)
     descricao_regras: str = Field(default="", max_length=1000)
+    medicos_permitidos: str = Field(default="", max_length=2000)
+    unidades_permitidas: str = Field(default="", max_length=2000)
 
 
 class TipoFilaOut(TipoFilaIn):

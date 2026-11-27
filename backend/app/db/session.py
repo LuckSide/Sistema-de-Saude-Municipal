@@ -1882,3 +1882,53 @@ def _init_db_impl() -> None:
                 backfill_codigos_fila_psf(conn)
         except Exception as exc_backfill_lab:
             _session_log.warning("Aviso em backfill_codigos_fila_psf: %s", exc_backfill_lab)
+
+        # Migrações aditivas: medicos_permitidos/unidades_permitidas em tfd_tipos_fila e public_token em filas/solicitações lab
+        for col_sql in [
+            "ALTER TABLE tfd_tipos_fila ADD COLUMN medicos_permitidos VARCHAR(2000) DEFAULT '' NOT NULL",
+            "ALTER TABLE tfd_tipos_fila ADD COLUMN unidades_permitidas VARCHAR(2000) DEFAULT '' NOT NULL",
+            "ALTER TABLE lab_fila_psf ADD COLUMN public_token VARCHAR(64) DEFAULT '' NOT NULL",
+            "ALTER TABLE lab_solic_mestre ADD COLUMN public_token VARCHAR(64) DEFAULT '' NOT NULL",
+        ]:
+            try:
+                with conn.begin_nested():
+                    conn.execute(text(col_sql))
+            except Exception:
+                pass
+        for idx_tok in [
+            "CREATE INDEX IF NOT EXISTS ix_lab_fila_psf_public_token ON lab_fila_psf (public_token)",
+            "CREATE INDEX IF NOT EXISTS ix_lab_solic_mestre_public_token ON lab_solic_mestre (public_token)",
+        ]:
+            try:
+                with conn.begin_nested():
+                    conn.execute(text(idx_tok))
+            except Exception:
+                pass
+
+        # Backfill idempotente de public_token em lab_fila_psf e lab_solic_mestre
+        try:
+            with conn.begin_nested():
+                rows_f = conn.execute(
+                    text("SELECT id FROM lab_fila_psf WHERE public_token IS NULL OR TRIM(public_token) = '' LIMIT 5000")
+                ).fetchall()
+                for (fid,) in rows_f:
+                    conn.execute(
+                        text("UPDATE lab_fila_psf SET public_token = :tok WHERE id = :fid"),
+                        {"tok": secrets.token_urlsafe(24), "fid": fid},
+                    )
+                rows_m = conn.execute(
+                    text(
+                        "SELECT m.id, f.public_token "
+                        "FROM lab_solic_mestre m "
+                        "LEFT JOIN lab_fila_psf f ON f.id = m.origem_fila_id "
+                        "WHERE m.public_token IS NULL OR TRIM(m.public_token) = '' LIMIT 5000"
+                    )
+                ).fetchall()
+                for (mid, tok_fila) in rows_m:
+                    tok = (tok_fila or "").strip() or secrets.token_urlsafe(24)
+                    conn.execute(
+                        text("UPDATE lab_solic_mestre SET public_token = :tok WHERE id = :mid"),
+                        {"tok": tok, "mid": mid},
+                    )
+        except Exception as exc_tok_lab:
+            _session_log.warning("Aviso no backfill de public_token lab: %s", exc_tok_lab)

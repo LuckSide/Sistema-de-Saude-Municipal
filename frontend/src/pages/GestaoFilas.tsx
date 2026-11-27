@@ -20,6 +20,7 @@ import {
   Sparkles,
   Tag,
   Settings2,
+  Building2,
 } from "lucide-react";
 import {
   tfdTipos,
@@ -28,13 +29,18 @@ import {
   tfdExcluirTipo,
   tfdRedefinirRegrasPadrao,
   tfdEspecialidades,
+  fetchMedicos,
+  fetchUnidadesSaude,
   type TipoFila,
   type EspecialidadeCat,
+  type Medico,
+  type UnidadeSaude,
   pagData,
   pagMeta,
 } from "../services/api";
 import { Badge, Button, Card, Input, Label, Select } from "../components/ui/primitives";
 import { useConfirm } from "../components/ConfirmDialog";
+import { formatarSubMedico, isMedicoGenericoNome } from "../utils/medicos";
 
 const TIPOS_FILA_CONFIG: {
   id: string;
@@ -123,6 +129,30 @@ function extrairCbos(cbosStr: string | undefined): string[] {
     .filter(Boolean);
 }
 
+function extrairIdsInteiros(raw: string | undefined): number[] {
+  if (!raw) return [];
+  const s = raw.trim();
+  if (s.startsWith("[") && s.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(s);
+      if (Array.isArray(parsed)) {
+        return [...new Set(parsed.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0))];
+      }
+    } catch {
+      // fallback
+    }
+  }
+  return [
+    ...new Set(
+      s
+        .replace(/;/g, ",")
+        .split(",")
+        .map((x) => Number(x.trim()))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    ),
+  ];
+}
+
 export default function GestaoFilas() {
   const [filas, setFilas] = useState<TipoFila[]>([]);
   const [carregando, setCarregando] = useState(false);
@@ -142,6 +172,10 @@ export default function GestaoFilas() {
 
   // Especialidades cadastradas no sistema para o seletor de CBO
   const [especialidadesSistema, setEspecialidadesSistema] = useState<EspecialidadeCat[]>([]);
+  const [medicosSistema, setMedicosSistema] = useState<Medico[]>([]);
+  const [unidadesSistema, setUnidadesSistema] = useState<UnidadeSaude[]>([]);
+  const [buscaMedicoRegra, setBuscaMedicoRegra] = useState("");
+  const [buscaUnidadeRegra, setBuscaUnidadeRegra] = useState("");
 
   // Modal Novo / Edição
   const [modalAberto, setModalAberto] = useState(false);
@@ -164,6 +198,8 @@ export default function GestaoFilas() {
     cbo_padrao: "",
     sinonimos: "",
     descricao_regras: "",
+    medicos_permitidos: [] as number[],
+    unidades_permitidas: [] as number[],
   });
 
   // Campo auxiliar para adicionar CBO
@@ -171,13 +207,19 @@ export default function GestaoFilas() {
 
   const { confirmar } = useConfirm();
 
-  // Carrega catálogo de especialidades do sistema
+  // Carrega catálogo de especialidades, médicos e unidades do sistema
   useEffect(() => {
     tfdEspecialidades({ limit: 1000 })
       .then((res) => {
         const lista = pagData<EspecialidadeCat>(res);
         setEspecialidadesSistema(lista);
       })
+      .catch(() => {});
+    fetchMedicos({ somente_ativos: true })
+      .then((m) => setMedicosSistema(m.filter((x) => x.ativo && !isMedicoGenericoNome(x.nome))))
+      .catch(() => {});
+    fetchUnidadesSaude()
+      .then((u) => setUnidadesSistema(u.filter((x) => x.ativo)))
       .catch(() => {});
   }, []);
 
@@ -258,7 +300,11 @@ export default function GestaoFilas() {
       cbo_padrao: "",
       sinonimos: "",
       descricao_regras: "",
+      medicos_permitidos: [],
+      unidades_permitidas: [],
     });
+    setBuscaMedicoRegra("");
+    setBuscaUnidadeRegra("");
     setCboParaAdicionar("");
     setErroModal("");
     setModalAberto(true);
@@ -280,7 +326,11 @@ export default function GestaoFilas() {
       cbo_padrao: f.cbo_padrao || "",
       sinonimos: f.sinonimos || "",
       descricao_regras: f.descricao_regras || "",
+      medicos_permitidos: extrairIdsInteiros(f.medicos_permitidos),
+      unidades_permitidas: extrairIdsInteiros(f.unidades_permitidas),
     });
+    setBuscaMedicoRegra("");
+    setBuscaUnidadeRegra("");
     setCboParaAdicionar("");
     setErroModal("");
     setModalAberto(true);
@@ -356,6 +406,8 @@ export default function GestaoFilas() {
         cbo_padrao: f.cbo_padrao === cboCode ? "" : f.cbo_padrao,
         sinonimos: f.sinonimos,
         descricao_regras: f.descricao_regras,
+        medicos_permitidos: f.medicos_permitidos || "",
+        unidades_permitidas: f.unidades_permitidas || "",
       });
       setSucesso(`CBO ${cboCode} (${espRemovida}) removido com sucesso de "${f.nome}".`);
       carregarFilas(page);
@@ -387,6 +439,8 @@ export default function GestaoFilas() {
         cbo_padrao: form.cbo_padrao.trim(),
         sinonimos: form.sinonimos.trim(),
         descricao_regras: form.descricao_regras.trim(),
+        medicos_permitidos: form.medicos_permitidos.length > 0 ? JSON.stringify(form.medicos_permitidos) : "",
+        unidades_permitidas: form.unidades_permitidas.length > 0 ? JSON.stringify(form.unidades_permitidas) : "",
       };
 
       if (filaEdicao) {
@@ -444,6 +498,8 @@ export default function GestaoFilas() {
         cbo_padrao: f.cbo_padrao || "",
         sinonimos: f.sinonimos || "",
         descricao_regras: f.descricao_regras || "",
+        medicos_permitidos: f.medicos_permitidos || "",
+        unidades_permitidas: f.unidades_permitidas || "",
       });
       setSucesso(`Serviço "${f.nome}" ${f.ativo ? "desativado" : "ativado"} com sucesso.`);
       carregarFilas(page);
@@ -1184,6 +1240,135 @@ export default function GestaoFilas() {
                     rows={2}
                     className="mt-1 w-full rounded-xl border border-sus-900/20 bg-white p-2 text-xs focus:border-teal focus:outline-hidden"
                   />
+                </div>
+              </div>
+
+              {/* Bloco 4: Médicos e Unidades Liberadas para esta Fila */}
+              <div className="bg-purple-50/40 p-4 rounded-xl border border-purple-200/70 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="text-xs font-bold text-sus-950 uppercase tracking-wider flex items-center gap-1.5">
+                    <Building2 className="h-4 w-4 text-purple-700" /> 4. Médicos e Unidades Liberadas
+                  </h4>
+                  <span className="text-[11px] font-semibold text-purple-800 bg-purple-100/70 px-2 py-0.5 rounded-md">
+                    {form.unidades_permitidas.length === 0 ? "Todas as unidades" : `${form.unidades_permitidas.length} unidade(s)`} ·{" "}
+                    {form.medicos_permitidos.length === 0 ? "Todos os médicos" : `${form.medicos_permitidos.length} médico(s)`}
+                  </span>
+                </div>
+                <p className="text-[11px] text-ink/70">
+                  Selecione quais unidades de saúde e quais médicos podem lançar nesta fila (ideal para filas de exames de sangue). Deixar vazio libera para todas as unidades ou todos os médicos ativos.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Unidades Liberadas */}
+                  <div className="rounded-xl border border-sus-900/10 bg-white p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="!mb-0 text-xs font-bold text-sus-950">Unidades Liberadas</Label>
+                      {form.unidades_permitidas.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setForm({ ...form, unidades_permitidas: [] })}
+                          className="text-[10px] font-semibold text-red-600 hover:underline"
+                        >
+                          Liberar todas
+                        </button>
+                      )}
+                    </div>
+                    <Input
+                      value={buscaUnidadeRegra}
+                      onChange={(e) => setBuscaUnidadeRegra(e.target.value)}
+                      placeholder="Filtrar unidade ou CNES…"
+                      className="text-xs !h-8"
+                    />
+                    <div className="max-h-36 overflow-y-auto divide-y divide-sus-900/5 text-xs">
+                      {unidadesSistema
+                        .filter((u) => {
+                          const t = buscaUnidadeRegra.trim().toLowerCase();
+                          return !t || u.nome.toLowerCase().includes(t) || (u.cnes || "").includes(t);
+                        })
+                        .map((u) => {
+                          const checked = form.unidades_permitidas.includes(u.id);
+                          return (
+                            <label key={u.id} className="flex items-center gap-2 py-1.5 px-1 cursor-pointer hover:bg-sand/40 rounded">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() =>
+                                  setForm((prev) => ({
+                                    ...prev,
+                                    unidades_permitidas: checked
+                                      ? prev.unidades_permitidas.filter((id) => id !== u.id)
+                                      : [...prev.unidades_permitidas, u.id],
+                                  }))
+                                }
+                                className="rounded border-sus-900/20 text-teal focus:ring-teal"
+                              />
+                              <span className="flex-1 truncate font-medium text-sus-950">{u.nome}</span>
+                            </label>
+                          );
+                        })}
+                    </div>
+                  </div>
+
+                  {/* Médicos Liberados */}
+                  <div className="rounded-xl border border-sus-900/10 bg-white p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="!mb-0 text-xs font-bold text-sus-950">Médicos Liberados</Label>
+                      {form.medicos_permitidos.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setForm({ ...form, medicos_permitidos: [] })}
+                          className="text-[10px] font-semibold text-red-600 hover:underline"
+                        >
+                          Liberar todos
+                        </button>
+                      )}
+                    </div>
+                    <Input
+                      value={buscaMedicoRegra}
+                      onChange={(e) => setBuscaMedicoRegra(e.target.value)}
+                      placeholder="Filtrar médico, CRM, CBO ou especialidade…"
+                      className="text-xs !h-8"
+                    />
+                    <div className="max-h-36 overflow-y-auto divide-y divide-sus-900/5 text-xs">
+                      {medicosSistema
+                        .filter((m) => {
+                          const t = buscaMedicoRegra.trim().toLowerCase();
+                          if (!t) return true;
+                          return (
+                            m.nome.toLowerCase().includes(t) ||
+                            (m.crm || "").toLowerCase().includes(t) ||
+                            (m.cbo_codigo || "").toLowerCase().includes(t) ||
+                            (m.especialidade || "").toLowerCase().includes(t) ||
+                            (m.especialidades || "").toLowerCase().includes(t)
+                          );
+                        })
+                        .map((m) => {
+                          const checked = form.medicos_permitidos.includes(m.id);
+                          const sub = formatarSubMedico(m);
+                          return (
+                            <label key={m.id} className="flex items-start gap-2 py-1.5 px-1 cursor-pointer hover:bg-sand/40 rounded">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() =>
+                                  setForm((prev) => ({
+                                    ...prev,
+                                    medicos_permitidos: checked
+                                      ? prev.medicos_permitidos.filter((id) => id !== m.id)
+                                      : [...prev.medicos_permitidos, m.id],
+                                  }))
+                                }
+                                className="mt-0.5 rounded border-sus-900/20 text-teal focus:ring-teal"
+                              />
+                              <span className="flex-1 min-w-0">
+                                <span className="block truncate font-semibold text-sus-950">{m.nome}</span>
+                                {sub && <span className="block truncate text-[10px] text-ink/60">{sub}</span>}
+                              </span>
+                            </label>
+                          );
+                        })}
+                    </div>
+                  </div>
                 </div>
               </div>
 

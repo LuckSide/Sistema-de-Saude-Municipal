@@ -70,6 +70,7 @@ import BuscaPacienteAutocomplete from "../../components/BuscaPacienteAutocomplet
 import BotaoWhatsApp from "../../components/BotaoWhatsApp";
 import ComprovanteExameModal from "../../components/ComprovanteExameModal";
 import AlertaPedidoDuplicado from "../../components/AlertaPedidoDuplicado";
+import { formatarSubMedico, isMedicoGenericoNome, keywordsMedico } from "../../utils/medicos";
 
 function hojeISO(): string {
   return new Date().toISOString().slice(0, 10);
@@ -192,12 +193,10 @@ export default function NovaSolicitacao() {
   const [cbosAutorizados, setCbosAutorizados] = useState<SigtapCbo[]>([]);
   const [carregandoCbos, setCarregandoCbos] = useState(false);
 
-  // Árvore SIGTAP completa (Área -> Subgrupo -> CBO) e Especialidades filtradas pelo CBO
-  const [arvoreSigtap, setArvoreSigtap] = useState<SigtapArvore | null>(null);
-  const [grupoSig, setGrupoSig] = useState("");
-  const [subgrupoSig, setSubgrupoSig] = useState("");
-  const [cboFiltroSig, setCboFiltroSig] = useState("");
-  const [espsCboSel, setEspsCboSel] = useState<{ id: number | null; codigo_cbo: string; nome: string; ativo: boolean }[]>([]);
+  const grupoSig: string = "";
+  const subgrupoSig: string = "";
+  const cboFiltroSig: string = "";
+  const espsCboSel: { id: number | null; codigo_cbo: string; nome: string; ativo: boolean }[] = [];
 
   // Origem e Data
   const [unidadeId, setUnidadeId] = useState<string>("");
@@ -715,53 +714,7 @@ export default function NovaSolicitacao() {
     [tiposFila],
   );
 
-  // Carrega Árvore SIGTAP completa em cascata: Área (Grupo) -> Subgrupo -> CBO
-  useEffect(() => {
-    let cancel = false;
-    sigtapArvore({
-      grupo_codigo: grupoSig || undefined,
-      subgrupo_codigo: subgrupoSig || undefined,
-      cbo: cboFiltroSig || undefined,
-    })
-      .then((res) => {
-        if (!cancel) setArvoreSigtap(res);
-      })
-      .catch(() => {});
-    return () => {
-      cancel = true;
-    };
-  }, [grupoSig, subgrupoSig, cboFiltroSig]);
-
-  // Filtro hierárquico: quando um CBO é selecionado, carrega apenas especialidades correspondentes/autorizadas
-  useEffect(() => {
-    if (!cboFiltroSig) {
-      setEspsCboSel([]);
-      return;
-    }
-    let cancel = false;
-    tfdCboEspecialidades(cboFiltroSig)
-      .then((res) => {
-        if (cancel) return;
-        const lista = res?.especialidades ?? [];
-        setEspsCboSel(lista);
-        setEspecialidade((atual) => {
-          const atualNorm = normalizarTexto(atual);
-          const aindaValida = atual && lista.some((x) => normalizarTexto(x.nome) === atualNorm);
-          if (aindaValida) return atual;
-          if (lista.length === 1) return lista[0].nome;
-          return "";
-        });
-        setEspManual(false);
-      })
-      .catch(() => {
-        if (!cancel) setEspsCboSel([]);
-      });
-    return () => {
-      cancel = true;
-    };
-  }, [cboFiltroSig]);
-
-  // Regra 3: Hierarquia de Seleção (Serviço -> Área/Subgrupo/CBO -> Procedimento)
+  // Regra 3: Seleção (Serviço -> Procedimento/Especialidade)
   const espFiltroCatalogo = espManual ? especialidade : "";
 
   useEffect(() => {
@@ -1066,8 +1019,6 @@ export default function NovaSolicitacao() {
     setProcTexto("");
     setCodigoProcedimento("");
     setBuscaProc("");
-    setCboFiltroSig("");
-    setEspsCboSel([]);
     setEspManual(false);
     setCbosAutorizados([]);
     setProcedimentosDinamicos([]);
@@ -1086,41 +1037,6 @@ export default function NovaSolicitacao() {
     } else {
       setEspecialidade("");
       setCodigoEspecialidade("");
-    }
-  }
-
-  function aoSelecionarGrupoSig(novoGrupo: string) {
-    setGrupoSig(novoGrupo);
-    if (subgrupoSig && (!novoGrupo || !subgrupoSig.startsWith(novoGrupo))) {
-      setSubgrupoSig("");
-    }
-    if (!isConsulta) {
-      setProcedimentoSel(null);
-      setProcTexto("");
-      setCodigoProcedimento("");
-    }
-  }
-
-  function aoSelecionarSubgrupoSig(novoSubgrupo: string) {
-    setSubgrupoSig(novoSubgrupo);
-    if (novoSubgrupo.length >= 2 && !grupoSig) {
-      setGrupoSig(novoSubgrupo.slice(0, 2));
-    }
-    if (!isConsulta) {
-      setProcedimentoSel(null);
-      setProcTexto("");
-      setCodigoProcedimento("");
-    }
-  }
-
-  function aoSelecionarCboFiltro(novoCbo: string) {
-    const cboLimpo = (novoCbo || "").replace(/\D/g, "").slice(0, 6);
-    setCboFiltroSig(cboLimpo);
-    if (cboLimpo) {
-      setCodigoEspecialidade(cboLimpo);
-    } else {
-      setCodigoEspecialidade("");
-      setEspsCboSel([]);
     }
   }
 
@@ -1466,33 +1382,25 @@ export default function NovaSolicitacao() {
     return medicos
       .map((m) => {
         const cboMed = (m.cbo_codigo || "").replace(/\D/g, "");
-        const isGenerico =
-          m.nome.includes("Responsável Técnico") ||
-          m.nome.includes("Responsavel Tecnico") ||
-          m.nome.includes("Médico da Unidade") ||
-          m.nome.includes("Medico da Unidade");
+        const isGenerico = isMedicoGenericoNome(m.nome);
         const cboMatch =
           temRegra &&
           !isGenerico &&
           (cbosSet.has(cboMed) || cbosPrefix4.has(cboMed.slice(0, 4)));
 
-        let subTexto = m.crm ? `CRM ${m.crm}` : "";
-        if (m.cbo_codigo) {
-          subTexto += (subTexto ? " · " : "") + `CBO ${m.cbo_codigo}`;
-        }
+        const extras: string[] = [];
         if (cboMatch) {
-          subTexto += ` · ⭐ CBO Liberado p/ ${tipoServico}`;
+          extras.push(`CBO Liberado p/ ${tipoServico}`);
         } else if (temRegra && tipoFilaAtivo?.exigir_cbo_estrito && !isGenerico) {
-          subTexto += " · ⚠️ Não autorizado neste serviço";
+          extras.push("CBO não autorizado neste serviço");
         }
+        const subTexto = formatarSubMedico(m, extras);
 
         return {
           value: String(m.id),
-          label: cboMatch ? `⭐ ${m.nome} [CBO Liberado]` : m.nome,
+          label: cboMatch ? `${m.nome} [CBO Liberado]` : m.nome,
           sub: subTexto || undefined,
-          keywords: `${m.nome} ${m.crm || ""} ${m.cbo_codigo || ""} ${m.especialidade || ""} ${
-            cboMatch ? "liberado autorizado cardiologista especialista" : ""
-          }`,
+          keywords: keywordsMedico(m, cboMatch ? "liberado autorizado especialista" : ""),
           cboMatch,
           isGenerico,
         };
@@ -1507,16 +1415,6 @@ export default function NovaSolicitacao() {
         return a.label.localeCompare(b.label, "pt-BR");
       });
   }, [medicos, cbosLiberadosServico, tipoServico, tipoFilaAtivo]);
-
-  const opcoesCboArvore = useMemo(() => {
-    const base = arvoreSigtap?.cbos ?? [];
-    return base.map((c) => ({
-      value: c.cbo,
-      label: c.descricao ? `${c.cbo} · ${c.descricao}` : `CBO ${c.cbo}`,
-      sub: c.cbo ? `CBO ${c.cbo}` : undefined,
-      keywords: `${c.cbo} ${c.descricao}`,
-    }));
-  }, [arvoreSigtap]);
 
   const opcoesEspecialidades = useMemo(() => {
     // 1. Se há um CBO explicitamente selecionado na árvore/filtro, exibe APENAS as especialidades correspondentes/autorizadas para aquele CBO
@@ -1608,93 +1506,6 @@ export default function NovaSolicitacao() {
       }));
   }, [cboFiltroSig, espsCboSel, isConsulta, cbosAutorizados, especialidadesCadastradas, procedimentosTodos]);
 
-  function renderPainelHierarquiaSigtap(contexto: "individual" | "lote") {
-    const grupos = arvoreSigtap?.grupos ?? [];
-    const subgrupos = (arvoreSigtap?.subgrupos ?? []).filter(
-      (s) => !grupoSig || s.grupo_codigo === grupoSig || s.codigo.startsWith(grupoSig),
-    );
-    return (
-      <div className="mt-4 rounded-xl border border-sus-900/10 bg-sand/30 p-3">
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-sus-900">
-            <Layers className="h-3.5 w-3.5 text-teal" /> Hierarquia SIGTAP (Área → Subgrupo → CBO)
-          </span>
-          {(grupoSig || subgrupoSig || cboFiltroSig) && (
-            <button
-              type="button"
-              onClick={() => {
-                setGrupoSig("");
-                setSubgrupoSig("");
-                aoSelecionarCboFiltro("");
-              }}
-              className="text-[11px] font-semibold text-red-600 hover:underline"
-            >
-              Limpar filtro SIGTAP
-            </button>
-          )}
-        </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3 items-start">
-          <div>
-            <div className="min-h-[22px] flex items-center mb-1">
-              <Label className="!mb-0 text-[11px] font-bold text-sus-950">Área (Grupo SIGTAP)</Label>
-            </div>
-            <Select
-              value={grupoSig}
-              onChange={(e) => aoSelecionarGrupoSig(e.target.value)}
-              className="h-11 text-xs font-medium"
-            >
-              <option value="">Todas as áreas SIGTAP…</option>
-              {grupos.map((g) => (
-                <option key={g.codigo} value={g.codigo}>
-                  {g.codigo} · {g.nome}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <div>
-            <div className="min-h-[22px] flex items-center mb-1">
-              <Label className="!mb-0 text-[11px] font-bold text-sus-950">Subgrupo SIGTAP</Label>
-            </div>
-            <Select
-              value={subgrupoSig}
-              onChange={(e) => aoSelecionarSubgrupoSig(e.target.value)}
-              className="h-11 text-xs font-medium"
-            >
-              <option value="">
-                {grupoSig ? `Todos os subgrupos do Grupo ${grupoSig}…` : "Todos os subgrupos SIGTAP…"}
-              </option>
-              {subgrupos.map((s) => (
-                <option key={s.codigo} value={s.codigo}>
-                  {s.codigo} · {s.nome}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <div>
-            <div className="min-h-[22px] flex items-center mb-1">
-              <Label className="!mb-0 text-[11px] font-bold text-sus-950">
-                CBO (Ocupação SIGTAP)
-              </Label>
-            </div>
-            <Combobox
-              value={cboFiltroSig}
-              onChange={(v) => aoSelecionarCboFiltro(v)}
-              options={opcoesCboArvore}
-              placeholder={
-                contexto === "lote"
-                  ? "Selecione o CBO para filtrar…"
-                  : "Selecione o CBO…"
-              }
-              searchPlaceholder="Digite o código CBO ou nome da ocupação…"
-              emptyText="Nenhum CBO encontrado nessa área/subgrupo"
-              showAll={true}
-            />
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   function renderCampoCboEspecialidade(contexto: "individual" | "lote") {
     return (
       <div>
@@ -1719,8 +1530,6 @@ export default function NovaSolicitacao() {
                 onClick={() => {
                   setEspecialidade("");
                   setCodigoEspecialidade("");
-                  setCboFiltroSig("");
-                  setEspsCboSel([]);
                   setEspManual(false);
                 }}
                 className="text-[10px] text-red-600 font-semibold hover:underline"
@@ -2061,7 +1870,11 @@ export default function NovaSolicitacao() {
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={() => navigate("/fila-exames")}
+                    onClick={() => {
+                      const statusDest = criado.status === "agendado" ? "agendado" : "aguardando";
+                      const termoBusca = criado.numero_pedido || criado.codigo_curto || String(criado.id);
+                      navigate(`/fila-exames?status=${encodeURIComponent(statusDest)}&q=${encodeURIComponent(termoBusca)}`);
+                    }}
                     className="border-emerald-600 text-emerald-800 hover:bg-emerald-100 text-xs"
                   >
                     Ir para Fila
@@ -2257,8 +2070,6 @@ export default function NovaSolicitacao() {
                     {/* Especialidade Médica / CBO */}
                     {renderCampoCboEspecialidade("individual")}
                   </div>
-
-                  {renderPainelHierarquiaSigtap("individual")}
                 </Card>
 
                 {/* Bloco 3: Origem do Pedido, Unidade e Médico */}
@@ -2318,29 +2129,17 @@ export default function NovaSolicitacao() {
 
                     {/* Médico Requisitante com busca inteligente Combobox */}
                     <div>
-                      <div className="min-h-[22px] flex items-center justify-between mb-1">
+                      <div className="min-h-[22px] flex items-center mb-1">
                         <Label className="!mb-0 text-xs font-bold text-sus-950">
                           Médico(a) Requisitante <span className="text-red-500">*</span>
                         </Label>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const mGen = medicos.find((m) =>
-                              m.nome.includes("Responsável Técnico") || m.nome.includes("Médico da Unidade"),
-                            );
-                            if (mGen) setMedicoId(String(mGen.id));
-                          }}
-                          className="text-[10px] font-bold text-teal hover:underline"
-                        >
-                          Usar Médico da Unidade
-                        </button>
                       </div>
                       <Combobox
                         value={medicoId}
                         onChange={(v) => setMedicoId(v)}
                         options={opcoesMedicos}
                         placeholder="Buscar Médico(a) Requisitante…"
-                        searchPlaceholder="Digite o nome do médico ou CRM…"
+                        searchPlaceholder="Digite o nome, CRM, CBO ou especialidade…"
                         emptyText="Nenhum médico encontrado"
                         showAll={false}
                       />
@@ -3163,7 +2962,17 @@ export default function NovaSolicitacao() {
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={() => navigate("/fila-exames")}
+                    onClick={() => {
+                      const statusDest =
+                        agendamentoDiretoLote && podeAgendarDireto
+                          ? "agendado"
+                          : loteProcessado.agendados > 0 && loteProcessado.na_fila > 0
+                          ? "todos"
+                          : loteProcessado.agendados > 0
+                          ? "agendado"
+                          : "aguardando";
+                      navigate(`/fila-exames?status=${encodeURIComponent(statusDest)}`);
+                    }}
                     className="border-emerald-600 text-emerald-800 hover:bg-emerald-100 text-xs font-semibold"
                   >
                     Ir para Fila de Espera
@@ -3291,8 +3100,6 @@ export default function NovaSolicitacao() {
                 {/* Especialidade Médica / CBO */}
                 {renderCampoCboEspecialidade("lote")}
               </div>
-
-              {renderPainelHierarquiaSigtap("lote")}
 
               {/* Se for Consulta Especializada no Lote: banner padronizado */}
               {isConsulta ? (
@@ -3498,30 +3305,16 @@ export default function NovaSolicitacao() {
                 </div>
 
                 <div>
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs font-bold text-sus-950">
-                      Médico(a) Requisitante / Responsável <span className="text-red-500">*</span>
-                    </Label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const mGen = medicos.find((m) =>
-                          m.nome.includes("Responsável Técnico") || m.nome.includes("Médico da Unidade"),
-                        );
-                        if (mGen) setMedicoId(String(mGen.id));
-                      }}
-                      className="text-[10px] font-bold text-teal hover:underline"
-                    >
-                      Usar Médico da Unidade
-                    </button>
-                  </div>
+                  <Label className="text-xs font-bold text-sus-950">
+                    Médico(a) Requisitante / Responsável <span className="text-red-500">*</span>
+                  </Label>
                   <div className="mt-1">
                     <Combobox
                       value={medicoId}
                       onChange={(v) => setMedicoId(v)}
                       options={opcoesMedicos}
                       placeholder="Buscar Médico(a) Requisitante…"
-                      searchPlaceholder="Digite o nome do médico ou CRM…"
+                      searchPlaceholder="Digite o nome, CRM, CBO ou especialidade…"
                       emptyText="Nenhum médico encontrado"
                       showAll={false}
                     />

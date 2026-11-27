@@ -53,6 +53,12 @@ import BotaoWhatsApp from "../../components/BotaoWhatsApp";
 import ComprovanteExameModal from "../../components/ComprovanteExameModal";
 import ModalPedidosInelegiveis from "../../components/ModalPedidosInelegiveis";
 import ModalLeituraRapidaQR from "../../components/ModalLeituraRapidaQR";
+import {
+  formatarSubMedico,
+  isMedicoGenericoNome,
+  keywordsMedico,
+  NOME_MEDICO_UNIDADE,
+} from "../../utils/medicos";
 import { useBackdropClose } from "../../hooks/useBackdropClose";
 import { PRIO_ROTULO } from "../../utils/rotulos";
 
@@ -99,6 +105,7 @@ function novoForm(unidadePadraoId?: string | number | null, medicoPadraoId?: str
     data_agendada: "",
     hora_agendada: "",
     medico_id: medicoPadraoId ? String(medicoPadraoId) : GENERICO_UNIDADE,
+    medico_nome: "",
     unidade_saude_id: unidadePadraoId ? String(unidadePadraoId) : "",
     destino: "",
     observacoes: "",
@@ -210,8 +217,14 @@ export default function FilaExames() {
   const [lista, setLista] = useState<Exame[]>([]);
   const [sp, setSearchParams] = useSearchParams();
   const [soMeus, setSoMeus] = useState(false);
-  const [filtro, setFiltro] = useState("aguardando");
-  const [q, setQ] = useState("");
+  const [filtro, setFiltro] = useState(() => {
+    const st = sp.get("status");
+    if (st === "todos" || st === "") return "";
+    if (st) return st;
+    if (sp.get("q") || sp.get("registro") || sp.get("id")) return "";
+    return "aguardando";
+  });
+  const [q, setQ] = useState(() => sp.get("q") || "");
   const [prio, setPrio] = useState("");
   const [tipoFila, setTipoFila] = useState("");
   const [proc, setProc] = useState("");
@@ -274,7 +287,7 @@ export default function FilaExames() {
   const [pages, setPages] = useState(1);
   const [sel, setSel] = useState<number[]>([]);
   const [loteModal, setLoteModal] = useState<"agendar" | "status" | "editar" | null>(null);
-  const [loteForm, setLoteForm] = useState({ data_agendada: "", hora_agendada: "", medico_id: "", unidade_id: "", destino: "", status: "", prioridade: "", justificativa: "", observacoes: "", enviar_whatsapp: true, instrucoes_transporte: "" });
+  const [loteForm, setLoteForm] = useState({ data_agendada: "", hora_agendada: "", medico_id: "", medico_nome_livre: "", unidade_id: "", destino: "", status: "", prioridade: "", justificativa: "", observacoes: "", enviar_whatsapp: true, instrucoes_transporte: "" });
   const [loteSalvando, setLoteSalvando] = useState(false);
   const [medicos, setMedicos] = useState<Medico[]>([]);
   const medGenerico = useMemo(() => acharMedicoGenerico(medicos), [medicos]);
@@ -385,39 +398,24 @@ export default function FilaExames() {
     const opts: ComboOption[] = [
       {
         value: GENERICO_UNIDADE,
-        label: "🏥 Médico da Unidade / Responsável Técnico",
+        label: NOME_MEDICO_UNIDADE,
         sub: "Padrão da rede municipal",
       },
     ];
+    const pushMed = (m: Medico, extra?: string) => {
+      if (isMedicoGenericoNome(m.nome)) return;
+      opts.push({
+        value: String(m.id),
+        label: m.nome,
+        sub: formatarSubMedico(m, extra ? [extra] : []) || undefined,
+        keywords: keywordsMedico(m),
+      });
+    };
     if (medicosFiltrados.temFiltro && medicosFiltrados.daUnidade.length > 0) {
-      medicosFiltrados.daUnidade.forEach((m) => {
-        if (!m.nome.includes("Responsável Técnico") && !m.nome.includes("Médico da Unidade")) {
-          opts.push({
-            value: String(m.id),
-            label: `⭐ ${m.nome}`,
-            sub: m.crm ? `CRM: ${m.crm}${m.cbo_codigo ? ` · CBO: ${m.cbo_codigo}` : ""}` : undefined,
-          });
-        }
-      });
-      medicosFiltrados.outros.forEach((m) => {
-        if (!m.nome.includes("Responsável Técnico") && !m.nome.includes("Médico da Unidade")) {
-          opts.push({
-            value: String(m.id),
-            label: m.nome,
-            sub: m.crm ? `CRM: ${m.crm}${m.cbo_codigo ? ` · CBO: ${m.cbo_codigo}` : ""}` : undefined,
-          });
-        }
-      });
+      medicosFiltrados.daUnidade.forEach((m) => pushMed(m, "Vinculado à unidade"));
+      medicosFiltrados.outros.forEach((m) => pushMed(m));
     } else {
-      medicos.filter((m) => m.ativo).forEach((m) => {
-        if (!m.nome.includes("Responsável Técnico") && !m.nome.includes("Médico da Unidade")) {
-          opts.push({
-            value: String(m.id),
-            label: m.nome,
-            sub: m.crm ? `CRM: ${m.crm}${m.cbo_codigo ? ` · CBO: ${m.cbo_codigo}` : ""}` : undefined,
-          });
-        }
-      });
+      medicos.filter((m) => m.ativo).forEach((m) => pushMed(m));
     }
     return opts;
   }, [medicos, medicosFiltrados]);
@@ -430,7 +428,7 @@ export default function FilaExames() {
   }
   function abrirLote(kind: "agendar" | "status" | "editar") {
     setErro("");
-    setLoteForm({ data_agendada: "", hora_agendada: "", medico_id: "", unidade_id: "", destino: "", status: "", prioridade: "", justificativa: "", observacoes: "", enviar_whatsapp: true, instrucoes_transporte: "" });
+    setLoteForm({ data_agendada: "", hora_agendada: "", medico_id: "", medico_nome_livre: "", unidade_id: "", destino: "", status: "", prioridade: "", justificativa: "", observacoes: "", enviar_whatsapp: true, instrucoes_transporte: "" });
     setLoteModal(kind);
   }
   async function salvarLote() {
@@ -450,14 +448,16 @@ export default function FilaExames() {
           setLoteSalvando(false);
           return;
         }
-        if (loteForm.data_agendada && (!loteForm.medico_id || !loteForm.unidade_id)) {
-          setErro("Agendamento exige médico e unidade de atendimento (PSF).");
+        if (loteForm.data_agendada && ((!loteForm.medico_id && !loteForm.medico_nome_livre.trim()) || !loteForm.unidade_id)) {
+          setErro("Agendamento exige médico executante (selecionado ou digitado) e unidade de atendimento (PSF).");
           setLoteSalvando(false);
           return;
         }
         if (loteForm.data_agendada) payload.data_agendada = loteForm.data_agendada;
         if (loteForm.hora_agendada) payload.hora_agendada = loteForm.hora_agendada;
-        if (loteForm.medico_id) {
+        if (loteForm.medico_nome_livre.trim()) {
+          payload.medico_nome = loteForm.medico_nome_livre.trim();
+        } else if (loteForm.medico_id) {
           const mid = loteForm.medico_id === GENERICO_UNIDADE ? (medGenerico?.id ?? null) : Number(loteForm.medico_id);
           if (mid) payload.medico_id = mid;
         }
@@ -989,6 +989,7 @@ export default function FilaExames() {
           data_agendada: (e.data_agendada || "").slice(0, 10),
           hora_agendada: e.hora_agendada ?? "",
           medico_id: e.medico_id ? String(e.medico_id) : "",
+          medico_nome: !e.medico_id && e.medico_nome ? e.medico_nome : "",
           unidade_saude_id: e.unidade_saude_id ? String(e.unidade_saude_id) : "",
           destino: e.destino,
           observacoes: e.observacoes,
@@ -1049,8 +1050,8 @@ export default function FilaExames() {
       setErro("A justificativa é obrigatória e deve ter pelo menos 12 caracteres.");
       return;
     }
-    if (mostrarAgendamento && (!form.data_agendada || !form.medico_id || !form.unidade_saude_id)) {
-      setErro("Agendamento exige data agendada, médico e unidade de atendimento.");
+    if (mostrarAgendamento && (!form.data_agendada || (!form.medico_id && !form.medico_nome.trim()) || !form.unidade_saude_id)) {
+      setErro("Agendamento exige data agendada, médico executante (selecionado ou digitado) e unidade de atendimento.");
       return;
     }
     const pid = Number(form.paciente_id);
@@ -1074,8 +1075,8 @@ export default function FilaExames() {
       setErro(RETRO_MSG);
       return;
     }
-    if (novoAgendamento && (!form.medico_id || !form.unidade_saude_id)) {
-      setErro("Agendamento exige médico e unidade de atendimento.");
+    if (novoAgendamento && ((!form.medico_id && !form.medico_nome.trim()) || !form.unidade_saude_id)) {
+      setErro("Agendamento exige médico executante e unidade de atendimento.");
       return;
     }
 
@@ -1099,8 +1100,8 @@ export default function FilaExames() {
       return;
     }
     // Agendamento expandido exige data + médico + unidade.
-    if (mostrarAgendamento && (!form.data_agendada || !form.medico_id || !form.unidade_saude_id)) {
-      setErro("Agendamento exige data agendada, médico e unidade de atendimento.");
+    if (mostrarAgendamento && (!form.data_agendada || (!form.medico_id && !form.medico_nome.trim()) || !form.unidade_saude_id)) {
+      setErro("Agendamento exige data agendada, médico executante (selecionado ou digitado) e unidade de atendimento.");
       return;
     }
     const pid = Number(form.paciente_id);
@@ -1124,20 +1125,22 @@ export default function FilaExames() {
       setErro(RETRO_MSG);
       return;
     }
-    if (novoAgendamento && (!form.medico_id || !form.unidade_saude_id)) {
-      setErro("Agendamento exige médico e unidade de atendimento.");
+    if (novoAgendamento && ((!form.medico_id && !form.medico_nome.trim()) || !form.unidade_saude_id)) {
+      setErro("Agendamento exige médico executante e unidade de atendimento.");
       return;
     }
     setSalvando(true);
     // Compat legado: especialidade espelha tipo_fila / nome especialidade.
     const espFinal = (form.nome_especialidade || form.especialidade || form.tipo_fila || "").trim();
     const tipoFinal = (form.tipo_fila || form.especialidade || "").trim().toUpperCase();
-    const midFinal =
-      form.medico_id === GENERICO_UNIDADE
-        ? (medGenerico?.id ?? null)
-        : form.medico_id
-        ? Number(form.medico_id)
-        : null;
+    const nomeMedLivre = form.medico_nome.trim();
+    const midFinal = nomeMedLivre
+      ? null
+      : form.medico_id === GENERICO_UNIDADE
+      ? (medGenerico?.id ?? null)
+      : form.medico_id
+      ? Number(form.medico_id)
+      : null;
     const payload: Record<string, unknown> = {
       ...form,
       exame: form.exame.trim(),
@@ -1153,6 +1156,7 @@ export default function FilaExames() {
       data_agendada: form.data_agendada || null,
       hora_agendada: form.hora_agendada || "",
       medico_id: midFinal,
+      medico_nome: nomeMedLivre,
       unidade_saude_id: form.unidade_saude_id ? Number(form.unidade_saude_id) : null,
       justificativa_prioridade: form.justificativa_prioridade.trim(),
     };
@@ -1857,24 +1861,9 @@ export default function FilaExames() {
                     <div><Label>Hora</Label><Input type="time" value={loteForm.hora_agendada} onChange={(e) => setLoteForm({ ...loteForm, hora_agendada: e.target.value })} /></div>
                   </div>
                   <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <Label className="flex items-center gap-1.5">
-                        <Stethoscope className="h-3.5 w-3.5 text-teal" /> Médico(a)
-                      </Label>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setLoteForm({
-                            ...loteForm,
-                            medico_id: medGenerico ? String(medGenerico.id) : GENERICO_UNIDADE,
-                          })
-                        }
-                        className="text-[11px] font-semibold text-teal hover:underline"
-                        title="Definir Médico da Unidade"
-                      >
-                        🏥 Médico da Unidade
-                      </button>
-                    </div>
+                    <Label className="mb-1.5 flex items-center gap-1.5">
+                      <Stethoscope className="h-3.5 w-3.5 text-teal" /> Médico(a) Executante *
+                    </Label>
                     <Combobox
                       value={
                         medGenerico && String(loteForm.medico_id) === String(medGenerico.id)
@@ -1883,16 +1872,23 @@ export default function FilaExames() {
                       }
                       onChange={(val) => {
                         if (val === GENERICO_UNIDADE) {
-                          setLoteForm({ ...loteForm, medico_id: medGenerico ? String(medGenerico.id) : GENERICO_UNIDADE });
+                          setLoteForm({ ...loteForm, medico_id: medGenerico ? String(medGenerico.id) : GENERICO_UNIDADE, medico_nome_livre: "" });
                         } else {
-                          setLoteForm({ ...loteForm, medico_id: val });
+                          setLoteForm({ ...loteForm, medico_id: val, medico_nome_livre: "" });
                         }
                       }}
                       options={opcoesMedicos}
-                      placeholder="Buscar médico…"
-                      searchPlaceholder="Digite o nome do médico ou CRM…"
+                      placeholder="Selecionar médico executante…"
+                      searchPlaceholder="Digite o nome, CRM, CBO ou especialidade…"
                       emptyText="Nenhum médico encontrado"
                       showAll={false}
+                    />
+                    <Input
+                      value={loteForm.medico_nome_livre}
+                      onChange={(e) => setLoteForm({ ...loteForm, medico_nome_livre: e.target.value, medico_id: e.target.value.trim() ? "" : loteForm.medico_id })}
+                      placeholder="Ou digite o nome do médico executante (caso não exista no sistema)…"
+                      className="mt-1.5 text-xs"
+                      maxLength={150}
                     />
                   </div>
                   <div>
@@ -1992,8 +1988,12 @@ export default function FilaExames() {
                       setErro("Informe a data do agendamento.");
                       return;
                     }
-                    if (!loteForm.medico_id || !loteForm.unidade_id) {
-                      setErro("Agendamento exige médico e unidade de atendimento.");
+                    if (!loteForm.medico_id && !loteForm.medico_nome_livre.trim()) {
+                      setErro("Informe ou digite o médico executante e selecione a unidade de atendimento.");
+                      return;
+                    }
+                    if (!loteForm.unidade_id) {
+                      setErro("Agendamento exige médico executante e unidade de atendimento.");
                       return;
                     }
                     setConfirmandoLote(true);
@@ -2021,7 +2021,7 @@ export default function FilaExames() {
               <p><b>{sel.length}</b> paciente(s) afetado(s).</p>
               <p>Especialidade: <b>{[...new Set(lista.filter((e) => sel.includes(e.id)).map((e) => e.nome_especialidade || e.especialidade).filter(Boolean))].join(", ") || "—"}</b></p>
               <p>Data: <b>{loteForm.data_agendada.split("-").reverse().join("/")}{loteForm.hora_agendada ? ` · ${loteForm.hora_agendada}` : ""}</b></p>
-              <p>Médico(a): <b>{loteForm.medico_id === GENERICO_UNIDADE ? "🏥 Médico da Unidade / Responsável Técnico" : medicos.find((m) => String(m.id) === loteForm.medico_id)?.nome || "—"}</b></p>
+              <p>Médico(a) Executante: <b>{loteForm.medico_nome_livre.trim() ? loteForm.medico_nome_livre.trim() : loteForm.medico_id === GENERICO_UNIDADE ? NOME_MEDICO_UNIDADE : medicos.find((m) => String(m.id) === loteForm.medico_id)?.nome || "—"}</b></p>
               <p>Unidade / PSF: <b>{unidades.find((u) => String(u.id) === loteForm.unidade_id)?.nome || (loteForm.destino.trim() || "—")}</b></p>
             </div>
             <div className="mt-4 flex gap-2">
@@ -2433,23 +2433,10 @@ export default function FilaExames() {
                   )}
                 </div>
                 <div>
-                  <div className="flex items-center justify-between min-h-[26px] mb-1.5">
+                  <div className="flex items-center min-h-[26px] mb-1.5">
                     <Label className="!mb-0 flex items-center gap-1.5">
                       <Stethoscope className="h-3.5 w-3.5 text-teal" /> Médico(a) Requisitante
                     </Label>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setForm({
-                          ...form,
-                          medico_id: medGenerico ? String(medGenerico.id) : GENERICO_UNIDADE,
-                        })
-                      }
-                      className="inline-flex items-center rounded-md bg-teal/10 px-2 py-0.5 text-[10px] font-bold text-teal hover:bg-teal/20 transition"
-                      title="Definir Médico da Unidade"
-                    >
-                      🏥 Médico da Unidade
-                    </button>
                   </div>
                   <Combobox
                     value={
@@ -2471,13 +2458,14 @@ export default function FilaExames() {
                       setForm((prev) => ({
                         ...prev,
                         medico_id: novoMedId,
+                        medico_nome: "",
                         ...(cboMed ? { codigo_especialidade: cboMed } : {}),
                         ...(espMed ? { nome_especialidade: espMed, especialidade: prev.especialidade || espMed } : {}),
                       }));
                     }}
                     options={opcoesMedicos}
                     placeholder="Buscar médico requisitante…"
-                    searchPlaceholder="Digite o nome do médico ou CRM…"
+                    searchPlaceholder="Digite o nome, CRM, CBO ou especialidade…"
                     emptyText="Nenhum médico encontrado"
                     showAll={false}
                   />
@@ -2497,21 +2485,6 @@ export default function FilaExames() {
                         <div className="flex-1">
                           <p className="font-bold text-amber-950">Aviso de CBO / Habilitação Médica no SIGTAP</p>
                           <p className="mt-0.5 text-amber-900 leading-relaxed">{valCbo.alerta}</p>
-                          {valCbo.permite_responsavel_tecnico && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (medGenerico) {
-                                  setForm({ ...form, medico_id: String(medGenerico.id) });
-                                } else {
-                                  setForm({ ...form, medico_id: GENERICO_UNIDADE });
-                                }
-                              }}
-                              className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-amber-200/90 px-2.5 py-1 text-xs font-bold text-amber-950 hover:bg-amber-300 transition"
-                            >
-                              🏥 Usar Médico da Unidade / Responsável Técnico
-                            </button>
-                          )}
                         </div>
                       </div>
                     </div>
@@ -2752,23 +2725,10 @@ export default function FilaExames() {
                     <Input type="date" value={form.data_agendada} min={retroativoBloqueado ? hojeISO() : undefined} onChange={(e) => setForm({ ...form, data_agendada: e.target.value })} />
                   </div>
                   <div>
-                    <div className="flex items-center justify-between min-h-[26px] mb-1.5">
+                    <div className="flex items-center min-h-[26px] mb-1.5">
                       <Label className="!mb-0 flex items-center gap-1.5">
-                        <Stethoscope className="h-3.5 w-3.5 text-teal" /> Médico(a) *
+                        <Stethoscope className="h-3.5 w-3.5 text-teal" /> Médico(a) Executante *
                       </Label>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setForm({
-                            ...form,
-                            medico_id: medGenerico ? String(medGenerico.id) : GENERICO_UNIDADE,
-                          })
-                        }
-                        className="inline-flex items-center rounded-md bg-teal/10 px-2 py-0.5 text-[10px] font-bold text-teal hover:bg-teal/20 transition"
-                        title="Definir Médico da Unidade"
-                      >
-                        🏥 Médico da Unidade
-                      </button>
                     </div>
                     <Combobox
                       value={
@@ -2790,15 +2750,23 @@ export default function FilaExames() {
                         setForm((prev) => ({
                           ...prev,
                           medico_id: novoMedId,
+                          medico_nome: "",
                           ...(cboMed ? { codigo_especialidade: cboMed } : {}),
                           ...(espMed ? { nome_especialidade: espMed, especialidade: prev.especialidade || espMed } : {}),
                         }));
                       }}
                       options={opcoesMedicos}
-                      placeholder="Buscar médico do agendamento…"
-                      searchPlaceholder="Digite o nome do médico ou CRM…"
+                      placeholder="Buscar médico executante…"
+                      searchPlaceholder="Digite o nome, CRM, CBO ou especialidade…"
                       emptyText="Nenhum médico encontrado"
                       showAll={false}
+                    />
+                    <Input
+                      value={form.medico_nome}
+                      onChange={(e) => setForm((prev) => ({ ...prev, medico_nome: e.target.value, medico_id: e.target.value.trim() ? "" : prev.medico_id }))}
+                      placeholder="Ou digite o nome do médico executante (se não cadastrado)…"
+                      className="mt-1.5 text-xs"
+                      maxLength={150}
                     />
                     {medicosErro && <p className="mt-1 text-xs text-red-600">{medicosErro}</p>}
                     {cbos.length > 0 && (

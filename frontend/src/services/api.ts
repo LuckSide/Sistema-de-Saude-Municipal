@@ -327,6 +327,33 @@ export type SystemSettings = {
 };
 export const fetchSettingsPublic = () =>
   api.get<SystemSettings>("/api/settings/public").then((r) => r.data);
+
+export type DiagnosticoConflitosCodigos = {
+  aplicado: boolean;
+  total_pendencias: number;
+  duplicados_tfd: number;
+  vazios_tfd: number;
+  duplicados_lab: number;
+  longos_lab: number;
+  colisoes_cruzadas: number;
+  atualizados_tfd: number;
+  atualizados_lab: number;
+  total_atualizados: number;
+  exemplos: {
+    tabela: string;
+    id: number;
+    motivo: string;
+    codigo_antigo: string;
+    codigo_novo: string;
+  }[];
+};
+
+export const diagnosticarConflitosCodigos = () =>
+  api.get<DiagnosticoConflitosCodigos>("/api/settings/conflitos-codigos").then((r) => r.data);
+
+export const resolverConflitosCodigos = () =>
+  api.post<DiagnosticoConflitosCodigos>("/api/settings/resolver-conflitos-codigos").then((r) => r.data);
+
 export const fetchSettings = () =>
   api.get<SystemSettings>("/api/settings").then((r) => r.data);
 export const saveSettings = (p: SystemSettings) =>
@@ -1105,6 +1132,12 @@ export type ExamePublico = {
   total_fila: number | null;
   grupo_fila?: string;
   paciente_iniciais: string;
+  origem_modulo?: string;
+  protocolo?: string;
+  hora_agendada?: string;
+  unidade_solicitante?: string;
+  laboratorio_nome?: string;
+  itens?: string[];
 };
 
 export type Fatura = {
@@ -1397,6 +1430,8 @@ export type TipoFila = {
   cbo_padrao?: string;
   sinonimos?: string;
   descricao_regras?: string;
+  medicos_permitidos?: string;
+  unidades_permitidas?: string;
 };
 export type ProcedimentoCat = {
   id: number;
@@ -1481,6 +1516,7 @@ export type ExameLotePayload = {
   data_agendada?: string | null;
   hora_agendada?: string;
   medico_id?: number;
+  medico_nome?: string;
   unidade_saude_id?: number;
   limpar_data_agendada?: boolean;
   destino?: string;
@@ -2282,6 +2318,7 @@ export const filaPsfCriar = (p: Record<string, unknown>) =>
       fila_id: (p as any).fila_id ?? undefined,
       tipo_fila: (p as any).tipo_fila ?? undefined,
       unidade_saude_id: (p as any).unidade_saude_id ?? undefined,
+      medico_id: (p as any).medico_id ?? undefined,
     })
     .then((r) => mapFila(r.data));
 
@@ -2300,6 +2337,7 @@ export const filaPsfAtualizar = (id: number, p: Record<string, unknown>) =>
       fila_id: (p as any).fila_id ?? undefined,
       tipo_fila: (p as any).tipo_fila ?? undefined,
       unidade_saude_id: (p as any).unidade_saude_id ?? undefined,
+      medico_id: (p as any).medico_id ?? undefined,
     })
     .then((r) => mapFila(r.data));
 
@@ -2494,6 +2532,8 @@ export type ComprovanteExame = {
   emitido_em: string;
   agendado_por: string;
   qr_code_url?: string;
+  public_token?: string;
+  acompanhar_path?: string;
   codigo_curto?: string;
   numero_pedido?: string;
   codigo_solicitacao?: string;
@@ -2503,6 +2543,11 @@ export type ComprovanteExame = {
   fila_nome?: string;
   prioridade?: string;
   exige_preparo?: boolean;
+  origem_modulo?: string;
+  especialidade?: string;
+  tipo_fila?: string;
+  destino?: string;
+  motivo_cancelamento?: string;
   transporte?: {
     possui_viagem: boolean;
     viagem_id?: number;

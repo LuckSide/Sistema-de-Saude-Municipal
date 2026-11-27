@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   Building2,
@@ -61,8 +62,35 @@ import ModalPedidosInelegiveis from "../../components/ModalPedidosInelegiveis";
 import ComprovanteExameModal from "../../components/ComprovanteExameModal";
 import { acoesEfetivas, type Acao } from "../../permissoes";
 import { useBackdropClose } from "../../hooks/useBackdropClose";
+import {
+  formatarSubMedico,
+  isMedicoGenericoNome,
+  keywordsMedico,
+  NOME_MEDICO_UNIDADE,
+} from "../../utils/medicos";
 
-const MEDICO_GENERICO = "Médico da Unidade / Responsável Técnico";
+const MEDICO_GENERICO = NOME_MEDICO_UNIDADE;
+
+function parseIdsRegra(raw?: string | null): number[] {
+  if (!raw) return [];
+  const s = raw.trim();
+  if (!s) return [];
+  if (s.startsWith("[") && s.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(s);
+      if (Array.isArray(parsed)) {
+        return parsed.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+      }
+    } catch {
+      // fallback
+    }
+  }
+  return s
+    .replace(/;/g, ",")
+    .split(",")
+    .map((x) => Number(x.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0);
+}
 
 function fmtData(s?: string) {
   if (!s) return "—";
@@ -271,14 +299,21 @@ export default function FilaPsf() {
   const [carregando, setCarregando] = useState(false);
 
   // Filtros Avançados da Fila
+  const [sp] = useSearchParams();
   const [filasLab, setFilasLab] = useState<TipoFila[]>([]);
   const [filtroFilaId, setFiltroFilaId] = useState("");
   const [filtrosAvancados, setFiltrosAvancados] = useState(false);
   const [filtroEspecialidade, setFiltroEspecialidade] = useState("");
   const [filtroPrioridade, setFiltroPrioridade] = useState("");
-  const [termoBusca, setTermoBusca] = useState("");
+  const [termoBusca, setTermoBusca] = useState(() => sp.get("q") || "");
   const [filtroUnidade, setFiltroUnidade] = useState("");
-  const [filtroStatus, setFiltroStatus] = useState("na_fila");
+  const [filtroStatus, setFiltroStatus] = useState(() => {
+    const st = sp.get("status");
+    if (st === "todos") return "todos";
+    if (st) return st;
+    if (sp.get("q")) return "todos";
+    return "na_fila";
+  });
   const [dataDe, setDataDe] = useState("");
   const [dataAte, setDataAte] = useState("");
 
@@ -516,35 +551,45 @@ export default function FilaPsf() {
     ];
   }, [unidades]);
 
-  // Opções para o Combobox de Unidades (Formulário)
+  const filaFormSel = useMemo(
+    () => filasLab.find((f) => String(f.id) === form.fila_id),
+    [filasLab, form.fila_id]
+  );
+
+  // Opções para o Combobox de Unidades (respeitando unidades liberadas da fila selecionada, se configuradas)
   const opcoesUnidades = useMemo<ComboOption[]>(() => {
-    return unidades.map((u) => ({
+    const permitidas = parseIdsRegra(filaFormSel?.unidades_permitidas);
+    const filtradas = permitidas.length > 0 ? unidades.filter((u) => permitidas.includes(u.id)) : unidades;
+    return filtradas.map((u) => ({
       value: u.nome,
       label: u.nome,
       sub: u.cnes ? `CNES: ${u.cnes}` : undefined,
     }));
-  }, [unidades]);
+  }, [unidades, filaFormSel]);
 
-  // Opções para o Combobox de Médicos
+  // Opções para o Combobox de Médicos (CBO + Especialidades, respeitando médicos liberados da fila se configurados)
   const opcoesMedicos = useMemo<ComboOption[]>(() => {
-    const opts: ComboOption[] = [
-      {
+    const permitidos = parseIdsRegra(filaFormSel?.medicos_permitidos);
+    const opts: ComboOption[] = [];
+    if (permitidos.length === 0) {
+      opts.push({
         value: MEDICO_GENERICO,
-        label: `🏥 ${MEDICO_GENERICO}`,
+        label: MEDICO_GENERICO,
         sub: "Padrão para postos de saúde da família (PSF)",
-      },
-    ];
+      });
+    }
     medicos.forEach((m) => {
-      if (!m.nome.includes("Responsável Técnico") && !m.nome.includes("Médico da Unidade")) {
-        opts.push({
-          value: m.nome,
-          label: m.nome,
-          sub: m.crm ? `CRM: ${m.crm}${m.cbo_codigo ? ` · CBO: ${m.cbo_codigo}` : ""}` : undefined,
-        });
-      }
+      if (isMedicoGenericoNome(m.nome)) return;
+      if (permitidos.length > 0 && !permitidos.includes(m.id)) return;
+      opts.push({
+        value: m.nome,
+        label: m.nome,
+        sub: formatarSubMedico(m) || undefined,
+        keywords: keywordsMedico(m),
+      });
     });
     return opts;
-  }, [medicos]);
+  }, [medicos, filaFormSel]);
 
   async function salvarPedido() {
     setErro("");
@@ -600,13 +645,14 @@ export default function FilaPsf() {
       ? Number(form.unidade_saude_id)
       : unidMatch?.id;
     try {
+      const medMatch = medicos.find((m) => m.nome === form.medico.trim());
       if (itemEditando) {
         await filaPsfAtualizar(itemEditando.id, {
           especialidade: form.especialidade.trim(),
           unidade_psf: form.unidade_psf.trim(),
           unidade_saude_id: unidIdNum,
           medico: form.medico.trim(),
-          prioridade: form.prioridade || "rotina",
+          prioridade: "rotina",
           data_solicitacao: form.data_solicitacao,
           data_pedido: form.data_pedido || form.data_solicitacao,
           justificativa: form.justificativa.trim(),
@@ -624,8 +670,9 @@ export default function FilaPsf() {
           especialidade: form.especialidade.trim(),
           unidade_psf: form.unidade_psf.trim(),
           unidade_saude_id: unidIdNum,
+          medico_id: medMatch?.id,
           medico: form.medico.trim(),
-          prioridade: form.prioridade || "rotina",
+          prioridade: "rotina",
           data_solicitacao: form.data_solicitacao,
           data_pedido: form.data_pedido || form.data_solicitacao,
           justificativa: form.justificativa.trim(),
@@ -1429,26 +1476,6 @@ export default function FilaPsf() {
                       <div>
                         <div className="flex items-center min-h-[26px] mb-1.5">
                           <Label className="!mb-0 flex items-center gap-1.5">
-                            <AlertTriangle className="h-3.5 w-3.5 text-amber-600" /> Prioridade
-                          </Label>
-                        </div>
-                        <Select
-                          value={form.prioridade}
-                          onChange={(e) => set("prioridade", e.target.value)}
-                          className="text-xs !h-9"
-                        >
-                          <option value="rotina">Rotina</option>
-                          <option value="urgente">Urgente</option>
-                          <option value="alta">Alta</option>
-                        </Select>
-                        <p className="mt-1 text-[11px] text-ink/50">
-                          Classificação clínica do pedido.
-                        </p>
-                      </div>
-
-                      <div>
-                        <div className="flex items-center min-h-[26px] mb-1.5">
-                          <Label className="!mb-0 flex items-center gap-1.5">
                             <FlaskConical className="h-3.5 w-3.5 text-purple-600" /> Fila de Sangue
                           </Label>
                         </div>
@@ -1457,12 +1484,34 @@ export default function FilaPsf() {
                           onChange={(e) => {
                             const val = e.target.value;
                             const fObj = filasLab.find((f) => String(f.id) === val);
-                            setForm((prev) => ({
-                              ...prev,
-                              fila_id: val,
-                              tipo_fila: fObj ? fObj.nome : prev.tipo_fila,
-                              especialidade: prev.especialidade || (fObj ? fObj.nome : ""),
-                            }));
+                            const uPerm = parseIdsRegra(fObj?.unidades_permitidas);
+                            const mPerm = parseIdsRegra(fObj?.medicos_permitidos);
+                            setForm((prev) => {
+                              let nextUnidadePsf = prev.unidade_psf;
+                              let nextUnidadeId = prev.unidade_saude_id;
+                              if (uPerm.length > 0 && nextUnidadeId && !uPerm.includes(Number(nextUnidadeId))) {
+                                const primeiraUnid = unidades.find((u) => uPerm.includes(u.id));
+                                nextUnidadePsf = primeiraUnid?.nome || "";
+                                nextUnidadeId = primeiraUnid ? String(primeiraUnid.id) : "";
+                              }
+                              let nextMedico = prev.medico;
+                              if (mPerm.length > 0) {
+                                const medAtual = medicos.find((m) => m.nome === nextMedico);
+                                if (!medAtual || !mPerm.includes(medAtual.id)) {
+                                  const primeiroMed = medicos.find((m) => mPerm.includes(m.id));
+                                  nextMedico = primeiroMed?.nome || "";
+                                }
+                              }
+                              return {
+                                ...prev,
+                                fila_id: val,
+                                tipo_fila: fObj ? fObj.nome : prev.tipo_fila,
+                                especialidade: prev.especialidade || (fObj ? fObj.nome : ""),
+                                unidade_psf: nextUnidadePsf,
+                                unidade_saude_id: nextUnidadeId,
+                                medico: nextMedico,
+                              };
+                            });
                           }}
                           className="text-xs !h-9"
                         >
@@ -1543,24 +1592,10 @@ export default function FilaPsf() {
                       </div>
 
                       <div>
-                        <div className="flex items-center justify-between min-h-[26px] mb-1.5">
+                        <div className="flex items-center min-h-[26px] mb-1.5">
                           <Label className="!mb-0 flex items-center gap-1.5">
                             <Stethoscope className="h-3.5 w-3.5 text-teal" /> Médico(a) *
                           </Label>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setForm((prev) => ({
-                                ...prev,
-                                medico: MEDICO_GENERICO,
-                                especialidade: prev.especialidade || "Clínica Geral",
-                              }));
-                            }}
-                            className="inline-flex items-center rounded-md bg-teal/10 px-2 py-0.5 text-[10px] font-bold text-teal hover:bg-teal/20 transition"
-                            title="Redefinir para Médico da Unidade"
-                          >
-                            🏥 Médico Unidade
-                          </button>
                         </div>
                         <Combobox
                           value={form.medico}
@@ -1575,7 +1610,7 @@ export default function FilaPsf() {
                           }}
                           options={opcoesMedicos}
                           placeholder="Buscar médico requisitante…"
-                          searchPlaceholder="Digite o nome do médico ou CRM…"
+                          searchPlaceholder="Digite o nome, CRM, CBO ou especialidade…"
                           emptyText="Nenhum médico encontrado"
                           showAll={false}
                         />

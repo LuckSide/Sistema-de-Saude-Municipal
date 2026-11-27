@@ -78,6 +78,7 @@ class FilaPsf(SQLModel, table=True):
     data_agendada: date | None = Field(default=None, sa_column=Column(Date, index=True))
     hora_agendada: str = Field(default="", max_length=10)
     criado_por: str = Field(default="", max_length=120)
+    public_token: str = Field(default="", max_length=64, index=True)
 
 
 class SolicitacaoMestre(SQLModel, table=True):
@@ -85,6 +86,7 @@ class SolicitacaoMestre(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     codigo_solicitacao: str = Field(default="", max_length=30, index=True)
+    public_token: str = Field(default="", max_length=64, index=True)
     paciente_id: int = Field(foreign_key="tfd_pacientes.id", index=True)
     data_agendada: date = Field(sa_column=Column(Date, index=True))
     laboratorio_id: int = Field(foreign_key="lab_laboratorios.id", index=True)

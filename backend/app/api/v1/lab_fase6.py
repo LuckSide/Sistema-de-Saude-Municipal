@@ -1034,9 +1034,48 @@ def listar_fila(
 def criar_fila(
     data: FilaPsfIn, db: Session = Depends(get_db), user=Depends(need_perm("lab_fila", "criar"))
 ):
+    import json as _json
+    import secrets as _secrets
+    from app.models.tfd import TipoFila
+
     pac = db.get(Paciente, data.paciente_id)
     if not pac:
         raise HTTPException(404, "Paciente não encontrado")
+
+    # Validação de unidades e médicos liberados por tipo de fila de exame de sangue
+    fila_cfg = None
+    if data.fila_id:
+        fila_cfg = db.get(TipoFila, data.fila_id)
+    elif (data.tipo_fila or "").strip():
+        fila_cfg = db.exec(
+            select(TipoFila).where(TipoFila.nome == data.tipo_fila.strip().upper())
+        ).first()
+
+    def _parse_ids_cfg(raw: str) -> list[int]:
+        s = (raw or "").strip()
+        if not s:
+            return []
+        try:
+            parsed = _json.loads(s)
+            if isinstance(parsed, list):
+                return [int(x) for x in parsed if str(x).strip().isdigit()]
+        except Exception:
+            pass
+        return [int(x.strip()) for x in s.split(",") if x.strip().isdigit()]
+
+    if fila_cfg:
+        u_perm = _parse_ids_cfg(getattr(fila_cfg, "unidades_permitidas", ""))
+        if u_perm and data.unidade_saude_id and int(data.unidade_saude_id) not in u_perm:
+            raise HTTPException(
+                400,
+                f"A unidade selecionada não está liberada para a fila '{fila_cfg.nome}'.",
+            )
+        m_perm = _parse_ids_cfg(getattr(fila_cfg, "medicos_permitidos", ""))
+        if m_perm and data.medico_id and int(data.medico_id) not in m_perm:
+            raise HTTPException(
+                400,
+                f"O médico selecionado não está liberado para a fila '{fila_cfg.nome}'.",
+            )
 
     obs_final = (data.observacoes or "").strip()
     sigtap_nomes_map: dict[int, str] = {}
@@ -1059,6 +1098,7 @@ def criar_fila(
     cod_solic = gerar_codigo_fila_psf_unico(db, d_ped)
     obj = FilaPsf(
         codigo_solicitacao=cod_solic,
+        public_token=_secrets.token_urlsafe(24),
         paciente_id=data.paciente_id,
         especialidade=data.especialidade.strip(),
         unidade_psf=data.unidade_psf,

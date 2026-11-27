@@ -137,12 +137,18 @@ def criar_solicitacao_mestre(
 
     # Transação única
     try:
+        import secrets as _secrets
+
         cod_solic = (getattr(fila, "codigo_solicitacao", "") or "").strip() if fila else ""
         if not cod_solic:
             cod_solic = gerar_protocolo_lab_aleatorio(data_agendada=data_agendada, db=db)
+        pub_tok = (getattr(fila, "public_token", "") or "").strip() if fila else ""
+        if not pub_tok:
+            pub_tok = _secrets.token_urlsafe(24)
         lab_obj = get_lab_or_404(db, laboratorio_id)
         mestre = SolicitacaoMestre(
             codigo_solicitacao=cod_solic,
+            public_token=pub_tok,
             paciente_id=paciente_id,
             data_agendada=data_agendada,
             hora_agendada=hora_agendada or "07:00",
@@ -386,20 +392,42 @@ def gerar_comprovante_agendamento(db: Session, mestre_id: int) -> dict:
         pac.codigo_prontuario = prontuario
         db.add(pac)
         db.commit()
-    qr_data = f"PEDIDO:{protocolo}|PRONT:{prontuario}|PAC:{pac.id if pac else ''}"
-    qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={urllib.parse.quote(qr_data)}"
+    pub_tok = (getattr(m, "public_token", "") or "").strip()
+    if not pub_tok:
+        import secrets as _secrets
+        pub_tok = _secrets.token_urlsafe(24)
+        m.public_token = pub_tok
+        db.add(m)
+        db.commit()
+    acompanhar_path = f"/acompanhar/{urllib.parse.quote(pub_tok)}"
+    qr_url = acompanhar_path
 
     from app.services.whatsapp import buscar_transporte_vinculado
-    transporte_info = buscar_transporte_vinculado(db, m.paciente_id, m.data_agendada)
+
+    status_norm = (getattr(m, "status", "") or "").strip().lower()
+    eh_cancelado = status_norm in {"cancelado", "cancelada", "desistiu", "recusado"}
+    eh_realizado = status_norm in {"realizado", "realizada", "coletado", "concluido", "concluida"}
+
+    transporte_info = None if eh_cancelado else buscar_transporte_vinculado(db, m.paciente_id, m.data_agendada)
+    itens_out = (
+        [{**it, "preparo_especifico": ""} for it in dados["itens"]]
+        if (eh_cancelado or eh_realizado)
+        else dados["itens"]
+    )
+    d_ped = getattr(m, "data_solicitacao", None) or (m.created_at.date() if getattr(m, "created_at", None) else None)
+    tipo_comp = "cancelado" if eh_cancelado else ("realizado" if eh_realizado else "agendamento")
 
     nasc_obj = (getattr(pac, "nascimento", None) or getattr(pac, "data_nascimento", None)) if pac else None
     return {
         "id": m.id,
-        "tipo_comprovante": "agendamento",
+        "tipo_comprovante": tipo_comp,
+        "origem_modulo": "laboratorio",
         "protocolo": protocolo,
         "codigo_curto": protocolo,
         "codigo_solicitacao": protocolo,
         "numero_pedido": protocolo,
+        "public_token": pub_tok,
+        "acompanhar_path": acompanhar_path,
         "qr_code_url": qr_url,
         "paciente_id": m.paciente_id,
         "paciente_nome": pac.nome if pac else "?",
@@ -407,26 +435,30 @@ def gerar_comprovante_agendamento(db: Session, mestre_id: int) -> dict:
         "paciente_cns": getattr(pac, "cns", "") or "",
         "paciente_prontuario": prontuario,
         "paciente_nascimento": nasc_obj.isoformat() if nasc_obj else "",
-        "data_agendada": m.data_agendada.isoformat(),
-        "hora_agendada": getattr(m, "hora_agendada", "07:00") or "07:00",
-        "laboratorio_id": m.laboratorio_id,
-        "laboratorio_nome": getattr(m, "laboratorio_nome_snapshot", "") or (lab.nome if lab else "?"),
-        "laboratorio_responsavel": getattr(m, "laboratorio_responsavel_snapshot", "") or (getattr(lab, "responsavel_tecnico", "") if lab else ""),
-        "laboratorio_horario": getattr(m, "laboratorio_horario_snapshot", "") or (getattr(lab, "horario_funcionamento", "") if lab else ""),
+        "data_agendada": "" if eh_cancelado else m.data_agendada.isoformat(),
+        "hora_agendada": "" if eh_cancelado else (getattr(m, "hora_agendada", "07:00") or "07:00"),
+        "data_pedido": d_ped.isoformat() if d_ped else "",
+        "data_solicitacao": d_ped.isoformat() if d_ped else "",
+        "laboratorio_id": 0 if eh_cancelado else m.laboratorio_id,
+        "laboratorio_nome": "" if eh_cancelado else (getattr(m, "laboratorio_nome_snapshot", "") or (lab.nome if lab else "?")),
+        "laboratorio_responsavel": "" if eh_cancelado else (getattr(m, "laboratorio_responsavel_snapshot", "") or (getattr(lab, "responsavel_tecnico", "") if lab else "")),
+        "laboratorio_horario": "" if eh_cancelado else (getattr(m, "laboratorio_horario_snapshot", "") or (getattr(lab, "horario_funcionamento", "") if lab else "")),
         "unidade_psf": getattr(m, "unidade_psf", "") or "Secretaria de Saúde",
         "medico_solicitante": getattr(m, "medico_solicitante", "") or "Médico da Unidade",
+        "fila_nome": getattr(m, "tipo_servico", "") or "Exames de Sangue",
         "justificativa": getattr(m, "justificativa", "") or "",
-        "instrucoes_transporte": getattr(m, "instrucoes_transporte", "") or "",
+        "instrucoes_transporte": "" if eh_cancelado else (getattr(m, "instrucoes_transporte", "") or ""),
         "transporte": transporte_info,
         "status": m.status,
         "status_auditoria": m.status_auditoria,
-        "itens": dados["itens"],
-        "jejum_horas": jejum,
-        "preparo_instrucoes": prep,
-        "orientacoes_gerais": orient,
-        "emitido_em": datetime.utcnow().isoformat(),
+        "motivo_cancelamento": (getattr(m, "observacao_laboratorio", "") or getattr(m, "observacoes", "") or "") if eh_cancelado else "",
+        "itens": itens_out,
+        "jejum_horas": "" if (eh_cancelado or eh_realizado) else jejum,
+        "preparo_instrucoes": [] if (eh_cancelado or eh_realizado) else prep,
+        "orientacoes_gerais": [] if (eh_cancelado or eh_realizado) else orient,
+        "emitido_em": datetime.utcnow().strftime("%d/%m/%Y %H:%M"),
         "agendado_por": m.agendado_por,
-        "exige_preparo": True,
+        "exige_preparo": not (eh_cancelado or eh_realizado),
     }
 
 
@@ -600,16 +632,30 @@ def gerar_comprovante_fila_psf(db: Session, fila_id: int) -> dict:
     d_sol_str = fila.data_solicitacao.isoformat() if fila.data_solicitacao else d_ped_str
     nasc_obj = (getattr(pac, "nascimento", None) or getattr(pac, "data_nascimento", None)) if pac else None
 
-    qr_data = f"FILA_LAB:{protocolo}|PRONT:{prontuario}|PAC:{pac.id if pac else ''}"
-    qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={urllib.parse.quote(qr_data)}"
+    status_norm = (getattr(fila, "status", "") or "na_fila").strip().lower()
+    eh_cancelado = status_norm in {"cancelado", "cancelada", "desistiu", "recusado"}
+    tipo_comp = "cancelado" if eh_cancelado else "inclusao_fila"
+
+    pub_tok = (getattr(fila, "public_token", "") or "").strip()
+    if not pub_tok:
+        import secrets as _secrets
+        pub_tok = _secrets.token_urlsafe(24)
+        fila.public_token = pub_tok
+        db.add(fila)
+        db.commit()
+    acompanhar_path = f"/acompanhar/{urllib.parse.quote(pub_tok)}"
+    qr_url = acompanhar_path
 
     return {
         "id": fila.id,
-        "tipo_comprovante": "inclusao_fila",
+        "tipo_comprovante": tipo_comp,
+        "origem_modulo": "laboratorio",
         "protocolo": protocolo,
         "codigo_curto": protocolo,
         "codigo_solicitacao": protocolo,
         "numero_pedido": protocolo,
+        "public_token": pub_tok,
+        "acompanhar_path": acompanhar_path,
         "qr_code_url": qr_url,
         "paciente_id": fila.paciente_id,
         "paciente_nome": pac.nome if pac else "?",
@@ -622,12 +668,15 @@ def gerar_comprovante_fila_psf(db: Session, fila_id: int) -> dict:
         "data_pedido": d_ped_str,
         "data_solicitacao": d_sol_str,
         "laboratorio_id": 0,
-        "laboratorio_nome": "A definir no agendamento / Fila Municipal",
+        "laboratorio_nome": "" if eh_cancelado else "A definir no agendamento / Fila Municipal",
         "unidade_psf": getattr(fila, "unidade_psf", "") or "Secretaria de Saúde",
         "medico_solicitante": getattr(fila, "medico_solicitante", "") or "Médico da Unidade",
         "fila_nome": getattr(fila, "tipo_fila", "") or getattr(fila, "especialidade", "") or "Fila de Exames de Sangue",
+        "tipo_fila": getattr(fila, "tipo_fila", "") or "",
+        "especialidade": getattr(fila, "especialidade", "") or "",
         "prioridade": getattr(fila, "prioridade", "rotina") or "rotina",
         "justificativa": getattr(fila, "justificativa", "") or "",
+        "motivo_cancelamento": (getattr(fila, "observacoes", "") or "") if eh_cancelado else "",
         "instrucoes_transporte": "",
         "transporte": None,
         "status": fila.status or "na_fila",
@@ -635,7 +684,7 @@ def gerar_comprovante_fila_psf(db: Session, fila_id: int) -> dict:
         "itens": itens_out,
         "jejum_horas": "",
         "preparo_instrucoes": [],
-        "orientacoes_gerais": [
+        "orientacoes_gerais": [] if eh_cancelado else [
             "Este comprovante confirma a inclusão do pedido na Fila Municipal de Espera de Exames de Sangue.",
             "Aguarde o agendamento em lote realizado pela Secretaria Municipal de Saúde conforme disponibilidade de vagas.",
             "Quando o exame for agendado, você receberá a confirmação com data, horário, laboratório e instruções de preparo/jejum.",

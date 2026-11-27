@@ -882,9 +882,12 @@ def consolidar_lote_atomico(
             pront = obter_prontuario_real(pac, pac.id if pac else None, db)
 
             # Cria SolicitacaoMestre com código de solicitação aleatório persistido
+            import secrets as _secrets
             cod_solic = (getattr(f, "codigo_solicitacao", "") or "").strip() or gerar_protocolo_lab_aleatorio(dt_agenda, db=db)
+            pub_tok = (getattr(f, "public_token", "") or "").strip() or _secrets.token_urlsafe(24)
             mestre = SolicitacaoMestre(
                 codigo_solicitacao=cod_solic,
+                public_token=pub_tok,
                 paciente_id=f.paciente_id,
                 data_agendada=dt_agenda,
                 hora_agendada=dados.hora_padrao or "07:00",

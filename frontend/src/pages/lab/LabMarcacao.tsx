@@ -51,6 +51,12 @@ import AlertaPedidoDuplicado from "../../components/AlertaPedidoDuplicado";
 import { useAuth } from "../../hooks/useAuth";
 import { useConfirm } from "../../components/ConfirmDialog";
 import { useBackdropClose } from "../../hooks/useBackdropClose";
+import {
+  formatarSubMedico,
+  isMedicoGenericoNome,
+  keywordsMedico,
+  NOME_MEDICO_UNIDADE,
+} from "../../utils/medicos";
 
 type ItemLote = { sigtap: SigtapProc; quantidade: number };
 
@@ -248,39 +254,24 @@ export default function LabMarcacao() {
     const opts: ComboOption[] = [
       {
         value: "GENERICO_UNIDADE",
-        label: "🏥 Médico da Unidade / Responsável Técnico",
+        label: NOME_MEDICO_UNIDADE,
         sub: "Padrão da rede municipal",
       },
     ];
+    const pushMed = (m: Medico, sufixo?: string) => {
+      if (isMedicoGenericoNome(m.nome)) return;
+      opts.push({
+        value: String(m.id),
+        label: m.nome,
+        sub: formatarSubMedico(m, sufixo ? [sufixo] : []) || undefined,
+        keywords: keywordsMedico(m),
+      });
+    };
     if (medicosFiltrados.temFiltro && medicosFiltrados.daUnidade.length > 0) {
-      medicosFiltrados.daUnidade.forEach((m) => {
-        if (!m.nome.includes("Responsável Técnico") && !m.nome.includes("Médico da Unidade")) {
-          opts.push({
-            value: String(m.id),
-            label: `⭐ ${m.nome}`,
-            sub: m.crm ? `CRM: ${m.crm} (Vinculado à unidade)` : "Vinculado à unidade",
-          });
-        }
-      });
-      medicosFiltrados.outros.forEach((m) => {
-        if (!m.nome.includes("Responsável Técnico") && !m.nome.includes("Médico da Unidade")) {
-          opts.push({
-            value: String(m.id),
-            label: m.nome,
-            sub: m.crm ? `CRM: ${m.crm}` : undefined,
-          });
-        }
-      });
+      medicosFiltrados.daUnidade.forEach((m) => pushMed(m, "Vinculado à unidade"));
+      medicosFiltrados.outros.forEach((m) => pushMed(m));
     } else {
-      medicos.forEach((m) => {
-        if (!m.nome.includes("Responsável Técnico") && !m.nome.includes("Médico da Unidade")) {
-          opts.push({
-            value: String(m.id),
-            label: m.nome,
-            sub: m.crm ? `CRM: ${m.crm}` : undefined,
-          });
-        }
-      });
+      medicos.forEach((m) => pushMed(m));
     }
     return opts;
   }, [medicos, medicosFiltrados]);
@@ -423,20 +414,23 @@ export default function LabMarcacao() {
       const med = isGenerico ? medGenerico : medicos.find((m) => String(m.id) === medicoId);
       const uni = unidades.find((u) => String(u.id) === unidadeId);
 
-      await examesSolicitarLote({
+      const criada = await examesSolicitarLote({
         paciente_id: Number(pacienteId),
         data_agendada: diaSel,
         laboratorio_id: Number(labId),
         itens: itens.map((i) => ({ sigtap_id: i.sigtap.id, quantidade: i.quantidade })),
         medico_id: isGenerico ? medGenerico?.id : (medicoId ? Number(medicoId) : undefined),
-        medico_solicitante: isGenerico ? "Médico da Unidade / Responsável Técnico" : med?.nome,
+        medico_solicitante: isGenerico ? NOME_MEDICO_UNIDADE : med?.nome,
         unidade_saude_id: unidadeId ? Number(unidadeId) : undefined,
         unidade_psf: uni?.nome,
         justificativa: justificativa.trim(),
       });
       fecharModal();
       setOk(`${totalItens} exame(s) agendado(s) com sucesso para o dia ${diaSel.split("-").reverse().join("/")}.`);
-      if (pacienteSelecionado?.nome) {
+      if (criada?.id) {
+        setPedidosEncontrados((atual) => [mapMestre(criada), ...atual.filter((p) => p.id !== criada.id)]);
+        setComprovanteModalId(criada.id);
+      } else if (pacienteSelecionado?.nome) {
         setTermoBusca(pacienteSelecionado.nome);
       }
       await carregarGrade();
@@ -910,25 +904,17 @@ export default function LabMarcacao() {
                     </div>
 
                     <div>
-                      <div className="flex items-center justify-between min-h-[26px] mb-1.5">
+                      <div className="flex items-center min-h-[26px] mb-1.5">
                         <Label className="!mb-0 flex items-center gap-1.5">
                           <Stethoscope className="h-3.5 w-3.5 text-teal" /> Médico(a) Requisitante
                         </Label>
-                        <button
-                          type="button"
-                          onClick={() => setMedicoId("GENERICO_UNIDADE")}
-                          className="inline-flex items-center rounded-md bg-teal/10 px-2 py-0.5 text-[10px] font-bold text-teal hover:bg-teal/20 transition"
-                          title="Definir Médico da Unidade"
-                        >
-                          🏥 Médico da Unidade
-                        </button>
                       </div>
                       <Combobox
                         value={medicoId}
                         onChange={setMedicoId}
                         options={opcoesMedicos}
                         placeholder="Buscar médico requisitante…"
-                        searchPlaceholder="Digite o nome do médico ou CRM…"
+                        searchPlaceholder="Digite o nome do médico, CRM, CBO ou especialidade…"
                         emptyText="Nenhum médico encontrado"
                         showAll={false}
                       />
@@ -1198,7 +1184,7 @@ export default function LabMarcacao() {
                       <span className="text-ink/50">Médico:</span>
                       <p className="font-semibold text-ink/80 truncate">
                         {medicoId === "GENERICO_UNIDADE"
-                          ? "🏥 Médico da Unidade / Responsável Técnico"
+                          ? NOME_MEDICO_UNIDADE
                           : medicos.find((m) => String(m.id) === medicoId)?.nome || "Não informado"}
                       </p>
                     </div>

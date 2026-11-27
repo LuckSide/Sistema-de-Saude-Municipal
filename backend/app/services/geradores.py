@@ -154,20 +154,33 @@ def gerar_protocolo_lab_aleatorio(
     db: Session | None = None,
     usados: set[str] | None = None,
 ) -> str:
-    """Gera um protocolo/número de solicitação laboratorial aleatório (ex.: `SL-2611-739204`)."""
-    _ = mestre_id  # nunca deriva sequencialmente do ID
-    dt = data_agendada if data_agendada else datetime.now().date()
-    ym = dt.strftime("%y%m")
+    """Gera protocolo/número de solicitação laboratorial compacto (`SL-XXXXXX`) alinhado às demais filas."""
+    _ = data_agendada, mestre_id  # nunca deriva sequencialmente do ID
     for digitos in (6, 7, 8):
         for _ in range(40):
-            cod = f"SL-{ym}-{_gerar_digitos_aleatorios(digitos)}"
+            cod = f"SL-{_gerar_digitos_aleatorios(digitos)}"
             if usados is not None and cod in usados:
                 continue
             if db is not None:
                 try:
-                    from app.models.lab_fase6 import SolicitacaoMestre
+                    from app.models.lab_fase6 import FilaPsf, SolicitacaoMestre
                     if db.exec(
                         select(SolicitacaoMestre.id).where(SolicitacaoMestre.codigo_solicitacao == cod)
+                    ).first():
+                        if usados is not None:
+                            usados.add(cod)
+                        continue
+                    if db.exec(
+                        select(FilaPsf.id).where(FilaPsf.codigo_solicitacao == cod)
+                    ).first():
+                        if usados is not None:
+                            usados.add(cod)
+                        continue
+                    from app.models.tfd import ExameFila
+                    if db.exec(
+                        select(ExameFila.id).where(
+                            (ExameFila.codigo_curto == cod) | (ExameFila.numero_pedido == cod)
+                        )
                     ).first():
                         if usados is not None:
                             usados.add(cod)
@@ -177,7 +190,7 @@ def gerar_protocolo_lab_aleatorio(
             if usados is not None:
                 usados.add(cod)
             return cod
-    cod = f"SL-{ym}-{secrets.token_hex(4).upper()}"
+    cod = f"SL-{secrets.token_hex(3).upper()}"
     if usados is not None:
         usados.add(cod)
     return cod

@@ -51,6 +51,8 @@ import {
   fetchPecSyncLogs,
   fetchPecSyncStatus,
   fetchSettings,
+  diagnosticarConflitosCodigos,
+  resolverConflitosCodigos,
   importarFilas,
   importarViagensCarro,
   labSigtap,
@@ -73,6 +75,7 @@ import {
   whatsappSalvarConfig,
   whatsappTestar,
   type ExamePermitidoItem,
+  type DiagnosticoConflitosCodigos,
   type ImportFilasOut,
   type ImportViagensCarroOut,
   type Integracoes,
@@ -226,6 +229,10 @@ function AbaGeral() {
   const [loading, setLoading] = useState(true);
   const [upd, setUpd] = useState<UpdateStatus | null>(null);
   const [updChecking, setUpdChecking] = useState(false);
+  const [conflitosDiag, setConflitosDiag] = useState<DiagnosticoConflitosCodigos | null>(null);
+  const [conflitosBusy, setConflitosBusy] = useState(false);
+  const [conflitosErro, setConflitosErro] = useState("");
+  const [conflitosOk, setConflitosOk] = useState("");
 
   useEffect(() => {
     fetchSettings()
@@ -430,6 +437,91 @@ function AbaGeral() {
             </div>
           ) : (
             <p className="text-sm text-ink/50">Verificando versão…</p>
+          )}
+        </Card>
+
+        <Card className="p-6">
+          <p className="mb-1 flex items-center gap-2 font-display text-base font-bold text-sus-950">
+            <Sparkles className="h-5 w-5 text-teal" /> Códigos de Solicitações e Exames de Sangue
+          </p>
+          <p className="mb-4 text-xs text-ink/55">
+            Analisa códigos duplicados, colisões entre módulos e protocolos legados muito longos de exames de sangue, padronizando para o formato compacto <code className="font-mono">SL-XXXXXX</code> sem perda de histórico.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={conflitosBusy}
+              onClick={async () => {
+                setConflitosBusy(true);
+                setConflitosErro("");
+                setConflitosOk("");
+                try {
+                  const res = await diagnosticarConflitosCodigos();
+                  setConflitosDiag(res);
+                } catch (e: unknown) {
+                  setConflitosErro(msgErro(e, "Falha ao analisar códigos de solicitação."));
+                } finally {
+                  setConflitosBusy(false);
+                }
+              }}
+              className="text-xs"
+            >
+              <Search className="h-3.5 w-3.5" /> {conflitosBusy ? "Analisando…" : "Analisar Conflitos"}
+            </Button>
+            <Button
+              type="button"
+              disabled={conflitosBusy}
+              onClick={async () => {
+                setConflitosBusy(true);
+                setConflitosErro("");
+                setConflitosOk("");
+                try {
+                  const res = await resolverConflitosCodigos();
+                  setConflitosDiag(res);
+                  setConflitosOk(
+                    res.total_atualizados > 0
+                      ? `${res.total_atualizados} código(s) corrigido(s)/padronizado(s) com sucesso (${res.atualizados_tfd} TFD, ${res.atualizados_lab} Laboratório).`
+                      : "Nenhum conflito ou código legado longo pendente encontrado."
+                  );
+                } catch (e: unknown) {
+                  setConflitosErro(msgErro(e, "Falha ao resolver conflitos de códigos."));
+                } finally {
+                  setConflitosBusy(false);
+                }
+              }}
+              className="text-xs bg-teal hover:bg-teal/90 text-white"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${conflitosBusy ? "animate-spin" : ""}`} />
+              {conflitosBusy ? "Resolvendo…" : "Resolver Conflitos de Códigos"}
+            </Button>
+          </div>
+          {conflitosErro && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-medium text-red-700">{conflitosErro}</p>}
+          {conflitosOk && <p className="mt-3 rounded-xl bg-teal/10 px-3 py-2 text-xs font-medium text-teal">{conflitosOk}</p>}
+          {conflitosDiag && (
+            <div className="mt-3 rounded-xl border border-sus-900/10 bg-sand/40 p-3 text-xs space-y-1.5">
+              <p className="font-bold text-sus-950">
+                {conflitosDiag.aplicado ? "Resultado da padronização:" : "Diagnóstico atual:"}{" "}
+                <span className={conflitosDiag.total_pendencias > 0 && !conflitosDiag.aplicado ? "text-amber-700" : "text-teal"}>
+                  {conflitosDiag.aplicado
+                    ? `${conflitosDiag.total_atualizados} registro(s) atualizado(s)`
+                    : `${conflitosDiag.total_pendencias} pendência(s) encontrada(s)`}
+                </span>
+              </p>
+              <p className="text-[11px] text-ink/70">
+                Duplicados TFD: <b>{conflitosDiag.duplicados_tfd}</b> · Vazios TFD: <b>{conflitosDiag.vazios_tfd}</b> · Duplicados Lab: <b>{conflitosDiag.duplicados_lab}</b> · Códigos longos/vazios Lab: <b>{conflitosDiag.longos_lab}</b> · Colisões cruzadas: <b>{conflitosDiag.colisoes_cruzadas}</b>
+              </p>
+              {conflitosDiag.exemplos.length > 0 && (
+                <div className="max-h-28 overflow-y-auto rounded-lg border border-sus-900/10 bg-white p-2 text-[10px] font-mono space-y-0.5">
+                  {conflitosDiag.exemplos.slice(0, 10).map((ex, idx) => (
+                    <div key={idx} className="flex justify-between gap-2 text-ink/75">
+                      <span>{ex.tabela} #{ex.id} ({ex.motivo})</span>
+                      <span>{ex.codigo_antigo} → <b>{ex.codigo_novo}</b></span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </Card>
       </div>

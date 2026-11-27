@@ -50,6 +50,8 @@ import BotaoWhatsApp from "../../components/BotaoWhatsApp";
 import ModalLeituraRapidaQR from "../../components/ModalLeituraRapidaQR";
 import ComprovanteExameModal from "../../components/ComprovanteExameModal";
 import { useBackdropClose } from "../../hooks/useBackdropClose";
+import { Combobox, type ComboOption } from "../../components/ui/combobox";
+import { formatarSubMedico, isMedicoGenericoNome, keywordsMedico } from "../../utils/medicos";
 
 type Visao = "mes" | "semana" | "dia";
 type Formato = "calendario" | "lista";
@@ -146,8 +148,24 @@ export default function Agendamentos() {
   const [dataMarca, setDataMarca] = useState(dia);
   const [horaMarca, setHoraMarca] = useState("08:00");
   const [medicoIdMarca, setMedicoIdMarca] = useState("");
+  const [medicoNomeMarca, setMedicoNomeMarca] = useState("");
   const [unidadeIdMarca, setUnidadeIdMarca] = useState("");
   const [salvandoMarca, setSalvandoMarca] = useState(false);
+
+  const opcoesMedicosMarca = useMemo<ComboOption[]>(() => {
+    const opts: ComboOption[] = [];
+    medicos
+      .filter((m) => m.ativo && !isMedicoGenericoNome(m.nome))
+      .forEach((m) => {
+        opts.push({
+          value: String(m.id),
+          label: m.nome,
+          sub: formatarSubMedico(m) || undefined,
+          keywords: keywordsMedico(m),
+        });
+      });
+    return opts;
+  }, [medicos]);
 
   const selBackdrop = useBackdropClose(() => setSel(null), !!sel);
   const loteStatusBackdrop = useBackdropClose(() => setModalLoteStatus(null), !!modalLoteStatus);
@@ -507,8 +525,8 @@ export default function Agendamentos() {
       setErroModal("Seu perfil não possui permissão para realizar agendamentos retroativos.");
       return;
     }
-    if (!medicoIdMarca || !unidadeIdMarca) {
-      setErroModal("Agendamento exige médico e unidade de atendimento.");
+    if ((!medicoIdMarca && !medicoNomeMarca.trim()) || !unidadeIdMarca) {
+      setErroModal("Agendamento exige médico executante (selecionado ou digitado) e unidade de atendimento.");
       return;
     }
 
@@ -529,7 +547,8 @@ export default function Agendamentos() {
         data_pedido: (alvoFila.data_pedido || "").slice(0, 10),
         data_agendada: dataMarca,
         hora_agendada: horaMarca,
-        medico_id: Number(medicoIdMarca),
+        medico_id: medicoIdMarca ? Number(medicoIdMarca) : null,
+        medico_nome: medicoIdMarca ? "" : medicoNomeMarca.trim(),
         unidade_saude_id: Number(unidadeIdMarca),
         destino: alvoFila.destino,
         observacoes: alvoFila.observacoes,
@@ -538,6 +557,8 @@ export default function Agendamentos() {
       setOk(`Agendamento de ${alvoFila.paciente_nome} confirmado para ${fmtDia(dataMarca)} às ${horaMarca}!`);
       setModalAgendarFila(false);
       setAlvoFila(null);
+      setMedicoIdMarca("");
+      setMedicoNomeMarca("");
       setDia(dataMarca);
       await carregar();
     } catch (e: unknown) {
@@ -1697,20 +1718,31 @@ export default function Agendamentos() {
               </div>
 
               <div>
-                <Label className="text-xs font-bold text-sus-950">Médico(a)</Label>
-                <Select
-                  value={medicoIdMarca}
-                  onChange={(e) => setMedicoIdMarca(e.target.value)}
-                  className="mt-1 !h-10 text-xs font-medium text-sus-950"
-                  required
-                >
-                  <option value="">Selecione o médico…</option>
-                  {medicos.map((m) => (
-                    <option key={m.id} value={String(m.id)}>
-                      {m.nome}
-                    </option>
-                  ))}
-                </Select>
+                <Label className="text-xs font-bold text-sus-950">Médico(a) Executante *</Label>
+                <div className="mt-1">
+                  <Combobox
+                    value={medicoIdMarca}
+                    onChange={(val) => {
+                      setMedicoIdMarca(val);
+                      if (val) setMedicoNomeMarca("");
+                    }}
+                    options={opcoesMedicosMarca}
+                    placeholder="Selecionar médico cadastrado…"
+                    searchPlaceholder="Digite o nome, CRM, CBO ou especialidade…"
+                    emptyText="Nenhum médico cadastrado encontrado"
+                    showAll={false}
+                  />
+                </div>
+                <Input
+                  value={medicoNomeMarca}
+                  onChange={(e) => {
+                    setMedicoNomeMarca(e.target.value);
+                    if (e.target.value.trim()) setMedicoIdMarca("");
+                  }}
+                  placeholder="Ou digite o nome do médico executante (se não cadastrado)…"
+                  className="mt-1.5 text-xs"
+                  maxLength={150}
+                />
               </div>
             </div>
 

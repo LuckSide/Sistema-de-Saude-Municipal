@@ -280,6 +280,8 @@ class TipoFila(SQLModel, table=True):
     cbo_padrao: str = Field(default="", max_length=10)  # Código CBO sugerido
     sinonimos: str = Field(default="", max_length=1000)  # Apelidos de busca e atalhos
     descricao_regras: str = Field(default="", max_length=1000)  # Descrição/orientação das regras
+    medicos_permitidos: str = Field(default="", max_length=2000)  # JSON/CSV de IDs de médicos liberados (vazio = todos)
+    unidades_permitidas: str = Field(default="", max_length=2000)  # JSON/CSV de IDs de unidades liberadas (vazio = todas)
 
 
 class ProcedimentoCatalogo(SQLModel, table=True):

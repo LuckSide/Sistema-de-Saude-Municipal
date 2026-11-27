@@ -3,6 +3,7 @@ from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Reques
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, and_, case, desc, func, not_, or_, select
+import secrets
 import urllib.parse
 
 import re as _re
@@ -218,6 +219,47 @@ def resolver_medico_unidade(db: Session, medico_id, unidade_id) -> tuple[Medico,
         if not uni:
             raise HTTPException(404, "Unidade de atendimento não encontrada")
     return med, uni
+
+
+def preencher_unidade_snapshot(obj: ExameFila, uni: UnidadeSaude) -> None:
+    obj.unidade_saude_id = uni.id
+    obj.unidade_nome = uni.nome or ""
+    obj.unidade_cnes = uni.cnes or ""
+    obj.unidade_endereco = uni.endereco or ""
+    obj.unidade_numero = getattr(uni, "numero", "") or ""
+    obj.unidade_bairro = uni.bairro or ""
+    obj.unidade_municipio = getattr(uni, "municipio", "") or ""
+    obj.unidade_cep = getattr(uni, "cep", "") or ""
+
+
+def aplicar_medico_unidade_agendamento(
+    db: Session,
+    obj: ExameFila,
+    medico_id: int | None,
+    medico_nome: str | None,
+    unidade_id: int | None,
+) -> None:
+    """Preenche médico executante (cadastrado ou nome digitado manualmente) + unidade no agendamento."""
+    nome_livre = (medico_nome or "").strip()
+    if medico_id and medico_id not in (0, -1):
+        med, uni = resolver_medico_unidade(db, medico_id, unidade_id)
+        preencher_snapshot(obj, med, uni)
+        return
+    if nome_livre:
+        uni = db.get(UnidadeSaude, unidade_id) if unidade_id else None
+        if not uni:
+            uni = db.exec(select(UnidadeSaude).where(UnidadeSaude.ativo != False)).first()  # noqa: E712
+            if not uni:
+                raise HTTPException(404, "Unidade de atendimento não encontrada")
+        preencher_unidade_snapshot(obj, uni)
+        obj.medico_id = None
+        obj.medico_nome = nome_livre[:150]
+        obj.medico_cpf = ""
+        obj.medico_cbo_codigo = ""
+        obj.medico_cbo_descricao = ""
+        return
+    med, uni = resolver_medico_unidade(db, medico_id, unidade_id)
+    preencher_snapshot(obj, med, uni)
 
 
 # ---------- Resumo ----------
@@ -3632,25 +3674,37 @@ def criar_exame(data: ExameIn, db: Session = Depends(get_db), ator: User = Depen
             payload["medico_cpf"] = med_origem.cpf or ""
             payload["medico_cbo_codigo"] = getattr(med_origem, "cbo_codigo", "") or ""
             payload["medico_cbo_descricao"] = getattr(med_origem, "cbo_descricao", "") or ""
+    elif (payload.get("medico_nome") or "").strip() and not payload.get("data_agendada"):
+        payload["medico_nome"] = str(payload["medico_nome"]).strip()[:150]
 
     if payload.get("codigo_curto"):
         payload["codigo_curto"] = str(payload["codigo_curto"]).strip().upper()
     if payload.get("numero_pedido"):
         payload["numero_pedido"] = str(payload["numero_pedido"]).strip().upper()[:30]
     else:
-        import random
-        payload["numero_pedido"] = f"PED-{hoje.strftime('%Y%m%d')}-{random.randint(100000, 999999)}"
+        payload["numero_pedido"] = gerar_numero_pedido_aleatorio(db)
     if not str(payload.get("tipo_fila") or "").strip():
         payload["tipo_fila"] = "ELETIVO"
     if payload.get("data_agendada"):
-        # Marcação já na criação: médico + unidade de atendimento obrigatórios.
-        if not payload.get("medico_id") or not payload.get("unidade_saude_id"):
+        # Marcação já na criação: médico executante (ID ou nome livre) + unidade obrigatórios.
+        nome_med_livre = str(payload.get("medico_nome") or "").strip()
+        if (not payload.get("medico_id") and not nome_med_livre) or not payload.get("unidade_saude_id"):
             raise HTTPException(400, "Agendamento exige médico e unidade de atendimento.")
-        med, uni = resolver_medico_unidade(db, payload.get("medico_id"), payload.get("unidade_saude_id"))
-        payload["medico_nome"] = med.nome or ""
-        payload["medico_cpf"] = med.cpf or ""
-        payload["medico_cbo_codigo"] = getattr(med, "cbo_codigo", "") or ""
-        payload["medico_cbo_descricao"] = getattr(med, "cbo_descricao", "") or ""
+        if payload.get("medico_id"):
+            med, uni = resolver_medico_unidade(db, payload.get("medico_id"), payload.get("unidade_saude_id"))
+            payload["medico_nome"] = med.nome or ""
+            payload["medico_cpf"] = med.cpf or ""
+            payload["medico_cbo_codigo"] = getattr(med, "cbo_codigo", "") or ""
+            payload["medico_cbo_descricao"] = getattr(med, "cbo_descricao", "") or ""
+        else:
+            uni = db.get(UnidadeSaude, payload.get("unidade_saude_id"))
+            if not uni:
+                raise HTTPException(404, "Unidade de atendimento não encontrada")
+            payload["medico_id"] = None
+            payload["medico_nome"] = nome_med_livre[:150]
+            payload["medico_cpf"] = ""
+            payload["medico_cbo_codigo"] = ""
+            payload["medico_cbo_descricao"] = ""
         payload["unidade_nome"] = uni.nome or ""
         payload["unidade_cnes"] = uni.cnes or ""
         payload["unidade_endereco"] = uni.endereco or ""
@@ -3772,8 +3826,7 @@ def criar_exames_lote(
 
         num_pedido = item.numero_pedido
         if not num_pedido:
-            import random
-            num_pedido = f"PED-{hoje.strftime('%Y%m%d')}-{random.randint(100000, 999999)}"
+            num_pedido = gerar_numero_pedido_aleatorio(db)
 
         payload_obj = {
             "paciente_id": pac.id,
@@ -3868,11 +3921,19 @@ def atualizar_exames_lote(
         exige_sem_retroativo(ator, data.data_agendada, True)
     mudando_prio = bool(data.prioridade)
     med_lote = uni_lote = None
+    nome_med_lote = (getattr(data, "medico_nome", "") or "").strip()
     if agendando:
-        # Agendamento em lote: médico + unidade de atendimento obrigatórios.
-        if not data.medico_id or not data.unidade_saude_id:
-            raise HTTPException(400, "Agendamento exige médico e unidade de atendimento.")
-        med_lote, uni_lote = resolver_medico_unidade(db, data.medico_id, data.unidade_saude_id)
+        # Agendamento em lote: médico executante (cadastrado ou nome livre) + unidade obrigatórios.
+        if (not data.medico_id and not nome_med_lote) or not data.unidade_saude_id:
+            raise HTTPException(400, "Agendamento exige médico executante e unidade de atendimento.")
+        if data.medico_id:
+            med_lote, uni_lote = resolver_medico_unidade(db, data.medico_id, data.unidade_saude_id)
+        else:
+            uni_lote = db.get(UnidadeSaude, data.unidade_saude_id)
+            if not uni_lote:
+                uni_lote = db.exec(select(UnidadeSaude).where(UnidadeSaude.ativo != False)).first()  # noqa: E712
+                if not uni_lote:
+                    raise HTTPException(404, "Unidade de atendimento não encontrada")
     justificativa = ""
     if mudando_prio:
         justificativa = valida_justificativa(data.justificativa_prioridade)
@@ -3898,17 +3959,29 @@ def atualizar_exames_lote(
             obj.data_agendada = data.data_agendada
         if data.hora_agendada != "":
             obj.hora_agendada = data.hora_agendada
-        if agendando and med_lote and uni_lote:
-            preencher_snapshot(obj, med_lote, uni_lote)
+        if agendando and uni_lote:
+            if med_lote:
+                preencher_snapshot(obj, med_lote, uni_lote)
+            else:
+                preencher_unidade_snapshot(obj, uni_lote)
+                obj.medico_id = None
+                obj.medico_nome = nome_med_lote[:150]
+                obj.medico_cpf = ""
+                obj.medico_cbo_codigo = ""
+                obj.medico_cbo_descricao = ""
         else:
-            if data.medico_id is not None or data.unidade_saude_id is not None:
+            if data.medico_id is not None or nome_med_lote or data.unidade_saude_id is not None:
                 mid = data.medico_id if data.medico_id is not None else obj.medico_id
                 uid = data.unidade_saude_id if data.unidade_saude_id is not None else obj.unidade_saude_id
-                if mid and uid:
+                if nome_med_lote and not data.medico_id:
+                    aplicar_medico_unidade_agendamento(db, obj, None, nome_med_lote, uid)
+                elif mid and uid:
                     preencher_snapshot(obj, *resolver_medico_unidade(db, mid, uid))
                 else:
                     if data.medico_id is not None:
                         obj.medico_id = data.medico_id
+                    if nome_med_lote:
+                        obj.medico_nome = nome_med_lote[:150]
                     if data.unidade_saude_id is not None:
                         obj.unidade_saude_id = data.unidade_saude_id
         if data.destino != "":
@@ -4600,15 +4673,17 @@ def atualizar_exame(
         obj.status = "agendado"
     if novo_agendamento:
         mid = data.medico_id if data.medico_id is not None else obj.medico_id
+        nome_livre = (getattr(data, "medico_nome", "") or "").strip()
         uid = data.unidade_saude_id if data.unidade_saude_id is not None else obj.unidade_saude_id
-        if not mid or not uid:
+        if (not mid and not nome_livre) or not uid:
             raise HTTPException(400, "Agendamento exige médico e unidade de atendimento.")
-        preencher_snapshot(obj, *resolver_medico_unidade(db, mid, uid))
-    elif data.medico_id is not None or data.unidade_saude_id is not None:
+        aplicar_medico_unidade_agendamento(db, obj, mid if not nome_livre else data.medico_id, nome_livre, uid)
+    elif data.medico_id is not None or (getattr(data, "medico_nome", "") or "").strip() or data.unidade_saude_id is not None:
         mid = data.medico_id if data.medico_id is not None else obj.medico_id
+        nome_livre = (getattr(data, "medico_nome", "") or "").strip()
         uid = data.unidade_saude_id if data.unidade_saude_id is not None else obj.unidade_saude_id
-        if mid and uid:
-            preencher_snapshot(obj, *resolver_medico_unidade(db, mid, uid))
+        if (mid or nome_livre) and uid:
+            aplicar_medico_unidade_agendamento(db, obj, data.medico_id if nome_livre else mid, nome_livre, uid)
     obj.public_token = token_atual
     _garantir_token(obj)
     if hasattr(data, "codigo_curto") and getattr(data, "codigo_curto"):
@@ -5242,50 +5317,105 @@ def gerar_dados_comprovante_tfd(db: Session, exame: ExameFila) -> dict:
             "preparo_especifico": p_info.get("badge", "") if _eh_lab_item(e) else "",
         })
 
-    if eh_laboratorial:
+    status_norm = (getattr(exame, "status", "") or "aguardando").strip().lower()
+    eh_cancelado = status_norm in {"cancelado", "cancelada", "desistiu", "recusado"}
+    eh_na_fila = status_norm in {"aguardando", "na_fila", "pendente", "fila"}
+    eh_realizado = status_norm in {"realizado", "realizada", "coletado", "concluido", "concluida", "compareceu"}
+    eh_agendado = bool(exame.data_agendada) and not eh_cancelado and not eh_na_fila
+
+    # Exames de sangue agendados podem exibir preparo apenas quando efetivamente agendados e ainda não realizados/cancelados
+    exige_preparo_out = bool(eh_laboratorial and eh_agendado and not eh_realizado and status_norm != "faltou")
+
+    if exige_preparo_out:
         jejum_h, prep_itens, orient_gerais = determinar_preparo(nomes_procs)
+    elif eh_na_fila or (not eh_agendado and not eh_cancelado and not eh_realizado):
+        jejum_h, prep_itens = "", []
+        orient_gerais = [
+            "Este comprovante confirma o registro da solicitação na Fila Municipal de Espera.",
+            "A solicitação encontra-se aguardando agendamento conforme disponibilidade de vagas e classificação clínica.",
+            "Quando o atendimento for agendado, a equipe da unidade ou Secretaria de Saúde informará data, horário e local.",
+        ]
     else:
         jejum_h, prep_itens, orient_gerais = "", [], []
+
+    if not exige_preparo_out:
+        for it in itens:
+            it["preparo_especifico"] = ""
 
     prontuario = getattr(pac, "codigo_prontuario", "") or (gerar_prontuario_aleatorio(None, pac.id) if pac and pac.id else "—")
     cod_curto = exame.codigo_curto or gerar_exame_curto_aleatorio(None, exame.id)
     num_pedido = exame.numero_pedido or cod_curto
 
-    # Link e QR Code de identificação exclusiva
-    qr_data = f"PEDIDO:{cod_curto}|PRONT:{prontuario}|PAC:{pac.id if pac else ''}"
-    qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={urllib.parse.quote(qr_data)}"
+    if not (exame.public_token or "").strip():
+        exame.public_token = secrets.token_urlsafe(24)
+        db.add(exame)
+        db.commit()
+        db.refresh(exame)
 
-    data_ag_str = exame.data_agendada.isoformat() if exame.data_agendada else (exame.data_pedido.isoformat() if exame.data_pedido else "")
+    # QR Code aponta para o portal público de acompanhamento em tempo real (sem acesso ao sistema)
+    acompanhar_path = f"/acompanhar/{urllib.parse.quote(exame.public_token)}"
+    qr_url = acompanhar_path
+
+    data_ag_str = exame.data_agendada.isoformat() if eh_agendado and exame.data_agendada else ""
+    hora_ag_str = (exame.hora_agendada or "").strip() if eh_agendado else ""
+    data_ped_str = exame.data_pedido.isoformat() if exame.data_pedido else ""
 
     from app.services.whatsapp import buscar_transporte_vinculado
-    data_busca = exame.data_agendada or exame.data_pedido
-    transporte_info = buscar_transporte_vinculado(db, exame.paciente_id, data_busca)
+    transporte_info = None
+    if eh_agendado and not eh_cancelado and exame.data_agendada:
+        transporte_info = buscar_transporte_vinculado(db, exame.paciente_id, exame.data_agendada)
+
+    tipo_comp = (
+        "cancelado"
+        if eh_cancelado
+        else ("realizado" if eh_realizado else ("agendamento" if eh_agendado else "inclusao_fila"))
+    )
+    especialidade_out = (getattr(exame, "nome_especialidade", "") or getattr(exame, "especialidade", "") or "").strip()
+    tipo_fila_out = (getattr(exame, "tipo_fila", "") or "").strip()
+    destino_out = (getattr(exame, "destino", "") or "").strip()
+    justificativa_out = (
+        getattr(exame, "justificativa", "")
+        or getattr(exame, "justificativa_prioridade", "")
+        or ""
+    ).strip()
 
     return {
         "id": exame.id,
+        "tipo_comprovante": tipo_comp,
+        "origem_modulo": "solicitacao",
         "protocolo": num_pedido,
         "codigo_curto": cod_curto,
-        "numero_pedido": exame.numero_pedido or "",
+        "numero_pedido": exame.numero_pedido or num_pedido,
+        "codigo_solicitacao": exame.numero_pedido or num_pedido,
         "public_token": exame.public_token or "",
+        "acompanhar_path": acompanhar_path,
         "paciente_id": exame.paciente_id,
         "paciente_nome": pac.nome if pac else "?",
         "paciente_cpf": getattr(pac, "cpf", "") or "",
         "paciente_cns": getattr(pac, "cns", "") or "",
         "paciente_prontuario": prontuario,
         "paciente_nascimento": (pac.nascimento.isoformat() if getattr(pac, "nascimento", None) else "") if pac else "",
+        "data_pedido": data_ped_str,
+        "data_solicitacao": data_ped_str,
         "data_agendada": data_ag_str,
-        "hora_agendada": exame.hora_agendada or "07:30",
-        "laboratorio_id": exame.unidade_saude_id or 1,
-        "laboratorio_nome": exame.unidade_nome or exame.destino or "Laboratório / Unidade Conveniada",
+        "hora_agendada": hora_ag_str,
+        "laboratorio_id": exame.unidade_saude_id or 0,
+        "laboratorio_nome": "" if eh_cancelado else (destino_out or ("A definir na regulação" if not eh_agendado else "")),
+        "destino": "" if eh_cancelado else destino_out,
         "unidade_psf": exame.unidade_nome or "Secretaria Municipal de Saúde",
         "medico_solicitante": exame.medico_nome or "Médico da Unidade",
-        "justificativa": exame.justificativa or "",
-        "instrucoes_transporte": getattr(exame, "instrucoes_transporte", "") or "",
+        "fila_nome": tipo_fila_out or especialidade_out or "Solicitações / Regulação",
+        "tipo_fila": tipo_fila_out,
+        "especialidade": especialidade_out,
+        "prioridade": getattr(exame, "prioridade", "rotina") or "rotina",
+        "justificativa": justificativa_out,
+        "motivo_cancelamento": (getattr(exame, "motivo_remocao", "") or getattr(exame, "observacoes", "") or "") if eh_cancelado else "",
+        "instrucoes_transporte": "" if eh_cancelado else (getattr(exame, "instrucoes_transporte", "") or ""),
         "transporte": transporte_info,
         "status": exame.status,
         "status_auditoria": exame.status,
         "itens": itens,
-        "exige_preparo": eh_laboratorial,
+        "exige_preparo": exige_preparo_out,
         "jejum_horas": jejum_h,
         "preparo_instrucoes": prep_itens,
         "orientacoes_gerais": orient_gerais,
@@ -5467,14 +5597,18 @@ def leitura_rapida_qr(
 
     try:
         from app.models.lab_exames import SigtapProcedimento
-        from app.models.lab_fase6 import ItemSolic, Laboratorio, SolicitacaoMestre
+        from app.models.lab_fase6 import FilaPsf, ItemSolic, Laboratorio, SolicitacaoMestre
     except ImportError:
         SolicitacaoMestre = None
+        FilaPsf = None
 
     if SolicitacaoMestre:
         mestre = db.exec(
             select(SolicitacaoMestre).where(
-                SolicitacaoMestre.codigo_solicitacao == termo
+                or_(
+                    SolicitacaoMestre.codigo_solicitacao == termo,
+                    SolicitacaoMestre.public_token == termo,
+                )
             ).order_by(desc(SolicitacaoMestre.id))
         ).first()
 
@@ -5548,6 +5682,57 @@ def leitura_rapida_qr(
                 },
                 "pode_recepcionar": mestre.status != "coletado",
                 "todos_coletados": mestre.status == "coletado",
+            }
+
+    if FilaPsf:
+        fila_psf = db.exec(
+            select(FilaPsf).where(
+                or_(
+                    FilaPsf.codigo_solicitacao == termo,
+                    FilaPsf.public_token == termo,
+                )
+            ).order_by(desc(FilaPsf.id))
+        ).first()
+        if fila_psf:
+            if SolicitacaoMestre:
+                mestre_vinc = db.exec(
+                    select(SolicitacaoMestre).where(
+                        SolicitacaoMestre.origem_fila_id == fila_psf.id,
+                        SolicitacaoMestre.status != "cancelado",
+                    )
+                ).first()
+                if mestre_vinc:
+                    return leitura_rapida_qr(codigo=mestre_vinc.codigo_solicitacao, db=db, ator=ator)
+            pac = db.get(Paciente, fila_psf.paciente_id)
+            prontuario = getattr(pac, "codigo_prontuario", "") or (gerar_prontuario_aleatorio(None, pac.id) if pac and pac.id else "—")
+            return {
+                "encontrado": True,
+                "tipo": "lab_fila",
+                "pedido_id": fila_psf.id,
+                "codigo_curto": fila_psf.codigo_solicitacao or "",
+                "numero_pedido": fila_psf.codigo_solicitacao or "",
+                "status": fila_psf.status or "na_fila",
+                "data_pedido": (fila_psf.data_pedido or fila_psf.data_solicitacao).isoformat(),
+                "data_agendada": "",
+                "hora_agendada": "",
+                "unidade_nome": getattr(fila_psf, "unidade_psf", "") or "Secretaria de Saúde",
+                "medico_nome": getattr(fila_psf, "medico_solicitante", "") or "Médico da Unidade",
+                "destino": "A definir no agendamento",
+                "instrucoes_transporte": "",
+                "transporte": None,
+                "paciente": {
+                    "id": pac.id if pac else None,
+                    "nome": pac.nome if pac else "Paciente",
+                    "prontuario": prontuario,
+                    "cpf": getattr(pac, "cpf", "") or "",
+                    "cns": getattr(pac, "cns", "") or "",
+                    "telefone": getattr(pac, "telefone", "") or "",
+                    "data_nascimento": pac.nascimento.isoformat() if pac and getattr(pac, "nascimento", None) else "",
+                },
+                "exames": [],
+                "preparo": {"jejum": "", "instrucoes": []},
+                "pode_recepcionar": False,
+                "todos_coletados": False,
             }
 
     raise HTTPException(404, f"Nenhuma solicitação encontrada para o código: '{termo}'")
@@ -5627,34 +5812,158 @@ def recepcao_rapida(
 
 @router.get("/public/exames/{token}", response_model=ExamePublicoOut)
 def consultar_exame_publico(token: str, db: Session = Depends(get_db)):
-    """Consulta pública sem login — só status/posição, sem PII (LGPD)."""
+    """Consulta pública sem login — status em tempo real de solicitações e exames, sem PII (LGPD)."""
+    import json as _json
     from fastapi import Response
 
-    if not token or len(token) > 64:
+    tok = (token or "").strip()
+    if not tok or len(tok) > 128:
         raise HTTPException(404, "Pedido não encontrado")
-    obj = db.exec(select(ExameFila).where(ExameFila.public_token == token)).first()
-    if not obj or not obj.ativo:
+
+    def _resp_json(out_obj: ExamePublicoOut) -> Response:
+        return Response(
+            content=out_obj.model_dump_json(),
+            media_type="application/json",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    # 1) Solicitações / Regulação (tfd_exames_fila)
+    obj = db.exec(select(ExameFila).where(ExameFila.public_token == tok)).first()
+    if obj and obj.ativo:
+        irmaos: list[ExameFila] = [obj]
+        if obj.numero_pedido:
+            irmaos = list(
+                db.exec(
+                    select(ExameFila).where(
+                        ExameFila.numero_pedido == obj.numero_pedido,
+                        ExameFila.ativo == True,  # noqa: E712
+                    )
+                ).all()
+            ) or [obj]
+        itens_nomes: list[str] = []
+        for it in irmaos:
+            n = (it.exame or "").strip()
+            if " · " in n:
+                n = n.split(" · ", 1)[1]
+            if n:
+                itens_nomes.append(n)
+        rank = _rank_por_grupo(db)
+        pos, _total_grupo, rotulo = rank.get(obj.id, (None, None, ""))
+        pac = db.get(Paciente, obj.paciente_id)
+        st_norm = (obj.status or "").strip().lower()
+        eh_cancelado = st_norm in {"cancelado", "cancelada", "desistiu", "recusado"}
+        eh_agendado = bool(obj.data_agendada) and st_norm not in {"aguardando", "na_fila", "pendente", "fila"} and not eh_cancelado
+        return _resp_json(
+            ExamePublicoOut(
+                origem_modulo="solicitacao",
+                protocolo=obj.numero_pedido or obj.codigo_curto or "",
+                exame=itens_nomes[0] if itens_nomes else obj.exame,
+                itens=itens_nomes,
+                especialidade=obj.nome_especialidade or obj.especialidade or obj.tipo_fila or "",
+                status=obj.status,
+                prioridade=obj.prioridade or "rotina",
+                data_pedido=obj.data_pedido,
+                data_agendada=obj.data_agendada if eh_agendado else None,
+                hora_agendada=(obj.hora_agendada or "") if eh_agendado else "",
+                destino=(obj.destino or "") if not eh_cancelado else "",
+                unidade_solicitante=obj.unidade_nome or "",
+                posicao=pos if st_norm in {"aguardando", "na_fila"} else None,
+                total_fila=None,
+                grupo_fila=rotulo or obj.tipo_fila or "",
+                paciente_iniciais=_iniciais(pac.nome if pac else ""),
+            )
+        )
+
+    # 2) Exames de Sangue Agendados / Coletados (lab_solic_mestre) e Fila PSF (lab_fila_psf)
+    try:
+        from app.models.lab_exames import SigtapProcedimento
+        from app.models.lab_fase6 import FilaPsf, ItemSolic, Laboratorio, SolicitacaoMestre
+    except ImportError:
         raise HTTPException(404, "Pedido não encontrado")
-    rank = _rank_por_grupo(db)
-    pos, _total_grupo, rotulo = rank.get(obj.id, (None, None, ""))
-    pac = db.get(Paciente, obj.paciente_id)
-    return Response(
-        content=ExamePublicoOut(
-            exame=obj.exame,
-            especialidade=obj.especialidade,
-            status=obj.status,
-            prioridade=obj.prioridade,
-            data_pedido=obj.data_pedido,
-            data_agendada=obj.data_agendada,
-            destino=obj.destino,
-            posicao=pos,
-            total_fila=None,
-            grupo_fila=rotulo or "",
-            paciente_iniciais=_iniciais(pac.nome if pac else ""),
-        ).model_dump_json(),
-        media_type="application/json",
-        headers={"Cache-Control": "no-store"},
-    )
+
+    mestre = db.exec(select(SolicitacaoMestre).where(SolicitacaoMestre.public_token == tok)).first()
+    if mestre:
+        pac = db.get(Paciente, mestre.paciente_id)
+        lab = db.get(Laboratorio, mestre.laboratorio_id) if mestre.laboratorio_id else None
+        itens_m = list(db.exec(select(ItemSolic).where(ItemSolic.solicitacao_id == mestre.id)).all())
+        sids = {it.sigtap_id for it in itens_m if it.sigtap_id}
+        procs_map = {}
+        if sids:
+            for sp in db.exec(select(SigtapProcedimento).where(SigtapProcedimento.id.in_(sids))).all():
+                if sp.id is not None:
+                    procs_map[sp.id] = sp.descricao or sp.codigo
+        itens_nomes = [procs_map.get(it.sigtap_id, "Exame Laboratorial") for it in itens_m]
+        st_norm = (mestre.status or "").strip().lower()
+        eh_cancelado = st_norm in {"cancelado", "cancelada", "desistiu", "recusado"}
+        lab_nome = "" if eh_cancelado else (getattr(mestre, "laboratorio_nome_snapshot", "") or (lab.nome if lab else ""))
+        d_ped = getattr(mestre, "created_at", None).date() if getattr(mestre, "created_at", None) else mestre.data_agendada
+        return _resp_json(
+            ExamePublicoOut(
+                origem_modulo="laboratorio",
+                protocolo=mestre.codigo_solicitacao or "",
+                exame=", ".join(itens_nomes[:3]) if itens_nomes else "Exames de Sangue",
+                itens=itens_nomes,
+                especialidade="Laboratório Clínico / Exames de Sangue",
+                status=mestre.status,
+                prioridade="rotina",
+                data_pedido=d_ped,
+                data_agendada=None if eh_cancelado else mestre.data_agendada,
+                hora_agendada="" if eh_cancelado else (getattr(mestre, "hora_agendada", "") or ""),
+                destino=lab_nome,
+                laboratorio_nome=lab_nome,
+                unidade_solicitante=getattr(mestre, "unidade_psf", "") or "",
+                posicao=None,
+                total_fila=None,
+                grupo_fila="Exames de Sangue",
+                paciente_iniciais=_iniciais(pac.nome if pac else ""),
+            )
+        )
+
+    fila = db.exec(select(FilaPsf).where(FilaPsf.public_token == tok)).first()
+    if fila:
+        pac = db.get(Paciente, fila.paciente_id)
+        raw_ids: list[int] = []
+        try:
+            parsed = _json.loads(fila.sigtap_ids_json or "[]")
+            if isinstance(parsed, list):
+                raw_ids = [int(x) for x in parsed if str(x).isdigit()]
+        except Exception:
+            raw_ids = []
+        itens_nomes: list[str] = []
+        if raw_ids:
+            p_map = {
+                sp.id: (sp.descricao or sp.codigo)
+                for sp in db.exec(select(SigtapProcedimento).where(SigtapProcedimento.id.in_(set(raw_ids)))).all()
+                if sp.id is not None
+            }
+            for sid in raw_ids:
+                if sid in p_map and p_map[sid] not in itens_nomes:
+                    itens_nomes.append(p_map[sid])
+        if not itens_nomes and fila.observacoes and "Exames:" in fila.observacoes:
+            trecho = fila.observacoes.split("Exames:")[1].split("|")[0].strip()
+            itens_nomes = [x.strip() for x in trecho.split(",") if x.strip()]
+        return _resp_json(
+            ExamePublicoOut(
+                origem_modulo="laboratorio",
+                protocolo=fila.codigo_solicitacao or "",
+                exame=", ".join(itens_nomes[:3]) if itens_nomes else "Exames de Sangue",
+                itens=itens_nomes,
+                especialidade=fila.especialidade or "Exames de Sangue",
+                status=fila.status or "na_fila",
+                prioridade=fila.prioridade or "rotina",
+                data_pedido=fila.data_pedido or fila.data_solicitacao,
+                data_agendada=None,
+                hora_agendada="",
+                destino="",
+                unidade_solicitante=fila.unidade_psf or "",
+                posicao=None,
+                total_fila=None,
+                grupo_fila=fila.tipo_fila or "Fila de Exames de Sangue",
+                paciente_iniciais=_iniciais(pac.nome if pac else ""),
+            )
+        )
+
+    raise HTTPException(404, "Pedido não encontrado")
 
 
 @router.get("/public/viagens/confirmar/{token}", response_model=ViagemConfirmacaoPublicaOut)
@@ -5830,6 +6139,8 @@ def _formatar_tipo_out(db: Session, obj: TipoFila) -> TipoFilaOut:
         cbo_padrao=getattr(obj, "cbo_padrao", "") or "",
         sinonimos=getattr(obj, "sinonimos", "") or "",
         descricao_regras=getattr(obj, "descricao_regras", "") or "",
+        medicos_permitidos=getattr(obj, "medicos_permitidos", "") or "",
+        unidades_permitidas=getattr(obj, "unidades_permitidas", "") or "",
         cbos_detalhes=detalhes,
     )
 
@@ -5908,6 +6219,8 @@ def criar_tipo(data: TipoFilaIn, db: Session = Depends(get_db), _=Depends(need_a
         cbo_padrao=data.cbo_padrao or "",
         sinonimos=data.sinonimos or "",
         descricao_regras=data.descricao_regras or "",
+        medicos_permitidos=getattr(data, "medicos_permitidos", "") or "",
+        unidades_permitidas=getattr(data, "unidades_permitidas", "") or "",
     )
     db.add(obj)
     db.commit()
@@ -5937,6 +6250,8 @@ def atualizar_tipo(tid: int, data: TipoFilaIn, db: Session = Depends(get_db), _=
     obj.cbo_padrao = data.cbo_padrao or ""
     obj.sinonimos = data.sinonimos or ""
     obj.descricao_regras = data.descricao_regras or ""
+    obj.medicos_permitidos = getattr(data, "medicos_permitidos", "") or ""
+    obj.unidades_permitidas = getattr(data, "unidades_permitidas", "") or ""
     db.add(obj)
     db.commit()
     db.refresh(obj)

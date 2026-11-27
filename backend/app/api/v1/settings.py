@@ -184,6 +184,28 @@ def salvar_settings(
     return to_out(s)
 
 
+@router.get("/settings/conflitos-codigos")
+def diagnosticar_conflitos_codigos(
+    db: Session = Depends(get_db),
+    _: User = Depends(need_any_perm("cfg_geral", "cfg_dados", "usuarios")),
+):
+    """Analisa códigos duplicados, colisões entre módulos e códigos longos de exames de sangue."""
+    from app.services.conflitos_codigos import analisar_e_resolver_codigos
+
+    return analisar_e_resolver_codigos(db, aplicar=False)
+
+
+@router.post("/settings/resolver-conflitos-codigos")
+def executar_resolucao_conflitos_codigos(
+    db: Session = Depends(get_db),
+    _: User = Depends(need_any_perm("cfg_geral", "cfg_dados", "usuarios", acoes=("editar",))),
+):
+    """Padroniza e resolve conflitos/duplicidades de códigos de solicitação de forma segura."""
+    from app.services.conflitos_codigos import analisar_e_resolver_codigos
+
+    return analisar_e_resolver_codigos(db, aplicar=True)
+
+
 # ---------- Gestão de Procedimentos / Exames Permitidos (SIGTAP) ----------
 class ExamesPermitidosIn(BaseModel):
     codigos: list[str] = Field(default_factory=list)
