@@ -512,3 +512,76 @@ def test_contagem_filas_separa_exames_por_procedimento_e_consultas_por_especiali
     assert por_id[cons_gastro.id]["total_tipo"] == 1
     assert por_id[endo1.id]["total_especialidade"] == 2
     assert por_id[colono.id]["total_especialidade"] == 1
+
+
+def test_excluir_paciente_com_vinculos_inativa_sem_erro_e_sem_vinculos_remove(client, db_session):
+    """Garante que excluir paciente com registros em tfd_exames_fila / tfd_pacientes_historico
+    não gera erro 500 de FK: inativa com segurança e oculta da listagem/busca padrão;
+    e paciente apenas com histórico cadastral é excluído definitivamente.
+    """
+    from app.models.tfd import ExameFila, Paciente, PacienteHistorico
+
+    pac_com_exame = Paciente(
+        nome="Teste",
+        cpf="91076969496",
+        cns="912203530320004",
+        codigo_prontuario="168193",
+        situacao_cadastral="ativo",
+    )
+    pac_sem_exame = Paciente(
+        nome="Paciente Sem Vinculo Assistencial",
+        cpf="88877766655",
+        codigo_prontuario="PR-778800",
+        situacao_cadastral="ativo",
+    )
+    db_session.add_all([pac_com_exame, pac_sem_exame])
+    db_session.commit()
+    db_session.refresh(pac_com_exame)
+    db_session.refresh(pac_sem_exame)
+
+    db_session.add_all([
+        PacienteHistorico(
+            paciente_id=pac_com_exame.id,
+            tipo_evento="edicao",
+            motivo="Teste sync",
+            descricao="Histórico prévio",
+        ),
+        PacienteHistorico(
+            paciente_id=pac_sem_exame.id,
+            tipo_evento="edicao",
+            motivo="Teste sync",
+            descricao="Histórico cadastro",
+        ),
+        ExameFila(
+            paciente_id=pac_com_exame.id,
+            exame="9999990005 - ENDOSCOPIA",
+            tipo_fila="EXAMES GASTROENTEROLOGIA",
+            especialidade="EXAMES GASTROENTEROLOGIA",
+            status="aguardando",
+            prioridade="rotina",
+            data_pedido=date(2026, 11, 1),
+        ),
+    ])
+    db_session.commit()
+
+    # 1. Excluir paciente com vínculo na fila -> 204 (sem IntegrityError / 500)
+    r_del1 = client.delete(f"/api/tfd/pacientes/{pac_com_exame.id}")
+    assert r_del1.status_code == 204, r_del1.text
+
+    db_session.expire_all()
+    pac_db = db_session.get(Paciente, pac_com_exame.id)
+    assert pac_db is not None
+    assert pac_db.situacao_cadastral == "inativo"
+
+    # Não aparece mais na listagem nem na busca exata ou autocomplete padrão
+    assert client.get("/api/tfd/pacientes", params={"q": "91076969496"}).json()["total"] == 0
+    assert client.get("/api/tfd/pacientes", params={"q": "Teste"}).json()["total"] == 0
+    assert client.get("/api/tfd/pacientes/buscar", params={"termo": "91076969496"}).json()["resultados"] == []
+    # Com incluir_inativos=true ainda é auditável
+    assert client.get("/api/tfd/pacientes", params={"q": "91076969496", "incluir_inativos": True}).json()["total"] == 1
+
+    # 2. Excluir paciente apenas com histórico cadastral -> remove definitivamente (204)
+    r_del2 = client.delete(f"/api/tfd/pacientes/{pac_sem_exame.id}")
+    assert r_del2.status_code == 204, r_del2.text
+    db_session.expire_all()
+    assert db_session.get(Paciente, pac_sem_exame.id) is None

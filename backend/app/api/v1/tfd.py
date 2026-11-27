@@ -626,12 +626,10 @@ def listar_pacientes(
 
     if exatos is not None:
         if not p_incluir_inativos:
-            ativos_exatos = [
+            exatos = [
                 p for p in exatos
                 if (getattr(p, "situacao_cadastral", None) or "ativo").strip().lower() in ("ativo", "")
             ]
-            if ativos_exatos:
-                exatos = ativos_exatos
         exatos = _deduplicar_lista_pacientes(exatos)
         for p in exatos:
             if not getattr(p, "codigo_prontuario", ""):
@@ -1313,15 +1311,89 @@ def exportar_demanda(
     )
 
 
+def _paciente_possui_vinculos(db: Session, pid: int) -> bool:
+    """Verifica se há registros assistenciais/financeiros referenciando o paciente (exceto histórico cadastral)."""
+    from sqlalchemy import inspect as sa_inspect, literal
+    from sqlmodel import SQLModel
+
+    try:
+        conn = db.connection()
+        existentes = set(sa_inspect(conn).get_table_names())
+    except Exception:
+        existentes = set()
+
+    for table in SQLModel.metadata.tables.values():
+        if table.name in ("tfd_pacientes", "tfd_pacientes_historico"):
+            continue
+        if existentes and table.name not in existentes:
+            continue
+        fk_cols = [
+            fk.parent
+            for fk in table.foreign_keys
+            if fk.column.table.name == "tfd_pacientes" and fk.column.name == "id"
+        ]
+        if not fk_cols:
+            continue
+        cond = or_(*(col == pid for col in fk_cols))
+        try:
+            with db.begin_nested():
+                hit = db.execute(select(literal(1)).select_from(table).where(cond).limit(1)).first()
+                if hit is not None:
+                    return True
+        except Exception:
+            continue
+    return False
+
+
+def _inativar_paciente_por_vinculos(db: Session, obj: Paciente, ator: User | None) -> None:
+    obj.situacao_cadastral = "inativo"
+    obj.situacao_atualizada_em = datetime.utcnow()
+    if not (obj.motivo_situacao or "").strip():
+        obj.motivo_situacao = "Cadastro excluído/inativado pelo operador (vínculos assistenciais preservados)"
+    autor_nome = (
+        (ator.nome or ator.username) if isinstance(ator, User) else "Operador"
+    )
+    db.add(obj)
+    db.add(
+        PacienteHistorico(
+            paciente_id=obj.id or 0,
+            tipo_evento="inativacao",
+            motivo="Exclusão lógica com preservação de vínculos",
+            descricao="Paciente inativado ao solicitar exclusão para preservar integridade dos atendimentos vinculados.",
+            usuario_nome=autor_nome,
+            origem="painel",
+        )
+    )
+    db.commit()
+
+
 @router.delete("/pacientes/{pid}", status_code=204)
-def excluir_paciente(pid: int, db: Session = Depends(get_db), _=Depends(need_perm("tfd_pacientes", "excluir"))):
+def excluir_paciente(
+    pid: int,
+    db: Session = Depends(get_db),
+    ator: User | None = Depends(need_perm("tfd_pacientes", "excluir")),
+):
     obj = db.get(Paciente, pid)
     if not obj:
         raise HTTPException(404, "Paciente não encontrado")
     if obj.eh_teste or (obj.nome or "").strip().lower() == "testes":
         raise HTTPException(400, "O paciente padrão de testes do sistema não pode ser excluído.")
-    db.delete(obj)
-    db.commit()
+
+    if _paciente_possui_vinculos(db, pid):
+        _inativar_paciente_por_vinculos(db, obj, ator)
+        return None
+
+    try:
+        from sqlmodel import delete as sql_delete
+
+        db.execute(sql_delete(PacienteHistorico).where(PacienteHistorico.paciente_id == pid))
+        db.delete(obj)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        obj_atual = db.get(Paciente, pid)
+        if obj_atual:
+            _inativar_paciente_por_vinculos(db, obj_atual, ator)
 
 
 # ---------- Veículos (frota) ----------

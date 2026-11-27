@@ -1417,6 +1417,55 @@ export default function NovaSolicitacao() {
   }, [medicos, cbosLiberadosServico, tipoServico, tipoFilaAtivo]);
 
   const opcoesEspecialidades = useMemo(() => {
+    const resolverNomeCbo = (cod: string, nomeAtual?: string) => {
+      const limpo = (cod || "").replace(/\D/g, "");
+      if (nomeAtual && !/^CBO\s*\d+/i.test(nomeAtual.trim())) return nomeAtual.trim();
+      const cad = especialidadesCadastradas.find((e) => (e.codigo_cbo || "").replace(/\D/g, "") === limpo);
+      if (cad?.nome) return cad.nome.trim();
+      const procMatch = procedimentosTodos.find((p) => (p.codigo_especialidade || "").replace(/\D/g, "") === limpo);
+      if (procMatch?.nome_especialidade || procMatch?.especialidade) {
+        return (procMatch.nome_especialidade || procMatch.especialidade || "").trim();
+      }
+      return nomeAtual?.trim() || `CBO ${cod}`;
+    };
+
+    // 0. Se o Tipo de Serviço possui CBOs liberados configurados, restringe estritamente a eles
+    if (cbosLiberadosServico.length > 0) {
+      const mapaLiberados = new Map<string, { nome: string; cbo: string; sub?: string }>();
+      for (const c of cbosLiberadosServico) {
+        const cod = (c.cbo || "").replace(/\D/g, "");
+        if (!cod) continue;
+        const nome = resolverNomeCbo(cod, c.nome);
+        if (!mapaLiberados.has(cod)) {
+          mapaLiberados.set(cod, { nome, cbo: cod });
+        }
+      }
+
+      if (!isConsulta && cbosAutorizados.length > 0) {
+        const sigtapSet = new Set(cbosAutorizados.map((c) => (c.cbo || "").replace(/\D/g, "")));
+        const intersecao = cbosAutorizados.filter((c) => mapaLiberados.has((c.cbo || "").replace(/\D/g, "")));
+        if (intersecao.length > 0) {
+          return intersecao.map((c) => ({
+            value: c.descricao || resolverNomeCbo(c.cbo),
+            label: c.descricao || resolverNomeCbo(c.cbo),
+            sub: `CBO ${c.cbo} · Liberado no serviço e SIGTAP`,
+            keywords: `${c.descricao} ${c.cbo}`,
+          }));
+        }
+        // Fallback: retorna somente os liberados no serviço se não houver interseção exata
+        void sigtapSet;
+      }
+
+      return Array.from(mapaLiberados.values())
+        .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"))
+        .map((e) => ({
+          value: e.nome,
+          label: e.nome,
+          sub: `CBO ${e.cbo}`,
+          keywords: `${e.nome} ${e.cbo}`,
+        }));
+    }
+
     // 1. Se há um CBO explicitamente selecionado na árvore/filtro, exibe APENAS as especialidades correspondentes/autorizadas para aquele CBO
     if (cboFiltroSig) {
       const cboPrefix = cboFiltroSig.slice(0, 4);
@@ -1504,7 +1553,7 @@ export default function NovaSolicitacao() {
         sub: e.cbo ? `CBO ${e.cbo}` : undefined,
         keywords: `${e.nome} ${e.cbo || ""}`,
       }));
-  }, [cboFiltroSig, espsCboSel, isConsulta, cbosAutorizados, especialidadesCadastradas, procedimentosTodos]);
+  }, [cbosLiberadosServico, cboFiltroSig, espsCboSel, isConsulta, cbosAutorizados, especialidadesCadastradas, procedimentosTodos]);
 
   function renderCampoCboEspecialidade(contexto: "individual" | "lote") {
     return (
@@ -1555,7 +1604,10 @@ export default function NovaSolicitacao() {
               const opt = opcoesEspecialidades.find((o) => o.value === v);
               if (opt?.sub) {
                 const cboMatch = opt.sub.match(/\d{4,6}/);
-                if (cboMatch) setCodigoEspecialidade(cboMatch[0]);
+                if (cboMatch) {
+                  setCodigoEspecialidade(cboMatch[0]);
+                  return;
+                }
               }
               const it = procedimentosTodos.find((p) => (p.especialidade || p.nome_especialidade) === v);
               if (it?.codigo_especialidade) setCodigoEspecialidade(it.codigo_especialidade);
@@ -1586,66 +1638,16 @@ export default function NovaSolicitacao() {
           />
         </div>
         <p className="mt-1 text-[11px] text-ink/60">
-          {cboFiltroSig
-            ? "Exibindo exclusivamente as especialidades correspondentes e autorizadas ao CBO selecionado."
-            : isConsulta
-              ? "Para consultas, selecione o CBO acima ou escolha diretamente a especialidade médica."
-              : cbosAutorizados.length > 0
-                ? "Especialidades restritas estritamente aos CBOs autorizados no SIGTAP para o procedimento."
-                : "Preenchida automaticamente pelo CBO ou procedimento selecionado."}
+          {cbosLiberadosServico.length > 0
+            ? "Exibindo somente os CBOs liberados para este tipo de serviço."
+            : cboFiltroSig
+              ? "Exibindo exclusivamente as especialidades correspondentes e autorizadas ao CBO selecionado."
+              : isConsulta
+                ? "Para consultas, selecione o CBO acima ou escolha diretamente a especialidade médica."
+                : cbosAutorizados.length > 0
+                  ? "Especialidades restritas estritamente aos CBOs autorizados no SIGTAP para o procedimento."
+                  : "Preenchida automaticamente pelo CBO ou procedimento selecionado."}
         </p>
-      </div>
-    );
-  }
-
-  function renderBannerRegrasServico() {
-    if (!tipoServico || !tipoFilaAtivo) return null;
-    const temCbos = cbosLiberadosServico.length > 0;
-    if (!temCbos && !tipoFilaAtivo.descricao_regras) return null;
-
-    return (
-      <div className="mt-2.5 rounded-lg border border-teal/20 bg-teal/5 p-2.5 text-xs">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="font-bold text-teal-900 inline-flex items-center gap-1">
-              {tipoFilaAtivo.exigir_cbo_estrito ? (
-                <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-bold text-amber-900 border border-amber-300">
-                  🔒 Regra Estrita
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-bold text-emerald-900 border border-emerald-300">
-                  ℹ️ Regra Flexível
-                </span>
-              )}
-              CBOs Liberados:
-            </span>
-            {temCbos ? (
-              cbosLiberadosServico.map((c) => (
-                <span
-                  key={c.cbo}
-                  className="inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 text-[11px] font-semibold text-sus-900 border border-teal/20 shadow-xs"
-                >
-                  <span className="font-mono text-[10px] font-bold text-teal">{c.cbo}</span>
-                  <span>{c.nome || `CBO ${c.cbo}`}</span>
-                </span>
-              ))
-            ) : (
-              <span className="text-[11px] text-ink/70">Acesso amplo a todos os CBOs médicos</span>
-            )}
-          </div>
-          <Link
-            to="/configuracoes?aba=servicos"
-            target="_blank"
-            className="text-[11px] font-semibold text-teal hover:underline inline-flex items-center gap-1"
-          >
-            Editar regras nas Configurações →
-          </Link>
-        </div>
-        {tipoFilaAtivo.descricao_regras && (
-          <p className="mt-1.5 text-[11px] text-ink/75 border-t border-teal/10 pt-1.5">
-            {tipoFilaAtivo.descricao_regras}
-          </p>
-        )}
       </div>
     );
   }
@@ -2064,7 +2066,6 @@ export default function NovaSolicitacao() {
                           ? "Consulta médica especializada: requer apenas a definição do CBO/especialidade."
                           : "Filtra automaticamente o catálogo de procedimentos ao lado."}
                       </p>
-                      {renderBannerRegrasServico()}
                     </div>
 
                     {/* Especialidade Médica / CBO */}
@@ -3094,7 +3095,6 @@ export default function NovaSolicitacao() {
                       ? "Consulta médica especializada em lote: requer apenas a definição do CBO/especialidade."
                       : "Filtra automaticamente o catálogo de procedimentos correspondentes."}
                   </p>
-                  {renderBannerRegrasServico()}
                 </div>
 
                 {/* Especialidade Médica / CBO */}
