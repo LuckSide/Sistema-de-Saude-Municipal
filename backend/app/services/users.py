@@ -31,9 +31,62 @@ def telas_to_list(raw: str) -> list[str]:
     return [t for t in (raw or "").split(",") if t]
 
 
+def validar_trava_psf_usuario(
+    db: Session,
+    ator: User | None,
+    unidade_id_req: int | None = None,
+    medico_id_req: int | None = None,
+    medico_nome_req: str | None = None,
+) -> tuple[int | None, int | None, str | None]:
+    """Enforça trava de usuário PSF bloqueado para sua unidade e médico da unidade.
+
+    Retorna (unidade_id_efetivo, medico_id_efetivo, medico_nome_efetivo).
+    Lança HTTPException(403) se o usuário tentar lançar em outra unidade ou com outro médico.
+    """
+    if (
+        not ator
+        or getattr(ator, "is_superuser", False)
+        or not getattr(ator, "restringir_psf_unidade_medico", False)
+        or not getattr(ator, "unidade_saude_id", None)
+    ):
+        return unidade_id_req, medico_id_req, medico_nome_req
+
+    from fastapi import HTTPException
+    from app.models.cadastros_saude import Medico, UnidadeSaude
+
+    uid_ator = int(ator.unidade_saude_id)
+    if unidade_id_req is not None and int(unidade_id_req) != uid_ator:
+        raise HTTPException(
+            403,
+            "Usuário bloqueado para lançar solicitações somente na sua unidade de saúde.",
+        )
+
+    uni = db.get(UnidadeSaude, uid_ator)
+    med_id_uni = getattr(uni, "medico_id", None) if uni else None
+    if med_id_uni:
+        med_uni = db.get(Medico, int(med_id_uni))
+        nome_uni = med_uni.nome if med_uni else ""
+        if medico_id_req is not None and int(medico_id_req) != int(med_id_uni):
+            raise HTTPException(
+                403,
+                "Usuário bloqueado para lançar solicitações somente com o médico da unidade.",
+            )
+        if medico_id_req is None and medico_nome_req and nome_uni:
+            if medico_nome_req.strip().lower() != nome_uni.strip().lower():
+                raise HTTPException(
+                    403,
+                    "Usuário bloqueado para lançar solicitações somente com o médico da unidade.",
+                )
+        return uid_ator, int(med_id_uni), (nome_uni or medico_nome_req)
+
+    return uid_ator, medico_id_req, medico_nome_req
+
+
 def _montar_user_out(
     user: User,
     unidade_nome: str | None = None,
+    unidade_medico_id: int | None = None,
+    unidade_medico_nome: str | None = None,
     lab_nome: str | None = None,
     paciente: object | None = None,
 ) -> dict:
@@ -49,6 +102,9 @@ def _montar_user_out(
         "medico_id": getattr(user, "medico_id", None),
         "unidade_saude_id": getattr(user, "unidade_saude_id", None),
         "unidade_saude_nome": unidade_nome,
+        "unidade_saude_medico_id": unidade_medico_id,
+        "unidade_saude_medico_nome": unidade_medico_nome,
+        "restringir_psf_unidade_medico": bool(getattr(user, "restringir_psf_unidade_medico", False)),
         "laboratorio_id": getattr(user, "laboratorio_id", None),
         "laboratorio_nome": lab_nome,
         "paciente_id": pid,
@@ -67,13 +123,20 @@ def _montar_user_out(
 def to_out(user: User, db: Session | None = None) -> dict:
     uid = getattr(user, "unidade_saude_id", None)
     unidade_nome = None
+    unidade_medico_id = None
+    unidade_medico_nome = None
     if uid and db:
         try:
-            from app.models.cadastros_saude import UnidadeSaude
+            from app.models.cadastros_saude import Medico, UnidadeSaude
 
             u = db.get(UnidadeSaude, uid)
             if u:
                 unidade_nome = u.nome
+                unidade_medico_id = getattr(u, "medico_id", None)
+                if unidade_medico_id:
+                    med_u = db.get(Medico, unidade_medico_id)
+                    if med_u:
+                        unidade_medico_nome = med_u.nome
         except Exception:
             pass
     lid = getattr(user, "laboratorio_id", None)
@@ -96,14 +159,21 @@ def to_out(user: User, db: Session | None = None) -> dict:
             paciente = db.get(Paciente, pid)
         except Exception:
             pass
-    return _montar_user_out(user, unidade_nome=unidade_nome, lab_nome=lab_nome, paciente=paciente)
+    return _montar_user_out(
+        user,
+        unidade_nome=unidade_nome,
+        unidade_medico_id=unidade_medico_id,
+        unidade_medico_nome=unidade_medico_nome,
+        lab_nome=lab_nome,
+        paciente=paciente,
+    )
 
 
 def users_to_out(users: list[User], db: Session) -> list[dict]:
     """Serializa uma lista de usuários resolvendo vínculos em lote (sem queries N+1)."""
     if not users:
         return []
-    from app.models.cadastros_saude import UnidadeSaude
+    from app.models.cadastros_saude import Medico, UnidadeSaude
     from app.models.lab_fase6 import Laboratorio
     from app.models.tfd import Paciente
 
@@ -111,12 +181,25 @@ def users_to_out(users: list[User], db: Session) -> list[dict]:
     l_ids = {u.laboratorio_id for u in users if getattr(u, "laboratorio_id", None)}
     p_ids = {u.paciente_id for u in users if getattr(u, "paciente_id", None)}
 
-    unidades_map = (
+    unidades_objs = (
         {
-            u.id: u.nome
+            u.id: u
             for u in db.exec(select(UnidadeSaude).where(UnidadeSaude.id.in_(u_ids))).all()
         }
         if u_ids
+        else {}
+    )
+    med_u_ids = {
+        u.medico_id
+        for u in unidades_objs.values()
+        if getattr(u, "medico_id", None)
+    }
+    medicos_u_map = (
+        {
+            m.id: m.nome
+            for m in db.exec(select(Medico).where(Medico.id.in_(med_u_ids))).all()
+        }
+        if med_u_ids
         else {}
     )
     labs_map = (
@@ -136,15 +219,21 @@ def users_to_out(users: list[User], db: Session) -> list[dict]:
         else {}
     )
 
-    return [
-        _montar_user_out(
-            u,
-            unidade_nome=unidades_map.get(getattr(u, "unidade_saude_id", None)),
-            lab_nome=labs_map.get(getattr(u, "laboratorio_id", None)),
-            paciente=pacs_map.get(getattr(u, "paciente_id", None)),
+    out_list = []
+    for u in users:
+        u_obj = unidades_objs.get(getattr(u, "unidade_saude_id", None))
+        u_med_id = getattr(u_obj, "medico_id", None) if u_obj else None
+        out_list.append(
+            _montar_user_out(
+                u,
+                unidade_nome=u_obj.nome if u_obj else None,
+                unidade_medico_id=u_med_id,
+                unidade_medico_nome=medicos_u_map.get(u_med_id) if u_med_id else None,
+                lab_nome=labs_map.get(getattr(u, "laboratorio_id", None)),
+                paciente=pacs_map.get(getattr(u, "paciente_id", None)),
+            )
         )
-        for u in users
-    ]
+    return out_list
 
 
 def gerar_temporaria(tamanho: int = 5) -> str:
@@ -262,6 +351,10 @@ def create_user(db: Session, data: UserCreate) -> tuple[User, str | None]:
         validar_forca_senha(data.password, username)
         pwd_hash = hash_password(data.password)
     pid, pac_vinculado = _validar_paciente_id(db, getattr(data, "paciente_id", None))
+    uid_val = _validar_unidade_id(db, data.unidade_saude_id)
+    restringir_psf = bool(getattr(data, "restringir_psf_unidade_medico", False))
+    if restringir_psf and not uid_val:
+        raise ValueError("Selecione a Unidade de Saúde / PSF para bloquear o lançamento por unidade e médico.")
     nome_final = (data.nome or "").strip() or (pac_vinculado.nome if pac_vinculado else "")
     user = User(
         username=username,
@@ -271,7 +364,8 @@ def create_user(db: Session, data: UserCreate) -> tuple[User, str | None]:
         telas=telas_to_str(data.telas),
         acoes=json.dumps(validar_acoes(data.acoes or {})),
         medico_id=_validar_medico_id(db, data.medico_id),
-        unidade_saude_id=_validar_unidade_id(db, data.unidade_saude_id),
+        unidade_saude_id=uid_val,
+        restringir_psf_unidade_medico=restringir_psf,
         laboratorio_id=_validar_laboratorio_id(db, data.laboratorio_id),
         paciente_id=pid,
         permite_retroativo=data.permite_retroativo,
@@ -307,6 +401,10 @@ def update_user(db: Session, user: User, data: UserUpdate) -> User:
         user.medico_id = _validar_medico_id(db, patch.pop("medico_id"))
     if "unidade_saude_id" in patch:
         user.unidade_saude_id = _validar_unidade_id(db, patch.pop("unidade_saude_id"))
+    if "restringir_psf_unidade_medico" in patch and patch["restringir_psf_unidade_medico"] is not None:
+        user.restringir_psf_unidade_medico = bool(patch.pop("restringir_psf_unidade_medico"))
+    if bool(getattr(user, "restringir_psf_unidade_medico", False)) and not user.unidade_saude_id:
+        raise ValueError("Selecione a Unidade de Saúde / PSF para bloquear o lançamento por unidade e médico.")
     if "laboratorio_id" in patch:
         user.laboratorio_id = _validar_laboratorio_id(db, patch.pop("laboratorio_id"))
     pac_vinculado = None

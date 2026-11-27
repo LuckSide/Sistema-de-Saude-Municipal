@@ -3709,6 +3709,21 @@ def criar_exame(data: ExameIn, db: Session = Depends(get_db), ator: User = Depen
     payload = data.model_dump()
 
     # Regra 2: Restrições de Lançamento por Perfil (PSF vs. TFD)
+    from app.services.users import validar_trava_psf_usuario
+    uid_travado, mid_travado, mnome_travado = validar_trava_psf_usuario(
+        db,
+        ator,
+        payload.get("unidade_saude_id"),
+        payload.get("medico_id"),
+        payload.get("medico_nome"),
+    )
+    if uid_travado is not None:
+        payload["unidade_saude_id"] = uid_travado
+    if mid_travado is not None:
+        payload["medico_id"] = mid_travado
+    if mnome_travado:
+        payload["medico_nome"] = mnome_travado
+
     is_central = eh_tfd_central(ator)
     hoje = date.today()
 
@@ -3867,9 +3882,17 @@ def criar_exames_lote(
         if not data.medico_id or not data.unidade_saude_id:
             raise HTTPException(400, "Agendamento direto exige médico e unidade de atendimento.")
 
+    from app.services.users import validar_trava_psf_usuario
+    uid_padrao_travado, mid_padrao_travado, _ = validar_trava_psf_usuario(
+        db,
+        ator,
+        data.unidade_saude_id,
+        data.medico_id,
+    )
+
     # Resolver médico e unidade padrão do lote
-    med_padrao = db.get(Medico, data.medico_id) if data.medico_id else None
-    uni_padrao = db.get(UnidadeSaude, data.unidade_saude_id) if data.unidade_saude_id else None
+    med_padrao = db.get(Medico, mid_padrao_travado) if mid_padrao_travado else None
+    uni_padrao = db.get(UnidadeSaude, uid_padrao_travado) if uid_padrao_travado else None
 
     if not is_central and ator.unidade_saude_id and not uni_padrao:
         uni_padrao = db.get(UnidadeSaude, ator.unidade_saude_id)
@@ -3903,8 +3926,14 @@ def criar_exames_lote(
         cid_desc = item.cid_descricao if item.cid_descricao is not None else data.cid_descricao_padrao
         obs_item = item.observacoes if item.observacoes is not None else data.observacoes_padrao
 
-        uni_item = db.get(UnidadeSaude, item.unidade_saude_id) if item.unidade_saude_id else uni_padrao
-        med_item = db.get(Medico, item.medico_id) if item.medico_id else med_padrao
+        uid_item_travado, mid_item_travado, _ = validar_trava_psf_usuario(
+            db,
+            ator,
+            item.unidade_saude_id or (uni_padrao.id if uni_padrao else None),
+            item.medico_id or (med_padrao.id if med_padrao else None),
+        )
+        uni_item = db.get(UnidadeSaude, uid_item_travado) if uid_item_travado else uni_padrao
+        med_item = db.get(Medico, mid_item_travado) if mid_item_travado else med_padrao
 
         data_ped = item.data_pedido or data.data_pedido or hoje
         if not is_central:

@@ -26,6 +26,7 @@ class UserCreate(BaseModel):
     acoes: dict[str, list[str]] = Field(default_factory=dict)
     medico_id: int | None = None
     unidade_saude_id: int | None = None
+    restringir_psf_unidade_medico: bool = False
     laboratorio_id: int | None = None
     paciente_id: int | None = None
     permite_retroativo: bool = True
@@ -40,6 +41,7 @@ class UserUpdate(BaseModel):
     acoes: dict[str, list[str]] | None = None
     medico_id: int | None = None
     unidade_saude_id: int | None = None
+    restringir_psf_unidade_medico: bool | None = None
     laboratorio_id: int | None = None
     paciente_id: int | None = None
     permite_retroativo: bool | None = None
@@ -63,6 +65,9 @@ class UserOut(BaseModel):
     medico_id: int | None = None
     unidade_saude_id: int | None = None
     unidade_saude_nome: str | None = None
+    unidade_saude_medico_id: int | None = None
+    unidade_saude_medico_nome: str | None = None
+    restringir_psf_unidade_medico: bool = False
     laboratorio_id: int | None = None
     laboratorio_nome: str | None = None
     paciente_id: int | None = None

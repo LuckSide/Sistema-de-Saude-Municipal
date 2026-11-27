@@ -50,30 +50,34 @@ function rsComputeEc(data: number[], ecLen: number): number[] {
   return res.slice(data.length);
 }
 
-// Versões 1..8 ECC Level L: [versão, maxBytes, blocks, dataPerBlock, ecPerBlock, alignmentCenters]
-const VERSION_SPECS: Array<[number, number, number, number, number, number[]]> = [
-  [1, 17, 1, 19, 7, []],
-  [2, 32, 1, 34, 10, [6, 18]],
-  [3, 53, 1, 55, 15, [6, 22]],
-  [4, 78, 1, 80, 20, [6, 26]],
-  [5, 106, 1, 108, 26, [6, 30]],
-  [6, 134, 2, 68, 18, [6, 34]],
-  [7, 154, 2, 78, 20, [6, 22, 38]],
-  [8, 192, 2, 97, 24, [6, 24, 42]],
+// Versões 1..10 ECC Level L: [versão, maxBytes, g1Blocks, g1Data, g2Blocks, g2Data, ecPerBlock, alignmentCenters]
+const VERSION_SPECS: Array<[number, number, number, number, number, number, number, number[]]> = [
+  [1, 17, 1, 19, 0, 0, 7, []],
+  [2, 32, 1, 34, 0, 0, 10, [6, 18]],
+  [3, 53, 1, 55, 0, 0, 15, [6, 22]],
+  [4, 78, 1, 80, 0, 0, 20, [6, 26]],
+  [5, 106, 1, 108, 0, 0, 26, [6, 30]],
+  [6, 134, 2, 68, 0, 0, 18, [6, 34]],
+  [7, 154, 2, 78, 0, 0, 20, [6, 22, 38]],
+  [8, 192, 2, 97, 0, 0, 24, [6, 24, 42]],
+  [9, 230, 2, 116, 0, 0, 30, [6, 26, 46]],
+  [10, 271, 2, 68, 2, 69, 18, [6, 28, 50]],
 ];
 
 const VERSION_INFO_BITS: Record<number, number> = {
   7: 0x07c94,
   8: 0x085bc,
+  9: 0x09a99,
+  10: 0x0a4d3,
 };
 
-function encodeBits(bytes: Uint8Array, totalDataCodewords: number): number[] {
+function encodeBits(bytes: Uint8Array, totalDataCodewords: number, version: number): number[] {
   const bits: number[] = [];
   const pushBits = (val: number, len: number) => {
     for (let i = len - 1; i >= 0; i--) bits.push((val >> i) & 1);
   };
   pushBits(0b0100, 4); // Modo Byte
-  pushBits(bytes.length, 8);
+  pushBits(bytes.length, version >= 10 ? 16 : 8);
   for (const b of bytes) pushBits(b, 8);
 
   const totalDataBits = totalDataCodewords * 8;
@@ -100,7 +104,7 @@ function buildMatrix(text: string): { size: number; modules: boolean[][] } | nul
   const spec = VERSION_SPECS.find((s) => utf8.length <= s[1]);
   if (!spec) return null;
 
-  const [version, , numBlocks, dataPerBlock, ecPerBlock, alignCenters] = spec;
+  const [version, , g1Blocks, g1Data, g2Blocks, g2Data, ecPerBlock, alignCenters] = spec;
   const size = 4 * version + 17;
   const grid = Array.from({ length: size }, () => new Array<number>(size).fill(-1));
   const reserved = Array.from({ length: size }, () => new Array<boolean>(size).fill(false));
@@ -174,21 +178,33 @@ function buildMatrix(text: string): { size: number; modules: boolean[][] } | nul
     }
   }
 
-  const codewords = encodeBits(utf8, numBlocks * dataPerBlock);
+  const totalDataCodewords = g1Blocks * g1Data + g2Blocks * g2Data;
+  const codewords = encodeBits(utf8, totalDataCodewords, version);
   const blocksData: number[][] = [];
   const blocksEc: number[][] = [];
-  for (let b = 0; b < numBlocks; b++) {
-    const slice = codewords.slice(b * dataPerBlock, (b + 1) * dataPerBlock);
+  let offset = 0;
+  for (let b = 0; b < g1Blocks; b++) {
+    const slice = codewords.slice(offset, offset + g1Data);
+    offset += g1Data;
+    blocksData.push(slice);
+    blocksEc.push(rsComputeEc(slice, ecPerBlock));
+  }
+  for (let b = 0; b < g2Blocks; b++) {
+    const slice = codewords.slice(offset, offset + g2Data);
+    offset += g2Data;
     blocksData.push(slice);
     blocksEc.push(rsComputeEc(slice, ecPerBlock));
   }
 
   const stream: number[] = [];
-  for (let i = 0; i < dataPerBlock; i++) {
-    for (let b = 0; b < numBlocks; b++) stream.push(blocksData[b][i]);
+  const maxDataCols = Math.max(g1Data, g2Data);
+  for (let i = 0; i < maxDataCols; i++) {
+    for (let b = 0; b < blocksData.length; b++) {
+      if (i < blocksData[b].length) stream.push(blocksData[b][i]);
+    }
   }
   for (let i = 0; i < ecPerBlock; i++) {
-    for (let b = 0; b < numBlocks; b++) stream.push(blocksEc[b][i]);
+    for (let b = 0; b < blocksEc.length; b++) stream.push(blocksEc[b][i]);
   }
 
   const streamBits: number[] = [];
@@ -222,16 +238,21 @@ function buildMatrix(text: string): { size: number; modules: boolean[][] } | nul
     }
   }
 
+  // ISO/IEC 18004: bit 14 (MSB) -> bit 0 (LSB) em ambas as cópias do Format Info
   const fmt = 0x77c4; // Level L (01) + Mask 0 (000) BCH masked with 101010000010010
   for (let i = 0; i < 15; i++) {
-    const dark = ((fmt >> i) & 1) === 1;
-    if (i < 6) grid[8][i] = dark ? 1 : 0;
-    else if (i < 8) grid[8][i + 1] = dark ? 1 : 0;
-    else grid[8][size - 15 + i] = dark ? 1 : 0;
+    const dark = ((fmt >> (14 - i)) & 1) === 1;
 
-    if (i < 8) grid[size - 1 - i][8] = dark ? 1 : 0;
-    else if (i < 9) grid[15 - i][8] = dark ? 1 : 0;
+    // Cópia 1 (canto superior esquerdo): horizontal (8,0..5), (8,7), (8,8) e vertical (7,8), (5..0,8)
+    if (i < 6) grid[8][i] = dark ? 1 : 0;
+    else if (i === 6) grid[8][7] = dark ? 1 : 0;
+    else if (i === 7) grid[8][8] = dark ? 1 : 0;
+    else if (i === 8) grid[7][8] = dark ? 1 : 0;
     else grid[14 - i][8] = dark ? 1 : 0;
+
+    // Cópia 2: vertical inferior esquerdo (size-1..size-7, 8) e horizontal superior direito (8, size-8..size-1)
+    if (i < 7) grid[size - 1 - i][8] = dark ? 1 : 0;
+    else grid[8][size - 15 + i] = dark ? 1 : 0;
   }
 
   return { size, modules: grid.map((row) => row.map((v) => v === 1)) };
@@ -255,7 +276,7 @@ export function gerarQrDataUri(valor: string): string {
   if (!texto) return "";
   const qr = buildMatrix(texto);
   if (!qr) return "";
-  const quiet = 2;
+  const quiet = 4;
   const total = qr.size + quiet * 2;
   let path = "";
   for (let r = 0; r < qr.size; r++) {

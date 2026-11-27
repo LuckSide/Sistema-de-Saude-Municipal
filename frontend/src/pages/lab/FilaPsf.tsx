@@ -132,7 +132,7 @@ function formatarEnderecoPaciente(p?: {
 export default function FilaPsf() {
   const { confirmar } = useConfirm();
   const auth = useAuth();
-  const { user, can } = auth;
+  const { user, can, isBloqueadoPsfUnidadeMedico } = auth;
   const canAction = (tela: string, acao: "ver" | "criar" | "editar" | "excluir"): boolean => {
     if (typeof (auth as any).canAction === "function") {
       return Boolean((auth as any).canAction(tela, acao));
@@ -146,7 +146,8 @@ export default function FilaPsf() {
   const podeEditar = canAction("lab_fila", "editar");
   const podeExcluir = canAction("lab_fila", "excluir");
   const usuarioRestritoUnidade = Boolean(
-    user?.unidade_saude_id && !user?.is_superuser && !can("lab") && !can("lab_marcacao") && !can("lab_agenda")
+    isBloqueadoPsfUnidadeMedico ||
+      (user?.unidade_saude_id && !user?.is_superuser && !can("lab") && !can("lab_marcacao") && !can("lab_agenda"))
   );
   const [lista, setLista] = useState<FilaPsfItem[]>([]);
   const [unidades, setUnidades] = useState<UnidadeSaude[]>([]);
@@ -431,6 +432,20 @@ export default function FilaPsf() {
     return user?.unidade_saude_nome || "";
   }, [unidades, user]);
 
+  const medicoPadraoUnidade = useMemo(() => {
+    if (!isBloqueadoPsfUnidadeMedico || !user?.unidade_saude_id) return "";
+    const u = unidades.find((x) => x.id === user.unidade_saude_id);
+    if (user.unidade_saude_medico_id) {
+      const m = medicos.find((x) => x.id === user.unidade_saude_medico_id);
+      if (m) return m.nome;
+    }
+    if (u?.medico_id) {
+      const m = medicos.find((x) => x.id === u.medico_id);
+      if (m) return m.nome;
+    }
+    return user.unidade_saude_medico_nome || u?.medico_nome || "";
+  }, [isBloqueadoPsfUnidadeMedico, user, unidades, medicos]);
+
   function abrirModalNovo() {
     setItemEditando(null);
     setPacienteSelecionado(null);
@@ -446,7 +461,7 @@ export default function FilaPsf() {
       especialidade: "",
       unidade_psf: unidInitNome,
       unidade_saude_id: unidInitObj ? String(unidInitObj.id) : (user?.unidade_saude_id ? String(user.unidade_saude_id) : ""),
-      medico: MEDICO_GENERICO,
+      medico: isBloqueadoPsfUnidadeMedico ? (medicoPadraoUnidade || MEDICO_GENERICO) : MEDICO_GENERICO,
       prioridade: "rotina",
       data_solicitacao: new Date().toISOString().slice(0, 10),
       data_pedido: new Date().toISOString().slice(0, 10),
@@ -1489,13 +1504,13 @@ export default function FilaPsf() {
                             setForm((prev) => {
                               let nextUnidadePsf = prev.unidade_psf;
                               let nextUnidadeId = prev.unidade_saude_id;
-                              if (uPerm.length > 0 && nextUnidadeId && !uPerm.includes(Number(nextUnidadeId))) {
+                              if (!usuarioRestritoUnidade && uPerm.length > 0 && nextUnidadeId && !uPerm.includes(Number(nextUnidadeId))) {
                                 const primeiraUnid = unidades.find((u) => uPerm.includes(u.id));
                                 nextUnidadePsf = primeiraUnid?.nome || "";
                                 nextUnidadeId = primeiraUnid ? String(primeiraUnid.id) : "";
                               }
                               let nextMedico = prev.medico;
-                              if (mPerm.length > 0) {
+                              if (!isBloqueadoPsfUnidadeMedico && mPerm.length > 0) {
                                 const medAtual = medicos.find((m) => m.nome === nextMedico);
                                 if (!medAtual || !mPerm.includes(medAtual.id)) {
                                   const primeiroMed = medicos.find((m) => mPerm.includes(m.id));
@@ -1562,6 +1577,7 @@ export default function FilaPsf() {
                         <Combobox
                           value={form.unidade_psf}
                           onChange={(v) => {
+                            if (usuarioRestritoUnidade) return;
                             const uObj = unidades.find((u) => u.nome === v);
                             setForm((prev) => ({
                               ...prev,
@@ -1574,6 +1590,7 @@ export default function FilaPsf() {
                           searchPlaceholder="Digite o nome da unidade…"
                           emptyText="Nenhuma unidade encontrada"
                           showAll={false}
+                          disabled={usuarioRestritoUnidade}
                         />
                         {pacienteSelecionado?.unidade_saude_id &&
                         String(pacienteSelecionado.unidade_saude_id) === form.unidade_saude_id ? (
@@ -1600,6 +1617,7 @@ export default function FilaPsf() {
                         <Combobox
                           value={form.medico}
                           onChange={(v) => {
+                            if (isBloqueadoPsfUnidadeMedico) return;
                             const medObj = medicos.find((m) => m.nome === v);
                             const espMed = (medObj?.especialidade || (medObj?.especialidades ? medObj.especialidades.split(",")[0].trim() : "") || "").trim();
                             setForm((prev) => ({
@@ -1613,9 +1631,12 @@ export default function FilaPsf() {
                           searchPlaceholder="Digite o nome, CRM, CBO ou especialidade…"
                           emptyText="Nenhum médico encontrado"
                           showAll={false}
+                          disabled={isBloqueadoPsfUnidadeMedico}
                         />
                         <p className="mt-1 text-[11px] text-ink/50">
-                          Médico(a) solicitante.
+                          {isBloqueadoPsfUnidadeMedico
+                            ? "Bloqueado para o médico vinculado à sua unidade."
+                            : "Médico(a) solicitante."}
                         </p>
                       </div>
                     </div>

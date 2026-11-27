@@ -131,6 +131,7 @@ class UnidadeIn(BaseModel):
     responsavel_tecnico_nome: str = Field(default="", max_length=150)
     responsavel_tecnico_cns: str = Field(default="", max_length=15)
     responsavel_tecnico_conselho: str = Field(default="", max_length=50)
+    medico_id: int | None = None
     endereco: str = Field(default="", max_length=200)
     numero: str = Field(default="", max_length=20)
     bairro: str = Field(default="", max_length=100)
@@ -183,6 +184,8 @@ class UnidadeOut(BaseModel):
     responsavel_tecnico_nome: str = ""
     responsavel_tecnico_cns: str = ""
     responsavel_tecnico_conselho: str = ""
+    medico_id: int | None = None
+    medico_nome: str = ""
     endereco: str = ""
     numero: str = ""
     bairro: str = ""

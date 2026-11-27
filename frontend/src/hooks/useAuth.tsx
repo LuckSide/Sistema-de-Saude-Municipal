@@ -25,6 +25,8 @@ type AuthCtx = {
   isTfdCentral: boolean;
   /** Perfil PSF (restrito à sua unidade e data de hoje). */
   isPsf: boolean;
+  /** Usuário PSF com trava explícita para lançar somente na própria unidade e com o médico da unidade. */
+  isBloqueadoPsfUnidadeMedico: boolean;
   /** Trava de lançamentos retroativos (data < hoje), salvo flag ou superuser. */
   retroativoBloqueado: boolean;
   /** Permissão para alterar viagens em datas passadas. */
@@ -95,6 +97,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   /** Perfil PSF: lotado em unidade de saúde e não pertencente à central TFD. */
   const isPsf = !!user && !isTfdCentral && !!user.unidade_saude_id;
 
+  const isBloqueadoPsfUnidadeMedico = !!user && !user.is_superuser && !!user.restringir_psf_unidade_medico && !!user.unidade_saude_id;
+
   const retroativoBloqueado = !!user && !user.is_superuser && user.permite_retroativo === false;
 
   const podeEditarPassadas = !!user && (user.is_superuser || (user.permite_retroativo !== false && (concedida(user.telas, "tfd_viagens_passadas") || concedida(user.telas, "usuarios"))));
@@ -111,8 +115,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ user, loading, login, logout, refreshMe, can, isMedico, isLancamentoRestrito, isTfdCentral, isPsf, retroativoBloqueado, podeEditarPassadas, podeAlterarPrioridade, precisaTrocarSenha }),
-    [user, loading, login, logout, refreshMe, can, isMedico, isLancamentoRestrito, isTfdCentral, isPsf, retroativoBloqueado, podeEditarPassadas, podeAlterarPrioridade, precisaTrocarSenha]
+    () => ({ user, loading, login, logout, refreshMe, can, isMedico, isLancamentoRestrito, isTfdCentral, isPsf, isBloqueadoPsfUnidadeMedico, retroativoBloqueado, podeEditarPassadas, podeAlterarPrioridade, precisaTrocarSenha }),
+    [user, loading, login, logout, refreshMe, can, isMedico, isLancamentoRestrito, isTfdCentral, isPsf, isBloqueadoPsfUnidadeMedico, retroativoBloqueado, podeEditarPassadas, podeAlterarPrioridade, precisaTrocarSenha]
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

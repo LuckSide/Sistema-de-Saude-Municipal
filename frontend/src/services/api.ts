@@ -92,6 +92,9 @@ export type Usuario = {
   medico_id?: number | null;
   unidade_saude_id?: number | null;
   unidade_saude_nome?: string | null;
+  unidade_saude_medico_id?: number | null;
+  unidade_saude_medico_nome?: string | null;
+  restringir_psf_unidade_medico?: boolean;
   laboratorio_id?: number | null;
   laboratorio_nome?: string | null;
   paciente_id?: number | null;
@@ -156,6 +159,8 @@ export type UnidadeSaude = {
   responsavel_tecnico_nome?: string;
   responsavel_tecnico_cns?: string;
   responsavel_tecnico_conselho?: string;
+  medico_id?: number | null;
+  medico_nome?: string;
   endereco: string;
   numero: string;
   bairro: string;

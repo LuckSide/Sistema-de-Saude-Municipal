@@ -556,6 +556,11 @@ def _init_db_impl() -> None:
                 conn.execute(text("ALTER TABLE usuarios ADD COLUMN permite_retroativo BOOLEAN DEFAULT TRUE NOT NULL"))
             except Exception:
                 pass
+        if "restringir_psf_unidade_medico" not in cols_u3b:
+            try:
+                conn.execute(text("ALTER TABLE usuarios ADD COLUMN restringir_psf_unidade_medico BOOLEAN DEFAULT FALSE NOT NULL"))
+            except Exception:
+                pass
         try:
             conn.execute(text("UPDATE usuarios SET permite_retroativo = TRUE WHERE permite_retroativo IS NULL"))
         except Exception:
@@ -584,6 +589,7 @@ def _init_db_impl() -> None:
             "numero": "VARCHAR(20) DEFAULT '' NOT NULL",
             "municipio": "VARCHAR(100) DEFAULT '' NOT NULL",
             "cep": "VARCHAR(10) DEFAULT '' NOT NULL",
+            "medico_id": "INTEGER",
         }.items():
             if col not in cols_uni:
                 try:

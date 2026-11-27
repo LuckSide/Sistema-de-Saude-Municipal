@@ -38,6 +38,7 @@ class UnidadeSaude(SQLModel, table=True):
     responsavel_tecnico_nome: str = Field(default="", max_length=150)
     responsavel_tecnico_cns: str = Field(default="", max_length=15)
     responsavel_tecnico_conselho: str = Field(default="", max_length=50)
+    medico_id: int | None = Field(default=None, index=True)  # Médico padrão / responsável da unidade (PSF)
     endereco: str = Field(default="", max_length=200)
     numero: str = Field(default="", max_length=20)
     bairro: str = Field(default="", max_length=100)

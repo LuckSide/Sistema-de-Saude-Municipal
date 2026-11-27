@@ -1042,6 +1042,22 @@ def criar_fila(
     if not pac:
         raise HTTPException(404, "Paciente não encontrado")
 
+    from app.services.users import validar_trava_psf_usuario
+    uid_psf_eff, _mid_psf_eff, mnome_psf_eff = validar_trava_psf_usuario(
+        db,
+        user,
+        data.unidade_saude_id,
+        data.medico_id,
+        data.medico_solicitante,
+    )
+    unidade_psf_eff = data.unidade_psf
+    if uid_psf_eff and getattr(user, "restringir_psf_unidade_medico", False):
+        from app.models.cadastros_saude import UnidadeSaude
+        u_obj_psf = db.get(UnidadeSaude, uid_psf_eff)
+        if u_obj_psf:
+            unidade_psf_eff = u_obj_psf.nome
+    medico_sol_eff = mnome_psf_eff or data.medico_solicitante
+
     # Validação de unidades e médicos liberados por tipo de fila de exame de sangue
     fila_cfg = None
     if data.fila_id:
@@ -1101,8 +1117,8 @@ def criar_fila(
         public_token=_secrets.token_urlsafe(24),
         paciente_id=data.paciente_id,
         especialidade=data.especialidade.strip(),
-        unidade_psf=data.unidade_psf,
-        medico_solicitante=data.medico_solicitante,
+        unidade_psf=unidade_psf_eff,
+        medico_solicitante=medico_sol_eff,
         data_solicitacao=d_solic,
         data_pedido=d_ped,
         prioridade=data.prioridade,
@@ -1112,7 +1128,7 @@ def criar_fila(
         status="na_fila",
         fila_id=data.fila_id,
         tipo_fila=data.tipo_fila or data.especialidade.strip(),
-        unidade_saude_id=data.unidade_saude_id,
+        unidade_saude_id=uid_psf_eff,
         criado_por=(user.nome or user.username or "")[:120],
     )
     db.add(obj)
@@ -1683,6 +1699,20 @@ def criar_mestre(
         totais = data.itens_normalizados()
     except ValueError as e:
         raise HTTPException(400, "Erro na formatação ou validação dos dados dos itens da solicitação.")
+    from app.services.users import validar_trava_psf_usuario
+    uid_mestre_eff, mid_mestre_eff, mnome_mestre_eff = validar_trava_psf_usuario(
+        db,
+        user,
+        data.unidade_saude_id,
+        data.medico_id,
+        data.medico_solicitante,
+    )
+    unidade_psf_mestre = data.unidade_psf
+    if uid_mestre_eff and getattr(user, "restringir_psf_unidade_medico", False):
+        from app.models.cadastros_saude import UnidadeSaude
+        u_obj_m = db.get(UnidadeSaude, uid_mestre_eff)
+        if u_obj_m:
+            unidade_psf_mestre = u_obj_m.nome
     m = criar_solicitacao_mestre(
         db,
         paciente_id=data.paciente_id,
@@ -1693,10 +1723,10 @@ def criar_mestre(
         origem_fila_id=data.origem_fila_id,
         agendado_por=user.username,
         itens=totais,
-        medico_id=data.medico_id,
-        medico_solicitante=data.medico_solicitante,
-        unidade_saude_id=data.unidade_saude_id,
-        unidade_psf=data.unidade_psf,
+        medico_id=mid_mestre_eff,
+        medico_solicitante=mnome_mestre_eff or data.medico_solicitante,
+        unidade_saude_id=uid_mestre_eff,
+        unidade_psf=unidade_psf_mestre,
         justificativa=data.justificativa,
     )
     return enriquecer_mestre(db, m)

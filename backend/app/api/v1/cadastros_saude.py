@@ -332,6 +332,10 @@ def inativar_medico(
     db.commit()
 
 
+def _unidade_to_out(u: UnidadeSaude, medico_nome: str = "") -> UnidadeOut:
+    return UnidadeOut(**u.model_dump(), medico_nome=medico_nome)
+
+
 # ---------- Unidades / PSFs ----------
 @router.get("/unidades-saude", response_model=list[UnidadeOut])
 @router.get("/unidades", response_model=list[UnidadeOut], include_in_schema=False)
@@ -352,6 +356,12 @@ def listar_unidades(
 
     unidades = list(db.exec(base).all())
     termo = (q or "").strip().lower()
+    med_ids = {u.medico_id for u in unidades if getattr(u, "medico_id", None)}
+    med_map = (
+        {m.id: m.nome for m in db.exec(select(Medico).where(Medico.id.in_(med_ids))).all()}
+        if med_ids
+        else {}
+    )
     if termo:
         unidades = [
             u for u in unidades
@@ -359,13 +369,14 @@ def listar_unidades(
             or termo in (u.cnes or "").lower()
             or termo in (getattr(u, "tipo_estabelecimento", "") or "").lower()
             or termo in (getattr(u, "responsavel_tecnico_nome", "") or "").lower()
+            or termo in (med_map.get(getattr(u, "medico_id", None) or 0, "")).lower()
             or termo in (getattr(u, "cnpj", "") or "").lower()
             or termo in (getattr(u, "codigo_ibge", "") or "").lower()
             or termo in (u.bairro or "").lower()
             or termo in (u.municipio or "").lower()
             or termo in (u.endereco or "").lower()
         ]
-    return [UnidadeOut(**u.model_dump()) for u in unidades]
+    return [_unidade_to_out(u, med_map.get(getattr(u, "medico_id", None) or 0, "")) for u in unidades]
 
 
 @router.post("/unidades-saude", response_model=UnidadeOut, status_code=201)
@@ -375,11 +386,17 @@ def criar_unidade(
     db: Session = Depends(_get_db),
     _ator: User = Depends(need_any_perm("usuarios", "cfg_unidades", acoes=("criar",))),
 ):
+    medico_nome = ""
+    if data.medico_id is not None:
+        med = db.get(Medico, data.medico_id)
+        if not med:
+            raise HTTPException(404, "Médico da unidade não encontrado")
+        medico_nome = med.nome
     obj = UnidadeSaude(**data.model_dump())
     db.add(obj)
     db.commit()
     db.refresh(obj)
-    return UnidadeOut(**obj.model_dump())
+    return _unidade_to_out(obj, medico_nome)
 
 
 @router.put("/unidades-saude/{uid}", response_model=UnidadeOut)
@@ -393,12 +410,18 @@ def atualizar_unidade(
     obj = db.get(UnidadeSaude, uid)
     if not obj:
         raise HTTPException(404, "Unidade não encontrada")
+    medico_nome = ""
+    if data.medico_id is not None:
+        med = db.get(Medico, data.medico_id)
+        if not med:
+            raise HTTPException(404, "Médico da unidade não encontrado")
+        medico_nome = med.nome
     for k, v in data.model_dump().items():
         setattr(obj, k, v)
     db.add(obj)
     db.commit()
     db.refresh(obj)
-    return UnidadeOut(**obj.model_dump())
+    return _unidade_to_out(obj, medico_nome)
 
 
 class UnidadeRtLoteIn(BaseModel):

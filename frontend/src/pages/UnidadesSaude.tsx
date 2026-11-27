@@ -112,6 +112,7 @@ const vazio = {
   responsavel_tecnico_nome: "",
   responsavel_tecnico_cns: "",
   responsavel_tecnico_conselho: "",
+  medico_id: "",
   endereco: "",
   numero: "",
   bairro: "",
@@ -309,6 +310,7 @@ export default function UnidadesSaude() {
         responsavel_tecnico_nome: u.responsavel_tecnico_nome ?? "",
         responsavel_tecnico_cns: u.responsavel_tecnico_cns ?? "",
         responsavel_tecnico_conselho: u.responsavel_tecnico_conselho ?? "",
+        medico_id: u.medico_id ? String(u.medico_id) : "",
         endereco: u.endereco,
         numero: u.numero ?? "",
         bairro: u.bairro,
@@ -356,11 +358,15 @@ export default function UnidadesSaude() {
     }
     setSalvando(true);
     try {
+      const payload = {
+        ...form,
+        medico_id: form.medico_id ? Number(form.medico_id) : null,
+      };
       if (editId) {
-        await updateUnidadeSaude(editId, form);
+        await updateUnidadeSaude(editId, payload);
         setOk("Unidade de saúde atualizada.");
       } else {
-        const criada = await createUnidadeSaude(form);
+        const criada = await createUnidadeSaude(payload);
         setEditId(criada.id);
         setOk("Unidade cadastrada com sucesso! Agora você pode cadastrar Serviços e Equipes.");
       }
@@ -639,6 +645,11 @@ export default function UnidadesSaude() {
                       ) : (
                         <span className="text-ink/40 italic">Não informado</span>
                       )}
+                      {u.medico_nome && (
+                        <p className="mt-1 text-[11px] font-semibold text-teal">
+                          Médico da unidade: {u.medico_nome}
+                        </p>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-xs text-ink/60">
                       <p>{u.endereco || "—"}{u.numero ? `, ${u.numero}` : ""}</p>
@@ -868,6 +879,28 @@ export default function UnidadesSaude() {
                           placeholder="Ex: CRM/MG 12345"
                         />
                       </div>
+                    </div>
+                    <div className="mt-2.5 pt-2.5 border-t border-sus-900/10">
+                      <label className="mb-1 block text-xs font-semibold text-ink/70">
+                        Médico(a) da Unidade (PSF)
+                      </label>
+                      <select
+                        value={form.medico_id}
+                        onChange={(e) => setForm({ ...form, medico_id: e.target.value })}
+                        className="w-full rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-sm outline-none focus:border-teal"
+                      >
+                        <option value="">Nenhum médico padrão vinculado</option>
+                        {profissionais.map((m) => (
+                          <option key={m.id} value={String(m.id)}>
+                            {m.nome}
+                            {m.crm ? ` · ${m.crm}` : ""}
+                            {m.cbo_descricao ? ` · ${m.cbo_descricao}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="mt-1 text-[11px] text-ink/55">
+                        Usado como médico padrão da unidade e no bloqueio automático para usuários de PSF.
+                      </p>
                     </div>
                   </div>
 

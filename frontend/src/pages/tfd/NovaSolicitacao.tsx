@@ -149,7 +149,7 @@ const MEDICO_GENERICO = "Médico da Unidade / Responsável Técnico";
 
 export default function NovaSolicitacao() {
   const navigate = useNavigate();
-  const { user, can, isTfdCentral, isLancamentoRestrito, retroativoBloqueado } = useAuth();
+  const { user, can, isTfdCentral, isLancamentoRestrito, isBloqueadoPsfUnidadeMedico, retroativoBloqueado } = useAuth();
   const podeDataRetroativa = isTfdCentral && !retroativoBloqueado;
   /** Apenas médicos (ou superuser) podem classificar prioridade urgente na tela de lançamento. */
   const podeDefinirPrioridade = Boolean(
@@ -408,7 +408,7 @@ export default function NovaSolicitacao() {
 
   function aplicarUnidadeDoPaciente(p: Paciente | null) {
     if (!p || unidades.length === 0) return;
-    if (!isTfdCentral && user?.unidade_saude_id) return;
+    if ((!isTfdCentral || isBloqueadoPsfUnidadeMedico) && user?.unidade_saude_id) return;
     const match = encontrarUnidadeDoPaciente(p as PacienteComUnidade, unidades);
     if (match) {
       setUnidadeId(String(match.id));
@@ -667,12 +667,19 @@ export default function NovaSolicitacao() {
         setUnidadeId(String(resUnis[0].id));
       }
 
-      // Médico padrão: Médico da Unidade
-      const medGen = resMeds.find(
-        (m) => m.nome.includes("Responsável Técnico") || m.nome.includes("Médico da Unidade"),
-      );
-      if (medGen) {
-        setMedicoId(String(medGen.id));
+      // Médico padrão: Médico vinculado à Unidade (se usuário PSF travado) ou Médico da Unidade genérico
+      const uidUsuario = user?.unidade_saude_id ? Number(user.unidade_saude_id) : null;
+      const unidUsuarioObj = uidUsuario ? resUnis.find((u) => u.id === uidUsuario) : undefined;
+      const medUnidadeId = user?.unidade_saude_medico_id || unidUsuarioObj?.medico_id || null;
+      if (isBloqueadoPsfUnidadeMedico && medUnidadeId) {
+        setMedicoId(String(medUnidadeId));
+      } else {
+        const medGen = resMeds.find(
+          (m) => m.nome.includes("Responsável Técnico") || m.nome.includes("Médico da Unidade"),
+        );
+        if (medGen) {
+          setMedicoId(String(medGen.id));
+        }
       }
 
       setCarregandoCatalogos(false);
@@ -683,17 +690,26 @@ export default function NovaSolicitacao() {
     };
   }, [user]);
 
-  // Se o usuário não for TFD Central, força data no dia atual e unidade no seu PSF
+  // Se o usuário não for TFD Central ou estiver travado no PSF, força unidade (e médico da unidade quando bloqueado)
   useEffect(() => {
-    if (!isTfdCentral) {
-      setDataPedido(hojeISO());
+    if (!isTfdCentral || isBloqueadoPsfUnidadeMedico) {
+      if (!isTfdCentral) {
+        setDataPedido(hojeISO());
+        setAgendamentoDireto(false);
+        setAgendamentoDiretoLote(false);
+      }
       if (user?.unidade_saude_id) {
         setUnidadeId(String(user.unidade_saude_id));
       }
-      setAgendamentoDireto(false);
-      setAgendamentoDiretoLote(false);
+      if (isBloqueadoPsfUnidadeMedico) {
+        const unidObj = unidades.find((u) => u.id === user?.unidade_saude_id);
+        const medUniId = user?.unidade_saude_medico_id || unidObj?.medico_id || null;
+        if (medUniId) {
+          setMedicoId(String(medUniId));
+        }
+      }
     }
-  }, [isTfdCentral, user]);
+  }, [isTfdCentral, isBloqueadoPsfUnidadeMedico, user, unidades]);
 
   // Travas RBAC: garante rotina para não-médicos e desativa agendamento direto sem permissão
   useEffect(() => {
@@ -2105,9 +2121,10 @@ export default function NovaSolicitacao() {
                         3. Origem e Profissional Solicitante
                       </h2>
                     </div>
-                    {!isTfdCentral && (
+                    {(!isTfdCentral || isBloqueadoPsfUnidadeMedico) && (
                       <span className="text-[11px] font-semibold text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-full flex items-center gap-1">
-                        <AlertTriangle className="h-3 w-3" /> Restrito à Unidade do Operador
+                        <AlertTriangle className="h-3 w-3" />{" "}
+                        {isBloqueadoPsfUnidadeMedico ? "Bloqueado para Unidade e Médico do PSF" : "Restrito à Unidade do Operador"}
                       </span>
                     )}
                   </div>
@@ -2120,7 +2137,7 @@ export default function NovaSolicitacao() {
                           PSF / Unidade Solicitante <span className="text-red-500">*</span>
                         </Label>
                       </div>
-                      {isTfdCentral ? (
+                      {isTfdCentral && !isBloqueadoPsfUnidadeMedico ? (
                         <div>
                           <Combobox
                             value={unidadeId}
@@ -2166,7 +2183,13 @@ export default function NovaSolicitacao() {
                         searchPlaceholder="Digite o nome, CRM, CBO ou especialidade…"
                         emptyText="Nenhum médico encontrado"
                         showAll={false}
+                        disabled={isBloqueadoPsfUnidadeMedico}
                       />
+                      {isBloqueadoPsfUnidadeMedico && (
+                        <p className="mt-1 text-[11px] text-amber-800">
+                          Bloqueado automaticamente para o médico vinculado à sua unidade.
+                        </p>
+                      )}
                       {renderAlertaCboMedico()}
                     </div>
                   </div>
@@ -3314,7 +3337,7 @@ export default function NovaSolicitacao() {
                   <Select
                     value={unidadeId}
                     onChange={(e) => setUnidadeId(e.target.value)}
-                    disabled={!isTfdCentral && !!user?.unidade_saude_id}
+                    disabled={(!isTfdCentral || isBloqueadoPsfUnidadeMedico) && !!user?.unidade_saude_id}
                     className="mt-1 text-xs"
                     required
                   >
@@ -3340,8 +3363,14 @@ export default function NovaSolicitacao() {
                       searchPlaceholder="Digite o nome, CRM, CBO ou especialidade…"
                       emptyText="Nenhum médico encontrado"
                       showAll={false}
+                      disabled={isBloqueadoPsfUnidadeMedico}
                     />
                   </div>
+                  {isBloqueadoPsfUnidadeMedico && (
+                    <p className="mt-1 text-[11px] text-amber-800">
+                      Bloqueado para o médico vinculado à sua unidade.
+                    </p>
+                  )}
                   {renderAlertaCboMedico()}
                 </div>
               </div>

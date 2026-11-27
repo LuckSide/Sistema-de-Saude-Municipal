@@ -62,7 +62,7 @@ type ItemLote = { sigtap: SigtapProc; quantidade: number };
 
 export default function LabMarcacao() {
   const { confirmar } = useConfirm();
-  const { user } = useAuth();
+  const { user, isBloqueadoPsfUnidadeMedico } = useAuth();
   const [labs, setLabs] = useState<Laboratorio[]>([]);
   const [medicos, setMedicos] = useState<Medico[]>([]);
   const [unidades, setUnidades] = useState<UnidadeSaude[]>([]);
@@ -293,14 +293,21 @@ export default function LabMarcacao() {
     setBuscaSig("");
     setDiaSel("");
     setErro("");
-    // Padrão de unidade na marcação direta: Secretaria de Saúde
-    const sec = unidades.find(
-      (u) =>
-        u.nome.toLowerCase().includes("secretaria") ||
-        u.nome.toLowerCase().includes("central")
-    ) || unidades[0];
-    setUnidadeId(sec ? String(sec.id) : "");
-    setMedicoId("GENERICO_UNIDADE");
+    if (isBloqueadoPsfUnidadeMedico && user?.unidade_saude_id) {
+      setUnidadeId(String(user.unidade_saude_id));
+      const uObj = unidades.find((u) => u.id === user.unidade_saude_id);
+      const medUniId = user.unidade_saude_medico_id || uObj?.medico_id || null;
+      setMedicoId(medUniId ? String(medUniId) : "GENERICO_UNIDADE");
+    } else {
+      // Padrão de unidade na marcação direta: Secretaria de Saúde
+      const sec = unidades.find(
+        (u) =>
+          u.nome.toLowerCase().includes("secretaria") ||
+          u.nome.toLowerCase().includes("central")
+      ) || unidades[0];
+      setUnidadeId(sec ? String(sec.id) : "");
+      setMedicoId("GENERICO_UNIDADE");
+    }
     setModal(true);
   }
 
@@ -897,9 +904,12 @@ export default function LabMarcacao() {
                         searchPlaceholder="Digite o nome da unidade…"
                         emptyText="Nenhuma unidade encontrada"
                         showAll={false}
+                        disabled={isBloqueadoPsfUnidadeMedico}
                       />
                       <p className="mt-1.5 text-[11px] text-ink/50">
-                        Padrão: Secretaria de Saúde (regulação central).
+                        {isBloqueadoPsfUnidadeMedico
+                          ? "Bloqueado para a sua unidade de saúde (PSF)."
+                          : "Padrão: Secretaria de Saúde (regulação central)."}
                       </p>
                     </div>
 
@@ -917,9 +927,12 @@ export default function LabMarcacao() {
                         searchPlaceholder="Digite o nome do médico, CRM, CBO ou especialidade…"
                         emptyText="Nenhum médico encontrado"
                         showAll={false}
+                        disabled={isBloqueadoPsfUnidadeMedico}
                       />
                       <p className="mt-1.5 text-[11px] text-ink/50">
-                        Padrão: Médico da Unidade / Resp. Técnico.
+                        {isBloqueadoPsfUnidadeMedico
+                          ? "Bloqueado para o médico vinculado à sua unidade."
+                          : "Padrão: Médico da Unidade / Resp. Técnico."}
                       </p>
                     </div>
                   </div>

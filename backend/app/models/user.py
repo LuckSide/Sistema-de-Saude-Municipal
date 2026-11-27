@@ -16,6 +16,7 @@ class User(SQLModel, table=True):
     acoes: str = Field(default="{}", sa_column=Column(Text, nullable=False, default="{}"))  # json {tela:[ver,criar,editar,excluir]}; ausente = tudo
     medico_id: int | None = Field(default=None, index=True)  # vínculo conta <-> cadastro de médico (perfil Médico)
     unidade_saude_id: int | None = Field(default=None, index=True)  # vínculo conta <-> unidade de saúde / PSF
+    restringir_psf_unidade_medico: bool = Field(default=False)  # trava lançamentos somente para unidade_saude_id e médico da unidade
     laboratorio_id: int | None = Field(default=None, index=True)  # vínculo conta <-> laboratório conveniado
     paciente_id: int | None = Field(default=None, index=True)  # vínculo conta <-> cadastro de pessoa/paciente do município
     permite_retroativo: bool = Field(default=True)  # trava de lançamentos retroativos (data < hoje)

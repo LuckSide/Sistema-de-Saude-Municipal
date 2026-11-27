@@ -387,19 +387,24 @@ export default function ComprovanteExameModal({
 
               {/* QR Code de Acompanhamento Público em Tempo Real */}
               {(() => {
-                const origin = typeof window !== "undefined" ? window.location.origin : "";
+                const envUrl = (import.meta as { env?: { VITE_PUBLIC_URL?: string } }).env?.VITE_PUBLIC_URL;
+                const origin = (envUrl && envUrl.trim().replace(/\/$/, "")) || (typeof window !== "undefined" ? window.location.origin : "");
+                const rawQrUrl = comprovante.qr_code_url || "";
                 const tokenUrl = comprovante.public_token
                   ? `${origin}/acompanhar/${encodeURIComponent(comprovante.public_token)}`
                   : comprovante.acompanhar_path
                   ? `${origin}${comprovante.acompanhar_path}`
-                  : comprovante.qr_code_url || "";
+                  : rawQrUrl.startsWith("/") && origin
+                  ? `${origin}${rawQrUrl}`
+                  : rawQrUrl;
                 if (!tokenUrl) return null;
                 return (
                   <div className="flex flex-col items-center justify-center p-2 print:p-1.5 rounded-xl bg-white border border-sus-900/15 shadow-sm text-center shrink-0">
                     <img
                       src={gerarQrDataUri(tokenUrl)}
                       alt="QR Code para acompanhar a solicitação no site"
-                      className="h-28 w-28 object-contain print:h-20 print:w-20"
+                      className="h-28 w-28 object-contain print:h-24 print:w-24"
+                      style={{ imageRendering: "pixelated" }}
                       loading="eager"
                     />
                     <span className="text-[10px] print:text-[9px] font-mono font-bold text-ink/75 mt-1">

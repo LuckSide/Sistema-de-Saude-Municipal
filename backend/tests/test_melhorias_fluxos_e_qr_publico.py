@@ -631,3 +631,150 @@ def test_unificar_cbos_uniformiza_variacoes_caixa_em_procedimentos(db_session):
     assert db_session.get(ProcedimentoCatalogo, p2.id).nome_especialidade == "Médico cardiologista"
     # Especialidade distinta não deve ser sobrescrita indevidamente
     assert db_session.get(ProcedimentoCatalogo, p3.id).nome_especialidade == "CIRURGIA CARDIOVASCULAR"
+
+
+def test_trava_psf_unidade_e_medico_da_unidade(db_session: Session):
+    """Testa seleção de médico da unidade no cadastro de UBS/PSF e trava do operador PSF."""
+    from app.services.users import to_out
+
+    med1 = db_session.exec(select(Medico).where(Medico.nome == "Dr. Carlos Eduardo")).first()
+    med2 = db_session.exec(select(Medico).where(Medico.nome == "Dra. Fernanda Lima")).first()
+    u1 = db_session.exec(select(UnidadeSaude).where(UnidadeSaude.nome == "PSF Central")).first()
+    u2 = db_session.exec(select(UnidadeSaude).where(UnidadeSaude.nome == "PSF Rural")).first()
+    pac = db_session.exec(select(Paciente)).first()
+    sig = db_session.exec(select(SigtapProcedimento)).first()
+    assert med1 and med2 and u1 and u2 and pac and sig
+
+    admin = User(
+        username="admin_cfg",
+        password_hash="x",
+        nome="Admin",
+        telas="usuarios,cfg_unidades,tfd_exames,tfd_fila_lancamento,lab_fila",
+        is_superuser=True,
+        is_active=True,
+    )
+    op_psf = User(
+        username="op_psf_bloq",
+        password_hash="x",
+        nome="Recepção PSF Central",
+        telas="tfd_fila_lancamento,lab_fila",
+        unidade_saude_id=u1.id,
+        restringir_psf_unidade_medico=True,
+        is_superuser=False,
+        is_active=True,
+    )
+    db_session.add_all([admin, op_psf])
+    db_session.commit()
+    db_session.refresh(admin)
+    db_session.refresh(op_psf)
+
+    app.dependency_overrides[get_db] = lambda: db_session
+    app.dependency_overrides[get_current_user_senha_ok] = lambda: admin
+    try:
+        client = TestClient(app)
+
+        # 1. Admin define Médico da Unidade (Dr. Carlos Eduardo) em PSF Central
+        res_u = client.put(
+            f"/api/unidades-saude/{u1.id}",
+            json={"nome": u1.nome, "cnes": u1.cnes, "medico_id": med1.id, "ativo": True},
+        )
+        assert res_u.status_code == 200, res_u.text
+        body_u = res_u.json()
+        assert body_u["medico_id"] == med1.id
+        assert body_u["medico_nome"] == med1.nome
+
+        # to_out / /me deve refletir unidade_saude_medico_id e flag
+        db_session.refresh(op_psf)
+        out_psf = to_out(op_psf, db_session)
+        assert out_psf["restringir_psf_unidade_medico"] is True
+        assert out_psf["unidade_saude_medico_id"] == med1.id
+        assert out_psf["unidade_saude_medico_nome"] == med1.nome
+
+        # 2. Como operador PSF bloqueado: tentar lançar em outra unidade -> 403
+        app.dependency_overrides[get_current_user_senha_ok] = lambda: op_psf
+        res_outra_u = client.post(
+            "/api/tfd/exames",
+            json={
+                "paciente_id": pac.id,
+                "paciente_nome": pac.nome,
+                "exame": "CONSULTA CARDIOLOGIA",
+                "especialidade": "Cardiologia",
+                "tipo_fila": "CONSULTAS ESPECIALIZADAS",
+                "unidade_saude_id": u2.id,
+                "medico_id": med1.id,
+                "data_pedido": date.today().isoformat(),
+                "justificativa": "Avaliação cardiológica clínica detalhada para paciente.",
+            },
+        )
+        assert res_outra_u.status_code == 403
+
+        # Tentar lançar com outro médico -> 403
+        res_outro_med = client.post(
+            "/api/tfd/exames",
+            json={
+                "paciente_id": pac.id,
+                "paciente_nome": pac.nome,
+                "exame": "CONSULTA CARDIOLOGIA",
+                "especialidade": "Cardiologia",
+                "tipo_fila": "CONSULTAS ESPECIALIZADAS",
+                "unidade_saude_id": u1.id,
+                "medico_id": med2.id,
+                "data_pedido": date.today().isoformat(),
+                "justificativa": "Avaliação cardiológica clínica detalhada para paciente.",
+            },
+        )
+        assert res_outro_med.status_code == 403
+
+        # Lançamento válido fixa automaticamente unidade e médico da unidade
+        res_ok = client.post(
+            "/api/tfd/exames",
+            json={
+                "paciente_id": pac.id,
+                "paciente_nome": pac.nome,
+                "exame": "CONSULTA CARDIOLOGIA",
+                "especialidade": "Cardiologia",
+                "tipo_fila": "CONSULTAS ESPECIALIZADAS",
+                "data_pedido": date.today().isoformat(),
+                "justificativa": "Avaliação cardiológica clínica detalhada para paciente.",
+            },
+        )
+        assert res_ok.status_code == 201, res_ok.text
+        criado = res_ok.json()
+        assert criado["unidade_saude_id"] == u1.id
+        assert criado["medico_id"] == med1.id
+
+        # Fila PSF (Exame de sangue): tentar outro médico -> 403
+        res_lab_med = client.post(
+            "/api/exames/fila-psf",
+            json={
+                "paciente_id": pac.id,
+                "especialidade": "Clínica Médica",
+                "unidade_psf": u1.nome,
+                "unidade_saude_id": u1.id,
+                "medico_solicitante": med2.nome,
+                "medico_id": med2.id,
+                "justificativa": "Exames de rotina anual do paciente na unidade.",
+                "sigtap_ids": [sig.id],
+            },
+        )
+        assert res_lab_med.status_code == 403
+
+        # Fila PSF válida com médico da unidade -> 201
+        res_lab_ok = client.post(
+            "/api/exames/fila-psf",
+            json={
+                "paciente_id": pac.id,
+                "especialidade": "Clínica Médica",
+                "unidade_psf": u1.nome,
+                "unidade_saude_id": u1.id,
+                "medico_solicitante": med1.nome,
+                "medico_id": med1.id,
+                "justificativa": "Exames de rotina anual do paciente na unidade.",
+                "sigtap_ids": [sig.id],
+            },
+        )
+        assert res_lab_ok.status_code == 201, res_lab_ok.text
+        assert res_lab_ok.json()["unidade_saude_id"] == u1.id
+        assert res_lab_ok.json()["medico_solicitante"] == med1.nome
+    finally:
+        app.dependency_overrides.clear()

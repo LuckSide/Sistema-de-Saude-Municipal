@@ -125,6 +125,7 @@ type Form = {
   acoes: Record<string, Acao[]>;
   medico_id: string;
   unidade_saude_id: string;
+  restringir_psf_unidade_medico: boolean;
   laboratorio_id: string;
   paciente_id: string;
   permite_retroativo: boolean;
@@ -140,6 +141,7 @@ const vazio: Form = {
   acoes: {},
   medico_id: "",
   unidade_saude_id: "",
+  restringir_psf_unidade_medico: false,
   laboratorio_id: "",
   paciente_id: "",
   permite_retroativo: true,
@@ -317,6 +319,7 @@ export default function Usuarios() {
           acoes: sanitizarAcoes(form.acoes),
           medico_id: form.medico_id ? Number(form.medico_id) : null,
           unidade_saude_id: form.unidade_saude_id ? Number(form.unidade_saude_id) : null,
+          restringir_psf_unidade_medico: Boolean(form.unidade_saude_id && form.restringir_psf_unidade_medico),
           laboratorio_id: form.laboratorio_id ? Number(form.laboratorio_id) : null,
           paciente_id: form.paciente_id ? Number(form.paciente_id) : null,
           permite_retroativo: form.permite_retroativo,
@@ -331,6 +334,7 @@ export default function Usuarios() {
           ...resto,
           medico_id: medico_id ? Number(medico_id) : null,
           unidade_saude_id: unidade_saude_id ? Number(unidade_saude_id) : null,
+          restringir_psf_unidade_medico: Boolean(unidade_saude_id && resto.restringir_psf_unidade_medico),
           laboratorio_id: laboratorio_id ? Number(laboratorio_id) : null,
           paciente_id: paciente_id ? Number(paciente_id) : null,
           gerar_temporaria: true,
@@ -368,6 +372,7 @@ export default function Usuarios() {
         acoes: sanitizarAcoes(u.acoes),
         medico_id: u.medico_id ? String(u.medico_id) : "",
         unidade_saude_id: u.unidade_saude_id ? String(u.unidade_saude_id) : "",
+        restringir_psf_unidade_medico: Boolean(u.restringir_psf_unidade_medico),
         laboratorio_id: u.laboratorio_id ? String(u.laboratorio_id) : "",
         paciente_id: u.paciente_id ? String(u.paciente_id) : "",
         permite_retroativo: u.permite_retroativo !== false,
@@ -791,6 +796,9 @@ export default function Usuarios() {
                         </Badge>
                         {u.is_superuser && <Badge variant="outline">★ Super</Badge>}
                         {u.must_change_password && <Badge variant="warning">Troca pendente</Badge>}
+                        {u.restringir_psf_unidade_medico && (
+                          <Badge variant="outline">Bloq. PSF/Médico</Badge>
+                        )}
                         {u.permite_retroativo === false && <Badge variant="outline">Sem retroativo</Badge>}
                       </div>
                     </td>
@@ -1004,7 +1012,14 @@ export default function Usuarios() {
                       <Label>Unidade de Saúde / PSF</Label>
                       <Select
                         value={form.unidade_saude_id}
-                        onChange={(e) => setForm({ ...form, unidade_saude_id: e.target.value })}
+                        onChange={(e) => {
+                          const novaUid = e.target.value;
+                          setForm((prev) => ({
+                            ...prev,
+                            unidade_saude_id: novaUid,
+                            restringir_psf_unidade_medico: novaUid ? prev.restringir_psf_unidade_medico : false,
+                          }));
+                        }}
                       >
                         <option value="">Nenhuma / Secretaria Central</option>
                         {unidades.filter((u) => u.ativo).map((u) => (
@@ -1013,6 +1028,35 @@ export default function Usuarios() {
                           </option>
                         ))}
                       </Select>
+
+                      {form.unidade_saude_id && (() => {
+                        const uniSel = unidades.find((u) => String(u.id) === String(form.unidade_saude_id));
+                        return (
+                          <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/70 p-2.5 space-y-1">
+                            <label className="flex cursor-pointer items-start gap-2 text-xs font-semibold text-amber-950">
+                              <input
+                                type="checkbox"
+                                checked={form.restringir_psf_unidade_medico}
+                                onChange={(e) =>
+                                  setForm((prev) => ({
+                                    ...prev,
+                                    restringir_psf_unidade_medico: e.target.checked,
+                                  }))
+                                }
+                                className="mt-0.5 h-4 w-4 accent-teal shrink-0"
+                              />
+                              <span>
+                                Bloquear para lançar somente nesta Unidade e com o Médico da Unidade
+                              </span>
+                            </label>
+                            <p className="pl-6 text-[11px] text-amber-900/80">
+                              {uniSel?.medico_nome
+                                ? `Médico da unidade vinculado: ${uniSel.medico_nome}`
+                                : "Nenhum médico vinculado no cadastro desta unidade (defina em Configurações → Unidades)."}
+                            </p>
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
