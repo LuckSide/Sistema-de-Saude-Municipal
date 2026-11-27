@@ -1466,34 +1466,52 @@ export default function NovaSolicitacao() {
         }));
     }
 
+    const ehTudoMaiusculo = (s: string) => s.length > 3 && s === s.toUpperCase() && s !== s.toLowerCase();
+    const adicionarEspUnica = (
+      mapa: Map<string, { nome: string; cbo?: string; autorizadoSigtap?: boolean }>,
+      nomesVistos: Set<string>,
+      nomeRaw: string,
+      cboRaw?: string,
+      extra?: { autorizadoSigtap?: boolean },
+    ) => {
+      const nome = (nomeRaw || "").trim();
+      if (!nome) return;
+      const nomeNorm = normalizarTexto(nome);
+      const cboLimpo = (cboRaw || "").replace(/\D/g, "");
+      const chave = cboLimpo ? `CBO:${cboLimpo}` : `TXT:${nomeNorm}`;
+      const atual = mapa.get(chave);
+      if (atual) {
+        if (ehTudoMaiusculo(atual.nome) && !ehTudoMaiusculo(nome)) {
+          atual.nome = nome;
+        }
+        return;
+      }
+      if (nomesVistos.has(nomeNorm)) return;
+      nomesVistos.add(nomeNorm);
+      mapa.set(chave, { nome, cbo: cboLimpo || undefined, ...extra });
+    };
+
     // 1. Se há um CBO explicitamente selecionado na árvore/filtro, exibe APENAS as especialidades correspondentes/autorizadas para aquele CBO
     if (cboFiltroSig) {
       const cboPrefix = cboFiltroSig.slice(0, 4);
       const mapaCbo = new Map<string, { nome: string; cbo?: string; autorizadoSigtap?: boolean }>();
+      const nomesCbo = new Set<string>();
 
       for (const e of espsCboSel) {
-        const nome = (e.nome || "").trim();
-        if (nome && !mapaCbo.has(nome)) {
-          mapaCbo.set(nome, { nome, cbo: e.codigo_cbo || cboFiltroSig });
-        }
+        adicionarEspUnica(mapaCbo, nomesCbo, e.nome || "", e.codigo_cbo || cboFiltroSig);
       }
       for (const e of especialidadesCadastradas) {
         const ec = (e.codigo_cbo || "").replace(/\D/g, "");
         if (ec && (ec === cboFiltroSig || (cboPrefix.length >= 4 && ec.startsWith(cboPrefix)))) {
-          const nome = (e.nome || "").trim();
-          if (nome && !mapaCbo.has(nome)) {
-            mapaCbo.set(nome, { nome, cbo: ec });
-          }
+          adicionarEspUnica(mapaCbo, nomesCbo, e.nome || "", ec);
         }
       }
       if (!isConsulta && cbosAutorizados.length > 0) {
-        const autorizadosSet = new Set(cbosAutorizados.map((c) => c.cbo));
+        const autorizadosSet = new Set(cbosAutorizados.map((c) => (c.cbo || "").replace(/\D/g, "")));
         for (const c of cbosAutorizados) {
-          if (c.cbo === cboFiltroSig || (cboPrefix.length >= 4 && c.cbo.startsWith(cboPrefix))) {
-            const nome = (c.descricao || `CBO ${c.cbo}`).trim();
-            if (!mapaCbo.has(nome)) {
-              mapaCbo.set(nome, { nome, cbo: c.cbo, autorizadoSigtap: true });
-            }
+          const cc = (c.cbo || "").replace(/\D/g, "");
+          if (cc === cboFiltroSig || (cboPrefix.length >= 4 && cc.startsWith(cboPrefix))) {
+            adicionarEspUnica(mapaCbo, nomesCbo, c.descricao || `CBO ${c.cbo}`, cc, { autorizadoSigtap: true });
           }
         }
         const filtradosSigtap = Array.from(mapaCbo.values()).filter(
@@ -1522,27 +1540,32 @@ export default function NovaSolicitacao() {
 
     // 2. Se não é consulta e há CBOs autorizados pelo SIGTAP para o procedimento selecionado:
     if (!isConsulta && cbosAutorizados.length > 0) {
-      return cbosAutorizados.map((c) => ({
-        value: c.descricao || `CBO ${c.cbo}`,
-        label: c.descricao || `CBO ${c.cbo}`,
-        sub: `CBO ${c.cbo} (Autorizado SIGTAP)`,
-        keywords: `${c.descricao} ${c.cbo}`,
-      }));
+      const mapaSig = new Map<string, { nome: string; cbo?: string }>();
+      const nomesSig = new Set<string>();
+      for (const c of cbosAutorizados) {
+        adicionarEspUnica(mapaSig, nomesSig, c.descricao || `CBO ${c.cbo}`, c.cbo);
+      }
+      return Array.from(mapaSig.values())
+        .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"))
+        .map((c) => ({
+          value: c.nome,
+          label: c.nome,
+          sub: c.cbo ? `CBO ${c.cbo} (Autorizado SIGTAP)` : "(Autorizado SIGTAP)",
+          keywords: `${c.nome} ${c.cbo || ""}`,
+        }));
     }
 
     const mapa = new Map<string, { nome: string; cbo?: string }>();
-    // 3. Especialidades cadastradas e oficiais na base
+    const nomesVistos = new Set<string>();
+    // 3. Especialidades cadastradas e oficiais na base (prioridade canônica por CBO)
     for (const e of especialidadesCadastradas) {
-      const nome = (e.nome || "").trim();
-      if (nome && !mapa.has(nome)) {
-        mapa.set(nome, { nome, cbo: e.codigo_cbo });
-      }
+      adicionarEspUnica(mapa, nomesVistos, e.nome || "", e.codigo_cbo);
     }
-    // 4. Especialidades complementares presentes no catálogo de procedimentos
+    // 4. Especialidades complementares presentes no catálogo de procedimentos (sem duplicar CBO ou caixa)
     for (const p of procedimentosTodos) {
-      const esp = (p.especialidade || p.nome_especialidade || "").trim();
-      if (esp && !mapa.has(esp)) {
-        mapa.set(esp, { nome: esp, cbo: p.codigo_especialidade });
+      const esp = (p.nome_especialidade || p.especialidade || "").trim();
+      if (esp) {
+        adicionarEspUnica(mapa, nomesVistos, esp, p.codigo_especialidade);
       }
     }
     return Array.from(mapa.values())

@@ -403,6 +403,9 @@ def listar_cbos_sigtap(
     termo = sanitizar_texto_cbo(termo_raw)
     out: list[dict] = []
 
+    def _eh_tudo_maiusculo(s: str) -> bool:
+        return len(s) > 3 and s == s.upper() and s != s.lower()
+
     def _deduplicar_cbos(itens: list[dict]) -> list[dict]:
         por_cbo: dict[str, dict] = {}
         for item in itens:
@@ -413,7 +416,12 @@ def listar_cbos_sigtap(
             if cbo_norm not in por_cbo:
                 por_cbo[cbo_norm] = {"cbo": cbo_norm, "descricao": desc_atual, "origem": item.get("origem", "sigtap")}
             else:
-                if len(desc_atual) > len(por_cbo[cbo_norm]["descricao"]) and not desc_atual.startswith("CBO "):
+                desc_prev = por_cbo[cbo_norm]["descricao"]
+                prefere_nova = (
+                    (len(desc_atual) > len(desc_prev) and not desc_atual.startswith("CBO "))
+                    or (_eh_tudo_maiusculo(desc_prev) and desc_atual and not _eh_tudo_maiusculo(desc_atual) and not desc_atual.startswith("CBO "))
+                )
+                if prefere_nova:
                     por_cbo[cbo_norm]["descricao"] = desc_atual
         return list(por_cbo.values())[:p_limit]
 

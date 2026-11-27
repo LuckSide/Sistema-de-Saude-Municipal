@@ -927,22 +927,33 @@ export default function FilaExames() {
 
   const especialidadesDoTipo = useMemo(() => {
     const mapa = new Map<string, { nome: string; cbo: string }>();
-    for (const e of listaEspecialidades) {
-      if (e.nome && !mapa.has(e.nome)) {
-        mapa.set(e.nome, { nome: e.nome, cbo: e.codigo_cbo || "" });
+    const nomesVistos = new Set<string>();
+    const ehTudoMaiusculo = (s: string) => s.length > 3 && s === s.toUpperCase() && s !== s.toLowerCase();
+    const adicionar = (nomeRaw?: string | null, cboRaw?: string | null) => {
+      const nome = (nomeRaw || "").trim();
+      if (!nome) return;
+      const nomeNorm = removerAcentos(nome).toLowerCase();
+      const cboLimpo = (cboRaw || "").replace(/\D/g, "");
+      const chave = cboLimpo ? `CBO:${cboLimpo}` : `TXT:${nomeNorm}`;
+      const atual = mapa.get(chave);
+      if (atual) {
+        if (ehTudoMaiusculo(atual.nome) && !ehTudoMaiusculo(nome)) {
+          atual.nome = nome;
+        }
+        return;
       }
+      if (nomesVistos.has(nomeNorm)) return;
+      nomesVistos.add(nomeNorm);
+      mapa.set(chave, { nome, cbo: cboLimpo });
+    };
+    for (const e of listaEspecialidades) {
+      adicionar(e.nome, e.codigo_cbo);
     }
     for (const p of procsDoTipo) {
-      const nome = p.nome_especialidade || p.especialidade;
-      const cbo = p.codigo_especialidade || "";
-      if (nome && !mapa.has(nome)) {
-        mapa.set(nome, { nome, cbo });
-      }
+      adicionar(p.nome_especialidade || p.especialidade, p.codigo_especialidade);
     }
     for (const ec of espsCboModal) {
-      if (ec.nome && !mapa.has(ec.nome)) {
-        mapa.set(ec.nome, { nome: ec.nome, cbo: ec.codigo_cbo || "" });
-      }
+      adicionar(ec.nome, ec.codigo_cbo);
     }
     const todas = Array.from(mapa.values()).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
     const cboModal = (form.codigo_especialidade || "").replace(/\D/g, "");

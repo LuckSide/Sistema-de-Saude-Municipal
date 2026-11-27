@@ -185,20 +185,21 @@ def chave_semantica_cbo(nome: Optional[str]) -> tuple[str, str]:
     if not bruto:
         return "", ""
 
-    # 1. Tenta casar com radicais canônicos explícitos (inclui sinônimos e erros comuns)
+    # 1. Tenta casar com radicais canônicos explícitos (prioriza termo específico mais longo,
+    #    ex.: "cirurgia cardiovascular" antes de "cardio" e "cirurgia plastica" antes de "cirurgiao")
     fonetico = normalizar_fonetica_pt(bruto)
     melhor_rad = ""
     melhor_cbo = ""
+    melhor_tam = -1
     for cbo_canon, _desc, radical, termos in CBO_ESPECIALIDADES_CANONICAS:
         for termo in termos:
             t_san = sanitizar_texto_cbo(termo)
             t_fon = normalizar_fonetica_pt(t_san)
             if t_san and (t_san in bruto or (t_fon and t_fon in fonetico)):
-                melhor_rad = radical
-                melhor_cbo = cbo_canon
-                break
-        if melhor_rad:
-            break
+                if len(t_san) > melhor_tam:
+                    melhor_tam = len(t_san)
+                    melhor_rad = radical
+                    melhor_cbo = cbo_canon
 
     # Caso especial: Clínica Geral / Médico Clínico sem especialidade focal (ex: "Clinica Geral", "Medico Clinico")
     if not melhor_rad and any(x in bruto for x in ("clinica geral", "clinico geral", "clinica medica", "medico clinico")):
@@ -380,8 +381,6 @@ def unificar_cbos_duplicados(db: Session) -> dict:
     registros_atualizados = 0
 
     for grp in grupos_finais:
-        if len(grp) <= 1:
-            continue
         grp_sorted = sorted(grp, key=_melhor_chave_ordenacao_esp)
         principal = grp_sorted[0]
         cbo_canon = limpar_codigo_cbo(principal.codigo_cbo)
@@ -392,8 +391,24 @@ def unificar_cbos_duplicados(db: Session) -> dict:
             _, cbo_canon = chave_semantica_cbo(principal.nome)
         if cbo_canon and principal.codigo_cbo != cbo_canon:
             principal.codigo_cbo = cbo_canon
-        principal.ativo = any(g.ativo for g in grp_sorted)
-        db.add(principal)
+        if len(grp_sorted) > 1:
+            principal.ativo = any(g.ativo for g in grp_sorted)
+            db.add(principal)
+
+        # Uniformiza variações de caixa/equivalência semântica no catálogo de procedimentos para este CBO
+        if cbo_canon and principal.nome:
+            procs_cbo = db.exec(
+                select(ProcedimentoCatalogo).where(ProcedimentoCatalogo.codigo_especialidade == cbo_canon)
+            ).all()
+            for pr in procs_cbo:
+                nome_pr = (pr.nome_especialidade or "").strip()
+                if nome_pr and nome_pr != principal.nome and comparar_nomes_cbo(nome_pr, principal.nome) >= 0.88:
+                    pr.nome_especialidade = principal.nome
+                    db.add(pr)
+                    registros_atualizados += 1
+
+        if len(grp_sorted) <= 1:
+            continue
 
         for dup in grp_sorted[1:]:
             nome_dup = (dup.nome or "").strip()

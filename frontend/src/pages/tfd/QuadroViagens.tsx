@@ -47,7 +47,6 @@ import {
   tfdDisponibilidade,
   tfdPuxarAgendados,
   tfdRemoverPassageiro,
-  tfdGerarViagemAutomatica,
   tfdSugestao,
   tfdSemana,
   tfdTrocarVeiculoViagem,
@@ -245,6 +244,35 @@ export default function QuadroViagens() {
   } | null>(null);
   const [enviandoWa, setEnviandoWa] = useState(false);
   const [visualizarOrdem, setVisualizarOrdem] = useState<DiaViagem | null>(null);
+  const [orgViagem, setOrgViagem] = useState<{
+    modo: "criar" | "vincular";
+    viagemId?: number;
+    data_viagem: string;
+    destino: string;
+    hora_saida: string;
+    hora_retorno: string;
+    veiculo_id: string;
+    motorista_id: string;
+    motorista: string;
+    observacoes: string;
+    candidatos: ViagemFila[];
+    selecionados: Set<number>;
+    motivoSugestao?: string;
+  } | null>(null);
+  const [salvandoOrg, setSalvandoOrg] = useState(false);
+  const [addPaxViagem, setAddPaxViagem] = useState<DiaViagem | null>(null);
+  const [addPaxForm, setAddPaxForm] = useState({
+    paciente_id: "",
+    tratamento: "",
+    unidade: "",
+    hora_consulta: "",
+    observacoes: "",
+    acompanhante: false,
+    acompanhante_id: "",
+    acompanhante_nome: "",
+    acompanhante_cpf: "",
+  });
+  const [salvandoAddPax, setSalvandoAddPax] = useState(false);
 
   useEffect(() => {
     if (visualizarOrdem) {
@@ -268,6 +296,19 @@ export default function QuadroViagens() {
     : frota.filter((f) => f.status === "disponivel");
   const motoristasLivresCriacao = dispCriacao
     ? motoristas.filter((m) => dispCriacao.motoristas.find((d) => d.id === m.id)?.disponivel !== false)
+    : motoristas;
+  const { disp: dispOrg } = useDisponibilidade(
+    orgViagem?.data_viagem ?? "",
+    orgViagem?.hora_saida ?? "",
+    orgViagem?.hora_retorno ?? "",
+    orgViagem?.viagemId ?? null,
+    orgViagem !== null,
+  );
+  const veiculosLivresOrg = dispOrg
+    ? dispOrg.veiculos.filter((f) => (orgViagem?.veiculo_id && String(f.id) === String(orgViagem.veiculo_id)) || (f.disponivel && f.status !== "manutencao" && !f.ocupado_por))
+    : frota.filter((f) => (orgViagem?.veiculo_id && String(f.id) === String(orgViagem.veiculo_id)) || f.status === "disponivel");
+  const motoristasLivresOrg = dispOrg
+    ? motoristas.filter((m) => (orgViagem?.motorista_id && String(m.id) === String(orgViagem.motorista_id)) || dispOrg.motoristas.find((d) => d.id === m.id)?.disponivel !== false)
     : motoristas;
   // Edição: disponibilidade da janela editada (ignora a própria viagem).
   const { disp: dispEdicao } = useDisponibilidade(
@@ -606,8 +647,50 @@ export default function QuadroViagens() {
     }
   }
 
+  function parseMinutosHHMM(hhmm: string | null | undefined): number | null {
+    const m = /^(\d{1,2}):(\d{2})$/.exec((hhmm || "").trim());
+    if (!m) return null;
+    const h = parseInt(m[1], 10);
+    const mn = parseInt(m[2], 10);
+    if (h < 0 || h > 23 || mn < 0 || mn > 59) return null;
+    return h * 60 + mn;
+  }
+
+  function listarCandidatosDiaDestino(dataRef: string, destRef: string): ViagemFila[] {
+    const destN = normDest(destRef);
+    return filaAguardando
+      .filter((f) => normDest(f.destino) === destN && (f.data_consulta || "").slice(0, 10) === dataRef)
+      .sort((a, b) => (a.hora_consulta || "99:99").localeCompare(b.hora_consulta || "99:99"));
+  }
+
+  function selecionadosPorHorarioECapacidade(
+    candidatosLista: ViagemFila[],
+    horaSaida: string,
+    horaRetorno: string,
+    capacidade: number,
+  ): Set<number> {
+    const sel = new Set<number>();
+    const saidaMin = parseMinutosHHMM(horaSaida) ?? 5 * 60;
+    const retMin = parseMinutosHHMM(horaRetorno) ?? Math.min(23 * 60 + 59, saidaMin + 9 * 60);
+    let ocup = 0;
+    const vistos = new Set<number>();
+    for (const f of candidatosLista) {
+      if (vistos.has(f.paciente_id)) continue;
+      const hc = parseMinutosHHMM(f.hora_consulta);
+      const compativelHorario = hc === null || (hc >= Math.max(0, saidaMin - 30) && hc <= retMin);
+      if (!compativelHorario) continue;
+      const peso = f.acompanhante ? 2 : 1;
+      if (capacidade > 0 && ocup + peso > capacidade) continue;
+      sel.add(f.id);
+      vistos.add(f.paciente_id);
+      ocup += peso;
+    }
+    return sel;
+  }
+
   async function criarViagemDestino(data: string, destino: string) {
-    if (!destino.trim()) {
+    const destTrim = destino.trim().toUpperCase();
+    if (!destTrim) {
       setErro("Informe a cidade de destino.");
       return;
     }
@@ -617,12 +700,14 @@ export default function QuadroViagens() {
     }
     setErro("");
     try {
+      const horaSaida = novoVeiculo.hora || "05:00";
+      const horaRetorno = novoVeiculo.retorno || retornoAutomatico(horaSaida);
       const mid = /^\d+$/.test(novoVeiculo.motorista_id) ? Number(novoVeiculo.motorista_id) : null;
-      await tfdCriarViagem({
-        destino,
+      const criado = await tfdCriarViagem({
+        destino: destTrim,
         data_viagem: data,
-        hora_saida: novoVeiculo.hora || "05:00",
-        hora_retorno: novoVeiculo.retorno || retornoAutomatico(novoVeiculo.hora || "05:00"),
+        hora_saida: horaSaida,
+        hora_retorno: horaRetorno,
         veiculo_id: novoVeiculo.veiculo_id ? Number(novoVeiculo.veiculo_id) : null,
         motorista_id: mid,
         motorista: novoVeiculo.motorista,
@@ -630,8 +715,31 @@ export default function QuadroViagens() {
       });
       setAlocandoEm(null);
       setNovoVeiculo({ veiculo_id: "", motorista: "", motorista_id: "", hora: "", retorno: "" });
-      setOk("Veículo alocado ao destino.");
       await recarregar();
+
+      const candDia = listarCandidatosDiaDestino(data, destTrim);
+      if (candDia.length > 0 && podeEditar) {
+        const veicObj = frota.find((v) => String(v.id) === String(criado.veiculo_id ?? ""));
+        const cap = veicObj?.capacidade || 0;
+        const preSel = selecionadosPorHorarioECapacidade(candDia, horaSaida, horaRetorno, cap);
+        setOrgViagem({
+          modo: "vincular",
+          viagemId: criado.id,
+          data_viagem: data,
+          destino: destTrim,
+          hora_saida: criado.hora_saida || horaSaida,
+          hora_retorno: criado.hora_retorno || horaRetorno,
+          veiculo_id: criado.veiculo_id ? String(criado.veiculo_id) : "",
+          motorista_id: criado.motorista_id ? String(criado.motorista_id) : (novoVeiculo.motorista_id === "__manual__" ? "__manual__" : ""),
+          motorista: criado.motorista || "",
+          observacoes: criado.observacoes || "",
+          candidatos: candDia,
+          selecionados: preSel.size > 0 ? preSel : new Set(candDia.map((c) => c.id)),
+          motivoSugestao: "Existem pacientes marcados na fila para este destino/horário.",
+        });
+      } else {
+        setOk("Viagem criada com sucesso.");
+      }
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Erro ao criar viagem.";
       setErro(msg);
@@ -705,16 +813,213 @@ export default function QuadroViagens() {
       return;
     }
     setErro("");
+    const candDia = listarCandidatosDiaDestino(data, destino);
+    const autoHor = horarioAutomaticoLocal(data, destino);
+    let horaSaida = autoHor.hora;
+    let horaRetorno = autoHor.retorno;
+    let veiculoId = "";
+    let capacidade = 0;
+    let motivoSug = "";
+
     try {
-      const res = await tfdGerarViagemAutomatica({ data_viagem: data, destino, alocar_fila: true });
+      const r = await tfdSugestao(data, destino);
+      if (r.hora_saida) horaSaida = r.hora_saida;
+      if (r.hora_retorno) horaRetorno = r.hora_retorno;
+      if (r.veiculo) {
+        veiculoId = String(r.veiculo.id);
+        capacidade = r.veiculo.capacidade || 0;
+      }
+      motivoSug = r.motivo || "";
+    } catch {
+      // fallback com cálculo local
+    }
+
+    const preSel = selecionadosPorHorarioECapacidade(candDia, horaSaida, horaRetorno, capacidade);
+    setOrgViagem({
+      modo: "criar",
+      data_viagem: data,
+      destino: destino.trim().toUpperCase(),
+      hora_saida: horaSaida,
+      hora_retorno: horaRetorno,
+      veiculo_id: veiculoId,
+      motorista_id: "",
+      motorista: "",
+      observacoes: "",
+      candidatos: candDia,
+      selecionados: preSel.size > 0 ? preSel : new Set(candDia.map((c) => c.id)),
+      motivoSugestao: motivoSug,
+    });
+  }
+
+  async function confirmarOrganizacaoViagem() {
+    if (!orgViagem || salvandoOrg) return;
+    if (!orgViagem.destino.trim() || !orgViagem.data_viagem) {
+      setErro("Destino e data da viagem são obrigatórios.");
+      return;
+    }
+    if (orgViagem.data_viagem < hoje && !podeEditarPassadas) {
+      setErro(PASSADA_MSG);
+      return;
+    }
+    setSalvandoOrg(true);
+    setErro("");
+    try {
+      const mid = /^\d+$/.test(orgViagem.motorista_id) ? Number(orgViagem.motorista_id) : null;
+      const horaSaida = orgViagem.hora_saida || "05:00";
+      const horaRetorno = orgViagem.hora_retorno || retornoAutomatico(horaSaida);
+      let vidAlvo = orgViagem.viagemId;
+
+      if (orgViagem.modo === "criar" || !vidAlvo) {
+        const criada = await tfdCriarViagem({
+          destino: orgViagem.destino.trim().toUpperCase(),
+          data_viagem: orgViagem.data_viagem,
+          hora_saida: horaSaida,
+          hora_retorno: horaRetorno,
+          veiculo_id: orgViagem.veiculo_id ? Number(orgViagem.veiculo_id) : null,
+          motorista_id: mid,
+          motorista: orgViagem.motorista,
+          observacoes: orgViagem.observacoes,
+          status: "agendada",
+        });
+        vidAlvo = criada.id;
+      } else {
+        const full = await tfdObterViagem(vidAlvo);
+        await tfdAtualizarViagem(vidAlvo, {
+          destino: orgViagem.destino.trim().toUpperCase(),
+          unidade: full.unidade,
+          data_viagem: orgViagem.data_viagem,
+          hora_saida: horaSaida,
+          hora_retorno: horaRetorno,
+          veiculo_id: orgViagem.veiculo_id ? Number(orgViagem.veiculo_id) : null,
+          motorista_id: mid,
+          motorista: orgViagem.motorista,
+          departamento: full.departamento,
+          data_retorno: full.data_retorno,
+          km_inicial: full.km_inicial,
+          km_final: full.km_final,
+          adiantamento: full.adiantamento,
+          status: full.status,
+          finalidade: full.finalidade,
+          observacoes: orgViagem.observacoes,
+        });
+      }
+
+      let alocados = 0;
+      const falhas: string[] = [];
+      for (const f of orgViagem.candidatos) {
+        if (!orgViagem.selecionados.has(f.id)) continue;
+        try {
+          await tfdAddPassageiro(vidAlvo, {
+            paciente_id: f.paciente_id,
+            acompanhante: f.acompanhante_nome || (f.acompanhante ? "Sim" : ""),
+            acompanhante_id: f.acompanhante_id ?? null,
+            acompanhante_cpf: f.acompanhante_cpf || "",
+            viagem_fila_id: f.id,
+            tratamento: f.tratamento,
+            unidade: f.unidade,
+            hora_consulta: f.hora_consulta,
+            observacoes: f.observacoes || "",
+          });
+          alocados += 1;
+        } catch (errPax: unknown) {
+          const msg = (errPax as { response?: { data?: { detail?: string } } }).response?.data?.detail;
+          falhas.push(`${f.paciente_nome}${msg ? ` (${msg})` : ""}`);
+        }
+      }
+
+      const destFinal = orgViagem.destino.trim().toUpperCase();
+      setOrgViagem(null);
+      await recarregar();
+      if (falhas.length > 0) {
+        setErro(`Alguns passageiros não puderam ser alocados: ${falhas.join("; ")}`);
+      }
       setOk(
-        `Viagem para ${res.destino} gerada automaticamente às ${res.hora_saida}` +
-          (res.alocados > 0 ? ` com ${res.alocados} passageiro(s) alocado(s).` : "."),
+        orgViagem.modo === "criar"
+          ? `Viagem para ${destFinal} criada${alocados > 0 ? ` com ${alocados} passageiro(s) alocado(s)` : ""}.`
+          : `${alocados} passageiro(s) organizado(s) na viagem para ${destFinal}.`,
       );
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Falha ao confirmar viagem.";
+      setErro(msg);
+    } finally {
+      setSalvandoOrg(false);
+    }
+  }
+
+  function abrirModalAddPassageiro(v: DiaViagem) {
+    setErro("");
+    setAddPaxViagem(v);
+    setAddPaxForm({
+      paciente_id: "",
+      tratamento: "",
+      unidade: "",
+      hora_consulta: "",
+      observacoes: "",
+      acompanhante: false,
+      acompanhante_id: "",
+      acompanhante_nome: "",
+      acompanhante_cpf: "",
+    });
+  }
+
+  async function alocarFilaNoModalAddPax(f: ViagemFila) {
+    if (!addPaxViagem || salvandoAddPax) return;
+    setSalvandoAddPax(true);
+    setErro("");
+    try {
+      await tfdAddPassageiro(addPaxViagem.id, {
+        paciente_id: f.paciente_id,
+        acompanhante: f.acompanhante_nome || (f.acompanhante ? "Sim" : ""),
+        acompanhante_id: f.acompanhante_id ?? null,
+        acompanhante_cpf: f.acompanhante_cpf || "",
+        viagem_fila_id: f.id,
+        tratamento: f.tratamento,
+        unidade: f.unidade,
+        hora_consulta: f.hora_consulta,
+        observacoes: f.observacoes || "",
+      });
+      setAddPaxViagem(null);
+      setOk(`${f.paciente_nome} adicionado(a) à viagem.`);
       await recarregar();
     } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Falha ao gerar viagem automaticamente.";
+      const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Falha ao adicionar passageiro.";
       setErro(msg);
+    } finally {
+      setSalvandoAddPax(false);
+    }
+  }
+
+  async function confirmarAddPaxAvulso() {
+    if (!addPaxViagem || salvandoAddPax) return;
+    if (!addPaxForm.paciente_id) {
+      setErro("Selecione um paciente para adicionar na viagem.");
+      return;
+    }
+    if (addPaxForm.acompanhante_id && Number(addPaxForm.acompanhante_id) === Number(addPaxForm.paciente_id)) {
+      setErro("Acompanhante não pode ser o próprio paciente.");
+      return;
+    }
+    setSalvandoAddPax(true);
+    setErro("");
+    try {
+      await tfdAddPassageiro(addPaxViagem.id, {
+        paciente_id: Number(addPaxForm.paciente_id),
+        acompanhante: addPaxForm.acompanhante ? (addPaxForm.acompanhante_nome.trim() || "Sim") : "",
+        acompanhante_id: addPaxForm.acompanhante && addPaxForm.acompanhante_id ? Number(addPaxForm.acompanhante_id) : null,
+        acompanhante_cpf: addPaxForm.acompanhante ? addPaxForm.acompanhante_cpf.replace(/\D/g, "").slice(0, 11) : "",
+        tratamento: addPaxForm.tratamento,
+        unidade: addPaxForm.unidade,
+        hora_consulta: addPaxForm.hora_consulta,
+        observacoes: addPaxForm.observacoes,
+      });
+      setAddPaxViagem(null);
+      setOk("Passageiro adicionado à viagem com sucesso.");
+      await recarregar();
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Falha ao adicionar passageiro.";
+      setErro(msg);
+    } finally {
+      setSalvandoAddPax(false);
     }
   }
 
@@ -966,55 +1271,6 @@ export default function QuadroViagens() {
     }
   }
 
-  async function alocarDiretoEmViagem(viagemId: number) {
-    if (!formFila.paciente_id || !formFila.destino.trim()) {
-      setErro("Paciente e destino são obrigatórios para alocar na viagem.");
-      return;
-    }
-    setErro("");
-    try {
-      const payload: Record<string, unknown> = {
-        paciente_id: Number(formFila.paciente_id),
-        destino: formFila.destino.trim().toUpperCase(),
-        unidade: formFila.unidade,
-        tratamento: formFila.tratamento,
-        prioridade: formFila.prioridade || "rotina",
-        observacoes: formFila.observacoes || "",
-        data_consulta: formFila.agendar ? formFila.data_consulta || null : null,
-        hora_consulta: formFila.agendar ? formFila.hora_consulta : "",
-        acompanhante_id: formFila.acompanhante && formFila.acompanhante_id ? Number(formFila.acompanhante_id) : null,
-        acompanhante_nome: formFila.acompanhante ? formFila.acompanhante_nome.trim() : "",
-        acompanhante_cpf: formFila.acompanhante ? formFila.acompanhante_cpf.replace(/\D/g, "").slice(0, 11) : "",
-      };
-      let filaId = editFila;
-      if (editFila) {
-        await tfdAtualizarFilaViagem(editFila, payload);
-      } else {
-        const criada = await tfdCriarFilaViagem(payload);
-        filaId = criada.id;
-      }
-
-      await tfdAddPassageiro(viagemId, {
-        paciente_id: Number(formFila.paciente_id),
-        acompanhante: formFila.acompanhante ? (formFila.acompanhante_nome || "Sim") : "",
-        acompanhante_id: formFila.acompanhante && formFila.acompanhante_id ? Number(formFila.acompanhante_id) : null,
-        acompanhante_cpf: formFila.acompanhante ? formFila.acompanhante_cpf : "",
-        viagem_fila_id: filaId,
-        tratamento: formFila.tratamento,
-        unidade: formFila.unidade,
-        hora_consulta: formFila.hora_consulta,
-        observacoes: formFila.observacoes || "",
-      });
-
-      setModalFila(false);
-      setOk("Paciente incluído e alocado com sucesso na viagem!");
-      await recarregar();
-    } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Falha ao alocar diretamente na viagem.";
-      setErro(msg);
-    }
-  }
-
   // Gestão direta da viagem no card semanal: editar / trocar veículo / excluir.
   async function abrirEditarViagem(v: DiaViagem) {
     if (v.data_viagem < hoje && !podeEditarPassadas) {
@@ -1200,21 +1456,6 @@ export default function QuadroViagens() {
     if (!q) return destinos.filter((d) => d.ativo).slice(0, 10);
     return destinos.filter((d) => d.ativo && d.nome_destino.toUpperCase().includes(q)).slice(0, 10);
   }, [formFila.destino, destinos]);
-
-  const viagensExistentesNaDataEDestino = useMemo(() => {
-    if (!formFila.destino.trim()) return [];
-    const destNorm = normDest(formFila.destino);
-    const resultado: DiaViagem[] = [];
-    for (const d of semana) {
-      if (formFila.agendar && formFila.data_consulta && d.data !== formFila.data_consulta) continue;
-      for (const dd of d.destinos) {
-        if (normDest(dd.destino) === destNorm) {
-          resultado.push(...dd.viagens);
-        }
-      }
-    }
-    return resultado;
-  }, [formFila.destino, formFila.data_consulta, formFila.agendar, semana]);
 
   function viagemCompativelParaFila(f: ViagemFila): DiaViagem | null {
     const destNorm = normDest(f.destino);
@@ -1581,6 +1822,23 @@ export default function QuadroViagens() {
                         />
                       </div>
 
+                      {(() => {
+                        const confVeic = novoVeiculo.veiculo_id && dispCriacao?.veiculos.find((x) => String(x.id) === String(novoVeiculo.veiculo_id) && !x.disponivel);
+                        const confMot = (novoVeiculo.motorista_id && /^\d+$/.test(novoVeiculo.motorista_id))
+                          ? dispCriacao?.motoristas.find((m) => String(m.id) === String(novoVeiculo.motorista_id) && !m.disponivel)
+                          : null;
+                        if (!confVeic && !confMot) return null;
+                        return (
+                          <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-semibold text-red-700 flex items-start gap-1.5">
+                            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-red-600" />
+                            <div>
+                              {confVeic && <p>Veículo já alocado neste mesmo horário ({confVeic.ocupado_por || "outra viagem"}).</p>}
+                              {confMot && <p>Motorista já alocado neste mesmo horário ({confMot.ocupado_por || "outra viagem"}).</p>}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
                       <div className="mt-2 flex gap-1.5">
                         <button
                           type="button"
@@ -1611,22 +1869,15 @@ export default function QuadroViagens() {
                         <p className="truncate text-xs font-extrabold text-sus-950">{dd.destino}</p>
                         {podeGerirFrota && podeEditar && dd.viagens.length === 0 && (data >= hoje || podeEditarPassadas) && (
                           <button
+                            type="button"
                             onClick={() => gerarViagemAuto(data, dd.destino)}
-                            className="ml-auto inline-flex items-center gap-1 rounded-lg bg-teal px-2 py-1 text-[10px] font-bold text-white hover:brightness-110"
-                            title="Gerar viagem automaticamente com horário e veículo sugeridos"
+                            className="ml-auto inline-flex items-center gap-1 rounded-lg bg-teal px-2.5 py-1 text-[10px] font-bold text-white hover:brightness-110"
+                            title="Gerar viagem com base nos pacientes da fila e organizar passageiros"
                           >
                             <Sparkles className="h-3 w-3" /> Gerar viagem
                           </button>
                         )}
-                        {podeGerirFrota && (data >= hoje || podeEditarPassadas) && (
-                          <button onClick={() => sugerir(data, dd.destino)} className={`${dd.viagens.length === 0 && podeEditar ? "" : "ml-auto "}rounded-lg bg-teal/10 p-1.5 text-teal hover:bg-teal/20`} title="Sugerir veículo e horário">
-                            <Sparkles className="h-4 w-4" />
-                          </button>
-                        )}
                       </div>
-                      {sugestao[`${data}|${dd.destino}`] && (
-                        <p className="mb-1.5 rounded-lg bg-teal/10 px-2.5 py-1 text-xs font-semibold text-teal">{sugestao[`${data}|${dd.destino}`]}</p>
-                      )}
                       {dd.viagens.map((v) => {
                         const chave = `${v.id}`;
                         const bloqueado = !!destArrasto && !destinoCompativel(destArrasto, v.destino);
@@ -1827,8 +2078,20 @@ export default function QuadroViagens() {
                             </p>
                             )}
                             <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-sus-900/5 pt-1.5">
-                              {selFila && (!v.veiculo_id || v.vagas > 0) && podeEditar && (data >= hoje || podeEditarPassadas) && (
-                                <button onClick={() => alocar(selFila, v.id, v.destino)} className={`inline-flex items-center gap-1 rounded-lg bg-teal text-white hover:brightness-110 font-bold ${escalaGrade.botaoAcao}`} title={v.veiculo_id ? "Alocar paciente selecionado" : "Alocar paciente (viagem sem veículo)"}>
+                              {podeEditar && (data >= hoje || podeEditarPassadas) && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const filaSel = selFila ? fila.find((x) => x.id === selFila) : undefined;
+                                    if (filaSel && destinoCompativel(filaSel.destino, v.destino) && (!v.veiculo_id || v.vagas > 0)) {
+                                      alocar(filaSel.id, v.id, v.destino);
+                                    } else {
+                                      abrirModalAddPassageiro(v);
+                                    }
+                                  }}
+                                  className={`inline-flex items-center gap-1 rounded-lg bg-teal text-white hover:brightness-110 font-bold ${escalaGrade.botaoAcao}`}
+                                  title="Adicionar passageiro na viagem"
+                                >
                                   <UserPlus className="h-3.5 w-3.5" />
                                 </button>
                               )}
@@ -1868,96 +2131,6 @@ export default function QuadroViagens() {
                           </div>
                         );
                       })}
-                      {podeGerirFrota && (data >= hoje || podeEditarPassadas) && (
-                        alocandoEm === `${data}|${dd.destino}` ? (
-                          <div className="rounded-xl border border-teal/40 bg-white p-2.5 text-xs">
-                            <div className="mb-1.5 flex items-center justify-between">
-                              <span className="font-bold text-teal text-xs">Adicionar veículo em {dd.destino}</span>
-                              <button
-                                type="button"
-                                onClick={() => setAlocandoEm(null)}
-                                className="rounded p-0.5 text-ink/50 hover:bg-sand/60 hover:text-ink"
-                              >
-                                <X className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-
-                            {/* 1. HORÁRIOS PRIMEIRO */}
-                            <div className="grid grid-cols-2 gap-1.5">
-                              <div>
-                                <Label>Saída *</Label>
-                                <Input
-                                  type="time"
-                                  value={novoVeiculo.hora}
-                                  onChange={(e) => {
-                                    const h = e.target.value;
-                                    setNovoVeiculo({ ...novoVeiculo, hora: h, retorno: novoVeiculo.retorno || retornoAutomatico(h) });
-                                  }}
-                                  className="!py-2 text-xs"
-                                />
-                              </div>
-                              <div>
-                                <Label>Retorno (auto +9h)</Label>
-                                <Input
-                                  type="time"
-                                  value={novoVeiculo.retorno}
-                                  onChange={(e) => setNovoVeiculo({ ...novoVeiculo, retorno: e.target.value })}
-                                  placeholder={retornoAutomatico(novoVeiculo.hora || "05:00")}
-                                  className="!py-2 text-xs"
-                                />
-                              </div>
-                            </div>
-
-                            {/* 2. VEÍCULO DISPONÍVEL FILTRADO EM TEMPO REAL */}
-                            <div className="mt-1.5">
-                              <Label>Veículo disponível *</Label>
-                              <Select
-                                value={novoVeiculo.veiculo_id}
-                                onChange={(e) => setNovoVeiculo({ ...novoVeiculo, veiculo_id: e.target.value })}
-                                className="!h-9 !py-1 text-xs"
-                              >
-                                <option value="">A definir carro</option>
-                                {veiculosLivresCriacao.map((f) => (
-                                  <option key={f.id} value={f.id}>
-                                    {f.placa} · {f.modelo || "Veículo"} ({f.capacidade} pax)
-                                  </option>
-                                ))}
-                              </Select>
-                              <p className="mt-1 text-[10px] text-ink/60">
-                                {veiculosLivresCriacao.length} veículo(s) livre(s) na janela
-                                {novoVeiculo.hora ? ` ${novoVeiculo.hora}→${novoVeiculo.retorno || retornoAutomatico(novoVeiculo.hora)}` : ""}. (Manutenção e viagens simultâneas excluídos).
-                              </p>
-                            </div>
-
-                            {/* 3. MOTORISTA */}
-                            <div className="mt-1.5">
-                              <Label>Motorista</Label>
-                              <CampoMotorista
-                                motoristas={motoristasLivresCriacao}
-                                motoristaId={novoVeiculo.motorista_id}
-                                motoristaNome={novoVeiculo.motorista}
-                                onMudar={(id, nome) => setNovoVeiculo({ ...novoVeiculo, motorista_id: id, motorista: nome })}
-                              />
-                            </div>
-
-                            <div className="mt-2 flex gap-1.5">
-                              <button onClick={() => criarViagemDestino(data, dd.destino)} className="flex-1 rounded-lg bg-teal px-3 py-2 text-xs font-bold text-white hover:brightness-110">Confirmar</button>
-                              <button onClick={() => setAlocandoEm(null)} className="rounded-lg border border-sus-900/15 px-3 py-2 text-xs font-semibold">Cancelar</button>
-                            </div>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              const hAuto = horarioAutomaticoLocal(data, dd.destino);
-                              setAlocandoEm(`${data}|${dd.destino}`);
-                              setNovoVeiculo({ veiculo_id: "", motorista: "", motorista_id: "", hora: hAuto.hora, retorno: hAuto.retorno });
-                            }}
-                            className="w-full rounded-xl border border-dashed border-sus-900/25 px-2 py-2 text-xs font-bold text-sus-900/70 hover:border-teal hover:text-teal"
-                          >
-                            + Veículo
-                          </button>
-                        )
-                      )}
                     </div>
                   ))}
                 </div>
@@ -2348,46 +2521,6 @@ export default function QuadroViagens() {
                     />
                   </div>
                 </>
-              )}
-
-              {/* Sugestão Automática de Viagens Existentes */}
-              {viagensExistentesNaDataEDestino.length > 0 && (
-                <div className="md:col-span-2 rounded-xl border border-amber-300 bg-amber-50/80 p-3 text-xs text-amber-950">
-                  <div className="flex items-center gap-1.5 font-bold text-amber-900 mb-1.5">
-                    <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
-                    <span>Viagem já cadastrada para {formFila.destino}{formFila.data_consulta ? ` em ${fmtDia(formFila.data_consulta)}` : ""}!</span>
-                  </div>
-                  <p className="text-[11px] text-amber-800 mb-2">
-                    Já existem viagens programadas para o mesmo destino. Deseja alocar o paciente diretamente para evitar duplicidade de viagens?
-                  </p>
-                  <div className="space-y-1.5">
-                    {viagensExistentesNaDataEDestino.map((v) => {
-                      const vagasLivres = Math.max(0, (v.capacidade || 0) - v.ocupados);
-                      return (
-                        <div key={v.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white/90 p-2 border border-amber-200">
-                          <div>
-                            <span className="font-bold text-sus-950">{v.destino}</span>
-                            <span className="text-ink/60"> · Saída {v.hora_saida || "05:00"}</span>
-                            <span className="text-ink/60"> · {v.veiculo_placa ? `Carro ${v.veiculo_placa}` : "Sem veículo"}</span>
-                            <span className={`ml-1.5 font-bold ${vagasLivres > 0 ? "text-emerald-700" : "text-red-600"}`}>
-                              ({vagasLivres > 0 ? `${vagasLivres} vaga(s) livre(s)` : "Lotado"})
-                            </span>
-                          </div>
-                          {podeEditar && vagasLivres > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => alocarDiretoEmViagem(v.id)}
-                              className="inline-flex items-center gap-1 rounded-lg bg-teal px-2.5 py-1 text-xs font-bold text-white hover:brightness-110 cursor-pointer"
-                            >
-                              <UserPlus className="h-3.5 w-3.5" />
-                              Alocar nesta viagem
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
               )}
 
               <div>
@@ -2945,6 +3078,448 @@ export default function QuadroViagens() {
           setOk("Viagens e passageiros importados com sucesso a partir do arquivo Word.");
         }}
       />
+
+      {orgViagem && (() => {
+        const veicSelOrg = veiculosLivresOrg.find((x) => String(x.id) === String(orgViagem.veiculo_id))
+          || frota.find((x) => String(x.id) === String(orgViagem.veiculo_id));
+        const capOrg = veicSelOrg?.capacidade || 0;
+        const assentosSel = orgViagem.candidatos
+          .filter((c) => orgViagem.selecionados.has(c.id))
+          .reduce((acc, c) => acc + (c.acompanhante ? 2 : 1), 0);
+        const confVeicOrg = orgViagem.veiculo_id && dispOrg?.veiculos.find((x) => String(x.id) === String(orgViagem.veiculo_id) && !x.disponivel);
+        const confMotOrg = (orgViagem.motorista_id && /^\d+$/.test(orgViagem.motorista_id))
+          ? dispOrg?.motoristas.find((m) => String(m.id) === String(orgViagem.motorista_id) && !m.disponivel)
+          : null;
+
+        return (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" onClick={() => setOrgViagem(null)}>
+            <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-card" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between border-b border-sus-900/10 px-6 py-4">
+                <div>
+                  <h3 className="font-display text-base font-bold text-sus-950 flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-teal" />
+                    {orgViagem.modo === "criar" ? "Confirmar Viagem e Organizar Pacientes" : "Organizar Pacientes da Fila na Viagem"}
+                  </h3>
+                  <p className="mt-0.5 text-xs text-ink/60">
+                    Revise ou altere os dados da viagem e marque os pacientes que irão nesta saída.
+                  </p>
+                </div>
+                <button type="button" onClick={() => setOrgViagem(null)} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-4 text-xs">
+                {orgViagem.motivoSugestao && (
+                  <p className="rounded-xl bg-teal/10 px-3 py-2 text-xs font-semibold text-teal">
+                    {orgViagem.motivoSugestao}
+                  </p>
+                )}
+
+                <div className="grid gap-3 md:grid-cols-2 rounded-xl border border-sus-900/10 bg-sand/30 p-3.5">
+                  <div>
+                    <Label>Destino *</Label>
+                    <Select
+                      value={destinos.some((d) => d.nome_destino === orgViagem.destino) ? orgViagem.destino : ""}
+                      onChange={(e) => setOrgViagem({ ...orgViagem, destino: e.target.value.toUpperCase() })}
+                    >
+                      <option value="">{orgViagem.destino || "Selecionar destino…"}</option>
+                      {destinos.filter((d) => d.ativo).map((d) => (
+                        <option key={d.id} value={d.nome_destino}>{d.nome_destino}</option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>Data da viagem *</Label>
+                    <Input
+                      type="date"
+                      value={orgViagem.data_viagem}
+                      min={!podeEditarPassadas ? hoje : undefined}
+                      onChange={(e) => setOrgViagem({ ...orgViagem, data_viagem: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label>Horário de saída *</Label>
+                    <Input
+                      type="time"
+                      value={orgViagem.hora_saida}
+                      onChange={(e) => {
+                        const h = e.target.value;
+                        setOrgViagem({ ...orgViagem, hora_saida: h, hora_retorno: retornoAutomatico(h) });
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <Label>Horário de retorno</Label>
+                    <Input
+                      type="time"
+                      value={orgViagem.hora_retorno}
+                      onChange={(e) => setOrgViagem({ ...orgViagem, hora_retorno: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label>Veículo</Label>
+                    <Select
+                      value={orgViagem.veiculo_id}
+                      onChange={(e) => setOrgViagem({ ...orgViagem, veiculo_id: e.target.value })}
+                    >
+                      <option value="">A definir carro</option>
+                      {veiculosLivresOrg.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.placa} · {f.modelo || "Veículo"} ({f.capacidade} pax)
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>Motorista</Label>
+                    <CampoMotorista
+                      motoristas={motoristasLivresOrg}
+                      motoristaId={orgViagem.motorista_id}
+                      motoristaNome={orgViagem.motorista}
+                      onMudar={(id, nome) => setOrgViagem({ ...orgViagem, motorista_id: id, motorista: nome })}
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <Label>Observações</Label>
+                    <Input
+                      value={orgViagem.observacoes}
+                      onChange={(e) => setOrgViagem({ ...orgViagem, observacoes: e.target.value })}
+                      placeholder="Observações da viagem (opcional)"
+                    />
+                  </div>
+                </div>
+
+                {(confVeicOrg || confMotOrg) && (
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-red-600" />
+                    <div>
+                      {confVeicOrg && <p>Conflito de veículo no mesmo horário ({confVeicOrg.ocupado_por || "outra viagem"}).</p>}
+                      {confMotOrg && <p>Conflito de motorista no mesmo horário ({confMotOrg.ocupado_por || "outra viagem"}).</p>}
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-display text-sm font-bold text-sus-950">
+                      Pacientes na fila para {orgViagem.destino} em {fmtDia(orgViagem.data_viagem)} ({orgViagem.candidatos.length})
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setOrgViagem({ ...orgViagem, selecionados: new Set(orgViagem.candidatos.map((c) => c.id)) })}
+                        className="rounded-lg bg-sus-900/10 px-2.5 py-1 text-[11px] font-bold text-sus-900 hover:bg-sus-900/15"
+                      >
+                        Marcar todos
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOrgViagem({ ...orgViagem, selecionados: new Set() })}
+                        className="rounded-lg border border-sus-900/15 px-2.5 py-1 text-[11px] font-bold text-sus-900 hover:bg-sand"
+                      >
+                        Desmarcar todos
+                      </button>
+                      <span className={`font-bold text-xs ${capOrg > 0 && assentosSel > capOrg ? "text-red-600" : "text-teal"}`}>
+                        {assentosSel}{capOrg > 0 ? `/${capOrg}` : ""} assento(s)
+                      </span>
+                    </div>
+                  </div>
+
+                  {capOrg > 0 && assentosSel > capOrg && (
+                    <p className="mb-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-[11px] font-semibold text-amber-800">
+                      Atenção: a seleção ({assentosSel} assentos) excede a capacidade do veículo ({capOrg} vagas). Desmarque alguns pacientes ou escolha outro veículo.
+                    </p>
+                  )}
+
+                  <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+                    {orgViagem.candidatos.map((c) => {
+                      const marcado = orgViagem.selecionados.has(c.id);
+                      return (
+                        <label
+                          key={c.id}
+                          className={`flex cursor-pointer items-start gap-2.5 rounded-xl border p-2.5 transition ${marcado ? "border-teal bg-teal/5" : "border-sus-900/10 bg-sand/40 opacity-75"}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={marcado}
+                            onChange={() => {
+                              const next = new Set(orgViagem.selecionados);
+                              if (next.has(c.id)) next.delete(c.id);
+                              else next.add(c.id);
+                              setOrgViagem({ ...orgViagem, selecionados: next });
+                            }}
+                            className="mt-0.5 h-4 w-4 accent-teal"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="font-bold text-sus-950">{c.paciente_nome}</span>
+                              {c.prioridade && (
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${c.prioridade === "urgente" ? "bg-red-100 text-red-700" : "bg-sus-900/10 text-sus-900"}`}>
+                                  {rotuloPrioridade(c.prioridade)}
+                                </span>
+                              )}
+                              {c.acompanhante && (
+                                <span className="rounded-full bg-teal/15 px-1.5 py-0.5 text-[10px] font-bold text-teal">
+                                  +1 acomp.{c.acompanhante_nome ? ` (${c.acompanhante_nome})` : ""}
+                                </span>
+                              )}
+                              {c.hora_consulta && (
+                                <span className="ml-auto font-mono text-[11px] font-bold text-sus-900">
+                                  Consulta {c.hora_consulta}
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-0.5 text-[11px] text-ink/60 truncate">
+                              {c.tratamento || "Tratamento não informado"}{c.unidade ? ` · ${c.unidade}` : ""}
+                            </p>
+                          </div>
+                        </label>
+                      );
+                    })}
+                    {orgViagem.candidatos.length === 0 && (
+                      <p className="py-4 text-center text-xs text-ink/50">
+                        Nenhum paciente aguardando na fila para este dia e destino.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-2 border-t border-sus-900/10 p-4">
+                <Button
+                  type="button"
+                  onClick={confirmarOrganizacaoViagem}
+                  disabled={salvandoOrg || Boolean(confVeicOrg) || Boolean(confMotOrg) || (capOrg > 0 && assentosSel > capOrg)}
+                  className="flex-1"
+                >
+                  <Check className="h-4 w-4" />
+                  {salvandoOrg
+                    ? "Salvando…"
+                    : orgViagem.modo === "criar"
+                      ? `Confirmar viagem (${orgViagem.selecionados.size} paciente${orgViagem.selecionados.size === 1 ? "" : "s"})`
+                      : `Alocar ${orgViagem.selecionados.size} paciente(s) selecionados`}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setOrgViagem(null)}
+                  className="rounded-xl border border-sus-900/15 px-4 py-2.5 text-sm font-bold text-sus-900 hover:bg-sand"
+                >
+                  {orgViagem.modo === "vincular" ? "Organizar depois" : "Cancelar"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {addPaxViagem && (() => {
+        const destN = normDest(addPaxViagem.destino);
+        const filaCompativel = filaAguardando
+          .filter((f) => normDest(f.destino) === destN)
+          .sort((a, b) => {
+            const aMesmoDia = (a.data_consulta || "").slice(0, 10) === addPaxViagem.data_viagem ? 0 : 1;
+            const bMesmoDia = (b.data_consulta || "").slice(0, 10) === addPaxViagem.data_viagem ? 0 : 1;
+            if (aMesmoDia !== bMesmoDia) return aMesmoDia - bMesmoDia;
+            return (a.hora_consulta || "99:99").localeCompare(b.hora_consulta || "99:99");
+          });
+        const lotado = Boolean(addPaxViagem.veiculo_id && addPaxViagem.vagas <= 0);
+        return (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" onClick={() => setAddPaxViagem(null)}>
+            <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-card" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between border-b border-sus-900/10 px-6 py-4">
+                <div>
+                  <h3 className="font-display text-base font-bold text-sus-950 flex items-center gap-2">
+                    <UserPlus className="h-4 w-4 text-teal" />
+                    Adicionar passageiro · {nomeViagem(addPaxViagem)} ({fmtDia(addPaxViagem.data_viagem)})
+                  </h3>
+                  <p className="mt-0.5 text-xs text-ink/60">
+                    Ocupação: <b>{addPaxViagem.ocupados}/{addPaxViagem.capacidade || "sem limite"}</b>
+                    {addPaxViagem.veiculo_placa ? ` · Veículo ${addPaxViagem.veiculo_placa}` : " · Sem veículo definido"}
+                  </p>
+                </div>
+                <button type="button" onClick={() => setAddPaxViagem(null)} className="rounded-lg p-2 text-ink/50 hover:bg-sand" aria-label="Fechar">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-5 text-xs">
+                {lotado && (
+                  <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 font-semibold text-amber-800">
+                    Este veículo já atingiu a capacidade máxima ({addPaxViagem.ocupados}/{addPaxViagem.capacidade}). Troque o veículo se precisar embarcar mais passageiros.
+                  </p>
+                )}
+
+                {filaCompativel.length > 0 && (
+                  <div>
+                    <p className="mb-2 font-display text-sm font-bold text-sus-950">
+                      Da fila de espera para {addPaxViagem.destino} ({filaCompativel.length})
+                    </p>
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                      {filaCompativel.map((f) => {
+                        const mesmoDia = (f.data_consulta || "").slice(0, 10) === addPaxViagem.data_viagem;
+                        return (
+                          <div key={f.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sus-900/10 bg-sand/40 p-2.5">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="font-bold text-sus-950">{f.paciente_nome}</span>
+                                {mesmoDia && (
+                                  <span className="rounded bg-teal/15 px-1.5 py-0.5 text-[10px] font-bold text-teal">
+                                    Mesmo dia
+                                  </span>
+                                )}
+                                {f.acompanhante && (
+                                  <span className="rounded-full bg-teal/15 px-1.5 py-0.5 text-[10px] font-bold text-teal">
+                                    +1 acomp.
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-ink/60 truncate">
+                                {f.data_consulta ? fmtDia(f.data_consulta.slice(0, 10)) : "Sem data fixa"}
+                                {f.hora_consulta ? ` às ${f.hora_consulta}` : ""}
+                                {f.tratamento ? ` · ${f.tratamento}` : ""}
+                                {f.unidade ? ` · ${f.unidade}` : ""}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={salvandoAddPax || lotado}
+                              onClick={() => alocarFilaNoModalAddPax(f)}
+                              className="inline-flex items-center gap-1 rounded-lg bg-teal px-3 py-1.5 text-xs font-bold text-white hover:brightness-110 disabled:opacity-50"
+                            >
+                              <Plus className="h-3.5 w-3.5" /> Alocar
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className="border-t border-sus-900/10 pt-4">
+                  <p className="mb-2 font-display text-sm font-bold text-sus-950">
+                    Adicionar paciente diretamente na viagem
+                  </p>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="md:col-span-2">
+                      <BuscaPacienteAutocomplete
+                        pacienteId={addPaxForm.paciente_id}
+                        onSelect={(p) => setAddPaxForm((prev) => ({ ...prev, paciente_id: p ? String(p.id) : "" }))}
+                        label="Paciente"
+                        obrigatorio
+                        placeholder="Buscar paciente por nome, CPF ou CNS…"
+                      />
+                    </div>
+                    <div>
+                      <Label>Tratamento / exame</Label>
+                      <Input
+                        value={addPaxForm.tratamento}
+                        onChange={(e) => setAddPaxForm({ ...addPaxForm, tratamento: e.target.value })}
+                        placeholder="Ex: Consulta, Hemodiálise"
+                      />
+                    </div>
+                    <div>
+                      <Label>Unidade / hospital</Label>
+                      <Input
+                        value={addPaxForm.unidade}
+                        onChange={(e) => setAddPaxForm({ ...addPaxForm, unidade: e.target.value })}
+                        placeholder="Hospital ou clínica"
+                      />
+                    </div>
+                    <div>
+                      <Label>Horário da consulta</Label>
+                      <Input
+                        type="time"
+                        value={addPaxForm.hora_consulta}
+                        onChange={(e) => setAddPaxForm({ ...addPaxForm, hora_consulta: e.target.value })}
+                      />
+                    </div>
+                    <label className="flex items-end gap-2 pb-2 text-xs font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={addPaxForm.acompanhante}
+                        onChange={(e) => {
+                          const v = e.target.checked;
+                          setAddPaxForm({
+                            ...addPaxForm,
+                            acompanhante: v,
+                            ...(v ? {} : { acompanhante_id: "", acompanhante_nome: "", acompanhante_cpf: "" }),
+                          });
+                        }}
+                        className="h-4 w-4 accent-teal"
+                      />
+                      Com acompanhante
+                    </label>
+                    {addPaxForm.acompanhante && (
+                      <div className="grid gap-3 rounded-xl border border-teal/30 bg-teal/5 p-3 md:col-span-2 md:grid-cols-2">
+                        <div className="md:col-span-2">
+                          <BuscaPacienteAutocomplete
+                            pacienteId={addPaxForm.acompanhante_id}
+                            onSelect={(p) =>
+                              setAddPaxForm((prev) => ({
+                                ...prev,
+                                acompanhante_id: p ? String(p.id) : "",
+                                acompanhante_nome: p ? p.nome : prev.acompanhante_nome,
+                                acompanhante_cpf: p ? (p.cpf || "") : prev.acompanhante_cpf,
+                              }))
+                            }
+                            label="Acompanhante cadastrado (opcional)"
+                            obrigatorio={false}
+                            placeholder="Buscar acompanhante por nome ou CPF…"
+                          />
+                        </div>
+                        <div>
+                          <Label>Nome do acompanhante</Label>
+                          <Input
+                            value={addPaxForm.acompanhante_nome}
+                            onChange={(e) => setAddPaxForm({ ...addPaxForm, acompanhante_nome: e.target.value })}
+                            placeholder="Nome completo"
+                          />
+                        </div>
+                        <div>
+                          <Label>CPF do acompanhante</Label>
+                          <Input
+                            value={addPaxForm.acompanhante_cpf}
+                            onChange={(e) => setAddPaxForm({ ...addPaxForm, acompanhante_cpf: e.target.value.replace(/\D/g, "").slice(0, 11) })}
+                            placeholder="Somente números"
+                          />
+                        </div>
+                      </div>
+                    )}
+                    <div className="md:col-span-2">
+                      <Label>Observações</Label>
+                      <Input
+                        value={addPaxForm.observacoes}
+                        onChange={(e) => setAddPaxForm({ ...addPaxForm, observacoes: e.target.value })}
+                        placeholder="Observações do embarque"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-2 border-t border-sus-900/10 p-4">
+                <Button
+                  type="button"
+                  onClick={confirmarAddPaxAvulso}
+                  disabled={salvandoAddPax || lotado || !addPaxForm.paciente_id}
+                  className="flex-1"
+                >
+                  <UserPlus className="h-4 w-4" />
+                  {salvandoAddPax ? "Adicionando…" : "Adicionar passageiro na viagem"}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setAddPaxViagem(null)}
+                  className="rounded-xl border border-sus-900/15 px-4 py-2.5 text-sm font-bold text-sus-900 hover:bg-sand"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

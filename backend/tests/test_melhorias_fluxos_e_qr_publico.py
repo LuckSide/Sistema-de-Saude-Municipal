@@ -585,3 +585,49 @@ def test_excluir_paciente_com_vinculos_inativa_sem_erro_e_sem_vinculos_remove(cl
     assert r_del2.status_code == 204, r_del2.text
     db_session.expire_all()
     assert db_session.get(Paciente, pac_sem_exame.id) is None
+
+
+def test_unificar_cbos_uniformiza_variacoes_caixa_em_procedimentos(db_session):
+    """Garante que variantes em maiúsculas/minúsculas ou sinônimos de um mesmo CBO em
+    tfd_procedimentos sejam normalizadas para o nome canônico de tfd_especialidades,
+    mesmo quando tfd_especialidades já possui apenas 1 registro para aquele CBO.
+    """
+    from app.models.tfd import Especialidade, ProcedimentoCatalogo
+    from app.services.cbo_normalizacao import unificar_cbos_duplicados
+
+    esp = Especialidade(codigo_cbo="225120", nome="Médico cardiologista", ativo=True)
+    db_session.add(esp)
+    db_session.commit()
+
+    p1 = ProcedimentoCatalogo(
+        codigo="0301010072",
+        nome="CONSULTA CARDIO",
+        tipo_fila="CONSULTAS ESPECIALIZADAS",
+        codigo_especialidade="225120",
+        nome_especialidade="MÉDICO CARDIOLOGISTA",
+    )
+    p2 = ProcedimentoCatalogo(
+        codigo="9999999988",
+        nome="ECOCARDIOGRAMA",
+        tipo_fila="EXAMES CARDIOLOGICOS",
+        codigo_especialidade="225120",
+        nome_especialidade="Cardiologia",
+    )
+    p3 = ProcedimentoCatalogo(
+        codigo="0406010001",
+        nome="CIRURGIA CARDIOVASCULAR",
+        tipo_fila="CIRURGIAS",
+        codigo_especialidade="225120",
+        nome_especialidade="CIRURGIA CARDIOVASCULAR",
+    )
+    db_session.add_all([p1, p2, p3])
+    db_session.commit()
+
+    res = unificar_cbos_duplicados(db_session)
+    assert res["registros_atualizados"] >= 2
+
+    db_session.expire_all()
+    assert db_session.get(ProcedimentoCatalogo, p1.id).nome_especialidade == "Médico cardiologista"
+    assert db_session.get(ProcedimentoCatalogo, p2.id).nome_especialidade == "Médico cardiologista"
+    # Especialidade distinta não deve ser sobrescrita indevidamente
+    assert db_session.get(ProcedimentoCatalogo, p3.id).nome_especialidade == "CIRURGIA CARDIOVASCULAR"
