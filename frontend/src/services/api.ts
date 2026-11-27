@@ -1889,6 +1889,22 @@ export const sigtapCriarManual = (p: {
 
 export const labSigtapCriar = sigtapCriarManual;
 
+export const sigtapAtualizar = (
+  id: number,
+  p: {
+    codigo: string;
+    descricao: string;
+    complexidade?: string;
+    instrumento?: string;
+    valor_sa?: number;
+    valor_sp?: number;
+    valor_sh?: number;
+    sexo?: string;
+    sem_codigo_especifico?: boolean;
+    codigo_faturamento_sigtap?: string;
+  }
+) => api.put<SigtapProc>(`/api/lab/sigtap/${id}`, p).then((r) => r.data);
+
 export type SigtapArvore = {
   grupos: { codigo: string; nome: string }[];
   subgrupos: { codigo: string; grupo_codigo: string; nome: string }[];

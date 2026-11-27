@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { Link, Navigate, useSearchParams } from "react-router-dom";
-import { BookOpenText, Layers, Pencil, Plus, Search, ShieldCheck, ShieldOff, Trash2, X } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { Layers, Pencil, Plus, Search, ShieldCheck, ShieldOff, Trash2, X } from "lucide-react";
 import {
   labSigtap,
   msgErro,
@@ -28,8 +28,10 @@ import { Badge, Button, Card, Input, Label } from "../../components/ui/primitive
 import Paginacao from "../../components/Paginacao";
 import { useBackdropClose } from "../../hooks/useBackdropClose";
 import { useConfirm } from "../../components/ConfirmDialog";
+import { useAuth } from "../../hooks/useAuth";
+import LabSigtap from "../lab/LabSigtap";
 
-type Aba = "tipos" | "procedimentos" | "especialidades";
+type Aba = "tipos" | "procedimentos" | "especialidades" | "sigtap";
 
 const vazioTipo = { codigo: "", nome: "", ativo: true };
 const vazioProc = {
@@ -46,19 +48,38 @@ const vazioProc = {
 const vazioEsp = { codigo_cbo: "", nome: "", ativo: true };
 
 export default function CatalogoExames() {
+  const { can } = useAuth();
   const { confirmar } = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  if (searchParams.get("aba") === "sigtap") {
-    return <Navigate to="/sigtap" replace />;
-  }
+  const podeCatalogo = can("tfd_catalogo");
+  const podeSigtap = can("lab_sigtap");
+  const abasDisponiveis: { id: Aba; label: string }[] = [
+    ...(podeCatalogo
+      ? [
+          { id: "tipos" as Aba, label: "Tipos de fila" },
+          { id: "procedimentos" as Aba, label: "Procedimentos" },
+          { id: "especialidades" as Aba, label: "Especialidades Médicas" },
+        ]
+      : []),
+    ...(podeSigtap || podeCatalogo
+      ? [{ id: "sigtap" as Aba, label: "Tabela Oficial SIGTAP (SUS)" }]
+      : []),
+  ];
 
   const abaParam = searchParams.get("aba") as Aba | null;
-  const [aba, setAba] = useState<Aba>(
-    abaParam === "procedimentos" || abaParam === "especialidades"
-      ? abaParam
-      : "tipos",
-  );
+  const abaValida = abasDisponiveis.some((x) => x.id === abaParam)
+    ? (abaParam as Aba)
+    : (abasDisponiveis[0]?.id ?? "sigtap");
+  const [aba, setAba] = useState<Aba>(abaValida);
+
+  useEffect(() => {
+    const p = searchParams.get("aba") as Aba | null;
+    if (p && abasDisponiveis.some((x) => x.id === p) && p !== aba) {
+      setAba(p);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
   const [q, setQ] = useState("");
   const [tipos, setTipos] = useState<TipoFila[]>([]);
   const [procs, setProcs] = useState<ProcedimentoCat[]>([]);
@@ -170,6 +191,7 @@ export default function CatalogoExames() {
   }
 
   useEffect(() => {
+    if (aba === "sigtap") return;
     setPage(1);
     carregar(1, aba, "").catch(() => setErro("Falha ao carregar catálogo."));
     setQ("");
@@ -299,33 +321,25 @@ export default function CatalogoExames() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <h2 className="font-display text-lg font-bold text-sus-950">Catálogo de Procedimentos e Filas</h2>
-          <span className="rounded-full bg-teal/10 px-2.5 py-0.5 text-xs font-semibold text-teal">
-            {total} registro(s)
-          </span>
+          {aba !== "sigtap" && (
+            <span className="rounded-full bg-teal/10 px-2.5 py-0.5 text-xs font-semibold text-teal">
+              {total} registro(s)
+            </span>
+          )}
         </div>
-        <div className="flex items-center gap-2">
-          <Link
-            to="/sigtap"
-            className="inline-flex items-center gap-1.5 rounded-xl border border-sus-900/20 bg-white px-3 py-2 text-xs font-bold text-sus-950 hover:bg-sand transition shadow-2xs"
-          >
-            <BookOpenText className="h-4 w-4 text-teal" /> Tabela Oficial SIGTAP (SUS) →
-          </Link>
-          <Button onClick={() => abrirModal()} className="bg-teal text-white hover:bg-teal/90">
-            <Plus className="h-4 w-4 mr-1" /> Novo
-          </Button>
-        </div>
+        {aba !== "sigtap" && (
+          <div className="flex items-center gap-2">
+            <Button onClick={() => abrirModal()} className="bg-teal text-white hover:bg-teal/90">
+              <Plus className="h-4 w-4 mr-1" /> Novo
+            </Button>
+          </div>
+        )}
       </div>
       {erro && !modal && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{erro}</p>}
       {ok && <p className="mb-3 rounded-xl bg-teal/10 px-3 py-2 text-sm text-teal">{ok}</p>}
 
       <div className="mb-4 flex flex-wrap gap-2">
-        {(
-          [
-            { id: "tipos", label: "Tipos de fila" },
-            { id: "procedimentos", label: "Procedimentos" },
-            { id: "especialidades", label: "Especialidades Médicas" },
-          ] as { id: Aba; label: string }[]
-        ).map((t) => (
+        {abasDisponiveis.map((t) => (
           <button
             key={t.id}
             onClick={() => mudarAba(t.id)}
@@ -338,6 +352,10 @@ export default function CatalogoExames() {
         ))}
       </div>
 
+      {aba === "sigtap" ? (
+        <LabSigtap />
+      ) : (
+        <>
       <Card className="mb-4 p-4">
             <form onSubmit={buscar} className="flex flex-wrap items-end gap-2">
               <div className="min-w-52 flex-1">
@@ -506,6 +524,8 @@ export default function CatalogoExames() {
               onPage={(p) => carregar(p, aba, q, pageSize).catch(() => setErro("Falha ao carregar catálogo."))}
             />
           </Card>
+        </>
+      )}
 
       {modal && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-sus-950/50 p-4" {...modalBackdrop}>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import {
   CheckCircle2,
   AlertTriangle,
@@ -28,17 +28,27 @@ import {
 } from "../../services/api";
 import { Button, Card, Input, Label, Select } from "../../components/ui/primitives";
 import Paginacao from "../../components/Paginacao";
+import AuditoriaLaudos from "./AuditoriaLaudos";
 
 const STATUS = ["pendente_conferencia", "aprovado", "divergente", "aguardando_autorizacao_sec"];
 
 export default function AuditLab() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const abaInicial = searchParams.get("aba") === "ajustes" ? "ajustes" : "auditoria";
-  const [aba, setAbaState] = useState<"auditoria" | "ajustes">(abaInicial);
+  const rawAba = searchParams.get("aba");
+  const abaInicial: "auditoria" | "ajustes" | "laudos" =
+    rawAba === "ajustes" ? "ajustes" : rawAba === "laudos" ? "laudos" : "auditoria";
+  const [aba, setAbaState] = useState<"auditoria" | "ajustes" | "laudos">(abaInicial);
 
-  const setAba = (novaAba: "auditoria" | "ajustes") => {
+  useEffect(() => {
+    const p = searchParams.get("aba");
+    if (p === "ajustes" || p === "laudos") {
+      setAbaState(p);
+    }
+  }, [searchParams]);
+
+  const setAba = (novaAba: "auditoria" | "ajustes" | "laudos") => {
     setAbaState(novaAba);
-    setSearchParams(novaAba === "ajustes" ? { aba: "ajustes" } : {}, { replace: true });
+    setSearchParams(novaAba === "auditoria" ? {} : { aba: novaAba }, { replace: true });
   };
 
   // Estado da Auditoria
@@ -229,17 +239,26 @@ export default function AuditLab() {
             >
               Conferência de Exames
             </button>
+            <button
+              type="button"
+              onClick={() => setAba("laudos")}
+              className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition ${
+                aba === "laudos"
+                  ? "bg-white text-sus-950 shadow-xs"
+                  : "text-ink/65 hover:text-sus-950"
+              }`}
+            >
+              <FileCheck className="h-3.5 w-3.5 text-indigo-600" />
+              <span>Auditoria de Laudos</span>
+            </button>
           </div>
-
-          <Link
-            to="/lab/auditoria-laudos"
-            className="flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3 py-1.5 text-xs font-semibold transition"
-          >
-            <FileCheck className="h-3.5 w-3.5" />
-            Laudos com Inconsistência
-          </Link>
         </div>
       </div>
+
+      {aba === "laudos" ? (
+        <AuditoriaLaudos />
+      ) : (
+        <>
 
       {erro && (
         <p className="rounded-xl bg-red-50 px-4 py-2 text-sm text-red-700 font-medium">
@@ -610,6 +629,8 @@ export default function AuditLab() {
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

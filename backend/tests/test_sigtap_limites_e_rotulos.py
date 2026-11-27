@@ -211,3 +211,65 @@ def test_rotulos_financeiros_padronizados_no_frontend():
     assert "Valor SIGTAP/SUS" in fat_tsx
     assert "Valor Contrato Local" in fat_tsx
     assert "Valor SIGTAP oficial" not in fat_tsx
+
+
+def test_editar_sigtap_legado_e_link_bpa_para_catalogo_sigtap(session: Session):
+    from datetime import date
+    from app.api.v1.lab import atualizar_sigtap
+    from app.models.lab_exames import SigtapProcedimento
+    from app.models.lab_fase6 import ItemSolic, Laboratorio, SolicitacaoMestre
+    from app.models.tfd import Paciente
+    from app.models.user import User
+    from app.schemas.lab import SigtapIn
+    from app.services.cnes_criticas_service import auditar_criticas_bpa_competencia
+
+    pac = Paciente(nome="Maria Silva Oliveira", cpf="11122233344", cns="700000000000001")
+    lab = Laboratorio(nome="Lab Teste", ativo=True)
+    proc_legado = SigtapProcedimento(
+        codigo="9999900275",
+        descricao="DOSAGEM DO ANTIGENO CA 15-3",
+        complexidade="MC",
+        instrumento="BPA-C",
+        valor_sa=13.35,
+    )
+    session.add_all([pac, lab, proc_legado])
+    session.commit()
+    session.refresh(pac)
+    session.refresh(lab)
+    session.refresh(proc_legado)
+
+    solic = SolicitacaoMestre(
+        codigo_solicitacao="SL-2611-952189",
+        paciente_id=pac.id,
+        data_agendada=date(2026, 11, 15),
+        laboratorio_id=lab.id,
+        status="realizado",
+    )
+    session.add(solic)
+    session.commit()
+    session.refresh(solic)
+    session.add(ItemSolic(solicitacao_id=solic.id, sigtap_id=proc_legado.id, quantidade=1))
+    session.commit()
+
+    auditoria = auditar_criticas_bpa_competencia(session, "2026-11")
+    crit_legado = [c for c in auditoria["criticas"] if "9999900275" in c["mensagem"]]
+    assert crit_legado, "Crítica bloqueante de código legado 9999900275 deve ser gerada"
+    assert crit_legado[0]["link_correcao"] == "/tfd/catalogo?aba=sigtap&q=9999900275&editar=9999900275"
+
+    admin = User(username="admin_sigtap", password_hash="x", is_superuser=True)
+    atualizado = atualizar_sigtap(
+        proc_legado.id,
+        SigtapIn(
+            codigo="0202030075",
+            descricao="DOSAGEM DE ANTIGENO CA 15-3 OFICIAL",
+            complexidade="MC",
+            instrumento="BPA-C",
+            valor_sa=13.35,
+        ),
+        db=session,
+        user=admin,
+    )
+    assert atualizado.codigo == "0202030075"
+
+    auditoria_pos = auditar_criticas_bpa_competencia(session, "2026-11")
+    assert not [c for c in auditoria_pos["criticas"] if "9999900275" in c["mensagem"]]

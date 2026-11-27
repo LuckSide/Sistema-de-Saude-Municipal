@@ -311,6 +311,75 @@ def criar_sigtap(
     return obj
 
 
+@router.put("/sigtap/{sid}", response_model=SigtapOut)
+def atualizar_sigtap(
+    sid: int,
+    data: SigtapIn,
+    db: Session = Depends(get_db),
+    user=Depends(need_any_perm("lab_sigtap", "cfg_exames", "usuarios", "tfd_catalogo", acoes=("editar",))),
+):
+    obj = db.get(SigtapProcedimento, sid)
+    if not obj:
+        raise HTTPException(404, "Procedimento SIGTAP não encontrado.")
+
+    sem_cod = bool(data.sem_codigo_especifico)
+    codigo = (data.codigo or "").strip()
+    cod_fat = (data.codigo_faturamento_sigtap or "").strip().replace(" ", "")
+
+    if sem_cod:
+        if not codigo:
+            codigo = obj.codigo
+        if cod_fat:
+            cod_fat_limpo = "".join(filter(str.isdigit, cod_fat))
+            if len(cod_fat_limpo) != 10:
+                raise HTTPException(400, "O código SIGTAP para faturamento deve conter exatamente 10 dígitos numéricos.")
+            cod_fat = cod_fat_limpo
+            proc_fat = db.exec(select(SigtapProcedimento).where(SigtapProcedimento.codigo == cod_fat)).first()
+            if proc_fat:
+                if not data.valor_sa and not data.valor_sp and not data.valor_sh:
+                    data.valor_sa = proc_fat.valor_sa
+                    data.valor_sp = proc_fat.valor_sp
+                    data.valor_sh = proc_fat.valor_sh
+                if not data.complexidade:
+                    data.complexidade = proc_fat.complexidade
+                if not data.instrumento:
+                    data.instrumento = proc_fat.instrumento
+    else:
+        cod_limpo = "".join(filter(str.isdigit, codigo))
+        if len(cod_limpo) != 10:
+            raise HTTPException(400, "O código SIGTAP padrão deve conter exatamente 10 dígitos numéricos.")
+        if cod_limpo.startswith("99999"):
+            raise HTTPException(400, "Informe um código SIGTAP oficial de 10 dígitos ou marque 'sem código específico' e vincule o código SIGTAP oficial.")
+        codigo = cod_limpo
+
+    if codigo != obj.codigo:
+        existente = db.exec(select(SigtapProcedimento).where(SigtapProcedimento.codigo == codigo, SigtapProcedimento.id != sid)).first()
+        if existente:
+            raise HTTPException(400, f"Já existe outro procedimento com o código '{codigo}'.")
+
+    ref_codigo = cod_fat or codigo
+    obj.codigo = codigo
+    obj.descricao = data.descricao.strip().upper()
+    obj.complexidade = data.complexidade
+    obj.instrumento = data.instrumento
+    obj.valor_sa = data.valor_sa
+    obj.valor_sp = data.valor_sp
+    obj.valor_sh = data.valor_sh
+    obj.valor_combinado = data.valor_combinado
+    obj.tipos_fila_permitidos = data.tipos_fila_permitidos
+    obj.sexo = data.sexo
+    obj.sem_codigo_especifico = sem_cod
+    obj.codigo_faturamento_sigtap = cod_fat
+    obj.grupo_codigo = ref_codigo[:2] if len(ref_codigo) >= 2 else (obj.grupo_codigo or "99")
+    obj.subgrupo_codigo = ref_codigo[:4] if len(ref_codigo) >= 4 else (obj.subgrupo_codigo or "9999")
+    obj.forma_organizacao_codigo = ref_codigo[:6] if len(ref_codigo) >= 6 else (obj.forma_organizacao_codigo or "999999")
+
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return _sigtap_para_out(obj)
+
+
 @router.get("/sigtap/cbos")
 def listar_cbos_sigtap(
     procedimento_codigo: str = Query(default="", max_length=20),

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   Clock,
@@ -7,6 +8,7 @@ import {
   Globe,
   History,
   Layers,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -23,6 +25,7 @@ import {
   siaAutoSyncExecutar,
   siaAutoSyncStatus,
   sigtapArvore,
+  sigtapAtualizar,
   sigtapAutoSyncConfig,
   sigtapAutoSyncExecutar,
   sigtapAutoSyncStatus,
@@ -48,7 +51,8 @@ function brl(v: number | undefined): string {
 }
 
 export default function LabSigtap() {
-  const [q, setQ] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [q, setQ] = useState(() => searchParams.get("q") || "");
   const [inst, setInst] = useState("");
   const [apenasLab, setApenasLab] = useState(false);
   const [grupoCodigo, setGrupoCodigo] = useState("");
@@ -81,8 +85,10 @@ export default function LabSigtap() {
   const [executandoSiaSync, setExecutandoSiaSync] = useState(false);
   const [ok, setOk] = useState("");
 
-  // Cadastro Manual de Procedimento SIGTAP
+  // Cadastro / Edição de Procedimento SIGTAP
   const [modalManual, setModalManual] = useState(false);
+  const [editSigtapId, setEditSigtapId] = useState<number | null>(null);
+  const editarParamProcessadoRef = useRef<string>("");
   const [manualCodigo, setManualCodigo] = useState("");
   const [manualDescricao, setManualDescricao] = useState("");
   const [manualComplexidade, setManualComplexidade] = useState("MC");
@@ -181,9 +187,53 @@ export default function LabSigtap() {
     }
   }
 
+  function abrirModalNovo() {
+    setEditSigtapId(null);
+    setManualCodigo("");
+    setManualDescricao("");
+    setManualComplexidade("MC");
+    setManualInstrumento("BPA-C");
+    setManualValorSa("0");
+    setManualValorSp("0");
+    setManualValorSh("0");
+    setManualSexo("");
+    setManualSemCodigo(false);
+    setManualCodigoFat("");
+    setNomeProcFat("");
+    limparBuscaSigtapRef();
+    setErro("");
+    setModalManual(true);
+  }
+
+  function abrirModalEditar(proc: SigtapProc) {
+    setEditSigtapId(proc.id ?? null);
+    setManualCodigo(proc.codigo || "");
+    setManualDescricao(proc.descricao || "");
+    setManualComplexidade(proc.complexidade || "MC");
+    setManualInstrumento(proc.instrumento || "BPA-C");
+    setManualValorSa(String(proc.valor_sa ?? 0));
+    setManualValorSp(String(proc.valor_sp ?? 0));
+    setManualValorSh(String(proc.valor_sh ?? 0));
+    setManualSexo(proc.sexo || "");
+    setManualSemCodigo(Boolean(proc.sem_codigo_especifico));
+    const codFat = proc.codigo_faturamento_sigtap || "";
+    setManualCodigoFat(codFat);
+    setNomeProcFat("");
+    limparBuscaSigtapRef();
+    setErro("");
+    setModalManual(true);
+    if (codFat.length === 10) {
+      buscarExameFaturamento(codFat);
+    }
+  }
+
   async function salvarProcedimentoManual() {
     if (!manualSemCodigo && !/^\d{10}$/.test(manualCodigo.trim())) {
       setErro("O código SIGTAP padrão deve conter exatamente 10 dígitos numéricos.");
+      return;
+    }
+    if (!manualSemCodigo && manualCodigo.trim().startsWith("99999")) {
+      setErro("Informe um código SIGTAP oficial de 10 dígitos ou marque 'sem código específico' e vincule o código SIGTAP oficial.");
       return;
     }
     if (manualSemCodigo && manualCodigoFat.trim() && !/^\d{10}$/.test(manualCodigoFat.trim().replace(/\D/g, ""))) {
@@ -197,7 +247,7 @@ export default function LabSigtap() {
     setSalvandoManual(true);
     setErro("");
     try {
-      const resp = await sigtapCriarManual({
+      const payload = {
         codigo: manualCodigo.trim(),
         descricao: manualDescricao.trim(),
         complexidade: manualComplexidade,
@@ -208,9 +258,17 @@ export default function LabSigtap() {
         sexo: manualSexo || undefined,
         sem_codigo_especifico: manualSemCodigo,
         codigo_faturamento_sigtap: manualCodigoFat.trim().replace(/\D/g, ""),
-      });
-      setOk(`Procedimento ${resp.codigo} cadastrado com sucesso.`);
+      };
+      const resp = editSigtapId
+        ? await sigtapAtualizar(editSigtapId, payload)
+        : await sigtapCriarManual(payload);
+      setOk(
+        editSigtapId
+          ? `Procedimento ${resp.codigo} atualizado com sucesso.`
+          : `Procedimento ${resp.codigo} cadastrado com sucesso.`,
+      );
       setModalManual(false);
+      setEditSigtapId(null);
       setManualCodigo("");
       setManualDescricao("");
       setManualValorSa("0");
@@ -220,9 +278,9 @@ export default function LabSigtap() {
       setManualCodigoFat("");
       setNomeProcFat("");
       limparBuscaSigtapRef();
-      buscar(1);
+      buscar(page, pageSize);
     } catch (e: any) {
-      setErro(msgErro(e, "Erro ao cadastrar procedimento manual."));
+      setErro(msgErro(e, editSigtapId ? "Erro ao atualizar procedimento SIGTAP." : "Erro ao cadastrar procedimento manual."));
     } finally {
       setSalvandoManual(false);
     }
@@ -288,6 +346,38 @@ export default function LabSigtap() {
     carregarVersoes();
     carregarAutoSync();
   }, []);
+
+  useEffect(() => {
+    const qParam = searchParams.get("q") || "";
+    const editarParam = (searchParams.get("editar") || "").trim();
+    if (qParam && qParam !== q) {
+      setQ(qParam);
+    }
+    if (!editarParam || editarParamProcessadoRef.current === editarParam) return;
+    const matchLocal = lista.find((x) => x.codigo === editarParam || String(x.id) === editarParam);
+    if (matchLocal) {
+      editarParamProcessadoRef.current = editarParam;
+      abrirModalEditar(matchLocal);
+      const next = new URLSearchParams(searchParams);
+      next.delete("editar");
+      setSearchParams(next, { replace: true });
+      return;
+    }
+    labSigtap(editarParam, undefined, 1, 10, false)
+      .then((resp) => {
+        const encontrados = pagData<SigtapProc>(resp);
+        const match = encontrados.find((x) => x.codigo === editarParam || String(x.id) === editarParam) || encontrados[0];
+        if (match) {
+          editarParamProcessadoRef.current = editarParam;
+          abrirModalEditar(match);
+          const next = new URLSearchParams(searchParams);
+          next.delete("editar");
+          setSearchParams(next, { replace: true });
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, lista]);
 
   const opcoesCboArvore = useMemo(() => {
     return (arvore?.cbos ?? []).map((c) => ({
@@ -468,7 +558,7 @@ export default function LabSigtap() {
         <h2 className="font-display text-lg font-bold text-sus-950">Tabela SIGTAP Completa</h2>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button
-            onClick={() => setModalManual(true)}
+            onClick={abrirModalNovo}
             className="!bg-teal !text-sus-950 font-bold flex items-center gap-1.5"
           >
             <Plus className="h-4 w-4" /> Cadastrar Procedimento Manual
@@ -591,11 +681,12 @@ export default function LabSigtap() {
               <th className="px-4 py-3">Complexidade</th>
               <th className="px-4 py-3">Instrumento</th>
               <th className="px-4 py-3">Valores SA/SP/SH</th>
+              <th className="px-4 py-3 text-right">Ações</th>
             </tr>
           </thead>
           <tbody>
             {lista.map((s) => (
-              <tr key={s.id ?? s.codigo} className="border-b border-sus-900/5 last:border-0">
+              <tr key={s.id ?? s.codigo} className="border-b border-sus-900/5 last:border-0 hover:bg-sand/30">
                 <td className="px-4 py-3 font-mono font-semibold">
                   <span>{s.codigo}</span>
                   {s.sem_codigo_especifico ? (
@@ -625,9 +716,19 @@ export default function LabSigtap() {
                 <td className="px-4 py-3 text-xs">{s.complexidade || "—"}</td>
                 <td className="px-4 py-3 text-xs">{s.instrumento}</td>
                 <td className="px-4 py-3 text-xs">{brl(s.valor_sa)} / {brl(s.valor_sp)} / {brl(s.valor_sh)}</td>
+                <td className="px-4 py-3 text-right">
+                  <button
+                    type="button"
+                    onClick={() => abrirModalEditar(s)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-sus-900/15 bg-white px-2.5 py-1 text-xs font-semibold text-sus-900 hover:bg-sand transition"
+                    title="Editar código ou mapeamento SIGTAP deste procedimento"
+                  >
+                    <Pencil className="h-3.5 w-3.5 text-teal" /> Editar
+                  </button>
+                </td>
               </tr>
             ))}
-            {lista.length === 0 && <tr><td colSpan={5} className="px-4 py-8 text-center text-ink/45">Nada encontrado.</td></tr>}
+            {lista.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-ink/45">Nada encontrado.</td></tr>}
           </tbody>
         </table>
         </div>
@@ -923,10 +1024,13 @@ export default function LabSigtap() {
             <div className="mb-4 flex items-center justify-between border-b border-sus-900/10 pb-3">
               <div>
                 <p className="font-display text-base font-bold text-sus-950 flex items-center gap-2">
-                  <Plus className="h-5 w-5 text-teal" /> Cadastrar Procedimento SIGTAP Manual
+                  {editSigtapId ? <Pencil className="h-5 w-5 text-teal" /> : <Plus className="h-5 w-5 text-teal" />}
+                  {editSigtapId ? "Editar Procedimento SIGTAP" : "Cadastrar Procedimento SIGTAP Manual"}
                 </p>
                 <p className="text-xs text-ink/60 mt-0.5">
-                  Adiciona um procedimento avulso compatível com a estrutura de 10 dígitos do SIGTAP / SUS.
+                  {editSigtapId
+                    ? "Atualize o código oficial SIGTAP (10 dígitos) ou vincule um código de faturamento SUS."
+                    : "Adiciona um procedimento avulso compatível com a estrutura de 10 dígitos do SIGTAP / SUS."}
                 </p>
               </div>
               <button
@@ -1163,7 +1267,7 @@ export default function LabSigtap() {
                   disabled={salvandoManual || (!manualSemCodigo && !manualCodigo) || !manualDescricao.trim()}
                   className="!bg-teal !text-sus-950 font-bold"
                 >
-                  {salvandoManual ? "Salvando…" : "Salvar Procedimento"}
+                  {salvandoManual ? "Salvando…" : editSigtapId ? "Atualizar Procedimento" : "Salvar Procedimento"}
                 </Button>
               </div>
             </div>

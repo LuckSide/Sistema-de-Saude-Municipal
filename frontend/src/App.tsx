@@ -89,10 +89,8 @@ const FilaPsf = lazyWithRetry(() => import("./pages/lab/FilaPsf"));
 const VagasAgenda = lazyWithRetry(() => import("./pages/lab/VagasAgenda"));
 const AuditLab = lazyWithRetry(() => import("./pages/lab/AuditLab"));
 const LabFaturamento = lazyWithRetry(() => import("./pages/lab/LabFaturamento"));
-const LabSigtap = lazyWithRetry(() => import("./pages/lab/LabSigtap"));
 const LabOrcamentoLotes = lazyWithRetry(() => import("./pages/lab/LabOrcamentoLotes"));
 const PortalLaboratorio = lazyWithRetry(() => import("./pages/lab/PortalLaboratorio"));
-const AuditoriaLaudos = lazyWithRetry(() => import("./pages/lab/AuditoriaLaudos"));
 const Prestadores = lazyWithRetry(() => import("./pages/Prestadores"));
 const AcompanharExame = lazyWithRetry(() => import("./pages/AcompanharExame"));
 const ConfirmarPresencaViagem = lazyWithRetry(() => import("./pages/ConfirmarPresencaViagem"));
@@ -253,7 +251,7 @@ export default function App() {
                     <Route path="agenda" element={<Guard tela="tfd_agenda"><AgendaTfd /></Guard>} />
                     <Route path="agendamentos" element={<Guard tela="tfd_agenda"><Agendamentos /></Guard>} />
                     <Route path="exames" element={<Navigate to="/fila-exames" replace />} />
-                    <Route path="catalogo" element={<Guard tela="tfd_catalogo"><CatalogoExames /></Guard>} />
+                    <Route path="catalogo" element={<GuardQualquer telas={["tfd_catalogo", "lab_sigtap"]}><CatalogoExames /></GuardQualquer>} />
                     <Route path="destinos" element={<Guard tela="tfd_destinos"><TfdDestinos /></Guard>} />
                     <Route path="frota" element={<GuardQualquer telas={["tfd_frota", "tfd_frota_gestao"]}><TfdFrota /></GuardQualquer>} />
                     <Route path="motoristas" element={<GuardQualquer telas={["tfd_motoristas", "tfd_frota_gestao"]}><TfdMotoristas /></GuardQualquer>} />
@@ -266,18 +264,18 @@ export default function App() {
                     <Route path="marcacao" element={<LabGuard tela="lab_marcacao"><LabMarcacao /></LabGuard>} />
                     <Route path="fila" element={<LabGuard tela="lab_fila"><FilaPsf /></LabGuard>} />
                     <Route path="agenda" element={<LabGuard tela="lab_agenda" telas={["lab_agenda", "lab_vagas"]}><VagasAgenda /></LabGuard>} />
-                    <Route path="vagas" element={<LabGuard tela="lab_vagas"><VagasAgenda /></LabGuard>} />
-                    <Route path="auditoria" element={<LabGuard tela="lab_audit"><AuditLab /></LabGuard>} />
-                    <Route path="auditoria-laudos" element={<LabGuard tela="lab_auditoria_laudos" telas={["lab_auditoria_laudos", "lab_audit"]}><AuditoriaLaudos /></LabGuard>} />
+                    <Route path="vagas" element={<Navigate to="/lab/agenda" replace />} />
+                    <Route path="auditoria" element={<LabGuard tela="lab_audit" telas={["lab_audit", "lab_auditoria_laudos"]}><AuditLab /></LabGuard>} />
+                    <Route path="auditoria-laudos" element={<Navigate to="/lab/auditoria?aba=laudos" replace />} />
                     <Route path="orcamento" element={<LabGuard tela="lab_orcamento"><LabOrcamentoLotes /></LabGuard>} />
                     <Route path="lotes" element={<LabGuard tela="lab_orcamento"><LabOrcamentoLotes /></LabGuard>} />
                     <Route path="faturamento" element={<LabGuard tela="lab_faturamento"><LabFaturamento /></LabGuard>} />
                     <Route path="portal-producao" element={<LabGuard tela="lab_portal"><PortalLaboratorio /></LabGuard>} />
-                    <Route path="sigtap" element={<Navigate to="/sigtap" replace />} />
+                    <Route path="sigtap" element={<Navigate to="/tfd/catalogo?aba=sigtap" replace />} />
                   </Route>
 
                   <Route path="/prestadores" element={<Guard tela="cfg_laboratorios"><Prestadores /></Guard>} />
-                  <Route path="/sigtap" element={<Guard tela="lab_sigtap"><LabSigtap /></Guard>} />
+                  <Route path="/sigtap" element={<Navigate to="/tfd/catalogo?aba=sigtap" replace />} />
                   <Route path="/aps" element={<Guard tela="aps"><ApsPainel /></Guard>} />
                   <Route path="/apac/solicitacoes" element={<Guard tela="apac_solicitacao"><ApacSolicitacao /></Guard>} />
                   <Route path="/apac/regulacao" element={<Guard tela="apac_regulacao"><ApacRegulacao /></Guard>} />

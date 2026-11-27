@@ -141,8 +141,8 @@ export default function PermissoesTree({
             >
               <Icone
                 className="h-3.5 w-3.5 transition-transform group-hover:scale-110"
-                fill={todos ? "currentColor" : "none"}
-                strokeWidth={todos ? 2.2 : 1.7}
+                fill="none"
+                strokeWidth={todos ? 2.25 : 1.75}
               />
             </button>
           );
@@ -278,7 +278,7 @@ export default function PermissoesTree({
             return (
               <div key={a.id} className="flex items-center gap-1.5" title={a.descricao}>
                 <span className={cn("grid h-5 w-5 place-items-center rounded border", a.corAtiva)}>
-                  <Icone className="h-3 w-3" fill="currentColor" strokeWidth={2.2} />
+                  <Icone className="h-3 w-3" fill="none" strokeWidth={2.25} />
                 </span>
                 <span className="text-[11px] font-medium text-sus-950">{a.rotulo}</span>
               </div>

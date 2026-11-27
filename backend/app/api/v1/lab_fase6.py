@@ -513,7 +513,7 @@ def listar_vagas(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=100, ge=1, le=100000),
     db: Session = Depends(get_db),
-    _=Depends(need_perm("lab_vagas")),
+    _=Depends(need_any_perm("lab_agenda", "lab_vagas")),
 ):
     dt_de = _parse_data_segura(de)
     dt_ate = _parse_data_segura(ate)
@@ -544,7 +544,7 @@ def listar_vagas(
 
 @router.post("/vagas", response_model=VagaOut, status_code=201)
 def criar_vaga(
-    data: VagaIn, db: Session = Depends(get_db), _=Depends(need_perm("lab_vagas", "criar"))
+    data: VagaIn, db: Session = Depends(get_db), _=Depends(need_any_perm("lab_agenda", "lab_vagas", acoes=("criar",)))
 ):
     if data.data < date.today():
         raise HTTPException(400, "Dia passado indisponível (sem vagas)")
@@ -589,7 +589,7 @@ def criar_vaga(
 def liberar_mes(
     data: VagaLoteMesIn,
     db: Session = Depends(get_db),
-    _=Depends(need_perm("lab_vagas", "criar")),
+    _=Depends(need_any_perm("lab_agenda", "lab_vagas", acoes=("criar",))),
 ):
     from calendar import monthrange
 
@@ -667,7 +667,7 @@ def liberar_mes(
 
 @router.put("/vagas/{vid}", response_model=VagaOut)
 def atualizar_vaga(
-    vid: int, data: VagaIn, db: Session = Depends(get_db), _=Depends(need_perm("lab_vagas", "editar"))
+    vid: int, data: VagaIn, db: Session = Depends(get_db), _=Depends(need_any_perm("lab_agenda", "lab_vagas", acoes=("editar",)))
 ):
     obj = db.get(VagaLab, vid)
     if not obj:
@@ -706,7 +706,7 @@ def atualizar_vaga(
 
 
 @router.delete("/vagas/{vid}", status_code=204)
-def excluir_vaga(vid: int, db: Session = Depends(get_db), _=Depends(need_perm("lab_vagas", "excluir"))):
+def excluir_vaga(vid: int, db: Session = Depends(get_db), _=Depends(need_any_perm("lab_agenda", "lab_vagas", acoes=("excluir",)))):
     obj = db.get(VagaLab, vid)
     if not obj:
         raise HTTPException(404, "Vaga não encontrada")

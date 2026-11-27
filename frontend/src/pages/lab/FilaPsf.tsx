@@ -1099,7 +1099,7 @@ export default function FilaPsf() {
                 <th className="px-4 py-3 font-semibold">Nº Pedido</th>
                 <th className="px-4 py-3 font-semibold">Data Pedido</th>
                 <th className="px-4 py-3 font-semibold">Paciente</th>
-                <th className="px-4 py-3 font-semibold">Fila / Especialidade</th>
+                <th className="px-4 py-3 font-semibold">Fila</th>
                 <th className="px-4 py-3 font-semibold">PSF / Origem</th>
                 <th className="px-4 py-3 font-semibold">Médico</th>
                 <th className="px-4 py-3 font-semibold">Exames</th>
@@ -1176,16 +1176,12 @@ export default function FilaPsf() {
                     </td>
                     <td className="px-4 py-3 text-xs whitespace-nowrap">
                       {f.tipo_fila ? (
-                        <span className="inline-block bg-purple-50 text-purple-700 border border-purple-200/60 px-1.5 py-0.5 rounded text-[10px] font-semibold mr-1.5">
+                        <span className="inline-block bg-purple-50 text-purple-700 border border-purple-200/60 px-2 py-0.5 rounded text-[11px] font-semibold">
                           {f.tipo_fila}
                         </span>
-                      ) : null}
-                      {f.especialidade &&
-                      f.especialidade.trim().toUpperCase() !== (f.tipo_fila || "").trim().toUpperCase() ? (
-                        <span className="font-semibold text-teal">{f.especialidade}</span>
-                      ) : !f.tipo_fila ? (
+                      ) : (
                         <span className="font-semibold text-teal">Geral</span>
-                      ) : null}
+                      )}
                     </td>
                     <td className="px-4 py-3 text-xs text-ink/75 font-medium">{f.unidade_psf}</td>
                     <td className="px-4 py-3 text-xs text-ink/75">{f.medico}</td>
@@ -2006,18 +2002,9 @@ export default function FilaPsf() {
               </h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
                 <div>
-                  <span className="text-ink/45 block">Especialidade / Fila</span>
+                  <span className="text-ink/45 block">Fila</span>
                   <span className="font-semibold text-teal">
-                    {detalheItem.tipo_fila &&
-                    detalheItem.especialidade &&
-                    detalheItem.tipo_fila.trim().toUpperCase() === detalheItem.especialidade.trim().toUpperCase()
-                      ? detalheItem.tipo_fila
-                      : `${detalheItem.especialidade || "Geral"}${
-                          detalheItem.tipo_fila &&
-                          detalheItem.tipo_fila.trim().toUpperCase() !== (detalheItem.especialidade || "").trim().toUpperCase()
-                            ? ` (${detalheItem.tipo_fila})`
-                            : ""
-                        }`}
+                    {detalheItem.tipo_fila || "Geral"}
                   </span>
                 </div>
                 <div>

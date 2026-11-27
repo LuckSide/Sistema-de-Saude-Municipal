@@ -509,8 +509,8 @@ def auditar_criticas_bpa_competencia(
                 ),
                 registro_id=p_amb.id,
                 registro_identificador=f"Produção #{p_amb.id} - Proc: {cod_proc}",
-                sugestao_correcao="Altere o lançamento para o código SIGTAP oficial correspondente.",
-                link_correcao="/producao-ambulatorial",
+                sugestao_correcao="Edite o procedimento na Tabela SIGTAP (Catálogo de Procedimentos) mapeando-o para o código SIGTAP oficial de 10 dígitos.",
+                link_correcao=f"/tfd/catalogo?aba=sigtap&q={cod_proc}&editar={cod_proc}",
             )
 
         # 4.1 BPA-I sem CNS do paciente (Bloqueante)
@@ -655,8 +655,8 @@ def auditar_criticas_bpa_competencia(
                     ),
                     registro_id=s_lab.id,
                     registro_identificador=f"Exame Solicitação #{s_lab.codigo_solicitacao or s_lab.id}",
-                    sugestao_correcao="Localize o pedido na Recepção do Laboratório ou associe o exame ao código SIGTAP oficial no Catálogo de Procedimentos.",
-                    link_correcao=f"/lab?q={s_lab.codigo_solicitacao or s_lab.id}",
+                    sugestao_correcao="Edite o código do procedimento na Tabela SIGTAP (Catálogo de Procedimentos) mapeando-o para o código SIGTAP oficial de 10 dígitos.",
+                    link_correcao=f"/tfd/catalogo?aba=sigtap&q={proc.codigo}&editar={proc.codigo}",
                 )
 
             # Checagem BPA-I

@@ -2,11 +2,13 @@ import test from "node:test";
 import assert from "node:assert";
 import { EXCLUSIVAS, MODULOS, concedida, todosCodigos } from "../src/permissoes.ts";
 
-test("tela /tfd (tfd_resumo) removida da árvore de permissões e novas telas presentes", () => {
+test("tela /tfd (tfd_resumo) removida da árvore de permissões e telas consolidadas presentes", () => {
   const codigos = todosCodigos();
   assert.ok(!codigos.includes("tfd_resumo"), "tfd_resumo não deve constar na árvore de permissões");
+  assert.ok(!codigos.includes("lab_vagas"), "lab_vagas foi consolidada em lab_agenda");
+  assert.ok(!codigos.includes("lab_auditoria_laudos"), "lab_auditoria_laudos foi consolidada em lab_audit");
 
-  for (const esperada of ["lab_auditoria_laudos", "cfg_importar", "admin_tickets", "lab_vagas", "lab_portal", "lab_orcamento"]) {
+  for (const esperada of ["cfg_importar", "admin_tickets", "lab_agenda", "lab_audit", "lab_portal", "lab_orcamento", "lab_sigtap"]) {
     assert.ok(codigos.includes(esperada), `Código ${esperada} deve existir na árvore de permissões`);
   }
 
