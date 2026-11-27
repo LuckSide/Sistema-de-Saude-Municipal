@@ -1030,8 +1030,9 @@ def processar_linhas(
                 col_mudou = "st_mudou_se"
             else:
                 col_mudou = "NULL AS st_mudou_se"
+            col_pai = "no_pai" if "no_pai" in cols else "'' AS no_pai"
             sel_cols = (
-                f"co_seq_cidadao, no_cidadao, nu_cpf, nu_cns, dt_nascimento, no_mae, "
+                f"co_seq_cidadao, no_cidadao, nu_cpf, nu_cns, dt_nascimento, no_mae, {col_pai}, "
                 f"nu_telefone_celular, {col_faleceu}, {col_mudou}"
             )
             if cpf_val:
@@ -1307,6 +1308,7 @@ def processar_linhas(
                         cns=cns_pec,
                         nascimento=pec_cidadao.get("dt_nascimento") or nasc_lin,
                         nome_mae=(pec_cidadao.get("no_mae") or "")[:150],
+                        nome_pai=(pec_cidadao.get("no_pai") or "")[:150],
                         telefone=(pec_cidadao.get("nu_telefone_celular") or r.get("telefone") or "")[:50],
                         co_seq_cidadao_pec=co_seq,
                         situacao_cadastral=sit,

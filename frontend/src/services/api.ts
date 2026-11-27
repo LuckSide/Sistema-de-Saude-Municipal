@@ -757,6 +757,8 @@ export type Paciente = {
   cns: string;
   sexo?: string | null;
   nascimento: string | null;
+  nome_mae?: string;
+  nome_pai?: string;
   telefone: string;
   endereco: string;
   endereco_numero: string;
@@ -1242,6 +1244,8 @@ export type PacientePec = {
   cpf: string;
   prontuario: string;
   nascimento: string | null;
+  nome_mae?: string;
+  nome_pai?: string;
   ubs?: string;
 };
 export type BuscaPacientesPec = {

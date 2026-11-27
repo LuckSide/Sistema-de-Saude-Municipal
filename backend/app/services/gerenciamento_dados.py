@@ -99,7 +99,7 @@ LOCK_DATA_CLEANUP = 847291993
 PROTECTED_FIELDS = frozenset({"id", "_sa_instance_state", "created_at"})
 
 _CAMPOS_MESCLAR_PACIENTE = frozenset({
-    "nome", "cpf", "cns", "nascimento", "sexo", "nome_mae", "nome_social",
+    "nome", "cpf", "cns", "nascimento", "sexo", "nome_mae", "nome_pai", "nome_social",
     "telefone", "endereco", "endereco_numero", "complemento", "bairro",
     "municipio", "cep", "ponto_referencia", "unidade_saude_id", "unidade_cnes",
     "unidade_nome", "equipe_esf", "equipe_ine", "microarea", "acs_nome",
@@ -1723,7 +1723,7 @@ def _unificar_pacientes(
     # Backfill de campos vazios no master usando os valores do duplicate
     campos_enriquecidos = []
     atributos_backfill = [
-        "cpf", "cns", "nascimento", "sexo", "nome_mae", "nome_social",
+        "cpf", "cns", "nascimento", "sexo", "nome_mae", "nome_pai", "nome_social",
         "telefone", "endereco", "endereco_numero", "complemento", "bairro",
         "municipio", "cep", "ponto_referencia", "unidade_saude_id", "unidade_cnes",
         "unidade_nome", "equipe_esf", "equipe_ine", "microarea", "acs_nome",

@@ -658,6 +658,7 @@ def _construir_query_pec(cols_pec: dict[str, set[str]]) -> str:
         sel_ds_saida = "'' AS ds_tipo_saida_pec"
 
     sel_exibicao = "c.st_ativo_para_exibicao::text AS st_ativo_para_exibicao" if "st_ativo_para_exibicao" in c_cols else "'' AS st_ativo_para_exibicao"
+    sel_no_pai = "c.no_pai" if "no_pai" in c_cols else "'' AS no_pai"
     sel_unificado = "c.st_unificado::text AS st_unificado_pec" if "st_unificado" in c_cols else "'' AS st_unificado_pec"
     master_col = "co_cidadao_master" if "co_cidadao_master" in c_cols else ("co_unico_cidadao_master" if "co_unico_cidadao_master" in c_cols else "")
     sel_master = f"c.{master_col}::text AS co_cidadao_master_pec" if master_col else "'' AS co_cidadao_master_pec"
@@ -707,6 +708,7 @@ def _construir_query_pec(cols_pec: dict[str, set[str]]) -> str:
                 c.dt_nascimento,
                 c.no_sexo,
                 c.no_mae,
+                {sel_no_pai},
                 c.nu_telefone_celular,
                 c.nu_telefone_contato,
                 c.nu_telefone_residencial,
@@ -906,6 +908,8 @@ def _consolidar_campos_master_em_memoria(
         master.nome_social = dup.nome_social
     if not limpar_nome_mae(master.nome_mae) and limpar_nome_mae(dup.nome_mae):
         master.nome_mae = dup.nome_mae
+    if not limpar_nome_mae(getattr(master, "nome_pai", "")) and limpar_nome_mae(getattr(dup, "nome_pai", "")):
+        master.nome_pai = dup.nome_pai
     if not master.sexo and dup.sexo:
         master.sexo = dup.sexo
     if not master.telefone and dup.telefone:
@@ -1542,6 +1546,7 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
                         dt_nasc = _parse_data_opcional(row_map.get("dt_nascimento"))
                         dt_nasc_str = str(dt_nasc) if dt_nasc else ""
                         nome_mae_raw = row_map.get("no_mae")
+                        nome_pai_raw = row_map.get("no_pai")
 
                         situacao_pec, detalhe_pec, dt_obito_pec = classificar_situacao_pec(row_map, municipio_sede)
 
@@ -1639,6 +1644,7 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
                                 nascimento=dt_nasc,
                                 sexo=str(row_map.get("no_sexo") or "").strip()[:20],
                                 nome_mae=str(nome_mae_raw or "").strip()[:150] if limpar_nome_mae(nome_mae_raw) else "",
+                                nome_pai=str(nome_pai_raw or "").strip()[:150] if limpar_nome_mae(nome_pai_raw) else "",
                                 telefone=tel_limpo,
                                 endereco=str(row_map.get("ds_logradouro") or "").strip()[:255],
                                 endereco_numero=str(row_map.get("nu_numero") or "").strip()[:20],
@@ -1714,6 +1720,8 @@ def sincronizar_pacientes_pec(db: Session, origem: str = "manual") -> PecSyncLog
                                 p.nome_social = str(row_map.get("no_social")).strip()[:150]
                             if not limpar_nome_mae(p.nome_mae) and limpar_nome_mae(nome_mae_raw):
                                 p.nome_mae = str(nome_mae_raw).strip()[:150]
+                            if not limpar_nome_mae(getattr(p, "nome_pai", "")) and limpar_nome_mae(nome_pai_raw):
+                                p.nome_pai = str(nome_pai_raw).strip()[:150]
                             if not p.sexo and row_map.get("no_sexo"):
                                 p.sexo = str(row_map.get("no_sexo")).strip()[:20]
                             if not p.nascimento and dt_nasc:

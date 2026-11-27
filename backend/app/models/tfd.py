@@ -15,6 +15,7 @@ class Paciente(SQLModel, table=True):
     nascimento: date | None = Field(default=None, sa_column=Column(Date, index=True))
     sexo: str = Field(default="", max_length=20)
     nome_mae: str = Field(default="", max_length=150)
+    nome_pai: str = Field(default="", max_length=150)
     telefone: str = Field(default="", max_length=50)
     endereco: str = Field(default="", max_length=255)
     endereco_numero: str = Field(default="", max_length=20)

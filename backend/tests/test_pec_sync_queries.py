@@ -272,3 +272,32 @@ def test_reset_pacientes_pec_modo_seguro_e_total():
         assert vaga.vagas_ocupadas == 0
         logs = db.exec(select(AuditLog).where(AuditLog.action == "DATA_PEC_RESET_RESYNC")).all()
         assert len(logs) == 2
+
+
+def test_paciente_mae_pai_e_pec_no_pai():
+    """Garante que PacienteIn/Out suportam nascimento, nome_mae e nome_pai e PEC adapta query."""
+    from datetime import date
+    from app.schemas.tfd import PacienteIn, PacienteOut
+    from app.models.tfd import Paciente
+
+    p_in = PacienteIn(
+        nome="JOAO DA SILVA",
+        nascimento=date(1990, 5, 10),
+        nome_mae="MARIA DA SILVA",
+        nome_pai="JOSE DA SILVA",
+    )
+    pac = Paciente(**p_in.model_dump())
+    pac.id = 1
+    out = PacienteOut.model_validate(pac, from_attributes=True)
+    assert out.nascimento == date(1990, 5, 10)
+    assert out.nome_mae == "MARIA DA SILVA"
+    assert out.nome_pai == "JOSE DA SILVA"
+
+    cols_com_pai = {
+        **COLS_BASE_PEC,
+        "tb_cidadao": {*COLS_BASE_PEC["tb_cidadao"], "no_pai"},
+    }
+    sql_com = _construir_query_pec(cols_com_pai)
+    sql_sem = _construir_query_pec(COLS_BASE_PEC)
+    assert "c.no_pai" in sql_com
+    assert "'' AS no_pai" in sql_sem

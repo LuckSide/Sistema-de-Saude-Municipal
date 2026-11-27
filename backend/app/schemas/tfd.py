@@ -22,6 +22,7 @@ class PacienteBase(BaseModel):
     nascimento: date | None = None
     sexo: str = Field(default="", max_length=20)
     nome_mae: str = Field(default="", max_length=150)
+    nome_pai: str = Field(default="", max_length=150)
     telefone: str = Field(default="")
     endereco: str = Field(default="")
     endereco_numero: str = Field(default="")

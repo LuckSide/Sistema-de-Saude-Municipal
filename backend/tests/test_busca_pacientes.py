@@ -133,3 +133,48 @@ def test_coluna_sem_acento_fallback_sem_unaccent_postgresql():
     expr_com_ext = coluna_sem_acento(FakeSession(True), Paciente.nome)
     sql_com_ext = str(expr_com_ext.compile(dialect=postgresql.dialect()))
     assert "unaccent(" in sql_com_ext
+
+
+def test_cadastro_e_retorno_nascimento_mae_pai(session: Session):
+    admin = _criar_usuario("tfd_pacientes", is_superuser=True)
+    app.dependency_overrides[get_db] = lambda: session
+    app.dependency_overrides[get_current_user_senha_ok] = lambda: admin
+    try:
+        client = TestClient(app)
+        res_cria = client.post(
+            "/api/tfd/pacientes",
+            json={
+                "nome": "LUCAS MENDES SOUZA",
+                "nascimento": "1995-08-21",
+                "nome_mae": "ANA MENDES SOUZA",
+                "nome_pai": "CARLOS SOUZA",
+            },
+        )
+        assert res_cria.status_code == 201, res_cria.text
+        criado = res_cria.json()
+        assert criado["nascimento"] == "1995-08-21"
+        assert criado["nome_mae"] == "ANA MENDES SOUZA"
+        assert criado["nome_pai"] == "CARLOS SOUZA"
+
+        res_list = client.get("/api/tfd/pacientes", params={"q": "LUCAS MENDES"})
+        assert res_list.status_code == 200
+        item = res_list.json()["data"][0]
+        assert item["nascimento"] == "1995-08-21"
+        assert item["nome_mae"] == "ANA MENDES SOUZA"
+        assert item["nome_pai"] == "CARLOS SOUZA"
+
+        res_buscar = client.get("/api/tfd/pacientes/buscar", params={"termo": "LUCAS MENDES"})
+        assert res_buscar.status_code == 200
+        b_item = res_buscar.json()["resultados"][0]
+        assert b_item["nascimento"] == "1995-08-21"
+        assert b_item["nome_mae"] == "ANA MENDES SOUZA"
+        assert b_item["nome_pai"] == "CARLOS SOUZA"
+
+        res_perfil = client.get(f"/api/tfd/pacientes/{criado['id']}/perfil")
+        assert res_perfil.status_code == 200
+        p_item = res_perfil.json()["paciente"]
+        assert p_item["nascimento"] == "1995-08-21"
+        assert p_item["nome_mae"] == "ANA MENDES SOUZA"
+        assert p_item["nome_pai"] == "CARLOS SOUZA"
+    finally:
+        app.dependency_overrides.clear()

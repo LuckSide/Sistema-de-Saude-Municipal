@@ -444,6 +444,7 @@ def _init_db_impl() -> None:
             "nome_social": "VARCHAR(150) DEFAULT '' NOT NULL",
             "sexo": "VARCHAR(20) DEFAULT '' NOT NULL",
             "nome_mae": "VARCHAR(150) DEFAULT '' NOT NULL",
+            "nome_pai": "VARCHAR(150) DEFAULT '' NOT NULL",
             "municipio": "VARCHAR(100) DEFAULT 'Guapé' NOT NULL",
             "ponto_referencia": "VARCHAR(150) DEFAULT '' NOT NULL",
             "unidade_cnes": "VARCHAR(20) DEFAULT '' NOT NULL",

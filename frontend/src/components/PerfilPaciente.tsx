@@ -167,6 +167,8 @@ export default function PerfilPaciente({
           <div><dt className="text-ink/45">CPF</dt><dd className="font-semibold">{p.cpf || "—"}</dd></div>
           <div><dt className="text-ink/45">Cartão SUS (CNS)</dt><dd className="font-semibold">{p.cns || "—"}</dd></div>
           <div><dt className="text-ink/45">Data de nascimento</dt><dd className="font-semibold">{fmtNasc(p.nascimento)}</dd></div>
+          <div><dt className="text-ink/45">Nome da mãe</dt><dd className="font-semibold">{p.nome_mae?.trim() || "—"}</dd></div>
+          <div><dt className="text-ink/45">Nome do pai</dt><dd className="font-semibold">{p.nome_pai?.trim() || "—"}</dd></div>
           <div><dt className="text-ink/45">Telefone</dt><dd className="font-semibold">{p.telefone || "—"}</dd></div>
           <div className="col-span-2 md:col-span-3"><dt className="text-ink/45">Endereço</dt><dd className="font-semibold">{enderecoCompleto(p)}</dd></div>
         </dl>

@@ -19,7 +19,14 @@ import ExportarExcel from "../../components/ExportarExcel";
 import PerfilPaciente from "../../components/PerfilPaciente";
 import { useConfirm } from "../../components/ConfirmDialog";
 
-const vazio = { nome: "", cpf: "", cns: "", nascimento: "", telefone: "", endereco: "", endereco_numero: "", complemento: "", bairro: "", cep: "", unidade_saude_id: "", equipe_esf: "", acs_nome: "", observacoes: "" };
+const vazio = { nome: "", cpf: "", cns: "", nascimento: "", nome_mae: "", nome_pai: "", telefone: "", endereco: "", endereco_numero: "", complemento: "", bairro: "", cep: "", unidade_saude_id: "", equipe_esf: "", acs_nome: "", observacoes: "" };
+
+function fmtNasc(s?: string | null): string {
+  if (!s || typeof s !== "string") return "—";
+  const base = s.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(base)) return "—";
+  return base.split("-").reverse().join("/");
+}
 
 export default function TfdPacientes() {
   const { confirmar } = useConfirm();
@@ -97,7 +104,7 @@ export default function TfdPacientes() {
       if (p) {
         setEditId(p.id);
         setEditProntuario(p.codigo_prontuario || `PR-${String(p.id).padStart(5, "0")}`);
-        setForm({ nome: p.nome, cpf: p.cpf, cns: p.cns, nascimento: p.nascimento ?? "", telefone: p.telefone, endereco: p.endereco, endereco_numero: p.endereco_numero ?? "", complemento: p.complemento ?? "", bairro: p.bairro ?? "", cep: p.cep ?? "", unidade_saude_id: p.unidade_saude_id ? String(p.unidade_saude_id) : "", equipe_esf: p.equipe_esf ?? "", acs_nome: p.acs_nome ?? "", observacoes: p.observacoes });
+        setForm({ nome: p.nome, cpf: p.cpf, cns: p.cns, nascimento: p.nascimento ?? "", nome_mae: p.nome_mae ?? "", nome_pai: p.nome_pai ?? "", telefone: p.telefone, endereco: p.endereco, endereco_numero: p.endereco_numero ?? "", complemento: p.complemento ?? "", bairro: p.bairro ?? "", cep: p.cep ?? "", unidade_saude_id: p.unidade_saude_id ? String(p.unidade_saude_id) : "", equipe_esf: p.equipe_esf ?? "", acs_nome: p.acs_nome ?? "", observacoes: p.observacoes });
       }
     } else {
       setEditId(null);
@@ -246,7 +253,7 @@ export default function TfdPacientes() {
           <thead>
             <tr className="border-b border-sus-900/10 bg-sand text-xs uppercase text-sus-900/60">
               <th className="px-4 py-3">Prontuário</th>
-              <th className="px-4 py-3">Nome / Endereço</th>
+              <th className="px-4 py-3">Nome / Nascimento / Filiação / Endereço</th>
               <th className="px-4 py-3">CPF / CNS</th>
               <th className="px-4 py-3">Telefone / Unidade</th>
               <th className="px-4 py-3">Fila de Espera</th>
@@ -338,6 +345,11 @@ export default function TfdPacientes() {
                           </span>
                         )}
                       </div>
+                      <p className="mt-0.5 text-xs font-normal text-ink/75">
+                        Nasc.: <span className="font-mono font-medium">{fmtNasc(p.nascimento)}</span>
+                        {" · "}Mãe: <span className="font-medium">{p.nome_mae?.trim() || "—"}</span>
+                        {" · "}Pai: <span className="font-medium">{p.nome_pai?.trim() || "—"}</span>
+                      </p>
                       <p className="text-xs font-normal text-ink/50">{end || "—"}</p>
                     </td>
                     <td className="px-4 py-3 text-xs">
@@ -477,6 +489,8 @@ export default function TfdPacientes() {
                 <div><Label>CNS</Label><Input value={form.cns} onChange={(e) => setForm({ ...form, cns: e.target.value })} /></div>
                 <div><Label>Nascimento</Label><Input type="date" value={form.nascimento} onChange={(e) => setForm({ ...form, nascimento: e.target.value })} /></div>
                 <div><Label>Telefone</Label><Input value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} /></div>
+                <div className="md:col-span-2"><Label>Nome da mãe</Label><Input value={form.nome_mae} onChange={(e) => setForm({ ...form, nome_mae: e.target.value })} placeholder="Nome completo da mãe" /></div>
+                <div className="md:col-span-2"><Label>Nome do pai</Label><Input value={form.nome_pai} onChange={(e) => setForm({ ...form, nome_pai: e.target.value })} placeholder="Nome completo do pai" /></div>
                 <div className="md:col-span-2"><Label>Logradouro</Label><Input value={form.endereco} onChange={(e) => setForm({ ...form, endereco: e.target.value })} placeholder="Rua/Avenida" /></div>
                 <div><Label>Nº</Label><Input value={form.endereco_numero} onChange={(e) => setForm({ ...form, endereco_numero: e.target.value })} /></div>
                 <div><Label>Complemento</Label><Input value={form.complemento} onChange={(e) => setForm({ ...form, complemento: e.target.value })} placeholder="Apto, bloco, casa…" /></div>
